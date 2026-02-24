@@ -1,0 +1,23 @@
+name: Inspecionar API Hugging Face
+
+on:
+  workflow_dispatch: # Permite que você rode manualmente clicando no botão
+
+jobs:
+  mapear-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Gradio Client
+        run: pip install gradio_client
+
+      - name: Executar Inspetor de API
+        run: python debug_api.py
+
