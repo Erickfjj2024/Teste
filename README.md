@@ -56,7 +56,7 @@ Acesse:
 
 
 
-## Deploy local (produção) no Termux
+## Deploy local (produção) no Termux / Windows / Linux
 Agora o backend consegue servir o frontend buildado (`frontend/dist`) no mesmo processo.
 
 Passo a passo:
@@ -70,7 +70,7 @@ Após isso, abra:
 - Health check: `http://localhost:4000/api/health`
 
 Observações:
-- `deploy:local` executa build e sobe o backend em modo de deploy local.
+- `deploy:local` executa build e sobe o backend em modo de deploy local, sem depender de sintaxe específica de variável de ambiente do shell (compatível com Windows, Termux e Linux).
 - Se `frontend/dist` não existir, o backend loga mensagem orientando rodar build.
 
 ## Rodando via GitHub Actions

@@ -34,7 +34,7 @@
 
 
 ## Deploy local (produção)
-- Script raiz: `npm run deploy:local` (atalho para build + start local).
+- Script raiz: `npm run deploy:local` (atalho para build + start local) com execução cross-platform, sem `NODE_ENV=...` inline.
 - `backend/src/server.js` detecta `frontend/dist` e serve o frontend estático no mesmo processo do backend.
 - Rotas `/api/*` seguem no router da API, e demais paths retornam `frontend/dist/index.html` (SPA fallback).
 - Porta padrão de acesso único no deploy local: `http://localhost:4000`.

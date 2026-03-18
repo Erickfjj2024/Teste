@@ -7,7 +7,7 @@
     "build": "npm run build --prefix frontend && npm run build --prefix backend",
     "start": "npm run start --prefix backend",
     "lint": "npm run lint --prefix frontend",
-    "start:local": "npm run build && NODE_ENV=production npm run start",
+    "start:local": "npm run build && npm run start",
     "deploy:local": "npm run start:local"
   },
   "devDependencies": {
