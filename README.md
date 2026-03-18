@@ -54,6 +54,24 @@ Acesse:
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:4000/api/health`
 
+
+## Rodando via GitHub Actions
+Foi adicionado workflow em `.github/workflows/ci.yml` com gatilhos em `push`, `pull_request` e execução manual (`workflow_dispatch`).
+
+Pipeline executa:
+1. `npm ci`
+2. `npm ci --prefix backend`
+3. `npm ci --prefix frontend`
+4. `npm run lint`
+5. `npm run build`
+6. upload de artefato `frontend-dist`
+
+Como usar no GitHub:
+1. Abra a aba **Actions** no repositório.
+2. Clique no workflow **CI - Lifestyle Look Builder**.
+3. Clique em **Run workflow** para rodar manualmente.
+4. Após sucesso, baixe o artefato `frontend-dist` se quiser inspecionar o build.
+
 ## Endpoints
 - `GET /api/health`
 - `GET /api/mock-profiles`

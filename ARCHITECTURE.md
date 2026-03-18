@@ -24,3 +24,10 @@
 - Logs de erro detalhados incluem arquivo e função.
 - Blocos `try/catch` aplicados nas integrações de persistência e geração.
 - Banco escolhido evita compilação nativa, favorecendo execução em Termux.
+
+
+## CI/CD (GitHub Actions)
+- Workflow: `.github/workflows/ci.yml`.
+- Disparos: `push` e `pull_request` para `main`, além de `workflow_dispatch` manual.
+- Etapas: instalação de dependências (root/backend/frontend), lint do frontend, build full-stack e upload do artefato `frontend-dist`.
+- Objetivo: garantir que o app continue executável e estável antes de merge/deploy.
