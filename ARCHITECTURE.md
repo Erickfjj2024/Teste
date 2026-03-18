@@ -31,3 +31,10 @@
 - Disparos: `push` e `pull_request` para `main`, além de `workflow_dispatch` manual.
 - Etapas: instalação de dependências (root/backend/frontend), lint do frontend, build full-stack e upload do artefato `frontend-dist`.
 - Objetivo: garantir que o app continue executável e estável antes de merge/deploy.
+
+
+## Deploy local (produção)
+- Script raiz: `npm run deploy:local` (atalho para build + start local).
+- `backend/src/server.js` detecta `frontend/dist` e serve o frontend estático no mesmo processo do backend.
+- Rotas `/api/*` seguem no router da API, e demais paths retornam `frontend/dist/index.html` (SPA fallback).
+- Porta padrão de acesso único no deploy local: `http://localhost:4000`.

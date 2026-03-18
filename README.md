@@ -55,6 +55,24 @@ Acesse:
 - API: `http://localhost:4000/api/health`
 
 
+
+## Deploy local (produção) no Termux
+Agora o backend consegue servir o frontend buildado (`frontend/dist`) no mesmo processo.
+
+Passo a passo:
+1. `npm install`
+2. `npm install --prefix backend`
+3. `npm install --prefix frontend`
+4. `npm run deploy:local`
+
+Após isso, abra:
+- App + API no mesmo servidor: `http://localhost:4000`
+- Health check: `http://localhost:4000/api/health`
+
+Observações:
+- `deploy:local` executa build e sobe o backend em modo de deploy local.
+- Se `frontend/dist` não existir, o backend loga mensagem orientando rodar build.
+
 ## Rodando via GitHub Actions
 Foi adicionado workflow em `.github/workflows/ci.yml` com gatilhos em `push`, `pull_request` e execução manual (`workflow_dispatch`).
 
