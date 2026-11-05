@@ -115,3 +115,9 @@
 - Capacidades que o Elevator precisa e o cliente WASM não tem: ler blocos/colisão, teleportar o jogador, ler/cobrar XP, tocar som de mod, e (a verificar) pular/agachar como teclas (`input.register-key`, se o toque do Android gera esses eventos).
 - Limite: mods grandes (máquinas, entidades de bloco, GUIs, fluidos) exigiriam uma API muito maior.
 - Pendente: autorização para compilar o fork Android (foi bloqueado como código externo).
+
+### Compilei o fork Android (autorizado) e achei um erro no .hmod
+- `cargo build -p cargo-horizon-mod` no fork OK. O `elevatorid.hmod` original foi RECUSADO pelo fork: `unknown field occludes` (a base do fork é mais antiga e só aceita hardness, explosion_resistance, light, requires_tool, friction, map_color, sounds).
+- Gerei `ports/elevator/dist/elevatorid-android.hmod` (sem `occludes`), que passa em `check` com a ferramenta do fork. SHA-256 f66994804b6a2fa47dfec14da92877248345383a61401247e50314dc17c6daec.
+- URL para o Android: https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid-android.hmod
+- Ideia do usuário: API robusta para mods grandes baseada na API Java. O catálogo `native-hooks.json` já mapeia cada gancho a um evento do NeoForge (campo `neoforge`).
