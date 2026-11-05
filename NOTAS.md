@@ -46,3 +46,6 @@
 - Lista obtida pela API da FTB (api.modpacks.ch, pacote 100, versão 1.11.1): 222 mods, Forge 1.18.2.
 - Licenças cruzadas com o Modrinth por hash. Relatório completo em `STONEBLOCK3-MODS.md` (seções A permissivos, B exigem permissão, C sem correspondência).
 - Hosts liberados no ambiente Default: curseforge.com, modrinth.com, api.modrinth.com, api.modpacks.ch, modpackindex.com.
+
+### SkyFactory 4
+- Lista e licenças em `SKYFACTORY4-MODS.md` (versão 4.2.4, Minecraft 1.12.2, mesma metodologia do StoneBlock 3).
