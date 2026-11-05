@@ -39,6 +39,34 @@ pub enum DyeColor {
     LightGray, Cyan, Purple, Blue, Brown, Green, Red, Black,
 }
 
+impl DyeColor {
+    /// Id do bloco do elevador de cada cor: `elevatorid:elevator_<cor>`.
+    pub const BLOCK_PREFIX: &'static str = "elevatorid:elevator_";
+
+    /// A cor de um bloco `elevatorid:elevator_<cor>`, ou `None` se não for um elevador.
+    pub fn from_block_name(name: &str) -> Option<Self> {
+        Some(match name.strip_prefix(Self::BLOCK_PREFIX)? {
+            "white" => Self::White,
+            "orange" => Self::Orange,
+            "magenta" => Self::Magenta,
+            "light_blue" => Self::LightBlue,
+            "yellow" => Self::Yellow,
+            "lime" => Self::Lime,
+            "pink" => Self::Pink,
+            "gray" => Self::Gray,
+            "light_gray" => Self::LightGray,
+            "cyan" => Self::Cyan,
+            "purple" => Self::Purple,
+            "blue" => Self::Blue,
+            "brown" => Self::Brown,
+            "green" => Self::Green,
+            "red" => Self::Red,
+            "black" => Self::Black,
+            _ => return None,
+        })
+    }
+}
+
 /// Direção em que o jogador fica virado em elevadores direcionais.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Facing {
@@ -499,6 +527,15 @@ mod tests {
         assert_eq!((d.yaw, d.pitch), (Yaw::Set(90.0), Pitch::Reset));
         let c = Config { reset_pitch_directional: false, ..Config::default() };
         assert_eq!(destination(B, &t, 0.0, 0.0, &c).pitch, Pitch::Keep);
+    }
+
+    #[test]
+    fn block_names_map_to_colors() {
+        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_white"), Some(DyeColor::White));
+        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_light_blue"), Some(DyeColor::LightBlue));
+        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_light_gray"), Some(DyeColor::LightGray));
+        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_rainbow"), None);
+        assert_eq!(DyeColor::from_block_name("minecraft:stone"), None);
     }
 
     #[test]

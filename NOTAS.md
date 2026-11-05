@@ -56,3 +56,16 @@
   - Cobre: busca do elevador de destino (pular sobe, agachar desce), elevador de origem (alcance de ativação), validação do servidor, custo de XP, posição final, yaw/pitch e a configuração com os mesmos padrões do original.
 - Ainda falta: a camada de integração com o Horizon (hooks no jogo), o bloco em 16 cores com receitas e modelos, a tela de opções (direcional, camuflagem) e o som. Os assets de bloco/receita do original são dados em JSON e podem virar um `.hmod`.
 - Avisos de licença e crédito em `ports/elevator/NOTICE.md` e `ports/elevator/LICENSE-ElevatorMod`.
+
+### Integração do Elevator com o Horizon (feita)
+- Mod nativo "trait mod" em `ports/elevator/` (`horizon-mixin.toml` + `api/`), pinado no Horizon a1e0c0db (5 nov 2026).
+- Compila contra a API real do Horizon (`cargo check` com o `horizon-client` do commit pinado). Não rodou ainda dentro do jogo.
+- Como funciona: ganchos `player_jump` (sobe) e `player_toggle_sneak` (desce) guardam o pedido; no fim do tick (`server_tick`) executa `/tp`, porque `run_command` não funciona dentro do gancho de um jogador.
+- Limitações atuais: 
+  - O XP não é cobrado (`use_xp` fica desligado; o gancho não vê o XP do jogador e a API só tem `give_experience`).
+  - Elevador direcional e camuflagem dependem de entidade de bloco (não portado).
+  - A velocidade vertical não é zerada (o cliente move o jogador).
+  - Som provisório do jogo (`minecraft:block.piston.extend`) em vez de `elevatorid:teleport`.
+  - Só roda no mundo em que o gancho dispara (`host.dimension()` igual ao do jogador).
+  - Falta o bloco em si (16 cores, receitas, modelos), que vem do `.hmod`.
+- Para verificar o mod sem áudio: o `horizon-client` completo exige a biblioteca `alsa` do sistema; a checagem usou `default-features = false`.
