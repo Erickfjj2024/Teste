@@ -28,3 +28,10 @@
 - Quais mods Java portar primeiro?
 - Ler a fundo docs/native-mods.md e o horizon-native-mod-template (hooks disponíveis).
 - Checar a licença de cada mod Java escolhido antes de portar.
+
+## Objetivo do usuário: jogar o modpack FTB StoneBlock 3
+- O usuário quer jogar o StoneBlock 3, mas não sabe quais mods ele tem nem as licenças.
+- Segundo as buscas (Moddex, ModpackIndex): Forge, Minecraft 1.18.2, cerca de 222 mods, Java 17. Lista completa: https://www.modpackindex.com/modpack/89156/ftb-stoneblock-3 e a página do CurseForge.
+- O Horizon roda o Minecraft 26.3. O pack é de 1.18.2, então cada port também precisa de adaptação de versão.
+- Bloqueio: curseforge.com e modrinth.com não resolvem nesta sessão (fora dos domínios de rede permitidos). A lista completa e as licenças ainda não foram levantadas.
+- Próximo passo: obter a lista de mods (permitir os domínios, ou o usuário colar/exportar a lista), conferir a licença de cada um e separar os portáveis.
