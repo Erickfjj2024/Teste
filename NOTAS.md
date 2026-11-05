@@ -35,3 +35,9 @@
 - O Horizon roda o Minecraft 26.3. O pack é de 1.18.2, então cada port também precisa de adaptação de versão.
 - Bloqueio: curseforge.com e modrinth.com não resolvem nesta sessão (fora dos domínios de rede permitidos). A lista completa e as licenças ainda não foram levantadas.
 - Próximo passo: obter a lista de mods (permitir os domínios, ou o usuário colar/exportar a lista), conferir a licença de cada um e separar os portáveis.
+
+### Atualização: rede liberada
+- Liberados no ambiente Default: www.curseforge.com, modrinth.com, api.modrinth.com.
+- Modrinth responde, mas o FTB StoneBlock 3 não está lá (só mods parecidos, como "Stoneblock" e "Vanilla Stoneblock").
+- CurseForge responde 403 (bloqueia acesso automatizado), então a lista de mods não sai por lá.
+- Sem acesso: api.modpacks.ch (API da FTB) e modpackindex.com. Alternativa: o usuário exporta a lista do pack pelo app da FTB ou do CurseForge e cola.
