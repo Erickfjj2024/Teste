@@ -94,130 +94,151 @@ Licenças: cada .jar foi procurado no Modrinth pelo hash SHA-1; vale a licença 
 | World Utils | LGPL-3.0-only | https://github.com/maruohon/worldutils/ | worldutils-1.12.2-0.4.2.jar |
 | YNot | LGPL-3.0-only | https://github.com/asiekierka/YNot | YNot-0.2.4.jar |
 
-## C. Sem correspondência no Modrinth (125 mods): licença a verificar
+## C. Sem correspondência por hash: segunda tentativa por nome
 
-- Advancement_Book-1.12-1.0.3.jar
-- Apotheosis-1.12.2-1.12.5.jar
-- Aroma1997Core-1.12.2-2.0.0.2.b167.jar
-- AromaBackup-1.12.2-3.0.0.0.b132.jar
-- BNBGamingCore-1.12.2-0.12.0.jar
-- BNBGamingLib-1.12.2-2.17.6.jar
-- BarrelsDrumsStorageAndMore-0.0.24.jar
-- Baubles-1.12-1.5.2.jar
-- BiblioCraft[v2.4.5][MC1.12.2].jar
-- BouncyCreepers-0.0.4.jar
-- BuildingGadgets-2.8.3.jar
-- CTM-MC1.12.2-1.0.2.31.jar
-- CalmDownZombieGuy-1.12.2-1.0.0.jar
-- CarryOn MC1.12.2 v1.12.3.jar
-- Chargers-1.12.2-1.2.0.4.jar
-- ChineseWorkshop-1.12.2_1.2.6.jar
-- Chisel-MC1.12.2-1.0.2.45.jar
-- ClickMachine-1.12.2-1.2.0.jar
-- CoFHCore-1.12.2-4.6.6.1-universal.jar
-- CoFHWorld-1.12.2-1.4.0.1-universal.jar
-- ComPatchedStorage-1.12.2-1.6.0.jar
-- CommonCapabilities-1.12.2-2.4.6.jar
-- CompactStorage-3.1-12.jar
-- CookingForBlockheads_1.12.2-6.5.0.jar
-- CustomMainMenu-MC1.12.2-2.0.9.1.jar
-- Cyclic-1.12.2-1.20.3.jar
-- CyclopsCore-1.12.2-1.6.4.jar
-- DefaultOptions_1.12.2-9.2.8.jar
-- DragonMurder-1.12.2-1.0.1.jar
-- EnderCore-1.12.2-0.5.76.jar
-- ExtraCells-1.12.2-2.6.5.jar
-- FancyBlockParticles-1.12.x-2.4.1.jar
-- FarmingForBlockheads_1.12.2-3.1.28.jar
-- FastFurnace-1.12.2-1.3.1.jar
-- FastWorkbench-1.12.2-1.7.3.jar
-- FenceOverhaul-1.3.4.jar
-- Forgelin-1.8.4.jar
-- ForgivingVoid_1.12.2-1.1.0.jar
-- Headcrumbs-1.12.2-2.0.5.17.jar
-- HorsePower-1.12.2-2.6.4.74.jar
-- HurtAnimationRemover-1.12.2-1.0.0.jar
-- HydroGel-1.12.2-1.1.0.jar
-- IntegratedDynamics-1.12.2-1.1.6.jar
-- IntegratedTunnels-1.12.2-1.6.11.jar
-- KleeSlabs_1.12.2-5.4.12.jar
-- LimitlessStructureBlocks-1.12.2-1.1.0.jar
-- LoadingScreens-1.12.2-0.3.1.jar
-- MCMultiPart-2.5.3.jar
-- MPUtils-1.12.2-1.5.7.jar
-- MatterOverdrive-1.12.2-0.7.1.0-universal.jar
-- Mercurius-1.12.2.jar
-- MobGrindingUtils-0.3.13.jar
-- Morpheus-1.12.2-3.5.106.jar
-- MouseTweaks-2.10-mc1.12.2.jar
-- NuclearCraft-2.18u-1.12.2.jar
-- OreExcavation-1.4.150.jar
-- Parabox-1.12.2-2.0.0.jar
-- Patchouli-1.0-20.jar
-- PipeMaster-1.0.2-b8.jar
-- Placebo-1.12.2-1.6.0.jar
-- PlaneFix-1.12.2-1.0.0.jar
-- PortalGun-1.12.2-7.1.0.jar
-- ProjectE-1.12.2-PE1.4.1.jar
-- ProportionalDestructionParticles-1.12.2-1.2.4.jar
-- RedstoneFlux-1.12-2.1.1.1-universal.jar
-- ResourceLoader-MC1.12.1-1.5.3.jar
-- SimpleStorageNetwork-1.12.2-1.7.10.jar
-- SkyBonsais-1.0.1.jar
-- SkyGrid-1.1.7.jar
-- SkyOrchards-0.0.12.jar
-- SmoothFont-mc1.12.2-2.1.2.jar
-- SqueezerPatch-1.12.2-1.0.0.jar
-- Sync-1.12.2-7.1.0.jar
-- TallGates-1.12.2-1.0.0.1.jar
-- ThermalDynamics-1.12.2-2.5.6.1-universal.jar
-- ThermalFoundation-1.12.2-2.6.7.1-universal.jar
-- ThermalInnovation-1.12.2-0.3.6.1-universal.jar
-- TinkerToolLeveling-1.12.2-1.1.0.jar
-- Toast Control-1.12.2-1.8.1.jar
-- Topography-1.12.2-1.14.2.jar
-- TreeGrowingSimulator2017-1.0.1.jar
-- Triumph-1.12.2-3.19.2.jar
-- Twitchcrumbs_1.12.2-3.0.4.jar
-- Uppers-0.0.6.jar
-- ViesCraft-1.12.2-5.9.16.jar
-- XL-Food-Mod-1.12.2-1.9.2.jar
-- ae2stuff-0.7.0.4-mc1.12.2.jar
-- appliedenergistics2-rv6-stable-7.jar
-- astralsorcery-1.12.2-1.10.27.jar
-- bdlib-1.14.3.12-mc1.12.2.jar
-- bedpatch-2.2-1.12.2.jar
-- bonsaitrees-1.1.4-b170.jar
-- chiselsandbits-14.33.jar
-- compactmachines3-1.12.2-3.0.18-b278.jar
-- conarm-1.12.2-1.2.5.9.jar
-- deepmoblearning-1.12.2-2.5.4-universal.jar
-- endercrop-1.12.2-1.6.0.jar
-- fluxnetworks-1.12.2-4.0.14-31.jar
-- iChunUtil-1.12.2-7.1.4.jar
-- inventorysorter-1.12.2-1.13.3+57.jar
-- malisiscore-1.12.2-6.5.1.jar
-- malisisdoors-1.12.2-7.3.0.jar
-- moreoverlays-1.15.1-mc1.12.2.jar
-- mpbasic-1.12.2-1.4.11.jar
-- ocxnetdriver-1.0.3-b17.jar
-- ogdragon-1.12.2-0.1.4.jar
-- practicallogistics2-1.12.2-3.0.8-11.jar
-- primitivecrafting-1.12.2-1.4.4.7.jar
-- realfilingcabinet-1.12-0.2.0.21.jar
-- reauth-3.6.0.jar
-- rustic-1.1.4.jar
-- simpletomb-1.12.2-1.0.0.jar
-- sonarcore-1.12.2-5.0.19-20.jar
-- statues-1.12.X-0.8.9.2.jar
-- stg-1.12.2-1.2.3.jar
-- supersoundmuffler-revived_1.12.2_1.0.2.10.jar
-- tesla-core-lib-1.12.2-1.0.18.jar
-- tinyprogressions-1.12.2-3.3.34-Release.jar
-- togetherforever-1.12.2-1.0.12-22.jar
-- torchmaster_1.12.2-1.8.5.0.jar
-- twilightforest-1.12.2-3.11.1021-universal.jar
-- weirdinggadget-1.12.2-2.1.16-universal.jar
-- witherCrumbs-1.12.2-0.11.jar
-- yoyos_1.12.2-1.3.3.25.jar
-- zenstages-0.5.0.jar
+Para os 125 mods sem hash no Modrinth, busquei o nome do mod (pelo projeto do CurseForge) e aceitei só títulos idênticos. Como o Modrinth pode ter outra versão do mesmo mod, confira se o projeto é o mesmo antes de confiar.
+
+- Licença achada por nome: 40 mods (17 permissivos, 23 com restrição)
+- Ainda sem licença: 85 mods
+
+### C1. Permissiva, achada por nome (17)
+
+| Mod | Autores | Licença | Projeto no Modrinth |
+|---|---|---|---|
+| Apotheosis | Shadows_of_Fire | MIT | modrinth.com/mod/apotheosis |
+| BdLib | bdew | MIT | modrinth.com/mod/bdlib |
+| Chisel | tterrag1098, Drullkus | MIT | modrinth.com/mod/psejas-chisel |
+| Common Capabilities | kroeser | MIT | modrinth.com/mod/common-capabilities |
+| Cyclops Core | kroeser | MIT | modrinth.com/mod/cyclops-core |
+| EnderCore | tterrag1098, crazypants_mc_the_second, HenryLoenwind | CC0-1.0 | modrinth.com/mod/endercore |
+| FastFurnace | Shadows_of_Fire | MIT | modrinth.com/mod/fastfurnace |
+| FastWorkbench | Shadows_of_Fire | MIT | modrinth.com/mod/fastworkbench |
+| Integrated Dynamics | kroeser | MIT | modrinth.com/mod/integrated-dynamics |
+| Integrated Tunnels | kroeser | MIT | modrinth.com/mod/integrated-tunnels |
+| Mouse Tweaks | YaLTeR | BSD-3-Clause | modrinth.com/mod/mouse-tweaks |
+| NuclearCraft | tomdodd4598 | MIT | modrinth.com/mod/nuclearcraft |
+| Placebo | Shadows_of_Fire | MIT | modrinth.com/mod/placebo |
+| Rustic | cadaverous_queen | MIT | modrinth.com/mod/rustic |
+| Statues | ShyNieke, Mrbysco | MIT | modrinth.com/mod/statues |
+| Toast Control | Shadows_of_Fire | MIT | modrinth.com/mod/toast-control |
+| Torchmaster | xalcon | MIT | modrinth.com/mod/torchmaster |
+
+### C2. Com restrição, achada por nome (23)
+
+| Mod | Autores | Licença | Projeto no Modrinth |
+|---|---|---|---|
+| Applied Energistics 2 | thetechnici4n, shartte, TeamAppliedEnergistics | LicenseRef-Multiple | modrinth.com/mod/ae2 |
+| Carry On | Tschipp, Purplicious_Cow_ | LGPL-3.0-only | modrinth.com/mod/carry-on |
+| Chargers | GoryMoon | LGPL-3.0-or-later | modrinth.com/mod/chargers |
+| CoFH Core | TeamCoFH, KingLemmingCoFH | LicenseRef-All-Rights-Reserved | modrinth.com/mod/cofh-core |
+| CompactStorage | witchica | LGPL-3.0-only | modrinth.com/mod/compact-storage |
+| Construct's Armory | TheIllusiveC4 | LGPL-3.0-or-later | modrinth.com/mod/constructs-armory |
+| Cooking for Blockheads | BlayTheNinth | LicenseRef-All-Rights-Reserved | modrinth.com/mod/cooking-for-blockheads |
+| Cyclic | Lothrazar | LicenseRef-All-Rights-Reserved | modrinth.com/mod/cyclic |
+| Default Options | BlayTheNinth | LicenseRef-All-Rights-Reserved | modrinth.com/mod/default-options |
+| Ender Crop | DrManganese | GPL-3.0-only | modrinth.com/mod/ender-crop |
+| Farming for Blockheads | BlayTheNinth | LicenseRef-All-Rights-Reserved | modrinth.com/mod/farming-for-blockheads |
+| Forgiving Void | BlayTheNinth | LicenseRef-All-Rights-Reserved | modrinth.com/mod/forgiving-void |
+| Horse Power | GoryMoon | AGPL-3.0-only | modrinth.com/mod/horse-power |
+| Inventory Sorter | cpw | LicenseRef-All-Rights-Reserved | modrinth.com/mod/spolii-inventory-sorter |
+| KleeSlabs | BlayTheNinth | LicenseRef-All-Rights-Reserved | modrinth.com/mod/kleeslabs |
+| Ore Excavation | Funwayguy, darkosto | LicenseRef-All-Rights-Reserved | modrinth.com/mod/ore-excavation |
+| Patchouli | Vazkii | CC-BY-NC-SA-3.0 | modrinth.com/mod/patchouli |
+| Simple Storage Network | Lothrazar | LicenseRef-All-Rights-Reserved | modrinth.com/mod/simple-storage-network |
+| Sky Grid | Funwayguy, darkosto | CC-BY-NC-SA-4.0 | modrinth.com/mod/sky-grid |
+| Thermal Dynamics | TeamCoFH, KingLemmingCoFH, RWTema, covers1624 | LicenseRef-All-Rights-Reserved | modrinth.com/mod/thermal-dynamics |
+| Thermal Foundation | TeamCoFH, KingLemmingCoFH | LicenseRef-All-Rights-Reserved | modrinth.com/mod/thermal-foundation |
+| Thermal Innovation | TeamCoFH, KingLemmingCoFH | LicenseRef-All-Rights-Reserved | modrinth.com/mod/thermal-innovation |
+| Together Forever | Buuz135 | LicenseRef-All-Rights-Reserved | modrinth.com/mod/together-forever |
+
+### C3. Ainda sem licença (85): verificar na página do CurseForge
+
+Os links de código-fonte não constam na API da FTB e o CurseForge bloqueia acesso automatizado (403).
+
+| Mod | Autores | Arquivo |
+|---|---|---|
+| Advancement Book | ParkerMc01 | Advancement_Book-1.12-1.0.3.jar |
+| AE2 Stuff | bdew | ae2stuff-0.7.0.4-mc1.12.2.jar |
+| Aroma1997Core | Aroma1997 | Aroma1997Core-1.12.2-2.0.0.2.b167.jar |
+| AromaBackup | Aroma1997 | AromaBackup-1.12.2-3.0.0.0.b132.jar |
+| Astral Sorcery | HellFirePvP | astralsorcery-1.12.2-1.10.27.jar |
+| Barrels, Drums, Storage & More | Funwayguy, darkosto | BarrelsDrumsStorageAndMore-0.0.24.jar |
+| Baubles | Azanor13 | Baubles-1.12-1.5.2.jar |
+| Bed Patch | Mordenkainen3141 | bedpatch-2.2-1.12.2.jar |
+| BiblioCraft | Nuchaz | BiblioCraft[v2.4.5][MC1.12.2].jar |
+| BnBGamingCore | bloodnbonesgaming, superckl, Blargerist | BNBGamingCore-1.12.2-0.12.0.jar |
+| BNBGamingLib | bloodnbonesgaming, Blargerist, superckl | BNBGamingLib-1.12.2-2.17.6.jar |
+| Bonsai Trees 4 | davenonymous | bonsaitrees-1.1.4-b170.jar |
+| Bouncy Creepers | vadis365 | BouncyCreepers-0.0.4.jar |
+| Building Gadgets | Direwolf20, ErrorMikey | BuildingGadgets-2.8.3.jar |
+| Calm Down Zombie Guy | bloodnbonesgaming, Blargerist | CalmDownZombieGuy-1.12.2-1.0.0.jar |
+| ChineseWorkshop | cityofskytcd, Snownee | ChineseWorkshop-1.12.2_1.2.6.jar |
+| Chisels & Bits - For Forge | AlgorithmX2, OrionOnline, ChiselsAndBits | chiselsandbits-14.33.jar |
+| Click Machine | Shadows_of_Fire | ClickMachine-1.12.2-1.2.0.jar |
+| CoFH World | TeamCoFH, KingLemmingCoFH, skyboy026 | CoFHWorld-1.12.2-1.4.0.1-universal.jar |
+| Compact Machines | davenonymous, RobotGryphon | compactmachines3-1.12.2-3.0.18-b278.jar |
+| ComPatchedStorage | Shadows_of_Fire | ComPatchedStorage-1.12.2-1.6.0.jar |
+| ConnectedTexturesMod | tterrag1098 | CTM-MC1.12.2-1.0.2.31.jar |
+| Custom Main Menu | Lumien231 | CustomMainMenu-MC1.12.2-2.0.9.1.jar |
+| Deep Mob Learning | IterationFunk | deepmoblearning-1.12.2-2.5.4-universal.jar |
+| Dragon Murder | Shadows_of_Fire | DragonMurder-1.12.2-1.0.1.jar |
+| ExtraCells2 | Forge_User_54797008, _ForgeUser9582869, _ForgeUser16181044 | ExtraCells-1.12.2-2.6.5.jar |
+| Fancy Block Particles | MorphoxL | FancyBlockParticles-1.12.x-2.4.1.jar |
+| Fence Overhaul | TheWeatherPony, The_WeatherPony | FenceOverhaul-1.3.4.jar |
+| Flux Networks | sonar_sonic, BloCamLimb | fluxnetworks-1.12.2-4.0.14-31.jar |
+| Headcrumbs | TurkeyDev, Forge_User_15685180 | Headcrumbs-1.12.2-2.0.5.17.jar |
+| Hurt Animation Remover | bloodnbonesgaming, Blargerist | HurtAnimationRemover-1.12.2-1.0.0.jar |
+| ID Squeezer Tweak | Shadows_of_Fire | SqueezerPatch-1.12.2-1.0.0.jar |
+| Ignition: HydroGel | Shadows_of_Fire | HydroGel-1.12.2-1.1.0.jar |
+| Limitless Structure Blocks | bloodnbonesgaming, Blargerist | LimitlessStructureBlocks-1.12.2-1.1.0.jar |
+| Loading Screens | bloodnbonesgaming, Blargerist | LoadingScreens-1.12.2-0.3.1.jar |
+| MalisisCore | Ordinastie | malisiscore-1.12.2-6.5.1.jar |
+| MalisisDoors | Ordinastie | malisisdoors-1.12.2-7.3.0.jar |
+| Matter Overdrive: Legacy Edition | Buuz135 | MatterOverdrive-1.12.2-0.7.1.0-universal.jar |
+| MCMultiPart | amadornes | MCMultiPart-2.5.3.jar |
+| Mercurius | TamasHenning | Mercurius-1.12.2.jar |
+| Mob Grinding Utils | vadis365, Flanks255 | MobGrindingUtils-0.3.13.jar |
+| More Overlays | feldim245 | moreoverlays-1.15.1-mc1.12.2.jar |
+| Morpheus | Quetzi | Morpheus-1.12.2-3.5.106.jar |
+| MPUtils | GenDeathrow | MPUtils-1.12.2-1.5.7.jar |
+| MPUtils Basic Tools | GenDeathrow | mpbasic-1.12.2-1.4.11.jar |
+| OC XNet Driver | davenonymous | ocxnetdriver-1.0.3-b17.jar |
+| OGDragon + | GenDeathrow | ogdragon-1.12.2-0.1.4.jar |
+| Parabox | Shadows_of_Fire, DarkhaxDev | Parabox-1.12.2-2.0.0.jar |
+| PigUtils | DarkhaxDev, iChun | iChunUtil-1.12.2-7.1.4.jar |
+| Pipe Goggles | davenonymous | PipeMaster-1.0.2-b8.jar |
+| PlaneFix | Shadows_of_Fire | PlaneFix-1.12.2-1.0.0.jar |
+| Portal Gun | iChun | PortalGun-1.12.2-7.1.0.jar |
+| Practical Logistics 2 | sonar_sonic | practicallogistics2-1.12.2-3.0.8-11.jar |
+| Primitive Crafting | Tschipp | primitivecrafting-1.12.2-1.4.4.7.jar |
+| ProjectE | SinKillerJ | ProjectE-1.12.2-PE1.4.1.jar |
+| Proportional Destruction Particles | Phylogeny | ProportionalDestructionParticles-1.12.2-1.2.4.jar |
+| Real Filing Cabinet | BlueNeenja | realfilingcabinet-1.12-0.2.0.21.jar |
+| ReAuth | TechnicianLP | reauth-3.6.0.jar |
+| Redstone Flux | TeamCoFH, KingLemmingCoFH | RedstoneFlux-1.12-2.1.1.1-universal.jar |
+| Resource Loader | Lumien231 | ResourceLoader-MC1.12.1-1.5.3.jar |
+| Shadowfacts' Forgelin | ShadowfactsDev | Forgelin-1.8.4.jar |
+| Simple Tomb | Lothrazar | simpletomb-1.12.2-1.0.0.jar |
+| Sky Bonsais | davenonymous | SkyBonsais-1.0.1.jar |
+| Sky Orchards | vadis365 | SkyOrchards-0.0.12.jar |
+| Smooth Font | bre2el | SmoothFont-mc1.12.2-2.1.2.jar |
+| Sonar Core | sonar_sonic | sonarcore-1.12.2-5.0.19-20.jar |
+| Subheads (formerly Twitchcrumbs) | BlayTheNinth | Twitchcrumbs_1.12.2-3.0.4.jar |
+| Super Sound Muffler: Revived | Firstnecron | supersoundmuffler-revived_1.12.2_1.0.2.10.jar |
+| SwingThroughGrass | exidex | stg-1.12.2-1.2.3.jar |
+| Sync | iChun | Sync-1.12.2-7.1.0.jar |
+| TallGates | GoryMoon | TallGates-1.12.2-1.0.0.1.jar |
+| Tesla Core Lib | face_of_cat | tesla-core-lib-1.12.2-1.0.18.jar |
+| The Twilight Forest | Benimatic, Drullkus, Squiggly_Androsa, Tamaized, GizmoTheMoonPig, jodlodi | twilightforest-1.12.2-3.11.1021-universal.jar |
+| The Weirding Gadget | AtomicBlom | weirdinggadget-1.12.2-2.1.16-universal.jar |
+| Tinkers' Tool Leveling | bonusboni | TinkerToolLeveling-1.12.2-1.1.0.jar |
+| Tiny Progressions | Kashdeya | tinyprogressions-1.12.2-3.3.34-Release.jar |
+| Topography | bloodnbonesgaming, Blargerist, superckl | Topography-1.12.2-1.14.2.jar |
+| Tree Growing Simulator | tterrag1098 | TreeGrowingSimulator2017-1.0.1.jar |
+| Triumph | bloodnbonesgaming, Blargerist, superckl | Triumph-1.12.2-3.19.2.jar |
+| Uppers | vadis365 | Uppers-0.0.6.jar |
+| ViesCraft Machines | Vies | ViesCraft-1.12.2-5.9.16.jar |
+| WitherCrumbs | TurkeyDev | witherCrumbs-1.12.2-0.11.jar |
+| XL Food Mod | mariot7 | XL-Food-Mod-1.12.2-1.9.2.jar |
+| Yoyos | jozufozu | yoyos_1.12.2-1.3.3.25.jar |
+| ZenStages | artdude543 | zenstages-0.5.0.jar |
