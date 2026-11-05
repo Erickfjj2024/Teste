@@ -48,7 +48,7 @@ Foi compilado com o perfil `fast` (sem LTO): é um pouco mais lento que o APK of
 4. Em **Installed**, ligue os dois. O mod de código mostra o que pode fazer (ver quem está no servidor,
    ler e mudar blocos, ver se jogadores agacham e pulam, mover jogadores, tirar XP, tocar sons).
 5. **Reinicie o app** (o conteúdo só é lido ao abrir).
-6. Crie um mundo em criativo (Superflat). `/give @s elevatorid:elevator_white 2`.
+6. Crie um mundo em criativo (Superflat). Os elevadores ficam na aba **Elevators** do inventário criativo, ou pelo comando `/give @s elevatorid:elevator_white 2` (precisa de trapaças ligadas no mundo).
 
 ## Testes
 

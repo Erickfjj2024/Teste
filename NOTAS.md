@@ -146,3 +146,6 @@
 ### Erro `unknown field occludes` no APK (corrigido)
 - O usuário importou o `elevatorid.hmod` do PC (tem `occludes`; o fork Android não conhece). Os três arquivos se chamavam "Elevator 0.1.0" no app, então ele não distinguia.
 - Agora: `elevator-blocks-android.hmod` (nome "Elevator Blocks"; script `ports/elevator/tools/make-android-hmod.sh`), `elevator-code-android.hmod` (nome "Elevator") e o do PC `elevatorid.hmod` renomeado "Elevator Blocks (PC only)". O antigo `elevatorid-android.hmod` foi removido.
+
+### Elevador não aparecia no criativo (corrigido)
+- Faltava uma aba de inventário criativo. Adicionado `hmod/data/elevatorid/horizon/creative_tab/elevators.json` ("Elevators", 16 itens). `elevator-blocks-android.hmod` regenerado (SHA-256 d65cdce7…eb5e). Comando exato: `/give @s elevatorid:elevator_white`.
