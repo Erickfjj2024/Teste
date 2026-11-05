@@ -1,0 +1,856 @@
+From 7dce90bc6b467fe7d2a80812f9ce205dab8a8291 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:22:13 +0000
+Subject: [PATCH] Recipe types for WASM server mods (API block 6)
+
+Capability recipe-types: recipes of types outside minecraft as their files
+say, and the items an ingredient names (tags resolved by the game,
+RecipeData tested). SDK re-exports serde_json; recipe-crusher example and
+harness support ([[recipe]], [tags], items). API level 9.
+---
+ Cargo.lock                                    |   8 ++
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/server_mods.rs |  27 ++++
+ crates/horizon-mod-sdk/Cargo.toml             |   1 +
+ .../examples/recipe-crusher/Cargo.toml        |  16 +++
+ .../examples/recipe-crusher/horizon-mod.toml  |   9 ++
+ .../examples/recipe-crusher/src/lib.rs        | 109 ++++++++++++++++
+ .../examples/recipe-crusher/tests/crush.toml  |  28 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |   3 +
+ crates/horizon-mod-sdk/wit/horizon.wit        |  23 ++++
+ crates/horizon-mods/src/api_level.rs          |   6 +-
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/manifest.rs           |  11 +-
+ crates/horizon-mods/src/recipe_types.rs       | 120 ++++++++++++++++++
+ crates/horizon-mods/src/runtime.rs            |  58 ++++++++-
+ crates/horizon-mods/src/testing.rs            |  35 +++++
+ crates/horizon-mods/tests/sandbox.rs          |   5 +-
+ docs/api/mods-reference.md                    |  21 ++-
+ 18 files changed, 476 insertions(+), 7 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/recipe-crusher/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/recipe-crusher/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/recipe-crusher/tests/crush.toml
+ create mode 100644 crates/horizon-mods/src/recipe_types.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index f79191f..d38f654 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1915,6 +1915,7 @@ dependencies = [
+ name = "horizon-mod-sdk"
+ version = "0.1.0"
+ dependencies = [
++ "serde_json",
+  "wit-bindgen 0.60.0",
+ ]
+ 
+@@ -3753,6 +3754,13 @@ dependencies = [
+  "yasna",
+ ]
+ 
++[[package]]
++name = "recipe-crusher"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "recipes"
+ version = "1.0.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 0d9ee3a..afe1f63 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -44,6 +44,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+     "crates/horizon-mod-sdk/examples/item-charger",
++    "crates/horizon-mod-sdk/examples/recipe-crusher",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 8343be7..0329bd5 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -277,6 +277,7 @@ mod run {
+                 snapshot.motions = self.server_motions();
+             }
+             self.mods.mods.set_snapshot(snapshot);
++            self.lend_recipe_types();
+             let entities = self.collect_mod_entities();
+             self.lend_world();
+             let before = std::mem::take(&mut self.mods.players);
+@@ -594,6 +595,32 @@ mod run {
+             }
+         }
+ 
++        /// The recipes of mods' own types and the item tags, for capability
++        /// `recipe-types`: made once the world's tables are loaded, when a
++        /// running server mod asks for it.
++        fn lend_recipe_types(&mut self) {
++            if !self.mods.mods.wants_recipe_types()
++                || self.mods.mods.has_recipe_data()
++                || self.res.rest.get().is_none()
++            {
++                return;
++            }
++            let recipes = &self.recipes().custom;
++            let items = self.items();
++            let data = horizon_mods::recipe_types::RecipeData {
++                recipes: recipes
++                    .iter()
++                    .map(|(kind, list)| {
++                        let list = list.iter().map(|r| (r.id.clone(), r.json.to_string()));
++                        (kind.clone(), list.collect())
++                    })
++                    .collect(),
++                tags: items.item_tag_order.clone(),
++                items: items.items.keys().map(|k| k.to_string()).collect(),
++            };
++            self.mods.mods.set_recipe_data(Arc::new(data));
++        }
++
+         /// A slot as the mod sees it: id, count and the SNBT of its components.
+         fn mod_stack(stack: &horizon_client::items::ItemStack) -> horizon_mods::ModItemStack {
+             let tag = horizon_client::save::item_to_nbt(stack);
+diff --git a/crates/horizon-mod-sdk/Cargo.toml b/crates/horizon-mod-sdk/Cargo.toml
+index 899fb55..71a627d 100644
+--- a/crates/horizon-mod-sdk/Cargo.toml
++++ b/crates/horizon-mod-sdk/Cargo.toml
+@@ -7,6 +7,7 @@ rust-version = "1.85"
+ description = "Write Horizon mods in Rust: WebAssembly components for the horizon:mod world (docs/mods.md)"
+ 
+ [dependencies]
++serde_json = "1"
+ wit-bindgen = { version = "0.60.0", default-features = false, features = ["macros", "realloc"] }
+ 
+ [lints]
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/Cargo.toml b/crates/horizon-mod-sdk/examples/recipe-crusher/Cargo.toml
+new file mode 100644
+index 0000000..bad1a34
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "recipe-crusher"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a crusher whose recipes come from data files of its own type"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/horizon-mod.toml b/crates/horizon-mod-sdk/examples/recipe-crusher/horizon-mod.toml
+new file mode 100644
+index 0000000..220217a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "recipecrusher"
++name = "Recipe Crusher"
++version = "0.1.0"
++description = "Test mod for recipe types: a crusher with an input and an output slot that crushes by the recipes of type recipecrusher:crushing."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "recipe-types"]
++experimental = ["recipe-types"]
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+new file mode 100644
+index 0000000..05cf817
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+@@ -0,0 +1,109 @@
++//! Recipe Crusher: the smallest user of recipe types. Recipes are files
++//! `data/<ns>/recipe/*.json` of type `recipecrusher:crushing`:
++//!
++//! ```json
++//! { "type": "recipecrusher:crushing",
++//!   "input": { "ingredient": "#c:ores/iron", "count": 1 },
++//!   "output": { "id": "minecraft:raw_iron", "count": 2 } }
++//! ```
++//!
++//! `recipecrusher:crusher` has slot 0 (input) and slot 1 (output). Every
++//! tick it crushes once when slot 0 holds an item some recipe takes (and
++//! enough of it) and slot 1 has room for the output.
++use std::collections::HashMap;
++
++use horizon_mod_sdk::server::serde_json::Value;
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, ItemStack, Registration,
++    ServerMod, recipe_types,
++};
++
++const KIND: &str = "recipecrusher:crushing";
++
++struct Recipe {
++    count: u32,
++    output: ItemStack,
++}
++
++struct Crusher {
++    /// The recipe each input item matches, resolved once from the tags.
++    by_input: Option<HashMap<String, Recipe>>,
++}
++
++impl Crusher {
++    fn load() -> HashMap<String, Recipe> {
++        let mut by_input = HashMap::new();
++        for r in recipe_types::recipes_of_type(KIND) {
++            let Ok(json) = horizon_mod_sdk::server::serde_json::from_str::<Value>(&r.json) else {
++                continue;
++            };
++            let Some(id) = json["output"]["id"].as_str() else { continue };
++            let out = ItemStack::new(id, json["output"]["count"].as_u64().unwrap_or(1) as u32);
++            let count = json["input"]["count"].as_u64().unwrap_or(1) as u32;
++            let ingredient = json["input"]["ingredient"].to_string();
++            for item in recipe_types::ingredient_items(&ingredient) {
++                by_input.entry(item).or_insert(Recipe {
++                    count,
++                    output: out.clone(),
++                });
++            }
++        }
++        by_input
++    }
++}
++
++impl ServerMod for Crusher {
++    fn init() -> Result<(Self, Registration), String> {
++        let kind = BlockEntityKind {
++            block: "recipecrusher:crusher".into(),
++            ticks: true,
++            container: Some(ContainerSpec::open(2)),
++            energy: None,
++            tanks: Vec::new(),
++            keep_data: true,
++        };
++        Ok((Crusher { by_input: None }, Registration::new().block_entity_kind(kind)))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        // The tables are lent after the mod starts: read them on the first tick.
++        let recipes = self.by_input.get_or_insert_with(Self::load);
++        let mut out = Vec::new();
++        for e in entities {
++            let mut items = e.items.clone();
++            items.resize(2, None);
++            let Some(input) = items[0].clone() else { continue };
++            let Some(r) = recipes.get(&input.item) else { continue };
++            if input.count < r.count {
++                continue;
++            }
++            let fits = match &items[1] {
++                None => true,
++                Some(o) => o.item == r.output.item && o.count + r.output.count <= 64,
++            };
++            if !fits {
++                continue;
++            }
++            match &mut items[1] {
++                Some(o) => o.count += r.output.count,
++                slot => *slot = Some(r.output.clone()),
++            }
++            items[0] = (input.count > r.count).then(|| ItemStack {
++                count: input.count - r.count,
++                ..input
++            });
++            out.push(BlockEntityUpdate {
++                dimension: e.dimension,
++                pos: e.pos,
++                data: e.data,
++                items: Some(items),
++                energy: None,
++                energy_faces: None,
++                tanks: None,
++                tank_faces: None,
++            });
++        }
++        out
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Crusher);
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/tests/crush.toml b/crates/horizon-mod-sdk/examples/recipe-crusher/tests/crush.toml
+new file mode 100644
+index 0000000..bc5b318
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/tests/crush.toml
+@@ -0,0 +1,28 @@
++# The crusher reads recipes of its own type and resolves their ingredient tags.
++
++items = ["minecraft:iron_ore", "minecraft:deepslate_iron_ore", "minecraft:raw_iron", "minecraft:stone"]
++
++[tags]
++"c:ores/iron" = ["minecraft:iron_ore", "minecraft:deepslate_iron_ore"]
++
++[[recipe]]
++id = "recipecrusher:crushing/iron"
++json = '''{"type":"recipecrusher:crushing","input":{"ingredient":"#c:ores/iron","count":1},"output":{"id":"minecraft:raw_iron","count":2}}'''
++
++[[step]]
++join = "Alex"
++blocks = [{ x = 0, y = 64, z = 0, state = "recipecrusher:crusher" }]
++set-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:deepslate_iron_ore*2", ""] }]
++ticks = 1
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:deepslate_iron_ore*1", "minecraft:raw_iron*2"] }]
++
++[[step]]
++ticks = 5
++# The second ore is crushed; then nothing is left to crush.
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["", "minecraft:raw_iron*4"] }]
++
++[[step]]
++set-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:stone*3", ""] }]
++ticks = 2
++# No recipe takes stone.
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:stone*3", ""] }]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 6c21f47..ec989c7 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -203,6 +203,9 @@ pub mod server {
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
++    pub use horizon::mods::recipe_types::{self, CustomRecipe};
++    /// For reading the recipes' JSON.
++    pub use serde_json;
+ 
+     /// The server's calls into a mod. Only the hooks [`Registration`] asks
+     /// for are called; the others may stay as their defaults.
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index e9ee153..f7319f9 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -747,6 +747,28 @@ interface player-control {
+     play-sound: func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32);
+ }
+ 
++/// Capability `recipe-types`, server mods only (manifest `api = "0.3"`,
++/// experimental): the recipes of types the mod brings. A recipe file
++/// `data/<namespace>/recipe/<path>.json` whose `type` is outside `minecraft`
++/// is kept as it is written; the mod reads it as it likes, and asks the game
++/// which items an ingredient of it names (the game knows the item tags).
++interface recipe-types {
++    record custom-recipe {
++        /// `<namespace>:<path>`, its place under `data/<namespace>/recipe/`.
++        id: string,
++        /// The file's JSON.
++        json: string,
++    }
++    /// The recipes of type `kind` (`mymod:crushing`), in file order, from the
++    /// content mods and the world's data packs. Empty for a type nobody uses.
++    recipes-of-type: func(kind: string) -> list<custom-recipe>;
++    /// The items an ingredient names, in order, once each: `ingredient` is
++    /// JSON, an item id, a `#tag`, a list of them, or an object with an
++    /// `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game
++    /// doesn't know are left out.
++    ingredient-items: func(ingredient: string) -> list<string>;
++}
++
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+ /// experimental). Only the hooks `init` asks for are ever called. The player
+ /// in each event is as the server saw them when it happened.
+@@ -990,6 +1012,7 @@ world horizon-server-mod {
+     import storage;
+     import players;
+     import player-control;
++    import recipe-types;
+     import %world;
+     export server-events;
+ }
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 63133a4..3472d81 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 8;
++pub const LEVEL: u32 = 9;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 51] = [
++pub const FUNCTIONS: [(&str, u32); 53] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -65,6 +65,8 @@ pub const FUNCTIONS: [(&str, u32); 51] = [
+     ("player-control.teleport", 8),
+     ("player-control.take-xp", 8),
+     ("player-control.play-sound", 8),
++    ("recipe-types.recipes-of-type", 9),
++    ("recipe-types.ingredient-items", 9),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 04e0334..eb296ac 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -18,6 +18,8 @@ pub mod index;
+ pub mod manifest;
+ pub mod modpack;
+ #[cfg(feature = "runtime")]
++pub mod recipe_types;
++#[cfg(feature = "runtime")]
+ mod runtime;
+ #[cfg(feature = "runtime")]
+ pub mod testing;
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index 8574f69..4abc650 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -103,12 +103,15 @@ pub enum Capability {
+     /// What players are doing, and moving, charging experience from and
+     /// playing sounds for them (server mods; interface `player-control`).
+     PlayerControl,
++    /// The recipes of types the mod brings, and the items an ingredient
++    /// names (server mods; interface `recipe-types`).
++    RecipeTypes,
+     /// The recipes and items the game knows, for recipe viewers
+     /// (interface `recipes`).
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 13] = [
++    pub const ALL: [Capability; 14] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -121,6 +124,7 @@ impl Capability {
+         Capability::Players,
+         Capability::World,
+         Capability::PlayerControl,
++        Capability::RecipeTypes,
+         Capability::Recipes,
+     ];
+     /// Whether a server mod may have it: the others act on a local player.
+@@ -131,6 +135,7 @@ impl Capability {
+                 | Capability::Players
+                 | Capability::World
+                 | Capability::PlayerControl
++                | Capability::RecipeTypes
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -148,6 +153,7 @@ impl Capability {
+             Capability::Players => "players",
+             Capability::World => "world",
+             Capability::PlayerControl => "player-control",
++            Capability::RecipeTypes => "recipe-types",
+             Capability::Recipes => "recipes",
+         }
+     }
+@@ -161,6 +167,7 @@ impl Capability {
+                 | Capability::Input
+                 | Capability::Recipes
+                 | Capability::PlayerControl
++                | Capability::RecipeTypes
+         )
+     }
+     /// What the player reads before turning the mod on: "May <this>".
+@@ -184,6 +191,7 @@ impl Capability {
+             Capability::PlayerControl => {
+                 "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
+             }
++            Capability::RecipeTypes => "read the recipes of the types it brings and the item tags they use",
+             Capability::Recipes => {
+                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
+             }
+@@ -228,6 +236,7 @@ impl fmt::Display for Capability {
+             Capability::Players => "players",
+             Capability::World => "world",
+             Capability::PlayerControl => "player-control",
++            Capability::RecipeTypes => "recipe-types",
+             Capability::Recipes => "recipes",
+         };
+         f.write_str(name)
+diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
+new file mode 100644
+index 0000000..772dafb
+--- /dev/null
++++ b/crates/horizon-mods/src/recipe_types.rs
+@@ -0,0 +1,120 @@
++//! Recipes of types a mod brings (API block 6): `data/<ns>/recipe/*.json`
++//! whose `type` is outside `minecraft`, kept as their files say, and the
++//! item tags that resolve an ingredient. The game builds a [`RecipeData`]
++//! from its tables and lends it; the mod reads the recipes and asks which
++//! items an ingredient names, and does its own matching.
++use serde_json::Value;
++use std::collections::{BTreeMap, HashMap, HashSet};
++
++/// What capability `recipe-types` answers from.
++#[derive(Clone, Debug, Default)]
++pub struct RecipeData {
++    /// Recipe type (`mymod:crushing`) to its recipes, each one's id
++    /// (`mymod:crushing/iron`) and file, in file order.
++    pub recipes: BTreeMap<String, Vec<(String, String)>>,
++    /// Item tag (`c:ores/iron`, no `#`) to its items in the game's order.
++    pub tags: HashMap<String, Vec<String>>,
++    /// Every item the game knows. Empty: nothing is filtered out.
++    pub items: HashSet<String>,
++}
++
++/// A bare id as `minecraft:`, as vanilla reads one.
++fn qualified(id: &str) -> String {
++    if id.contains(':') {
++        id.to_owned()
++    } else {
++        format!("minecraft:{id}")
++    }
++}
++
++impl RecipeData {
++    /// The items an ingredient names, in order, once each: its `ingredient`
++    /// JSON is an item id, a `#tag`, a list of them, or an object with an
++    /// `item`, a `tag` or `items`. Items the game doesn't know are left out,
++    /// and so is anything else it doesn't understand.
++    pub fn ingredient_items(&self, ingredient: &str) -> Vec<String> {
++        let Ok(json) = serde_json::from_str::<Value>(ingredient) else {
++            return Vec::new();
++        };
++        let mut out = Vec::new();
++        self.collect(&json, &mut out);
++        let mut seen = HashSet::new();
++        out.retain(|i| (self.items.is_empty() || self.items.contains(i)) && seen.insert(i.clone()));
++        out
++    }
++
++    fn collect(&self, v: &Value, out: &mut Vec<String>) {
++        match v {
++            Value::String(s) => match s.strip_prefix('#') {
++                Some(tag) => {
++                    if let Some(items) = self.tags.get(&qualified(tag)) {
++                        out.extend(items.iter().cloned());
++                    }
++                }
++                None => out.push(qualified(s)),
++            },
++            Value::Array(a) => a.iter().for_each(|v| self.collect(v, out)),
++            Value::Object(o) => {
++                if let Some(item) = o.get("item").and_then(Value::as_str) {
++                    out.push(qualified(item));
++                }
++                if let Some(tag) = o.get("tag").and_then(Value::as_str) {
++                    self.collect(&Value::String(format!("#{tag}")), out);
++                }
++                if let Some(items) = o.get("items") {
++                    self.collect(items, out);
++                }
++            }
++            _ => {}
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn data() -> RecipeData {
++        RecipeData {
++            recipes: BTreeMap::new(),
++            tags: HashMap::from([
++                (
++                    "c:dusts/redstone".into(),
++                    vec!["minecraft:redstone".into(), "mymod:redstone_dust".into()],
++                ),
++                ("c:empty".into(), vec![]),
++            ]),
++            items: ["minecraft:redstone", "minecraft:stone", "mymod:redstone_dust"]
++                .iter()
++                .map(|s| s.to_string())
++                .collect(),
++        }
++    }
++    #[test]
++    fn an_ingredient_names_items_tags_and_lists() {
++        let d = data();
++        assert_eq!(d.ingredient_items(r#""stone""#), ["minecraft:stone"]);
++        assert_eq!(
++            d.ingredient_items(r##""#c:dusts/redstone""##),
++            ["minecraft:redstone", "mymod:redstone_dust"]
++        );
++        assert_eq!(
++            d.ingredient_items(r##"["minecraft:stone", "#c:dusts/redstone", "minecraft:stone"]"##),
++            ["minecraft:stone", "minecraft:redstone", "mymod:redstone_dust"]
++        );
++        assert_eq!(d.ingredient_items(r#"{"item":"minecraft:stone"}"#), ["minecraft:stone"]);
++        assert_eq!(
++            d.ingredient_items(r#"{"tag":"c:dusts/redstone"}"#),
++            ["minecraft:redstone", "mymod:redstone_dust"]
++        );
++    }
++    #[test]
++    fn unknown_things_are_left_out() {
++        let d = data();
++        assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
++        assert!(d.ingredient_items(r##""#c:empty""##).is_empty());
++        assert!(d.ingredient_items(r##""#c:missing""##).is_empty());
++        assert!(d.ingredient_items("17").is_empty());
++        assert!(d.ingredient_items("{not json").is_empty());
++    }
++}
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index fca8f3c..8bb2280 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{player_control, players, world as mod_world},
++    horizon::mods::{player_control, players, recipe_types, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -302,6 +302,8 @@ pub trait WorldView: std::any::Any + Send {
+ 
+ /// The view lent for the current calls, shared by every mod's store.
+ type WorldSlot = Arc<Mutex<Option<Box<dyn WorldView>>>>;
++/// The recipes of mods' own types and the tags that resolve their ingredients.
++type RecipeSlot = Arc<Mutex<Option<Arc<crate::recipe_types::RecipeData>>>>;
+ 
+ /// A mod's text panel, drawn every frame until it changes.
+ #[derive(Clone, Debug)]
+@@ -464,6 +466,7 @@ struct State {
+     storage_budget: u64,
+     limits: StoreLimits,
+     world: WorldSlot,
++    recipe_data: RecipeSlot,
+ }
+ 
+ /// The installed mods and the engine running them. `Mods::default()` is
+@@ -475,6 +478,7 @@ pub struct Mods {
+     snapshot: Arc<Snapshot>,
+     out: Vec<Output>,
+     world: WorldSlot,
++    recipe_data: RecipeSlot,
+     /// Moves on whenever a mod starts or stops: the game resends the server
+     /// mods' commands to players when it changes.
+     generation: u64,
+@@ -498,6 +502,26 @@ impl Mods {
+                 })
+         })
+     }
++    /// Whether a running mod may use capability `recipe-types`: only then is
++    /// its table worth building.
++    pub fn wants_recipe_types(&self) -> bool {
++        self.entries.iter().any(|e| {
++            e.status == Status::Running
++                && e.manifest
++                    .as_ref()
++                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::RecipeTypes))
++        })
++    }
++    /// Whether [`Mods::set_recipe_data`] has been called.
++    pub fn has_recipe_data(&self) -> bool {
++        self.recipe_data.lock().is_ok_and(|s| s.is_some())
++    }
++    /// The tables capability `recipe-types` answers from; replaces the last.
++    pub fn set_recipe_data(&mut self, data: Arc<crate::recipe_types::RecipeData>) {
++        if let Ok(mut slot) = self.recipe_data.lock() {
++            *slot = Some(data);
++        }
++    }
+     /// Lends the game's world to capability `world` for the calls until
+     /// [`Mods::take_world`]; with none lent, `get-block` finds nothing and
+     /// `set-blocks` checks only its count.
+@@ -584,6 +608,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             player_control::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            recipe_types::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             RenderHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -629,6 +655,7 @@ impl Mods {
+             .collect();
+         let snapshot = self.snapshot.clone();
+         let world = self.world.clone();
++        let recipe_data = self.recipe_data.clone();
+         let (engine, linker) = self.engine()?;
+         let component =
+             Component::new(engine, wasm).map_err(|e| format!("not a component: {e}"))?;
+@@ -670,6 +697,7 @@ impl Mods {
+                 .instances(16)
+                 .build(),
+             world,
++            recipe_data,
+         };
+         let mut store = Store::new(engine, state);
+         store.limiter(|s| &mut s.limits);
+@@ -1708,6 +1736,34 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++/// Most recipes one `recipes-of-type` call hands over.
++const RECIPES_PER_CALL: usize = 1 << 16;
++impl recipe_types::Host for State {
++    fn recipes_of_type(&mut self, kind: String) -> Vec<recipe_types::CustomRecipe> {
++        let Ok(slot) = self.recipe_data.lock() else {
++            return Vec::new();
++        };
++        let Some(data) = slot.as_ref() else {
++            return Vec::new();
++        };
++        data.recipes.get(&kind).map_or_else(Vec::new, |list| {
++            list.iter()
++                .take(RECIPES_PER_CALL)
++                .map(|(id, json)| recipe_types::CustomRecipe {
++                    id: id.clone(),
++                    json: json.clone(),
++                })
++                .collect()
++        })
++    }
++    fn ingredient_items(&mut self, ingredient: String) -> Vec<String> {
++        let Ok(slot) = self.recipe_data.lock() else {
++            return Vec::new();
++        };
++        slot.as_ref()
++            .map_or_else(Vec::new, |d| d.ingredient_items(&ingredient))
++    }
++}
+ /// `player-control.teleport`, `take-xp` and `play-sound` a mod may queue in one call.
+ const CONTROL_PER_CALL: usize = 8;
+ const SOUNDS_PER_CALL: usize = 16;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index d86b98d..85079f2 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -568,10 +568,29 @@ pub struct Script {
+     pub player: PlayerSet,
+     #[serde(default)]
+     pub clock: ClockSet,
++    /// Capability `recipe-types`: recipes of mods' own types (`[[recipe]]`
++    /// with an `id` and the file's `json`; the type is the JSON's `type`),
++    /// the item tags that resolve their ingredients (`[tags]`, each one
++    /// `"c:dusts/redstone" = ["minecraft:redstone"]`) and the items the game
++    /// knows (`items`; none listed: all are).
++    #[serde(default, rename = "recipe")]
++    pub recipes: Vec<RecipeSet>,
++    #[serde(default)]
++    pub tags: std::collections::BTreeMap<String, Vec<String>>,
++    #[serde(default)]
++    pub items: Vec<String>,
+     #[serde(default, rename = "step")]
+     pub steps: Vec<Step>,
+ }
+ 
++/// A recipe file of a mod's own type in a test.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RecipeSet {
++    id: String,
++    json: String,
++}
++
+ /// Fields of the player to change; the others keep their values. A server
+ /// mod's players have no `yaw`, `pitch` or `food`, and a client mod's player
+ /// no `game-mode`.
+@@ -811,6 +830,22 @@ impl Script {
+         if let Some(c) = &mut game.clock {
+             self.clock.apply(c);
+         }
++        if !self.recipes.is_empty() || !self.tags.is_empty() || !self.items.is_empty() {
++            let mut data = crate::recipe_types::RecipeData::default();
++            for r in &self.recipes {
++                let kind = serde_json::from_str::<serde_json::Value>(&r.json)
++                    .ok()
++                    .and_then(|v| v["type"].as_str().map(str::to_owned))
++                    .ok_or_else(|| format!("recipe {}: its json has no type", r.id))?;
++                data.recipes
++                    .entry(kind)
++                    .or_default()
++                    .push((r.id.clone(), r.json.clone()));
++            }
++            data.tags = self.tags.clone().into_iter().collect();
++            data.items = self.items.iter().cloned().collect();
++            game.mods.set_recipe_data(std::sync::Arc::new(data));
++        }
+         for (i, step) in self.steps.iter().enumerate() {
+             step.run(game)
+                 .map_err(|e| format!("step {} ({}): {e}", i + 1, step.describe()))?;
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 71b2a46..c32359e 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -256,9 +256,10 @@ experimental = ["ui", "render", "input", "recipes"]
+     };
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+-    // world's collision boxes and `player-control`, which the elevator example uses.
++    // world's collision boxes and `player-control`, which the elevator example uses;
++    // level 9 is `recipe-types`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 8);
++    assert_eq!(LEVEL, 9);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 453101f..3b4fadf 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -19,6 +19,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
+ | `players` | [`players`](#players) | see who is on the server and message them |
+ | `world` | [`world`](#world) | read and change the world's blocks |
+ | `player-control` | [`player-control`](#player-control) | see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds |
++| `recipe-types` | [`recipe-types`](#recipe-types) | read the recipes of the types it brings and the item tags they use |
+ | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+ 
+ ## World `horizon-mod`
+@@ -32,7 +33,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -727,6 +728,24 @@ What a player is doing as of the last server tick.
+ | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
+ | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+ 
++## `recipe-types`
++
++Access: capability `recipe-types`.
++
++Capability `recipe-types`, server mods only (manifest `api = "0.3"`, experimental): the recipes of types the mod brings. A recipe file `data/<namespace>/recipe/<path>.json` whose `type` is outside `minecraft` is kept as it is written; the mod reads it as it likes, and asks the game which items an ingredient of it names (the game knows the item tags).
++
++### record `custom-recipe`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `<namespace>:<path>`, its place under `data/<namespace>/recipe/`. |
++| `json` | `string` | The file's JSON. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
++| `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
++
+ ## `server-events`
+ 
+ Access: exported by the mod: the game calls it.
+-- 
+2.43.0
+
