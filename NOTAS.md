@@ -192,3 +192,5 @@
 - Bloco 1 (entidades de bloco WASM): WIT registration.block-entities + block-entities-tick; SDK Registration::block_entity; runtime Mods::block_entities_tick; harness expect.block-entities; exemplo block-counter (teste passa); jogo: collect_mod_entities/apply_mod_entity_updates em server_mods.rs e native_block_entity em native_hooks.rs (verificacao de compilacao Android em andamento). Mods antigos precisam ser recompilados (WIT mudou).
 
 - Bloco 2 (inventarios): container-spec/item-stack no WIT, SDK ContainerSpec::open, harness set-items/expect.block-items, exemplo block-mover (teste passa); jogo compila para Android (patch ports/api-fork/0002). Itens vao como id+count+SNBT dos componentes. Ainda nao testado dentro do jogo.
+
+- Bloco 3 (energia): energy-spec/energy-side no WIT; transferencia por tick entre vizinhos (horizon_mods::energy, 3 testes); unidade e do mod (J no Mekanism); exemplo energy-demo (teste passa); compila Android; patch 0003. NAO feito: itens que carregam energia (dependem dos data components, bloco 5) e redes de cabos eficientes (bloco 9).

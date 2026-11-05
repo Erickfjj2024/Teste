@@ -1,0 +1,984 @@
+From 40f2bbc131f4dcfb34375cbdd9e7ca7cb551e11c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:01:11 +0000
+Subject: [PATCH] Energy for WASM block entities (API block 3)
+
+energy-spec/energy-side in the WIT, energy and faces in block-entity and
+update, a pure per-tick transfer between neighbours (horizon_mods::energy,
+tested), the game applying it to loaded block entities, harness support
+(set-energy, block-energy) and the energy-demo example. Regenerated the API
+reference.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/server_mods.rs | 129 ++++++++++++++++-
+ .../examples/block-counter/src/lib.rs         |   2 +
+ .../examples/block-mover/src/lib.rs           |   2 +
+ .../examples/energy-demo/Cargo.toml           |  16 +++
+ .../examples/energy-demo/horizon-mod.toml     |   8 ++
+ .../examples/energy-demo/src/lib.rs           |  65 +++++++++
+ .../examples/energy-demo/tests/chain.toml     |  29 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |  20 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  36 +++++
+ crates/horizon-mods/src/energy.rs             | 136 ++++++++++++++++++
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/runtime.rs            |   2 +-
+ crates/horizon-mods/src/testing.rs            |  96 +++++++++++++
+ docs/api/mods-reference.md                    |  81 +++++++++++
+ 16 files changed, 627 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-demo/tests/chain.toml
+ create mode 100644 crates/horizon-mods/src/energy.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 9be18d9..580e704 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1144,6 +1144,13 @@ dependencies = [
+  "simdutf8",
+ ]
+ 
++[[package]]
++name = "energy-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "env_filter"
+ version = "0.1.4"
+diff --git a/Cargo.toml b/Cargo.toml
+index c3a5349..3527101 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -41,6 +41,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/elevator",
+     "crates/horizon-mod-sdk/examples/block-counter",
+     "crates/horizon-mod-sdk/examples/block-mover",
++    "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 136a7e0..8dbb36f 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -339,6 +339,7 @@ mod run {
+             };
+             self.return_world();
+             self.apply_mod_entity_updates(updates);
++            self.transfer_mod_energy();
+             self.mods.players = players;
+             self.show_mod_output();
+             self.apply_mod_block_writes();
+@@ -472,6 +473,50 @@ mod run {
+             out
+         }
+ 
++        /// The sides of a block entity's faces: what its mod last set
++        /// (`energy_faces`), else the kind's own.
++        fn energy_faces(
++            m: &horizon_client_render::containers::ModBlockEntity,
++            spec: &horizon_mods::EnergySpec,
++        ) -> [horizon_mods::EnergySide; 6] {
++            use horizon_mods::EnergySide as S;
++            let from_byte = |b: u8| match b {
++                1 => S::Input,
++                2 => S::Output,
++                3 => S::Both,
++                _ => S::None,
++            };
++            let mut out = [S::None; 6];
++            match m.nbt.get(&horizon_world::nbt::JavaString::from("energy_faces")) {
++                Some(horizon_world::nbt::Tag::ByteArray(b)) => {
++                    for (to, from) in out.iter_mut().zip(b) {
++                        *to = from_byte(*from);
++                    }
++                }
++                _ => {
++                    for (to, from) in out.iter_mut().zip(&spec.faces) {
++                        *to = *from;
++                    }
++                }
++            }
++            out
++        }
++        fn side_byte(s: horizon_mods::EnergySide) -> u8 {
++            use horizon_mods::EnergySide as S;
++            match s {
++                S::None => 0,
++                S::Input => 1,
++                S::Output => 2,
++                S::Both => 3,
++            }
++        }
++        fn stored_energy(m: &horizon_client_render::containers::ModBlockEntity) -> u64 {
++            match m.nbt.get(&horizon_world::nbt::JavaString::from("energy")) {
++                Some(horizon_world::nbt::Tag::Long(v)) => (*v).max(0) as u64,
++                _ => 0,
++            }
++        }
++
+         /// A slot as the mod sees it: id, count and the SNBT of its components.
+         fn mod_stack(stack: &horizon_client::items::ItemStack) -> horizon_mods::ModItemStack {
+             let tag = horizon_client::save::item_to_nbt(stack);
+@@ -520,7 +565,7 @@ mod run {
+             }
+             let registry = self.pack.assets.registry;
+             let dim = self.dim.id();
+-            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>)> = self
++            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>, u64, Vec<horizon_mods::EnergySide>)> = self
+                 .world
+                 .block_entities
+                 .iter_mut()
+@@ -539,13 +584,20 @@ mod run {
+                         _ => Vec::new(),
+                     };
+                     let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
+-                    Some(([pos.0, pos.1, pos.2], data, items))
++                    let (energy, faces) = match &kind.energy {
++                        Some(spec) => (
++                            Self::stored_energy(m).min(spec.capacity),
++                            Self::energy_faces(m, spec).to_vec(),
++                        ),
++                        None => (0, Vec::new()),
++                    };
++                    Some(([pos.0, pos.1, pos.2], data, items, energy, faces))
+                 })
+                 .take(horizon_mods::BLOCK_ENTITIES_PER_CALL)
+                 .collect();
+             found
+                 .into_iter()
+-                .map(|(p, data, items)| horizon_mods::BlockEntity {
++                .map(|(p, data, items, energy, energy_faces)| horizon_mods::BlockEntity {
+                     dimension: dim.into(),
+                     pos: BlockPos {
+                         x: p[0],
+@@ -555,6 +607,8 @@ mod run {
+                     state: state_string(registry, self.world.block(p[0], p[1], p[2])),
+                     data,
+                     items,
++                    energy,
++                    energy_faces,
+                 })
+                 .collect()
+         }
+@@ -578,6 +632,27 @@ mod run {
+                         self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                     }
+                 }
++                if u.energy.is_some() || u.energy_faces.is_some() {
++                    let kinds = self.mods.mods.block_entity_kinds();
++                    if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                        self.world.block_entities.get_mut(&key)
++                        && let Some(spec) = kinds
++                            .iter()
++                            .find(|k| k.block == m.id)
++                            .and_then(|k| k.energy.as_ref())
++                    {
++                        let name = |s: &str| horizon_world::nbt::JavaString::from(s);
++                        if let Some(e) = u.energy {
++                            let e = e.min(spec.capacity).min(i64::MAX as u64) as i64;
++                            m.nbt.insert(name("energy"), horizon_world::nbt::Tag::Long(e));
++                        }
++                        if let Some(f) = &u.energy_faces {
++                            let bytes = f.iter().map(|s| Self::side_byte(*s)).collect();
++                            m.nbt.insert(name("energy_faces"), horizon_world::nbt::Tag::ByteArray(bytes));
++                        }
++                        self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                    }
++                }
+                 if let Some(items) = u.items {
+                     let slots = match self.world.block_entities.get_mut(&key) {
+                         Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.items.len(),
+@@ -597,6 +672,54 @@ mod run {
+             }
+         }
+ 
++        /// One tick of energy moving between neighbouring block entities
++        /// of this level (`horizon_mods::energy`).
++        fn transfer_mod_energy(&mut self) {
++            let kinds = self.mods.mods.block_entity_kinds();
++            if !kinds.iter().any(|k| k.energy.is_some()) {
++                return;
++            }
++            let mut nodes: Vec<horizon_mods::energy::EnergyNode> = self
++                .world
++                .block_entities
++                .iter_mut()
++                .filter_map(|(pos, e)| {
++                    let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
++                        return None;
++                    };
++                    let spec = kinds.iter().find(|k| k.block == m.id)?.energy.as_ref()?;
++                    Some(horizon_mods::energy::EnergyNode {
++                        pos: [pos.0, pos.1, pos.2],
++                        energy: Self::stored_energy(m).min(spec.capacity),
++                        capacity: spec.capacity,
++                        max_receive: spec.max_receive,
++                        max_extract: spec.max_extract,
++                        faces: Self::energy_faces(m, spec),
++                    })
++                })
++                .collect();
++            if nodes.len() < 2 {
++                return;
++            }
++            let before: Vec<u64> = nodes.iter().map(|n| n.energy).collect();
++            horizon_mods::energy::transfer(&mut nodes);
++            for (n, was) in nodes.iter().zip(before) {
++                if n.energy == was {
++                    continue;
++                }
++                let key = (n.pos[0], n.pos[1], n.pos[2]);
++                if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                    self.world.block_entities.get_mut(&key)
++                {
++                    m.nbt.insert(
++                        horizon_world::nbt::JavaString::from("energy"),
++                        horizon_world::nbt::Tag::Long(n.energy.min(i64::MAX as u64) as i64),
++                    );
++                    self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                }
++            }
++        }
++
+         /// Puts back the chunks [`Game::lend_world`] lent.
+         fn return_world(&mut self) {
+             let Some(view) = self.mods.mods.take_world() else {
+diff --git a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+index 9cb484a..1b8c25c 100644
+--- a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+@@ -23,6 +23,8 @@ impl ServerMod for Counter {
+                     pos: e.pos,
+                     data: (n + 1).to_le_bytes().to_vec(),
+                     items: None,
++                    energy: None,
++                    energy_faces: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+index 2b3ec0e..b924fcb 100644
+--- a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+@@ -52,6 +52,8 @@ impl ServerMod for Mover {
+                 pos: e.pos,
+                 data: e.data,
+                 items: Some(items),
++                energy: None,
++                energy_faces: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/energy-demo/Cargo.toml
+new file mode 100644
+index 0000000..11b13e6
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "energy-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: generator, battery and consumer blocks that pass energy along"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/energy-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..e3e6cbf
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-demo/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "energydemo"
++name = "Energy Demo"
++version = "0.1.0"
++description = "Test mod for block energy: a generator makes 10 a tick, a battery stores it, a consumer burns 5 a tick."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+new file mode 100644
+index 0000000..243f16a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -0,0 +1,65 @@
++//! Energy Demo: the smallest user of block energy.
++//! `energydemo:generator` makes 10 a tick and only gives; `energydemo:battery`
++//! stores up to 1000, 50 a tick in and out, and never ticks (the game moves
++//! its energy); `energydemo:consumer` burns 5 a tick and only takes.
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, EnergySide, EnergySpec, Registration,
++    ServerMod,
++};
++
++struct Demo;
++
++fn kind(block: &str, ticks: bool, energy: EnergySpec) -> BlockEntityKind {
++    BlockEntityKind {
++        block: block.into(),
++        ticks,
++        container: None,
++        energy: Some(energy),
++    }
++}
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        let r = Registration::new()
++            .block_entity_kind(kind(
++                "energydemo:generator",
++                true,
++                EnergySpec::open(100, 50, EnergySide::Output),
++            ))
++            .block_entity_kind(kind(
++                "energydemo:battery",
++                false,
++                EnergySpec::open(1000, 50, EnergySide::Both),
++            ))
++            .block_entity_kind(kind(
++                "energydemo:consumer",
++                true,
++                EnergySpec::open(100, 50, EnergySide::Input),
++            ));
++        Ok((Demo, r))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        entities
++            .into_iter()
++            .filter_map(|e| {
++                let energy = if e.state.starts_with("energydemo:generator") {
++                    e.energy + 10
++                } else if e.state.starts_with("energydemo:consumer") {
++                    e.energy.saturating_sub(5)
++                } else {
++                    return None;
++                };
++                Some(BlockEntityUpdate {
++                    dimension: e.dimension,
++                    pos: e.pos,
++                    data: e.data,
++                    items: None,
++                    energy: Some(energy),
++                    energy_faces: None,
++                })
++            })
++            .collect()
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/tests/chain.toml b/crates/horizon-mod-sdk/examples/energy-demo/tests/chain.toml
+new file mode 100644
+index 0000000..8c2ab14
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-demo/tests/chain.toml
+@@ -0,0 +1,29 @@
++# generator -> battery -> consumer in a row: energy flows along, the generator
++# stops at its capacity, and a battery given away to stone does not leak.
++
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "energydemo:generator" },
++    { x = 1, y = 64, z = 0, state = "energydemo:battery" },
++    { x = 2, y = 64, z = 0, state = "energydemo:consumer" },
++]
++ticks = 1
++# Tick 1: generator 0+10 -> gives 10 to the battery; the battery gives 10 to the
++# consumer; the consumer has 10 (it burns on the next tick).
++expect.block-energy = [
++    { x = 0, y = 64, z = 0, energy = 0 },
++    { x = 1, y = 64, z = 0, energy = 0 },
++    { x = 2, y = 64, z = 0, energy = 10 },
++]
++
++[[step]]
++ticks = 3
++# Each tick the consumer burns 5 and gets 10: +5 net, so 10 -> 15 -> 20 -> 25.
++expect.block-energy = [{ x = 2, y = 64, z = 0, energy = 25 }]
++
++[[step]]
++blocks = [{ x = 2, y = 64, z = 0, state = "minecraft:stone" }]
++ticks = 5
++# The battery has nowhere to give now and fills up.
++expect.block-energy = [{ x = 1, y = 64, z = 0, energy = 50 }]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 0cef5a2..a52444c 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -196,7 +196,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, ItemStack, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, ContainerSpec, EnergySide, EnergySpec, ItemStack, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -253,6 +253,17 @@ pub mod server {
+             }
+         }
+     }
++    impl EnergySpec {
++        /// A store of `capacity` that takes and gives `rate` a tick through every face.
++        pub fn open(capacity: u64, rate: u64, side: EnergySide) -> Self {
++            Self {
++                capacity,
++                max_receive: rate,
++                max_extract: rate,
++                faces: vec![side; 6],
++            }
++        }
++    }
+     impl ItemStack {
+         pub fn new(item: &str, count: u32) -> Self {
+             Self {
+@@ -282,9 +293,15 @@ pub mod server {
+                 block: block.into(),
+                 ticks,
+                 container: None,
++                energy: None,
+             });
+             self
+         }
++        /// Adds a block entity kind with everything set (slots, energy).
++        pub fn block_entity_kind(mut self, kind: BlockEntityKind) -> Self {
++            self.block_entities.push(kind);
++            self
++        }
+         /// As [`Registration::block_entity`], with item slots.
+         pub fn block_entity_with_slots(
+             mut self,
+@@ -296,6 +313,7 @@ pub mod server {
+                 block: block.into(),
+                 ticks,
+                 container: Some(container),
++                energy: None,
+             });
+             self
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index aa8bb98..4d1f36a 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -832,6 +832,33 @@ interface server-events {
+         /// (players, hoppers and droppers use them; a broken block drops
+         /// them). None: no slots.
+         container: option<container-spec>,
++        /// Stored energy, moved between neighbouring blocks by the game (see
++        /// `energy-spec`). None: the block holds no energy.
++        energy: option<energy-spec>,
++    }
++    /// Which way energy may pass through a face of a block.
++    enum energy-side {
++        none,
++        /// Energy may flow in through this face.
++        input,
++        /// Energy may flow out through this face.
++        output,
++        both,
++    }
++    /// A block's energy store. The game moves energy every tick, after the
++    /// mods' `block-entities-tick`, from each block's output faces to the
++    /// block touching it, when that block takes energy in through the face
++    /// that touches back. The unit is the mod's own (Mekanism's joules);
++    /// the game only counts whole numbers. Each block gives at most
++    /// `max-extract` and takes at most `max-receive` a tick, in all faces together.
++    record energy-spec {
++        capacity: u64,
++        max-receive: u64,
++        max-extract: u64,
++        /// The faces' sides, in this order of faces: down, up, north, south,
++        /// west, east. A block's mod may change them with `energy-faces`
++        /// (a machine turned to face another way).
++        faces: list<energy-side>,
+     }
+     /// The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+     record container-spec {
+@@ -861,6 +888,10 @@ interface server-events {
+         data: list<u8>,
+         /// Its slots, as many as its container has (none for a block with no container).
+         items: list<option<item-stack>>,
++        /// The energy it stores (0 for a block with no energy), and the
++        /// sides of its faces now.
++        energy: u64,
++        energy-faces: list<energy-side>,
+     }
+     /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+@@ -870,6 +901,11 @@ interface server-events {
+         /// The slots after the call; none leaves them as they are. Extra
+         /// slots past the container's, and stacks of unknown items, are dropped.
+         items: option<list<option<item-stack>>>,
++        /// The energy after the call (kept within the capacity); none leaves
++        /// it as it is. The game's transfers after the tick change it again.
++        energy: option<u64>,
++        /// New sides for the faces; none leaves them as they are.
++        energy-faces: option<list<energy-side>>,
+     }
+     /// Once, after loading. An error keeps the mod off and is logged.
+     init: func() -> result<registration, string>;
+diff --git a/crates/horizon-mods/src/energy.rs b/crates/horizon-mods/src/energy.rs
+new file mode 100644
+index 0000000..e2de1f5
+--- /dev/null
++++ b/crates/horizon-mods/src/energy.rs
+@@ -0,0 +1,136 @@
++//! Energy moving between neighbouring block entities (API block 3). Pure: the
++//! game and the test harness build the nodes and write the energies back.
++use crate::EnergySide;
++
++/// Where face `i` looks: down, up, north, south, west, east.
++pub const FACES: [[i32; 3]; 6] = [
++    [0, -1, 0],
++    [0, 1, 0],
++    [0, 0, -1],
++    [0, 0, 1],
++    [-1, 0, 0],
++    [1, 0, 0],
++];
++
++/// One block that stores energy.
++#[derive(Clone, Debug, PartialEq)]
++pub struct EnergyNode {
++    pub pos: [i32; 3],
++    pub energy: u64,
++    pub capacity: u64,
++    pub max_receive: u64,
++    pub max_extract: u64,
++    pub faces: [EnergySide; 6],
++}
++
++fn gives(s: EnergySide) -> bool {
++    matches!(s, EnergySide::Output | EnergySide::Both)
++}
++fn takes(s: EnergySide) -> bool {
++    matches!(s, EnergySide::Input | EnergySide::Both)
++}
++
++/// One tick of transfers. Blocks are visited in position order, and each
++/// block's faces in the order of [`FACES`], so a result never depends on
++/// the order of `nodes`. A block gives at most `max_extract` and takes at
++/// most `max_receive` in the whole tick.
++pub fn transfer(nodes: &mut [EnergyNode]) {
++    let mut order: Vec<usize> = (0..nodes.len()).collect();
++    order.sort_by_key(|&i| nodes[i].pos);
++    let at: std::collections::HashMap<[i32; 3], usize> =
++        nodes.iter().enumerate().map(|(i, n)| (n.pos, i)).collect();
++    let mut given = vec![0u64; nodes.len()];
++    let mut taken = vec![0u64; nodes.len()];
++    for &s in &order {
++        for (face, d) in FACES.iter().enumerate() {
++            if !gives(nodes[s].faces[face]) {
++                continue;
++            }
++            let to = [
++                nodes[s].pos[0] + d[0],
++                nodes[s].pos[1] + d[1],
++                nodes[s].pos[2] + d[2],
++            ];
++            let Some(&t) = at.get(&to) else { continue };
++            if !takes(nodes[t].faces[face ^ 1]) {
++                continue;
++            }
++            let room = nodes[t].capacity.saturating_sub(nodes[t].energy);
++            let amount = nodes[s]
++                .energy
++                .min(nodes[s].max_extract.saturating_sub(given[s]))
++                .min(nodes[t].max_receive.saturating_sub(taken[t]))
++                .min(room);
++            if amount == 0 {
++                continue;
++            }
++            nodes[s].energy -= amount;
++            nodes[t].energy += amount;
++            given[s] += amount;
++            taken[t] += amount;
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use EnergySide::{Both, Input, None as No, Output};
++
++    fn node(pos: [i32; 3], energy: u64, faces: [EnergySide; 6]) -> EnergyNode {
++        EnergyNode {
++            pos,
++            energy,
++            capacity: 100,
++            max_receive: 30,
++            max_extract: 30,
++            faces,
++        }
++    }
++    #[test]
++    fn moves_at_most_the_rate_and_what_fits() {
++        let mut n = vec![
++            node([0, 0, 0], 100, [Output; 6]),
++            node([1, 0, 0], 90, [Input; 6]),
++        ];
++        transfer(&mut n);
++        assert_eq!((n[0].energy, n[1].energy), (90, 100));
++        let mut n = vec![
++            node([0, 0, 0], 100, [Output; 6]),
++            node([1, 0, 0], 0, [Input; 6]),
++        ];
++        transfer(&mut n);
++        assert_eq!((n[0].energy, n[1].energy), (70, 30));
++    }
++    #[test]
++    fn faces_must_match() {
++        // East of the first block is its face 5; the second must take through face 4 (west).
++        let mut west_closed = [Input; 6];
++        west_closed[4] = No;
++        let mut n = vec![
++            node([0, 0, 0], 50, [Output; 6]),
++            node([1, 0, 0], 0, west_closed),
++        ];
++        transfer(&mut n);
++        assert_eq!(n[1].energy, 0);
++    }
++    #[test]
++    fn a_chain_passes_energy_along_and_order_does_not_matter() {
++        let mk = || {
++            vec![
++                node([0, 0, 0], 100, [Output; 6]),
++                node([1, 0, 0], 0, [Both; 6]),
++                node([2, 0, 0], 0, [Input; 6]),
++            ]
++        };
++        let mut a = mk();
++        transfer(&mut a);
++        let mut b = mk();
++        b.reverse();
++        transfer(&mut b);
++        b.reverse();
++        assert_eq!(a, b);
++        // The middle block gave nothing yet when it was visited before the first? Position order: 0 gives 30 to 1, then 1 gives 30 to 2.
++        assert_eq!((a[0].energy, a[1].energy, a[2].energy), (70, 0, 30));
++    }
++}
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 983df73..743cc98 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -8,6 +8,8 @@
+ pub mod api_level;
+ #[cfg(feature = "runtime")]
+ pub mod commands;
++#[cfg(feature = "runtime")]
++pub mod energy;
+ pub mod content;
+ #[cfg(feature = "index")]
+ pub mod index;
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index c600f16..7498758 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, ItemStack as ModItemStack, ServerCommand,
++        BlockPos, ContainerSpec, EnergySide, EnergySpec, ItemStack as ModItemStack, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 15145b7..f024c24 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -43,6 +43,8 @@ pub struct TestGame {
+     pub block_entities: std::collections::BTreeMap<(i32, i32, i32), Vec<u8>>,
+     /// Their slots, by position, as `"minecraft:stone*3"` (empty: no stack).
+     pub block_items: std::collections::BTreeMap<(i32, i32, i32), Vec<String>>,
++    /// Their stored energy and the sides of their faces, by position.
++    pub block_energy: std::collections::BTreeMap<(i32, i32, i32), (u64, [crate::EnergySide; 6])>,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -162,6 +164,7 @@ impl TestGame {
+             world: Default::default(),
+             block_entities: Default::default(),
+             block_items: Default::default(),
++            block_energy: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -229,6 +232,29 @@ impl TestGame {
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
+         self.block_items
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        self.block_energy
++            .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        let spec_of = |state: &str| {
++            let block = state.split('[').next().unwrap_or("");
++            kinds
++                .iter()
++                .find(|k| k.block == block)
++                .and_then(|k| k.energy.clone())
++        };
++        let faces_of = |spec: &crate::EnergySpec| {
++            let mut f = [crate::EnergySide::None; 6];
++            for (to, from) in f.iter_mut().zip(&spec.faces) {
++                *to = *from;
++            }
++            f
++        };
++        for (pos, state) in &self.world {
++            if let Some(spec) = spec_of(state) {
++                self.block_energy
++                    .entry(*pos)
++                    .or_insert((0, faces_of(&spec)));
++            }
++        }
+         for (pos, state) in &self.world {
+             if of(state) {
+                 self.block_entities.entry(*pos).or_default();
+@@ -254,11 +280,29 @@ impl TestGame {
+                 state,
+                 data: data.clone(),
+                 items: held.iter().map(|s| parse_stack(s)).collect(),
++                energy: self.block_energy.get(&(x, y, z)).map_or(0, |e| e.0),
++                energy_faces: self
++                    .block_energy
++                    .get(&(x, y, z))
++                    .map_or_else(Vec::new, |e| e.1.to_vec()),
+             });
+         }
+         for u in self.mods.block_entities_tick(self.tick, &list) {
+             let key = (u.pos.x, u.pos.y, u.pos.z);
+             self.block_entities.insert(key, u.data);
++            if let (Some(spec), Some(entry)) = (
++                self.world.get(&key).and_then(|s| spec_of(s)),
++                self.block_energy.get_mut(&key),
++            ) {
++                if let Some(e) = u.energy {
++                    entry.0 = e.min(spec.capacity);
++                }
++                if let Some(f) = &u.energy_faces {
++                    for (to, from) in entry.1.iter_mut().zip(f) {
++                        *to = *from;
++                    }
++                }
++            }
+             if let Some(items) = u.items {
+                 let n = self.block_items.get(&key).map_or(0, Vec::len);
+                 let mut text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
+@@ -266,6 +310,27 @@ impl TestGame {
+                 self.block_items.insert(key, text);
+             }
+         }
++        let mut nodes: Vec<crate::energy::EnergyNode> = self
++            .block_energy
++            .iter()
++            .filter_map(|(&(x, y, z), &(energy, faces))| {
++                let spec = spec_of(self.world.get(&(x, y, z))?)?;
++                Some(crate::energy::EnergyNode {
++                    pos: [x, y, z],
++                    energy: energy.min(spec.capacity),
++                    capacity: spec.capacity,
++                    max_receive: spec.max_receive,
++                    max_extract: spec.max_extract,
++                    faces,
++                })
++            })
++            .collect();
++        crate::energy::transfer(&mut nodes);
++        for n in nodes {
++            if let Some(e) = self.block_energy.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
++                e.0 = n.energy;
++            }
++        }
+     }
+     /// `n` frames, 1/60 s apart.
+     pub fn frames(&mut self, n: u64) {
+@@ -496,6 +561,16 @@ pub struct BlockItemsSet {
+     slots: Vec<String>,
+ }
+ 
++/// The stored energy of a block entity a step sets or expects.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct BlockEnergySet {
++    x: i32,
++    y: i32,
++    z: i32,
++    energy: u64,
++}
++
+ /// A block entity's bytes a step expects.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -564,6 +639,9 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Energy of block entities before the ticks (as `set-items`).
++    #[serde(default)]
++    set_energy: Vec<BlockEnergySet>,
+     #[serde(default)]
+     expect: Expect,
+ }
+@@ -589,6 +667,8 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods: the stored energy of block entities after the step.
++    block_energy: Option<Vec<BlockEnergySet>>,
+     /// Server mods: the slots of block entities after the step.
+     block_items: Option<Vec<BlockItemsSet>>,
+     /// Server mods: the saved bytes of block entities after the step.
+@@ -744,6 +824,11 @@ impl Step {
+         for b in &self.blocks {
+             game.world.insert((b.x, b.y, b.z), b.state.clone());
+         }
++        for s in &self.set_energy {
++            if let Some(e) = game.block_energy.get_mut(&(s.x, s.y, s.z)) {
++                e.0 = s.energy;
++            }
++        }
+         for s in &self.set_items {
+             game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
+         }
+@@ -947,6 +1032,17 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.block_energy {
++            for b in want {
++                let got = game.block_energy.get(&(b.x, b.y, b.z)).map(|e| e.0);
++                if got != Some(b.energy) {
++                    return Err(format!(
++                        "energy at {} {} {}: expected {}, got {got:?}",
++                        b.x, b.y, b.z, b.energy
++                    ));
++                }
++            }
++        }
+         if let Some(want) = &e.block_items {
+             for b in want {
+                 let got = game.block_items.get(&(b.x, b.y, b.z));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 49d2e32..0677820 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -788,6 +788,48 @@ An argument's value, parsed as its kind says.
+ | `player` | `player` |  |
+ | `block-pos` | `block-pos` |  |
+ 
++### enum `energy-side`
++
++Which way energy may pass through a face of a block.
++
++| Case | |
++| --- | --- |
++| `none` |  |
++| `input` | Energy may flow in through this face. |
++| `output` | Energy may flow out through this face. |
++| `both` |  |
++
++### record `energy-spec`
++
++A block's energy store. The game moves energy every tick, after the mods' `block-entities-tick`, from each block's output faces to the block touching it, when that block takes energy in through the face that touches back. The unit is the mod's own (Mekanism's joules); the game only counts whole numbers. Each block gives at most `max-extract` and takes at most `max-receive` a tick, in all faces together.
++
++| Field | Type | |
++| --- | --- | --- |
++| `capacity` | `u64` |  |
++| `max-receive` | `u64` |  |
++| `max-extract` | `u64` |  |
++| `faces` | `list<energy-side>` | The faces' sides, in this order of faces: down, up, north, south, west, east. A block's mod may change them with `energy-faces` (a machine turned to face another way). |
++
++### record `container-spec`
++
++The slots of a block entity. Slot numbers start at 0; at most 256 slots.
++
++| Field | Type | |
++| --- | --- | --- |
++| `slots` | `u32` |  |
++| `faces` | `list<list<u32>>` | The slots each face reaches, in this order of faces: down, up, north, south, west, east (what a hopper next to that face sees). |
++| `inputs` | `list<u32>` | The slots hoppers may put into. |
++| `outputs` | `list<u32>` | The slots hoppers may take from. |
++
++### record `block-entity-kind`
++
++| Field | Type | |
++| --- | --- | --- |
++| `block` | `string` | The block's id, `mymod:machine`. |
++| `ticks` | `bool` | Include this block's entities in `block-entities-tick`. |
++| `container` | `option<container-spec>` | Item slots the block entity holds, as a vanilla container does (players, hoppers and droppers use them; a broken block drops them). None: no slots. |
++| `energy` | `option<energy-spec>` | Stored energy, moved between neighbouring blocks by the game (see `energy-spec`). None: the block holds no energy. |
++
+ ### record `registration`
+ 
+ | Field | Type | |
+@@ -797,6 +839,44 @@ An argument's value, parsed as its kind says.
+ | `joins` | `bool` | Call `player-joined` and `player-left`. |
+ | `chat` | `bool` | Call `chat` for each chat message a player sends. |
+ | `blocks` | `bool` | Call `block-broken` and `block-placed`. |
++| `block-entities` | `list<block-entity-kind>` | Blocks of the mod that carry a block entity: its saved bytes (`block-entity.data`), kept with the chunk and ticked by `block-entities-tick`. The block's content `template` must itself have a block entity (a furnace, a chest...), so that breaking the block removes it. |
++
++### record `item-stack`
++
++An item stack. `components` is the SNBT of its data components (`{"minecraft:damage":3}`), empty for none.
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `string` |  |
++| `count` | `u32` |  |
++| `components` | `string` |  |
++
++### record `block-entity`
++
++A block entity of the mod, as the server holds it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `dimension` | `string` |  |
++| `pos` | `block-pos` |  |
++| `state` | `string` | The block state it sits in, `mymod:machine[facing=north]`. |
++| `data` | `list<u8>` | What the mod saved last (empty for a new one): at most 65536 bytes. |
++| `items` | `list<option<item-stack>>` | Its slots, as many as its container has (none for a block with no container). |
++| `energy` | `u64` | The energy it stores (0 for a block with no energy), and the sides of its faces now. |
++| `energy-faces` | `list<energy-side>` |  |
++
++### record `block-entity-update`
++
++New bytes and slots for the block entity at `pos` in `dimension`.
++
++| Field | Type | |
++| --- | --- | --- |
++| `dimension` | `string` |  |
++| `pos` | `block-pos` |  |
++| `data` | `list<u8>` |  |
++| `items` | `option<list<option<item-stack>>>` | The slots after the call; none leaves them as they are. Extra slots past the container's, and stacks of unknown items, are dropped. |
++| `energy` | `option<u64>` | The energy after the call (kept within the capacity); none leaves it as it is. The game's transfers after the tick change it again. |
++| `energy-faces` | `option<list<energy-side>>` | New sides for the faces; none leaves them as they are. |
+ 
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+@@ -808,3 +888,4 @@ An argument's value, parsed as its kind says.
+ | `command` | `func(player: player, name: string, args: string, values: list<tuple<string, argument-value>>) -> result<option<string>, string>` | `/name args` typed by `player`: ok(some(text)) is their feedback, err(text) their error in red. `values` holds each argument given, by name, in order (an optional one left out isn't there); a line that doesn't parse never reaches the mod: the player gets vanilla's error. |
+ | `block-broken` | `func(player: player, pos: block-pos, state: string)` | A player broke the block at `pos` in their dimension: `state` is what was there, as `minecraft:oak_log[axis=y]`. |
+ | `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
++| `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
+-- 
+2.43.0
+
