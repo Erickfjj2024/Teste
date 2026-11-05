@@ -8,7 +8,7 @@ dentro de uma sandbox. Esta pasta leva o elevador para esse formato. O APK só p
 
 | Arquivo | O que é | Em `dist/` |
 |---|---|---|
-| `elevatorid-android.hmod` | os 16 blocos, receitas, texturas, idiomas e o som | sim |
+| `elevator-blocks-android.hmod` | os 16 blocos, receitas, texturas, idiomas e o som | sim |
 | `elevator-code-android.hmod` | o código do elevador (WASM, mod de servidor, API 0.3) | sim |
 
 Os dois precisam estar instalados e ligados. Um mod do fork não mistura conteúdo (API 0.2) e código de

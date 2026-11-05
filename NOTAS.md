@@ -118,8 +118,8 @@
 
 ### Compilei o fork Android (autorizado) e achei um erro no .hmod
 - `cargo build -p cargo-horizon-mod` no fork OK. O `elevatorid.hmod` original foi RECUSADO pelo fork: `unknown field occludes` (a base do fork é mais antiga e só aceita hardness, explosion_resistance, light, requires_tool, friction, map_color, sounds).
-- Gerei `ports/elevator/dist/elevatorid-android.hmod` (sem `occludes`), que passa em `check` com a ferramenta do fork. SHA-256 f66994804b6a2fa47dfec14da92877248345383a61401247e50314dc17c6daec.
-- URL para o Android: https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid-android.hmod
+- Gerei `ports/elevator/dist/elevator-blocks-android.hmod` (sem `occludes`), que passa em `check` com a ferramenta do fork. SHA-256 f66994804b6a2fa47dfec14da92877248345383a61401247e50314dc17c6daec.
+- URL para o Android: https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevator-blocks-android.hmod
 - Ideia do usuário: API robusta para mods grandes baseada na API Java. O catálogo `native-hooks.json` já mapeia cada gancho a um evento do NeoForge (campo `neoforge`).
 
 ### Protótipo da API robusta: o que medi antes de começar
@@ -142,3 +142,7 @@
 - Build: `android_build.py --abi arm64-v8a --public --profile fast --dev-build elevator --dev-version-code 1`. Pacote `dev.horizon.android.dev` (instala ao lado do original, sem apagar mundos). Rust 7m46s; o Gradle precisou de retentativas por 429 do Maven Central.
 - APK 37 MB, SHA-256 e601f7e7…5ea7; assinado (v2), `passed: true` na auditoria do projeto. Não está no repositório (enviado pelo chat).
 - Roteiro de instalação e testes: `ports/elevator/TESTAR-APK.md`. Nada rodou num celular ainda.
+
+### Erro `unknown field occludes` no APK (corrigido)
+- O usuário importou o `elevatorid.hmod` do PC (tem `occludes`; o fork Android não conhece). Os três arquivos se chamavam "Elevator 0.1.0" no app, então ele não distinguia.
+- Agora: `elevator-blocks-android.hmod` (nome "Elevator Blocks"; script `ports/elevator/tools/make-android-hmod.sh`), `elevator-code-android.hmod` (nome "Elevator") e o do PC `elevatorid.hmod` renomeado "Elevator Blocks (PC only)". O antigo `elevatorid-android.hmod` foi removido.

@@ -4,6 +4,19 @@
 projeto; o mod passou nos testes de roteiro num jogo simulado. Nada disso garante que funcione no seu
 aparelho. Se algo falhar, me mande a mensagem que aparecer.
 
+## Atenção: quatro arquivos, só dois servem para o APK
+
+Dentro do app, os mods aparecem pelo nome. O que você precisa são exatamente estes dois:
+
+| Nome no app | Arquivo | Serve no APK? |
+|---|---|---|
+| **Elevator Blocks** | `elevator-blocks-android.hmod` | **sim** |
+| **Elevator** | `elevator-code-android.hmod` | **sim** |
+| Elevator Blocks (PC only) | `elevatorid.hmod` | **não**: dá o erro `unknown field occludes` |
+
+Se você já importou o `elevatorid.hmod` antigo (nome "Elevator" ou "Elevator Blocks (PC only)"), **remova-o**
+em Installed antes de importar o novo: os dois usam o mesmo identificador (`elevatorid`) e um bloqueia o outro.
+
 ## O APK
 
 | | |
@@ -26,11 +39,11 @@ Foi compilado com o perfil `fast` (sem LTO): é um pouco mais lento que o APK of
 2. Abra o app **Horizon Android** de nome igual (o de teste). Faça **Download Minecraft 26.3** (o jogo é baixado
    da Mojang no próprio celular, como no APK original).
 3. Em **Mods**, importe os dois arquivos (pelo seletor de arquivos do sistema, ou por URL):
-   * `elevatorid-android.hmod`: os blocos
+   * `elevator-blocks-android.hmod`: os blocos
    * `elevator-code-android.hmod`: o código
 
    URLs diretas (o repositório é público):
-   * `https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid-android.hmod`
+   * `https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevator-blocks-android.hmod`
    * `https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevator-code-android.hmod`
 4. Em **Installed**, ligue os dois. O mod de código mostra o que pode fazer (ver quem está no servidor,
    ler e mudar blocos, ver se jogadores agacham e pulam, mover jogadores, tirar XP, tocar sons).
