@@ -67,9 +67,9 @@ Foi compilado com o perfil `fast` (sem LTO): é um pouco mais lento que o APK of
 **Diferenças em relação ao Java** (não são defeito): o pulo só conta quando você pula **do chão**; monstros ainda
 nascem nos elevadores; não há tela de opções nem camuflagem; a configuração é por comando. Mais detalhes em `ANDROID.md`.
 
-## Se pular não sobe (diagnóstico, versão 0.1.2)
+## Se pular não sobe (diagnóstico)
 
-A versão 0.1.2 do mod de código **mostra no chat o que ele vê do seu movimento**, para eu descobrir por que o pulo
+Com `/elevator watch on` o mod de código **mostra no chat o que ele vê do seu movimento** (vem desligado), para descobrir por que o pulo
 não é percebido. Fique parado em cima de um elevador (com outro acima, e ar livre sobre os dois) e **pule uma vez**.
 Aparecem linhas como:
 

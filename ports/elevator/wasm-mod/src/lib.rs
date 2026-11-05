@@ -57,8 +57,8 @@ const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=3.0;
 const RIDE_COOLDOWN: u8 = 3;
 
 /// Whether a new mod starts telling players what it sees of their movement (`/elevator watch`).
-/// On while the jump is being tracked down.
-const WATCH_DEFAULT: bool = true;
+/// Off by default; it is for tracking down a jump that is not seen.
+const WATCH_DEFAULT: bool = false;
 
 struct Elevators {
     /// Tells each player what the mod sees of their movement, when it changes.
@@ -269,6 +269,10 @@ impl Elevators {
 
     /// `/elevator debug`: what the mod sees of the player who typed it.
     fn debug(&self, p: &Player) -> String {
+        // The id a typed command carries is not always the one `players::online` lists (it
+        // differed for the owner of a single-player world), so find the player by name.
+        let listed = players::online().into_iter().find(|q| q.name == p.name);
+        let p = listed.as_ref().unwrap_or(p);
         let Some(m) = player_control::get_motion(&p.id) else {
             return "No motion is reported for you".into();
         };

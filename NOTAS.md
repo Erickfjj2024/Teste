@@ -163,3 +163,8 @@
 - Com o 0.1.1 subir continuou sem funcionar e o usuário não trouxe a saída do /elevator debug. Descer funciona: logo origem, destino, colisão e teleporte estão certos; só a PERCEPÇÃO do pulo falha.
 - 0.1.2: `/elevator watch on|off` (ligado por padrão) conta no chat, a cada mudança de y/chão/pulos/agachar, o que o mod vê (com o número do tick e o intervalo desde a última chamada). Faixa de subida ampliada para 0.3–3.0 blocos. Patch `0007-…`. `elevator-code-android.hmod` SHA-256 c2b7ef2f…81ff. 11 roteiros passam.
 - Próximo passo depende das linhas que o usuário enviar.
+
+### Funcionou (0.1.2) e 0.1.3
+- Com o 0.1.2 o usuário relatou que o teste funcionou. Não sabemos qual dos três detectores de pulo resolveu (contador do jogo, flag de chão ou subida pelo movimento) nem se foi a faixa ampliada para 3 blocos; ele não mandou as linhas do /elevator watch.
+- `/elevator debug` respondeu "No motion is reported for you": o id do jogador que digita o comando não é o mesmo que `players::online` lista (dono do mundo no servidor integrado). O elevador em si usa os ids de `players::online`, por isso funciona. 0.1.3 acha o jogador pelo nome no debug, e deixa `watch` desligado por padrão. Patch `0008-…`. `elevator-code-android.hmod` SHA-256 cca08b59…b86c.
+- Possível problema relacionado a investigar depois: outros pontos do jogo que associam o id do comando ao jogador (se algum mod de servidor usar `player.id` de comando em `player-control`, falhará para o dono).
