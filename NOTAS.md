@@ -102,3 +102,9 @@
 - Eu tinha escrito que `.hmod` é só conteúdo. Isso vale para a documentação do Horizon principal; o fork Android ainda roda `.hmod` com `mod.wasm` (código em sandbox, Wasmtime, 64 bits).
 - No registro `horizon-mods` (125 versões): 102 são `.hnmod` (nativo, NÃO roda no Android), 13 são `.hmod` (alguns com código WASM, como compass_bar, e partes de "assets" de mods de duas partes), 7 shaders e 1 resource pack.
 - Mods de duas partes (ex.: Wayfarer Stones, Deepbore Quarry): o `.hmod` só traz modelos/texturas/receitas ("does nothing alone") e o código está no `.hnmod`. É exatamente o formato do Elevator.
+
+### Por que `.hnmod` não roda no Android, e forks
+- `.hnmod` = código-fonte (mixins em Rust) que o launcher do PC compila junto com o jogo. O APK Android vem pronto e não tem compilador; a doc do fork (android-content.md, android-0.7.7.md) diz que isso exige "recompilar o jogo" e que "não há compilador no celular". `.hmod` WASM é bytecode pronto, carregado em tempo de execução.
+- Licença do Horizon e do fork: MIT (copiar, modificar, distribuir, com aviso de copyright mantido). O próprio fork Android é um fork assim ("unofficial", mantém autoria e histórico). Texturas da Mojang não são MIT e ficam fora do repositório.
+- Caminho técnico: gerar no PC um APK próprio com o mod compilado dentro ("separately compiled client").
+- Obstáculo medido: o fork Android está numa base antiga do Horizon (`native-hooks.json` com 108 ganchos, contra 432 no principal). Faltam `movement_input`, `potential_spawns` e `server_players`, que o mod do Elevator usa; também não achei `native_entity_nbt` no fork.
