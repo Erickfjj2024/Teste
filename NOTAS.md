@@ -49,3 +49,10 @@
 
 ### SkyFactory 4
 - Lista e licenças em `SKYFACTORY4-MODS.md` (versão 4.2.4, Minecraft 1.12.2, mesma metodologia do StoneBlock 3).
+
+## Primeiro port: ElevatorMod ("OpenBlocks Elevator")
+- Original: github.com/VsnGamer/ElevatorMod (MIT, Vasco), revisão 01502b60. Usuário chamou de "open elevators" (CurseForge: openblocks-elevator).
+- Port em `ports/elevator/` (crate `horizon_elevator`): lógica pura em Rust, 16 testes passando.
+  - Cobre: busca do elevador de destino (pular sobe, agachar desce), elevador de origem (alcance de ativação), validação do servidor, custo de XP, posição final, yaw/pitch e a configuração com os mesmos padrões do original.
+- Ainda falta: a camada de integração com o Horizon (hooks no jogo), o bloco em 16 cores com receitas e modelos, a tela de opções (direcional, camuflagem) e o som. Os assets de bloco/receita do original são dados em JSON e podem virar um `.hmod`.
+- Avisos de licença e crédito em `ports/elevator/NOTICE.md` e `ports/elevator/LICENSE-ElevatorMod`.
