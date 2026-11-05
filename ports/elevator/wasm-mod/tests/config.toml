@@ -28,6 +28,7 @@ expect.error = "Settings can only be changed when you are alone on the server"
 [[step]]
 as = "Alex"
 motion = { sneaking = false, on-ground = true, jumps = 0 }
+ticks = 1
 command = "elevator debug"
 expect.feedback = "sneaking=false onGround=true jumps=0 y=64.000 origin=none up=none down=none cooldown=0"
 
@@ -47,4 +48,4 @@ expect.told = []
 as = "Alex"
 motion = { on-ground = false }
 ticks = 1
-expect.told = ["Alex: tick 2 (+1): y=64.000 rise=+0.000 onGround=false jumps=0 sneaking=false onElevator=false"]
+expect.told = ["Alex: tick 3 (+1): y=64.000 rise=+0.000 onGround=false jumps=0 sneaking=false onElevator=false"]

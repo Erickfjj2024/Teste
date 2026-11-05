@@ -172,3 +172,10 @@
 ### Tapete: "funcionou só para subir" (a esclarecer)
 - Usuário: cores diferentes funcionam; tapete só para subir. Em simulação (harness com tapete = laje de 1/16) o mod sobe e desce com tapete em cima de qualquer um dos elevadores (`tests/carpet_both_ways.toml`, patch 0009). Na simulação o pouso é no topo do elevador (a altura do tapete não conta), como no Java.
 - Faltam dados do aparelho: onde está o tapete, o que acontece ao agachar, e a linha de `/elevator debug` (corrigido na 0.1.3) no ponto em que descer falha.
+
+### Tapete: causa encontrada (relato do usuário) e correções
+- Relato: com tapete nos dois elevadores, no de cima não conseguia descer logo depois de subir; um pulo no de cima e depois agachar funcionava; subir do de baixo sempre funcionava; `/elevator debug` seguia dando "No motion is reported".
+- Causa: o teletransporte pousa os pés DENTRO da laje de 1/16 do tapete. `update_player_pose` (pose.rs) não consegue encaixar nem a pose em pé nem a agachada e usa a de rastejar; o mod lia "agachado" pela pose, então apertar agachar não virava uma borda de "agachar". O pulo tira o jogador de dentro do tapete. Descer fica sem o problema porque a ação do pulo não depende da pose.
+- Correção no jogo (APK v3, patch 0010): `sneaking` = tecla (hub `g.sneaking` para convidados; `shift_key_down` para o local), não a pose.
+- Correção no mod (0.1.4, patch 0011): pousa em cima de blocos finos sobre o elevador (+1/16), e o `/elevator debug` lê o que o tick guardou (o comando digitado não recebe `motions` no snapshot; o ajuste por nome em 0.1.3 não resolvia).
+- `elevator-code-android.hmod` 0.1.4 SHA-256 7700c4eb…ff8f. 12 roteiros passam.

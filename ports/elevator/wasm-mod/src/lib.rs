@@ -236,12 +236,22 @@ impl Elevators {
             Err(_) => return false,
         }
         let dest = logic::destination(to, &target, p.x, p.z, cfg);
+        // A thin block lying on the elevator (a carpet) would hold the player's feet inside its
+        // collision, where the game cannot stand or crouch them (it crawls them, and a sneak is
+        // not seen). They land on top of it instead: a sixteenth of a block higher.
+        let thin = reader
+            .boxes(to.above())
+            .iter()
+            .filter(|b| b.min_y < 0.01 && b.max_y < 0.999)
+            .map(|b| b.max_y)
+            .fold(0.0_f64, f64::max);
+        let land_y = dest.y.max(f64::from(to.y) + target.support_height + thin);
         let yaw = match dest.yaw {
             Yaw::Set(v) => Some(v),
             Yaw::Keep => None,
         };
         let pitch = (dest.pitch == Pitch::Reset).then_some(0.0);
-        if player_control::teleport(&p.id, &p.dimension, dest.x, dest.y, dest.z, yaw, pitch).is_ok() {
+        if player_control::teleport(&p.id, &p.dimension, dest.x, land_y, dest.z, yaw, pitch).is_ok() {
             player_control::play_sound(
                 &p.dimension,
                 TELEPORT_SOUND,
@@ -267,14 +277,15 @@ impl Elevators {
         reader.elevator_at(below).is_some()
     }
 
-    /// `/elevator debug`: what the mod sees of the player who typed it.
+    /// `/elevator debug`: what the mod saw of the player who typed it on its last tick. (A typed
+    /// command is not given the players' motion, so this reads what `tick` kept.)
     fn debug(&self, p: &Player) -> String {
         // The id a typed command carries is not always the one `players::online` lists (it
         // differed for the owner of a single-player world), so find the player by name.
         let listed = players::online().into_iter().find(|q| q.name == p.name);
         let p = listed.as_ref().unwrap_or(p);
-        let Some(m) = player_control::get_motion(&p.id) else {
-            return "No motion is reported for you".into();
+        let Some(seen) = self.seen.get(&p.id) else {
+            return "The mod has not seen you move yet: wait a second and try again".into();
         };
         let reader = Reader { dimension: &p.dimension };
         let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
@@ -283,14 +294,14 @@ impl Elevators {
         let show = |b: Option<BlockPos>| b.map_or("none".to_string(), |b| format!("{} {} {}", b.x, b.y, b.z));
         format!(
             "sneaking={} onGround={} jumps={} y={:.3} origin={} up={} down={} cooldown={}",
-            m.sneaking,
-            m.on_ground,
-            m.jumps,
+            seen.sneaking,
+            seen.on_ground,
+            seen.jumps,
             p.y,
             show(origin),
             show(at(Dir::Up)),
             show(at(Dir::Down)),
-            self.seen.get(&p.id).map_or(0, |s| s.cooldown)
+            seen.cooldown
         )
     }
 }

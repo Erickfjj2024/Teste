@@ -11,11 +11,12 @@ blocks = [
 command = "elevator watch off"
 ticks = 1
 
-# Up, onto the elevator that has a carpet on it: they land inside the carpet's sixteenth.
+# Up, onto the elevator that has a carpet on it: they land on top of the carpet (a sixteenth up),
+# not inside it, where the game would crawl them and not see a sneak.
 [[step]]
 motion = { jumps = 1 }
 ticks = 1
-expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
+expect.teleports = ["Alex: minecraft:overworld 0.5 69.0625 0.5 ~ ~"]
 
 # Standing on that carpet (feet at 69.0625), sneak: down to the white elevator.
 [[step]]
@@ -35,10 +36,10 @@ expect.teleports = []
 [[step]]
 motion = { jumps = 2 }
 ticks = 1
-expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
+expect.teleports = ["Alex: minecraft:overworld 0.5 69.0625 0.5 ~ ~"]
 
 [[step]]
 player = { y = 69.0625 }
 motion = { sneaking = true }
 ticks = 5
-expect.teleports = ["Alex: minecraft:overworld 0.5 64 0.5 ~ ~"]
+expect.teleports = ["Alex: minecraft:overworld 0.5 64.0625 0.5 ~ ~"]
