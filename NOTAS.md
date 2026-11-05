@@ -108,3 +108,10 @@
 - Licença do Horizon e do fork: MIT (copiar, modificar, distribuir, com aviso de copyright mantido). O próprio fork Android é um fork assim ("unofficial", mantém autoria e histórico). Texturas da Mojang não são MIT e ficam fora do repositório.
 - Caminho técnico: gerar no PC um APK próprio com o mod compilado dentro ("separately compiled client").
 - Obstáculo medido: o fork Android está numa base antiga do Horizon (`native-hooks.json` com 108 ganchos, contra 432 no principal). Faltam `movement_input`, `potential_spawns` e `server_players`, que o mod do Elevator usa; também não achei `native_entity_nbt` no fork.
+
+### Requisito do usuário: um único APK que carregue qualquer mod
+- Um APK por mod é inviável. Mods nativos (mixins) alteram o código do jogo e não carregam em tempo de execução; só dados (`.hmod` de conteúdo) e bytecode (`.hmod` WASM) carregam num APK só.
+- Estratégia: estender a API WASM do fork (`crates/horizon-mod-sdk/wit/horizon.wit`) com poucas capacidades genéricas, uma vez, e portar os mods como WASM. A lógica pura do Elevator (`ports/elevator/src/lib.rs`, sem dependências) já compila para WASM.
+- Capacidades que o Elevator precisa e o cliente WASM não tem: ler blocos/colisão, teleportar o jogador, ler/cobrar XP, tocar som de mod, e (a verificar) pular/agachar como teclas (`input.register-key`, se o toque do Android gera esses eventos).
+- Limite: mods grandes (máquinas, entidades de bloco, GUIs, fluidos) exigiriam uma API muito maior.
+- Pendente: autorização para compilar o fork Android (foi bloqueado como código externo).
