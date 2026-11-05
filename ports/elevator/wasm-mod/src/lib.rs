@@ -53,10 +53,18 @@ struct Seen {
 
 /// A jump rises about 0.42 a block in its first tick (more with Jump Boost); a ride, a fall
 /// or a flight is outside this.
-const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=1.2;
+const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=3.0;
 const RIDE_COOLDOWN: u8 = 3;
 
+/// Whether a new mod starts telling players what it sees of their movement (`/elevator watch`).
+/// On while the jump is being tracked down.
+const WATCH_DEFAULT: bool = true;
+
 struct Elevators {
+    /// Tells each player what the mod sees of their movement, when it changes.
+    watch: bool,
+    /// The server tick of the last call, to see whether `tick` is called every tick.
+    last_tick: u64,
     config: Config,
     /// The config as `key = value` lines, kept in `storage`.
     lines: BTreeMap<String, String>,
@@ -295,6 +303,8 @@ impl ServerMod for Elevators {
             .collect();
         Ok((
             Elevators {
+                watch: WATCH_DEFAULT,
+                last_tick: 0,
                 config: Config::from_toml(&text),
                 lines,
                 seen: HashMap::new(),
@@ -303,7 +313,9 @@ impl ServerMod for Elevators {
         ))
     }
 
-    fn tick(&mut self, _tick: u64) {
+    fn tick(&mut self, tick: u64) {
+        let gap = tick.saturating_sub(self.last_tick);
+        self.last_tick = tick;
         let online = players::online();
         self.seen.retain(|id, _| online.iter().any(|p| p.id == *id));
         for p in &online {
@@ -324,6 +336,24 @@ impl ServerMod for Elevators {
             };
             now.cooldown = prev.cooldown.saturating_sub(1);
             let rise = p.y - prev.pos[1];
+            if self.watch
+                && (rise.abs() > 0.05
+                    || m.on_ground != prev.on_ground
+                    || m.jumps != prev.jumps
+                    || m.sneaking != prev.sneaking)
+            {
+                players::tell(
+                    &p.id,
+                    &format!(
+                        "tick {tick} (+{gap}): y={:.3} rise={rise:+.3} onGround={} jumps={} sneaking={} onElevator={}",
+                        p.y,
+                        m.on_ground,
+                        m.jumps,
+                        m.sneaking,
+                        Self::stood_on_elevator(&prev)
+                    ),
+                );
+            }
             // A jump is seen three ways, any of which is enough: the game's jump count went up,
             // the player left the ground going up, or they stood on an elevator and rose by a
             // jump's height. (The count alone missed the owner of a world on an integrated
@@ -341,7 +371,19 @@ impl ServerMod for Elevators {
                 rode |= self.ride(p, &m, Dir::Down);
             }
             if jumped {
-                rode |= self.ride(p, &m, Dir::Up);
+                let went = self.ride(p, &m, Dir::Up);
+                if self.watch {
+                    let why = if m.jumps > prev.jumps {
+                        "the jump count"
+                    } else {
+                        "the movement"
+                    };
+                    players::tell(
+                        &p.id,
+                        &format!("jump seen by {why}: {}", if went { "went up" } else { "no elevator to go up to" }),
+                    );
+                }
+                rode |= went;
             }
             if rode {
                 now.cooldown = RIDE_COOLDOWN;
@@ -355,13 +397,17 @@ impl ServerMod for Elevators {
         match (words.next(), words.next(), words.next()) {
             (None | Some("show"), _, _) => Ok(Some(self.show())),
             (Some("debug"), _, _) => Ok(Some(self.debug(player))),
+            (Some("watch"), Some(mode), _) if matches!(mode, "on" | "off") => {
+                self.watch = mode == "on";
+                Ok(Some(format!("watch {mode}")))
+            }
             (Some("set"), Some(key), Some(value)) => {
                 if players::online().len() > 1 {
                     return Err("Settings can only be changed when you are alone on the server".into());
                 }
                 self.set(key, value).map(Some)
             }
-            _ => Err("Use /elevator show, /elevator debug, or /elevator set <setting> <value>".into()),
+            _ => Err("Use /elevator show, /elevator debug, /elevator watch on|off, or /elevator set <setting> <value>".into()),
         }
     }
 }

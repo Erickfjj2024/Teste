@@ -8,6 +8,7 @@ blocks = [
     { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
     { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
 ]
+command = "elevator watch off"
 ticks = 1
 
 [[step]]

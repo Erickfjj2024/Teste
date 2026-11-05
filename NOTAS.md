@@ -158,3 +158,8 @@
 - A correção do contador de pulos (patch 0005) foi compilada (biblioteca diferente da anterior) mas subir continuou sem funcionar; causa exata não confirmada (sem log do aparelho). Hipóteses descartadas por leitura: troca de estatísticas (igual nos dois caminhos), servidor em thread própria é o padrão.
 - Solução que não exige APK novo: o mod (0.1.1, só o .hmod) agora também enxerga o pulo pelo movimento (flag de chão saindo + subida de 0.3 a 1.2 blocos, ou subida a partir do topo de um elevador), com espera de 3 ticks só para esses dois. Comando `/elevator debug` para diagnóstico. 11 roteiros passam. Patch `0006-…`.
 - `elevator-code-android.hmod` agora 0.1.1, SHA-256 660c7ec0…a92d.
+
+### Elevator 0.1.2 (diagnóstico)
+- Com o 0.1.1 subir continuou sem funcionar e o usuário não trouxe a saída do /elevator debug. Descer funciona: logo origem, destino, colisão e teleporte estão certos; só a PERCEPÇÃO do pulo falha.
+- 0.1.2: `/elevator watch on|off` (ligado por padrão) conta no chat, a cada mudança de y/chão/pulos/agachar, o que o mod vê (com o número do tick e o intervalo desde a última chamada). Faixa de subida ampliada para 0.3–3.0 blocos. Patch `0007-…`. `elevator-code-android.hmod` SHA-256 c2b7ef2f…81ff. 11 roteiros passam.
+- Próximo passo depende das linhas que o usuário enviar.

@@ -1,0 +1,177 @@
+From f8b7e7199d0aaa3f95d5b5ac4414f5fd6f9944dc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 20:56:48 +0000
+Subject: [PATCH] Elevator 0.1.2: /elevator watch tells what the mod sees of a
+ player's movement
+
+On by default while the jump is tracked down. The jump rise range is widened to 3 blocks
+(the wait after a ride keeps the ride's own move from reading as a jump).
+---
+ .../examples/elevator/horizon-mod.toml        |  2 +-
+ .../examples/elevator/src/lib.rs              | 54 +++++++++++++++++--
+ .../examples/elevator/tests/config.toml       | 18 +++++++
+ .../examples/elevator/tests/experience.toml   |  1 +
+ 4 files changed, 70 insertions(+), 5 deletions(-)
+
+diff --git a/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+index 6a499d1..812a5d7 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+@@ -1,6 +1,6 @@
+ id = "elevator"
+ name = "Elevator"
+-version = "0.1.1"
++version = "0.1.2"
+ description = "Jump on an elevator block to go up to the next one above, sneak to go down. Rust port of ElevatorMod (VsnGamer, MIT). Needs the Elevator blocks mod (elevatorid)."
+ authors = ["VsnGamer (ElevatorMod, MIT)", "Rust port"]
+ api = "0.3"
+diff --git a/crates/horizon-mod-sdk/examples/elevator/src/lib.rs b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+index 5f9624f..4b8c09c 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+@@ -53,10 +53,18 @@ struct Seen {
+ 
+ /// A jump rises about 0.42 a block in its first tick (more with Jump Boost); a ride, a fall
+ /// or a flight is outside this.
+-const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=1.2;
++const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=3.0;
+ const RIDE_COOLDOWN: u8 = 3;
+ 
++/// Whether a new mod starts telling players what it sees of their movement (`/elevator watch`).
++/// On while the jump is being tracked down.
++const WATCH_DEFAULT: bool = true;
++
+ struct Elevators {
++    /// Tells each player what the mod sees of their movement, when it changes.
++    watch: bool,
++    /// The server tick of the last call, to see whether `tick` is called every tick.
++    last_tick: u64,
+     config: Config,
+     /// The config as `key = value` lines, kept in `storage`.
+     lines: BTreeMap<String, String>,
+@@ -295,6 +303,8 @@ impl ServerMod for Elevators {
+             .collect();
+         Ok((
+             Elevators {
++                watch: WATCH_DEFAULT,
++                last_tick: 0,
+                 config: Config::from_toml(&text),
+                 lines,
+                 seen: HashMap::new(),
+@@ -303,7 +313,9 @@ impl ServerMod for Elevators {
+         ))
+     }
+ 
+-    fn tick(&mut self, _tick: u64) {
++    fn tick(&mut self, tick: u64) {
++        let gap = tick.saturating_sub(self.last_tick);
++        self.last_tick = tick;
+         let online = players::online();
+         self.seen.retain(|id, _| online.iter().any(|p| p.id == *id));
+         for p in &online {
+@@ -324,6 +336,24 @@ impl ServerMod for Elevators {
+             };
+             now.cooldown = prev.cooldown.saturating_sub(1);
+             let rise = p.y - prev.pos[1];
++            if self.watch
++                && (rise.abs() > 0.05
++                    || m.on_ground != prev.on_ground
++                    || m.jumps != prev.jumps
++                    || m.sneaking != prev.sneaking)
++            {
++                players::tell(
++                    &p.id,
++                    &format!(
++                        "tick {tick} (+{gap}): y={:.3} rise={rise:+.3} onGround={} jumps={} sneaking={} onElevator={}",
++                        p.y,
++                        m.on_ground,
++                        m.jumps,
++                        m.sneaking,
++                        Self::stood_on_elevator(&prev)
++                    ),
++                );
++            }
+             // A jump is seen three ways, any of which is enough: the game's jump count went up,
+             // the player left the ground going up, or they stood on an elevator and rose by a
+             // jump's height. (The count alone missed the owner of a world on an integrated
+@@ -341,7 +371,19 @@ impl ServerMod for Elevators {
+                 rode |= self.ride(p, &m, Dir::Down);
+             }
+             if jumped {
+-                rode |= self.ride(p, &m, Dir::Up);
++                let went = self.ride(p, &m, Dir::Up);
++                if self.watch {
++                    let why = if m.jumps > prev.jumps {
++                        "the jump count"
++                    } else {
++                        "the movement"
++                    };
++                    players::tell(
++                        &p.id,
++                        &format!("jump seen by {why}: {}", if went { "went up" } else { "no elevator to go up to" }),
++                    );
++                }
++                rode |= went;
+             }
+             if rode {
+                 now.cooldown = RIDE_COOLDOWN;
+@@ -355,13 +397,17 @@ impl ServerMod for Elevators {
+         match (words.next(), words.next(), words.next()) {
+             (None | Some("show"), _, _) => Ok(Some(self.show())),
+             (Some("debug"), _, _) => Ok(Some(self.debug(player))),
++            (Some("watch"), Some(mode), _) if matches!(mode, "on" | "off") => {
++                self.watch = mode == "on";
++                Ok(Some(format!("watch {mode}")))
++            }
+             (Some("set"), Some(key), Some(value)) => {
+                 if players::online().len() > 1 {
+                     return Err("Settings can only be changed when you are alone on the server".into());
+                 }
+                 self.set(key, value).map(Some)
+             }
+-            _ => Err("Use /elevator show, /elevator debug, or /elevator set <setting> <value>".into()),
++            _ => Err("Use /elevator show, /elevator debug, /elevator watch on|off, or /elevator set <setting> <value>".into()),
+         }
+     }
+ }
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/config.toml b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+index 864bacc..1053395 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+@@ -30,3 +30,21 @@ as = "Alex"
+ motion = { sneaking = false, on-ground = true, jumps = 0 }
+ command = "elevator debug"
+ expect.feedback = "sneaking=false onGround=true jumps=0 y=64.000 origin=none up=none down=none cooldown=0"
++
++# /elevator watch says what the mod sees of your movement.
++[[step]]
++command = "elevator watch on"
++expect.feedback = "watch on"
++
++# The first tick only learns what you are doing; the next one tells what changed.
++[[step]]
++as = "Alex"
++motion = { on-ground = true }
++ticks = 1
++expect.told = []
++
++[[step]]
++as = "Alex"
++motion = { on-ground = false }
++ticks = 1
++expect.told = ["Alex: tick 2 (+1): y=64.000 rise=+0.000 onGround=false jumps=0 sneaking=false onElevator=false"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml b/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
+index 4794dbe..ec3fbb3 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
+@@ -8,6 +8,7 @@ blocks = [
+     { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
+     { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
+ ]
++command = "elevator watch off"
+ ticks = 1
+ 
+ [[step]]
+-- 
+2.43.0
+
