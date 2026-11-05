@@ -194,3 +194,5 @@
 - Bloco 2 (inventarios): container-spec/item-stack no WIT, SDK ContainerSpec::open, harness set-items/expect.block-items, exemplo block-mover (teste passa); jogo compila para Android (patch ports/api-fork/0002). Itens vao como id+count+SNBT dos componentes. Ainda nao testado dentro do jogo.
 
 - Bloco 3 (energia): energy-spec/energy-side no WIT; transferencia por tick entre vizinhos (horizon_mods::energy, 3 testes); unidade e do mod (J no Mekanism); exemplo energy-demo (teste passa); compila Android; patch 0003. NAO feito: itens que carregam energia (dependem dos data components, bloco 5) e redes de cabos eficientes (bloco 9).
+
+- Bloco 4 (fluidos e quimicos): tank-spec/tank no WIT (kind + substancia por id, unidades inteiras), energy-side virou flow-side, transferencia entre vizinhos (horizon_mods::flow, 4 testes), exemplo tank-demo; compila Android; patch 0004. NAO feito: interacao com baldes/fluidos do mundo, cores/texturas das substancias (bloco 11).
