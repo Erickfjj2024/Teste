@@ -121,3 +121,10 @@
 - Gerei `ports/elevator/dist/elevatorid-android.hmod` (sem `occludes`), que passa em `check` com a ferramenta do fork. SHA-256 f66994804b6a2fa47dfec14da92877248345383a61401247e50314dc17c6daec.
 - URL para o Android: https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid-android.hmod
 - Ideia do usuário: API robusta para mods grandes baseada na API Java. O catálogo `native-hooks.json` já mapeia cada gancho a um evento do NeoForge (campo `neoforge`).
+
+### Protótipo da API robusta: o que medi antes de começar
+- `rustup target add wasm32-wasip2` funcionou aqui; `ports/elevator/src/lib.rs` compila para `wasm32-wasip2` sem mudanças.
+- O fork Android compila no host (`cargo check -p horizon-client --no-default-features`, 1m18s). Mas ele NÃO tem `mod_api`, `Hooks` nem `Host`: o sistema de "trait mods" foi criado no Horizon principal depois da base do fork. O fork tem só 108 ganchos de mixin (`native-hooks.json`) e o SDK WASM antigo (`crates/horizon-mod-sdk/wit/horizon.wit`).
+- Fusão de teste (git merge-tree, base = último upstream mesclado pelo fork, 8c02c0b de 1 nov): o Horizon atual (f319701, 5 nov) mudou 2272 arquivos (+539 mil linhas) em 4 dias; o fork mudou 623. Resultado: 54 arquivos em conflito (a maioria em horizon-client-render, game.rs, mods.rs, native_hooks.rs, Cargo.*, launcher).
+- O Horizon principal ainda tem o executor WASM (wasmtime, recurso `runtime` em horizon-mods), mas removeu o crate `horizon-mod-sdk`; a doc diz "code is native now".
+- Conclusão: o caminho mais curto é adicionar à API WASM atual do fork (WIT + host em horizon-mods/game/mods.rs) as capacidades que o Elevator precisa; a ponte gerada completa fica para depois, sobre uma base atualizada.
