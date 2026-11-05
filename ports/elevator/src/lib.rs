@@ -150,6 +150,83 @@ impl Config {
     }
 }
 
+impl Config {
+    /// Lê o arquivo `config/elevatorid-synced.toml` do ElevatorMod: linhas `chave = valor` (as
+    /// seções e os comentários `#` são ignorados). Chaves ausentes ou inválidas ficam no padrão e
+    /// os valores são limitados aos intervalos do original.
+    pub fn from_toml(text: &str) -> Self {
+        let mut cfg = Self::default();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let (key, value) = (key.trim(), value.split('#').next().unwrap_or("").trim());
+            let flag = || value.parse::<bool>().ok();
+            let number = || value.parse::<u32>().ok();
+            match key {
+                "sameColor" => cfg.same_color = flag().unwrap_or(cfg.same_color),
+                "range" => cfg.range = number().unwrap_or(cfg.range),
+                "activationRange" => cfg.activation_range = number().unwrap_or(cfg.activation_range),
+                "precisionTarget" => cfg.precision_target = flag().unwrap_or(cfg.precision_target),
+                "mobSpawn" => cfg.mob_spawn = flag().unwrap_or(cfg.mob_spawn),
+                "resetPitchNormal" => cfg.reset_pitch_normal = flag().unwrap_or(cfg.reset_pitch_normal),
+                "resetPitchDirectional" => {
+                    cfg.reset_pitch_directional = flag().unwrap_or(cfg.reset_pitch_directional)
+                }
+                "useXP" => cfg.use_xp = flag().unwrap_or(cfg.use_xp),
+                "XPPointsAmount" => cfg.xp_points_amount = number().unwrap_or(cfg.xp_points_amount),
+                _ => {}
+            }
+        }
+        cfg.clamped()
+    }
+}
+
+/// XP necessário para passar do nível `level` para o próximo (`Player.getXpNeededForNextLevel`).
+pub fn xp_needed(level: i32) -> i32 {
+    if level >= 30 {
+        112 + (level - 30) * 9
+    } else if level >= 15 {
+        37 + (level - 15) * 5
+    } else {
+        7 + level * 2
+    }
+}
+
+/// `Math.round(float)` do Java: arredonda para cima nos meios (`floor(x + 0.5)`).
+pub fn java_round(x: f32) -> i32 {
+    (x + 0.5).floor() as i32
+}
+
+/// Pontos de XP já ganhos no nível atual, como o original calcula
+/// (`Math.round(experienceProgress * getXpNeededForNextLevel())`).
+pub fn xp_progress_points(level: i32, progress: f32) -> i64 {
+    i64::from(java_round(progress * xp_needed(level) as f32))
+}
+
+/// Canal da mensagem do cliente para o servidor (equivale ao `elevatorid:teleport_request`).
+pub const CHANNEL: &str = "elevator:teleport_request";
+
+/// Codifica o pedido de teleporte: seis inteiros de 32 bits (`from` e `to`), little-endian.
+pub fn encode_request(from: BlockPos, to: BlockPos) -> [u8; 24] {
+    let mut out = [0u8; 24];
+    for (i, v) in [from.x, from.y, from.z, to.x, to.y, to.z].into_iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Lê um pedido de teleporte; `None` se o tamanho não for o certo.
+pub fn decode_request(data: &[u8]) -> Option<(BlockPos, BlockPos)> {
+    if data.len() != 24 {
+        return None;
+    }
+    let n = |i: usize| i32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
+    Some((BlockPos::new(n(0), n(1), n(2)), BlockPos::new(n(3), n(4), n(5))))
+}
+
 /// Sentido do movimento.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dir {
@@ -527,6 +604,60 @@ mod tests {
         assert_eq!((d.yaw, d.pitch), (Yaw::Set(90.0), Pitch::Reset));
         let c = Config { reset_pitch_directional: false, ..Config::default() };
         assert_eq!(destination(B, &t, 0.0, 0.0, &c).pitch, Pitch::Keep);
+    }
+
+    #[test]
+    fn config_reads_the_original_toml() {
+        let toml = "[General]\n#Should elevators have the same color\nsameColor = true\nrange = 100\n\
+                    activationRange = 2\nuseXP = true # custo\nXPPointsAmount = 5\nprecisionTarget = false\n\
+                    resetPitchNormal = true\nbogus = 1\n";
+        let c = Config::from_toml(toml);
+        assert!(c.same_color && c.use_xp && c.reset_pitch_normal && !c.precision_target);
+        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (100, 2, 5));
+        assert!(c.reset_pitch_directional); // ausente: fica no padrão
+    }
+
+    #[test]
+    fn config_toml_values_are_clamped_and_bad_values_ignored() {
+        let c = Config::from_toml("range = 1\nactivationRange = 500\nXPPointsAmount = 0\nsameColor = maybe\n");
+        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (3, 64, 1));
+        assert!(!c.same_color);
+        assert_eq!(Config::from_toml(""), Config::default());
+    }
+
+    #[test]
+    fn xp_needed_matches_minecraft() {
+        assert_eq!(xp_needed(0), 7);
+        assert_eq!(xp_needed(14), 35);
+        assert_eq!(xp_needed(15), 37);
+        assert_eq!(xp_needed(29), 107);
+        assert_eq!(xp_needed(30), 112);
+        assert_eq!(xp_needed(40), 202);
+    }
+
+    #[test]
+    fn java_round_rounds_halves_up() {
+        assert_eq!(java_round(3.5), 4);
+        assert_eq!(java_round(2.5), 3);
+        assert_eq!(java_round(2.4), 2);
+        assert_eq!(java_round(-0.5), 0);
+        assert_eq!(java_round(-1.5), -1);
+    }
+
+    #[test]
+    fn xp_progress_points_follow_the_original_formula() {
+        assert_eq!(xp_progress_points(0, 0.0), 0);
+        assert_eq!(xp_progress_points(0, 0.5), 4); // 0.5 * 7 = 3.5, Math.round dá 4
+        assert_eq!(xp_progress_points(10, 0.5), 14); // 0.5 * 27 = 13.5
+        assert_eq!(xp_progress_points(20, 0.25), 16); // 0.25 * 62 = 15.5
+    }
+
+    #[test]
+    fn requests_round_trip() {
+        let (a, b) = (BlockPos::new(-5, 64, 300), BlockPos::new(-5, -60, 300));
+        assert_eq!(decode_request(&encode_request(a, b)), Some((a, b)));
+        assert_eq!(decode_request(&[0; 23]), None);
+        assert_eq!(decode_request(&[0; 25]), None);
     }
 
     #[test]

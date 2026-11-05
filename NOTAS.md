@@ -69,3 +69,10 @@
   - Só roda no mundo em que o gancho dispara (`host.dimension()` igual ao do jogador).
   - Falta o bloco em si (16 cores, receitas, modelos), que vem do `.hmod`.
 - Para verificar o mod sem áudio: o `horizon-client` completo exige a biblioteca `alsa` do sistema; a checagem usou `default-features = false`.
+
+### Elevator: segunda rodada (XP exato, cliente/servidor, .hmod)
+- Descoberta: os ganchos `player_jump` e `player_toggle_sneak` do servidor só disparam para convidados, não para o dono do mundo. Por isso o mod foi refeito como o original: o cliente lê pular/agachar (`movement_input` + `tick`) e manda um pedido (`net_send_to_server`); o servidor (`net_from_client`) valida e teleporta.
+- XP exato: leitura de `XpLevel`/`XpP` pelo `entity_nbt` e cobrança por `/xp add <jogador> -N points` (cópia do `giveExperiencePoints` do Java no Horizon). Fórmulas e `Math.round` testadas.
+- Config lida de `config/elevatorid-synced.toml` (mesmos nomes, padrões e limites).
+- `.hmod` pronto em `ports/elevator/hmod` (16 blocos, receitas, texturas, idiomas, som). Passa em `cargo horizon-mod build` e `check`.
+- Lista completa de diferenças e itens não verificados: `ports/elevator/README.md`. Nada rodou dentro do jogo ainda.

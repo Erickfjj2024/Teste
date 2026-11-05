@@ -1,71 +1,87 @@
 //! Elevator para o Horizon: pular sobe para o elevador de cima, agachar desce para o de baixo.
 //!
 //! Port do ElevatorMod (VsnGamer, MIT; veja NOTICE.md). A lógica pura está em `../../src/lib.rs`
-//! (testada sem o jogo); este arquivo só liga essa lógica aos ganchos do servidor.
+//! (testada sem o jogo); este arquivo só liga essa lógica aos ganchos do Horizon.
 //!
-//! Como funciona: o servidor avisa quando um jogador pula (`player_jump`) ou agacha
-//! (`player_toggle_sneak`). O mod guarda o pedido. No fim do tick (`server_tick`) ele executa o
-//! `/tp`, porque dentro do gancho de um jogador o jogo não deixa rodar comandos.
-use std::sync::Mutex;
+//! O desenho segue o mod original, que tem duas metades:
+//!
+//! * **Cliente** (`ElevatorHandler.java`): a cada tick vê se o jogador acabou de apertar pular ou
+//!   agachar, procura o elevador de destino e manda um pedido ao servidor.
+//! * **Servidor** (`TeleportPacket.java`): valida o pedido, cobra o XP (se configurado) e teleporta.
+//!
+//! Como no original, o mod precisa estar instalado no cliente e no servidor.
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use horizon_client::mod_api::{
-    Hooks, Host, PlayerJumpEvent, PlayerToggleSneakEvent, ServerTickEvent, ServerTickPhase,
+    Hooks, Host, LevelRef, MovementInputEvent, NetFromClientEvent, NativeServerPlayer, Tag, Text,
+    TickEvent,
 };
 
-// Parte da lógica (elevador direcional, limites de configuração) ainda não é usada pelo jogo.
+// Parte da lógica (elevador direcional) ainda não é usada pelo jogo.
 #[allow(dead_code)]
 #[path = "../../src/lib.rs"]
 mod logic;
 
-use logic::{BlockPos, Config, Destination, Dir, DyeColor, Elevator, Facing, Pitch, Player, Yaw, World};
+use logic::{BlockPos, Config, Dir, DyeColor, Elevator, Facing, Pitch, Player, Reject, World, Yaw};
 
 pub fn hooks() -> Box<dyn Hooks> {
     Box::new(Mod::default())
 }
 
-/// Som tocado no destino. O ElevatorMod usa o próprio `elevatorid:teleport`; até o `.hmod` trazer
-/// esse som, usa-se um som do jogo.
-const TELEPORT_SOUND: &str = "minecraft:block.piston.extend";
+/// Som tocado no destino: o mesmo `elevatorid:teleport` do ElevatorMod, que vai dentro do `.hmod`
+/// (`hmod/assets/elevatorid/sounds.json` e `sounds/teleport.ogg`).
+const TELEPORT_SOUND: &str = "elevatorid:teleport";
 
-struct Pending {
-    name: String,
-    dimension: String,
-    to: BlockPos,
-    dest: Destination,
-}
+/// Vermelho (`ChatFormatting.RED`).
+const RED: u32 = 0xFF5555;
 
 #[derive(Default)]
 struct Mod {
-    pending: Mutex<Vec<Pending>>,
+    /// Teclas como estavam no último `movement_input` (cliente).
+    jump: AtomicBool,
+    sneak: AtomicBool,
+    /// Teclas como estavam no tick anterior, para achar o instante em que foram apertadas.
+    last_jump: AtomicBool,
+    last_sneak: AtomicBool,
+    config: OnceLock<Config>,
 }
 
-/// O mundo de um servidor, visto pelo `Host`.
-struct HostWorld<'a> {
+/// Altura do mundo por dimensão (mínimo, altura), quando o jogo não informa (cliente).
+fn dimension_height(dimension: &str) -> (i32, i32) {
+    match dimension {
+        "minecraft:the_nether" | "minecraft:the_end" => (0, 256),
+        _ => (-64, 384),
+    }
+}
+
+/// O mundo visto pelo `Host`: o nível completo no servidor, o mundo em cena no cliente.
+struct Reader<'a> {
     host: &'a dyn Host,
-    level: horizon_client::mod_api::LevelRef,
+    level: Option<LevelRef>,
+    /// (y mínimo, altura)
+    height: (i32, i32),
 }
 
 fn arr(p: BlockPos) -> [i32; 3] {
     [p.x, p.y, p.z]
 }
 
-impl World for HostWorld<'_> {
+impl World for Reader<'_> {
     fn elevator_at(&self, pos: BlockPos) -> Option<Elevator> {
-        let name = self.host.level_block(self.level, arr(pos))?;
+        let name = match self.level {
+            Some(level) => self.host.level_block(level, arr(pos))?,
+            None => self.host.block(arr(pos)),
+        };
         let color = DyeColor::from_block_name(&name)?;
-        // Altura da forma de colisão do bloco, para o jogador ficar em cima dele.
-        let support_height = self
-            .host
-            .block_collision(arr(pos))
-            .iter()
-            .map(|b| b[4])
-            .fold(0.0_f64, f64::max);
+        // Altura da forma do bloco, para o jogador ficar em cima dele.
+        let top = self.host.block_collision(arr(pos)).iter().map(|b| b[4]).fold(0.0_f64, f64::max);
         Some(Elevator {
             color,
             // O estado direcional e a camuflagem dependem de uma entidade de bloco, ainda não portada.
             directional: false,
             facing: Facing::South,
-            support_height: if support_height > 0.0 { support_height } else { 1.0 },
+            support_height: if top > 0.0 { top } else { 1.0 },
         })
     }
 
@@ -77,13 +93,11 @@ impl World for HostWorld<'_> {
     }
 
     fn in_build_height(&self, y: i32) -> bool {
-        self.host
-            .level_height(self.level)
-            .is_some_and(|(min, height)| y >= min && y < min + height)
+        y >= self.height.0 && y < self.height.0 + self.height.1
     }
 
     fn is_loaded(&self, pos: BlockPos) -> bool {
-        self.host.level_is_loaded(self.level, arr(pos))
+        self.level.is_none_or(|level| self.host.level_is_loaded(level, arr(pos)))
     }
 }
 
@@ -92,96 +106,175 @@ fn safe_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 16 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+fn floor_pos(p: [f64; 3]) -> BlockPos {
+    BlockPos::new(p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32)
+}
+
 impl Mod {
-    fn request(&self, host: &mut dyn Host, uuid: u128, dir: Dir) {
-        let cfg = Config::default();
+    /// A configuração, lida uma vez de `config/elevatorid-synced.toml` (como o original).
+    fn config(&self, host: &dyn Host) -> &Config {
+        self.config.get_or_init(|| {
+            let path = host.instance_dir().join("config").join("elevatorid-synced.toml");
+            std::fs::read_to_string(path).map(|t| Config::from_toml(&t)).unwrap_or_default()
+        })
+    }
+
+    // ---------------------------------------------------------------- cliente
+
+    /// `ElevatorHandler.tryTeleport`: procura o destino e manda o pedido ao servidor.
+    fn client_try(&self, host: &mut dyn Host, dir: Dir) {
+        let Some(player) = host.player() else {
+            return;
+        };
+        let cfg = self.config(&*host).clone();
+        let here = floor_pos([player.x, player.y, player.z]);
+        let request = {
+            let world = Reader { host: &*host, level: None, height: dimension_height(player.dimension) };
+            logic::origin_elevator(&world, here, &cfg).and_then(|from| {
+                logic::find_target(&world, from, dir, &cfg).map(|to| (from, to))
+            })
+        };
+        if let Some((from, to)) = request {
+            let _ = host.net_send_to_server(logic::CHANNEL, &logic::encode_request(from, to));
+        }
+    }
+
+    // --------------------------------------------------------------- servidor
+
+    /// O XP do jogador como o servidor o guarda: nível e progresso (`XpLevel`, `XpP`).
+    fn read_xp(host: &mut dyn Host, p: &NativeServerPlayer) -> Option<(i32, f32)> {
+        let id = u32::try_from(p.entity_id).ok().filter(|&id| id > 0)?;
+        let entity = host.entity(id)?;
+        let nbt = host.entity_nbt(entity)?;
+        let level = match nbt.get(&"XpLevel".into())? {
+            Tag::Int(v) => *v,
+            _ => return None,
+        };
+        let progress = match nbt.get(&"XpP".into())? {
+            Tag::Float(bits) => f32::from_bits(*bits),
+            _ => return None,
+        };
+        Some((level, progress))
+    }
+
+    /// `TeleportPacket.handle`: valida, cobra XP e teleporta.
+    fn server_teleport(&self, host: &mut dyn Host, uuid: u128, from: BlockPos, to: BlockPos) {
+        let cfg = self.config(&*host).clone();
         let Some(p) = host.server_players().into_iter().find(|p| p.uuid == uuid) else {
             return;
         };
-        // Espectador não usa elevador; jogador morto também não.
-        if p.game_mode == 3 || p.health <= 0.0 || !safe_name(&p.name) {
+        if !safe_name(&p.name) {
             return;
         }
-        // Os dados de bloco e colisão do `Host` valem para o mundo em que o gancho roda.
+        // Os dados de colisão do `Host` valem para o mundo em que o gancho roda.
         if host.dimension() != p.dimension {
             return;
         }
         let Some(level) = host.level(&p.dimension) else {
             return;
         };
-        let world = HostWorld { host: &*host, level };
+        let height = host.level_height(level).unwrap_or_else(|| dimension_height(&p.dimension));
 
-        let here = BlockPos::new(
-            p.position[0].floor() as i32,
-            p.position[1].floor() as i32,
-            p.position[2].floor() as i32,
-        );
-        let Some(from) = logic::origin_elevator(&world, here, &cfg) else {
-            return;
-        };
-        let Some(to) = logic::find_target(&world, from, dir, &cfg) else {
-            return;
-        };
-        let player = Player {
-            alive: true,
+        let here = floor_pos(p.position);
+        let mut player = Player {
+            alive: p.health > 0.0,
             creative: p.game_mode == 1,
             block_pos: here,
-            // O gancho não vê o XP do jogador; por isso `use_xp` fica desligado (padrão do original).
             xp_progress_points: 0,
             xp_level: 0,
         };
-        if logic::validate(&world, &player, from, to, &cfg).is_err() || logic::xp_cost(&player, &cfg).is_err() {
-            return;
-        }
-        let Some(target) = world.elevator_at(to) else {
+        let (target, valid) = {
+            let world = Reader { host: &*host, level: Some(level), height };
+            (world.elevator_at(to), logic::validate(&world, &player, from, to, &cfg))
+        };
+        let (Some(target), Ok(())) = (target, valid) else {
             return;
         };
+
+        // XP: como no original, só se `useXP` estiver ligado e o jogador não for criativo.
+        let mut cost = 0;
+        if cfg.use_xp && !player.creative {
+            let Some((xp_level, progress)) = Self::read_xp(host, &p) else {
+                return;
+            };
+            player.xp_level = u32::try_from(xp_level).unwrap_or(0);
+            player.xp_progress_points = logic::xp_progress_points(xp_level, progress);
+            match logic::xp_cost(&player, &cfg) {
+                Ok(c) => cost = c,
+                Err(Reject::MissingXp) => {
+                    host.action_bar(
+                        uuid,
+                        Text::translate_with_fallback(
+                            "elevatorid.message.missing_xp",
+                            "You do not have enough XP to use elevators",
+                            &[],
+                        )
+                        .with_color(RED),
+                    );
+                    return;
+                }
+                Err(_) => return,
+            }
+        }
+        if cost > 0 && !host.run_command(&format!("xp add {} -{} points", p.name, cost)) {
+            return; // não conseguiu cobrar: não teleporta de graça
+        }
+
         let dest = logic::destination(to, &target, p.position[0], p.position[2], &cfg);
-        self.pending.lock().unwrap().push(Pending { name: p.name, dimension: p.dimension, to, dest });
+        let yaw = match dest.yaw {
+            Yaw::Keep => "~".to_string(),
+            Yaw::Set(v) => format!("{v}"),
+        };
+        let pitch = match dest.pitch {
+            Pitch::Keep => "~",
+            Pitch::Reset => "0",
+        };
+        let line = format!(
+            "execute in {} run tp {} {} {} {} {} {}",
+            p.dimension, p.name, dest.x, dest.y, dest.z, yaw, pitch
+        );
+        if host.run_command(&line) {
+            host.play_sound(
+                TELEPORT_SOUND,
+                [f64::from(to.x) + 0.5, f64::from(to.y) + 0.5, f64::from(to.z) + 0.5],
+                4, // SoundSource.BLOCKS
+                1.0,
+                1.0,
+            );
+        }
     }
 }
 
 impl Hooks for Mod {
-    /// Pular: sobe para o próximo elevador acima.
-    fn player_jump(&self, host: &mut dyn Host, event: &mut PlayerJumpEvent<'_>) {
-        self.request(host, event.player, Dir::Up);
+    /// Cliente: guarda o estado das teclas de pular e agachar.
+    fn movement_input(&self, _host: &dyn Host, event: &mut MovementInputEvent) {
+        self.jump.store(event.jump, Ordering::Relaxed);
+        self.sneak.store(event.sneak, Ordering::Relaxed);
     }
 
-    /// Agachar: desce para o próximo elevador abaixo.
-    fn player_toggle_sneak(&self, host: &mut dyn Host, event: &mut PlayerToggleSneakEvent<'_>) {
-        if event.sneaking {
-            self.request(host, event.player, Dir::Down);
-        }
-    }
-
-    /// No fim do tick: executa os teleportes pedidos.
-    fn server_tick(&self, host: &mut dyn Host, event: &mut ServerTickEvent<'_>) {
-        if !matches!(event.phase, ServerTickPhase::ServerTickEnd { .. }) {
+    /// Cliente: no instante em que uma tecla é apertada, tenta usar o elevador.
+    /// Como no original, agachar é visto antes de pular.
+    fn tick(&self, host: &mut dyn Host, _event: &mut TickEvent) {
+        if !host.window() {
             return;
         }
-        let todo = std::mem::take(&mut *self.pending.lock().unwrap());
-        for p in todo {
-            let yaw = match p.dest.yaw {
-                Yaw::Keep => "~".to_string(),
-                Yaw::Set(v) => format!("{v}"),
-            };
-            let pitch = match p.dest.pitch {
-                Pitch::Keep => "~",
-                Pitch::Reset => "0",
-            };
-            let line = format!(
-                "execute in {} run tp {} {} {} {} {} {}",
-                p.dimension, p.name, p.dest.x, p.dest.y, p.dest.z, yaw, pitch
-            );
-            if host.run_command(&line) {
-                host.play_sound(
-                    TELEPORT_SOUND,
-                    [f64::from(p.to.x) + 0.5, f64::from(p.to.y) + 0.5, f64::from(p.to.z) + 0.5],
-                    4, // SoundSource.BLOCKS
-                    1.0,
-                    1.0,
-                );
-            }
+        let sneaking = self.sneak.load(Ordering::Relaxed);
+        if self.last_sneak.swap(sneaking, Ordering::Relaxed) != sneaking && sneaking {
+            self.client_try(host, Dir::Down);
+        }
+        let jumping = self.jump.load(Ordering::Relaxed);
+        if self.last_jump.swap(jumping, Ordering::Relaxed) != jumping && jumping {
+            self.client_try(host, Dir::Up);
+        }
+    }
+
+    /// Servidor: o pedido de teleporte de um cliente.
+    fn net_from_client(&self, host: &mut dyn Host, event: &mut NetFromClientEvent<'_>) {
+        if event.channel != logic::CHANNEL {
+            return;
+        }
+        if let Some((from, to)) = logic::decode_request(event.data) {
+            self.server_teleport(host, event.player, from, to);
         }
     }
 }
