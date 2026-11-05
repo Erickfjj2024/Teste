@@ -1,0 +1,25 @@
+# /elevator shows the settings and sets them when you are alone.
+
+[[step]]
+join = "Alex"
+command = "elevator show"
+expect.feedback = "sameColor=false range=384 activationRange=6 precisionTarget=true resetPitchNormal=false resetPitchDirectional=true useXP=false XPPointsAmount=1"
+
+[[step]]
+command = "elevator set range 10"
+expect.feedback = "range = 10"
+
+[[step]]
+command = "elevator set bogus 1"
+expect.error = "Unknown setting bogus. Settings: sameColor, range, activationRange, precisionTarget, mobSpawn, resetPitchNormal, resetPitchDirectional, useXP, XPPointsAmount"
+
+[[step]]
+command = "elevator set useXP maybe"
+expect.error = "useXP takes true or false"
+
+# Not with company.
+[[step]]
+join = "Sam"
+as = "Alex"
+command = "elevator set range 20"
+expect.error = "Settings can only be changed when you are alone on the server"

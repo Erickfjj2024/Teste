@@ -1,0 +1,161 @@
+From 555e3c7bd1c2ef81bd4a2a169d9bd99f0c631b11 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 19:21:29 +0000
+Subject: [PATCH 2/3] player-control: reach guests (the owner is one with the
+ server on its own thread) and play sounds for them
+
+---
+ crates/horizon-client/src/game/server_mods.rs | 104 ++++++++++++++----
+ 1 file changed, 84 insertions(+), 20 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 624ec9b..7f2a27e 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -273,11 +273,8 @@ mod run {
+             }
+             let players = self.server_players(None);
+             let mut snapshot = self.mod_snapshot_with(players.clone());
+-            if self.options.execution_role.is_client()
+-                && self.remote.is_none()
+-                && self.player.is_some()
+-            {
+-                snapshot.motions = vec![(uuid_string(self.player_uuid()), self.own_motion())];
++            if self.mods.world {
++                snapshot.motions = self.server_motions();
+             }
+             self.mods.mods.set_snapshot(snapshot);
+             self.lend_world();
+@@ -418,13 +415,49 @@ mod run {
+             }
+         }
+ 
+-        /// Whether `id` is the window's own player, in-frame: the only player
+-        /// capability `player-control` reaches so far.
+-        fn is_own_player(&self, id: &str) -> bool {
+-            self.options.execution_role.is_client()
++        /// Who a server mod's player id names: the window's own player in-frame,
++        /// or a guest by connection (the owner of a single-player world is one
++        /// when the server runs on its own thread, the default). Also the
++        /// dimension they are in.
++        fn mod_player(&self, id: &str) -> Option<(Target, String)> {
++            if self.options.execution_role.is_client()
+                 && self.remote.is_none()
+                 && self.player.is_some()
+                 && id == uuid_string(self.player_uuid())
++            {
++                return Some((Target::Player, self.dim.id().to_owned()));
++            }
++            self.lan
++                .iter()
++                .flat_map(|h| &h.hub.guests)
++                .find(|g| g.placed && uuid_string(g.uuid) == id)
++                .map(|g| (Target::Guest(g.conn), g.dimension.clone()))
++        }
++
++        /// What every player is doing, as capability `player-control` reads it:
++        /// the window's own player in-frame, then each guest (their game state
++        /// swapped in for the read).
++        fn server_motions(&mut self) -> Vec<(String, Motion)> {
++            let mut out = Vec::new();
++            if self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++            {
++                out.push((uuid_string(self.player_uuid()), self.own_motion()));
++            }
++            let guests: Vec<(u32, u128)> = self
++                .lan
++                .iter()
++                .flat_map(|h| &h.hub.guests)
++                .filter(|g| g.placed)
++                .map(|g| (g.conn, g.uuid))
++                .collect();
++            for (conn, uuid) in guests {
++                if let Some(m) = self.for_player(Target::Guest(conn), |g| g.own_motion()) {
++                    out.push((uuid_string(uuid), m));
++                }
++            }
++            out
+         }
+ 
+         /// Puts back the chunks [`Game::lend_world`] lent.
+@@ -656,23 +689,39 @@ mod run {
+                     yaw,
+                     pitch,
+                 } => {
+-                    if !self.is_own_player(&player) || dimension != self.dim.id() {
++                    let Some((target, now)) = self.mod_player(&player) else {
++                        return;
++                    };
++                    if now != dimension || (host.is_some() && target != Target::Player) {
+                         log::warn!(
+-                            "Horizon: mod {name} can only move the window's own player within their dimension"
++                            "Horizon: mod {name} can move a player only within the dimension they are in"
+                         );
+                         return;
+                     }
+-                    let rotation = (yaw.is_some() || pitch.is_some())
+-                        .then(|| [yaw.unwrap_or(self.yaw), pitch.unwrap_or(self.pitch)]);
+-                    self.teleport_to_in_level(Target::Player, pos, rotation);
++                    let rotation = (yaw.is_some() || pitch.is_some()).then(|| {
++                        let (cy, cp) = match target {
++                            Target::Player => (self.yaw, self.pitch),
++                            _ => (0.0, 0.0),
++                        };
++                        [yaw.unwrap_or(cy), pitch.unwrap_or(cp)]
++                    });
++                    self.teleport_to_in_level(target, pos, rotation);
+                 }
+-                Output::TakeXp { name, player, points } => {
+-                    if !self.is_own_player(&player) {
+-                        log::warn!("Horizon: mod {name} can only charge the window's own player");
++                Output::TakeXp {
++                    name,
++                    player,
++                    points,
++                } => {
++                    let Some((target, _)) = self.mod_player(&player) else {
+                         return;
+-                    }
++                    };
+                     let points = i32::try_from(points).unwrap_or(i32::MAX);
+-                    self.change_experience(true, false, -points);
++                    if self
++                        .for_player(target, |g| g.change_experience(true, false, -points))
++                        .is_none()
++                    {
++                        log::warn!("Horizon: mod {name} could not take experience from {player}");
++                    }
+                 }
+                 Output::PlaySound {
+                     dimension,
+@@ -682,9 +731,24 @@ mod run {
+                     pitch,
+                     ..
+                 } => {
+-                    if dimension == self.dim.id() {
++                    if dimension != self.dim.id() {
++                        return;
++                    }
++                    // The window's own game plays it when it simulates the world...
++                    if self.options.execution_role.is_client() && self.remote.is_none() {
+                         self.audio.play(&sound, Some(pos), volume, pitch);
+                     }
++                    // ...and the guests' games are sent it when the host is free.
++                    if self.lan.is_some() || host.is_some() {
++                        self.creatures.lan_sounds.push(super::super::creatures::NativeSound {
++                            dimension: self.dim.id(),
++                            sound,
++                            at: pos,
++                            source: 4, // SoundSource.BLOCKS
++                            volume,
++                            pitch,
++                        });
++                    }
+                 }
+                 _ => {}
+             }
+-- 
+2.43.0
+

@@ -1,0 +1,290 @@
+//! Elevator, a Horizon server mod (`docs/mods.md`, "Server mods"): a port of
+//! ElevatorMod (VsnGamer, MIT; see NOTICE). Jump on an elevator block to go
+//! up to the next one above it, sneak to go down.
+//!
+//! The rules (which block is the target, what the server checks, what the
+//! experience cost is, where the player lands) are in `logic.rs`, tested
+//! without the game. This file reads the world and the players through the
+//! mod API and carries out what the logic decided.
+//!
+//! The blocks come from the content mod `elevatorid` (`elevatorid:elevator_<colour>`).
+use std::collections::{BTreeMap, HashMap};
+
+use horizon_mod_sdk::server::{
+    Args, Player, Registration, ServerMod, GameMode, player_control, players, world,
+};
+use horizon_mod_sdk::storage;
+
+// The directional elevator's seat of the rules is the same file the PC mod builds from.
+#[allow(dead_code)]
+mod logic;
+
+use logic::{
+    BlockPos, Config, Dir, DyeColor, Elevator, Facing, Pitch, Player as Rider, Reject, World, Yaw,
+};
+
+/// The sound the Java mod plays on arrival (`elevatorid:teleport`, in the content mod).
+const TELEPORT_SOUND: &str = "elevatorid:teleport";
+/// The config keys `/elevator set` takes (ElevatorMod's `elevatorid-synced.toml`).
+const KEYS: [&str; 9] = [
+    "sameColor",
+    "range",
+    "activationRange",
+    "precisionTarget",
+    "mobSpawn",
+    "resetPitchNormal",
+    "resetPitchDirectional",
+    "useXP",
+    "XPPointsAmount",
+];
+
+struct Elevators {
+    config: Config,
+    /// The config as `key = value` lines, kept in `storage`.
+    lines: BTreeMap<String, String>,
+    /// What each player was doing the last tick: (sneaking, jumps).
+    seen: HashMap<String, (bool, u32)>,
+}
+
+/// The world's height by dimension: (lowest block, height).
+fn dimension_height(dimension: &str) -> (i32, i32) {
+    match dimension {
+        "minecraft:the_nether" | "minecraft:the_end" => (0, 256),
+        _ => (-64, 384),
+    }
+}
+
+/// The block state's name and its `key=value` properties.
+fn parse_state(state: &str) -> (&str, Vec<(&str, &str)>) {
+    let (name, rest) = state.split_once('[').unwrap_or((state, ""));
+    let props = rest
+        .trim_end_matches(']')
+        .split(',')
+        .filter_map(|p| p.split_once('='))
+        .collect();
+    (name, props)
+}
+
+fn facing_of(name: &str) -> Option<Facing> {
+    Some(match name {
+        "north" => Facing::North,
+        "south" => Facing::South,
+        "east" => Facing::East,
+        "west" => Facing::West,
+        _ => return None,
+    })
+}
+
+/// The world as one dimension's loaded chunks show it.
+struct Reader<'a> {
+    dimension: &'a str,
+}
+
+impl Reader<'_> {
+    fn boxes(&self, pos: BlockPos) -> Vec<world::CollisionBox> {
+        world::get_collision(self.dimension, pos.x, pos.y, pos.z).unwrap_or_default()
+    }
+}
+
+impl World for Reader<'_> {
+    fn elevator_at(&self, pos: BlockPos) -> Option<Elevator> {
+        let state = world::get_block(self.dimension, pos.x, pos.y, pos.z)?;
+        let (name, props) = parse_state(&state);
+        let color = DyeColor::from_block_name(name)?;
+        let prop = |key: &str| props.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+        let top = self.boxes(pos).iter().map(|b| b.max_y).fold(0.0_f64, f64::max);
+        Some(Elevator {
+            color,
+            directional: prop("directional") == Some("true"),
+            facing: prop("facing").and_then(facing_of).unwrap_or(Facing::North),
+            support_height: if top > 0.0 { top } else { 1.0 },
+        })
+    }
+
+    fn is_suffocating(&self, pos: BlockPos) -> bool {
+        self.boxes(pos).iter().any(|b| {
+            b.max_x - b.min_x >= 0.999 && b.max_y - b.min_y >= 0.999 && b.max_z - b.min_z >= 0.999
+        })
+    }
+
+    fn in_build_height(&self, y: i32) -> bool {
+        let (min, height) = dimension_height(self.dimension);
+        y >= min && y < min + height
+    }
+
+    fn is_loaded(&self, pos: BlockPos) -> bool {
+        world::get_block(self.dimension, pos.x, pos.y, pos.z).is_some()
+    }
+}
+
+fn render(lines: &BTreeMap<String, String>) -> String {
+    let mut text = String::from("[General]\n");
+    for (k, v) in lines {
+        text.push_str(&format!("{k} = {v}\n"));
+    }
+    text
+}
+
+impl Elevators {
+    /// `/elevator set <key> <value>`: only when you are alone on the server.
+    fn set(&mut self, key: &str, value: &str) -> Result<String, String> {
+        if !KEYS.contains(&key) {
+            return Err(format!("Unknown setting {key}. Settings: {}", KEYS.join(", ")));
+        }
+        let boolean = matches!(
+            key,
+            "sameColor" | "precisionTarget" | "mobSpawn" | "resetPitchNormal" | "resetPitchDirectional"
+                | "useXP"
+        );
+        let ok = if boolean {
+            matches!(value, "true" | "false")
+        } else {
+            value.parse::<u32>().is_ok()
+        };
+        if !ok {
+            let want = if boolean { "true or false" } else { "a whole number" };
+            return Err(format!("{key} takes {want}"));
+        }
+        self.lines.insert(key.to_owned(), value.to_owned());
+        let text = render(&self.lines);
+        self.config = Config::from_toml(&text);
+        storage::set("config", text.as_bytes())?;
+        Ok(format!("{key} = {value}"))
+    }
+
+    fn show(&self) -> String {
+        let c = &self.config;
+        format!(
+            "sameColor={} range={} activationRange={} precisionTarget={} resetPitchNormal={} \
+             resetPitchDirectional={} useXP={} XPPointsAmount={}",
+            c.same_color,
+            c.range,
+            c.activation_range,
+            c.precision_target,
+            c.reset_pitch_normal,
+            c.reset_pitch_directional,
+            c.use_xp,
+            c.xp_points_amount
+        )
+    }
+
+    /// `ElevatorHandler.tryTeleport` and `TeleportPacket.handle` in one place:
+    /// finds the target, checks it as the server does, charges and moves the player.
+    fn ride(&self, p: &Player, motion: &player_control::Motion, dir: Dir) {
+        if p.health <= 0.0 || p.game_mode == GameMode::Spectator {
+            return;
+        }
+        let cfg = &self.config;
+        let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        let reader = Reader { dimension: &p.dimension };
+        let Some(from) = logic::origin_elevator(&reader, here, cfg) else {
+            return;
+        };
+        let Some(to) = logic::find_target(&reader, from, dir, cfg) else {
+            return;
+        };
+        let rider = Rider {
+            alive: true,
+            creative: p.game_mode == GameMode::Creative,
+            block_pos: here,
+            xp_progress_points: logic::xp_progress_points(motion.xp_level, motion.xp_progress),
+            xp_level: u32::try_from(motion.xp_level).unwrap_or(0),
+        };
+        if logic::validate(&reader, &rider, from, to, cfg).is_err() {
+            return;
+        }
+        let Some(target) = reader.elevator_at(to) else {
+            return;
+        };
+        // The experience check and charge: only with `useXP` on, and not in creative.
+        match logic::xp_cost(&rider, cfg) {
+            Ok(0) => {}
+            Ok(cost) => {
+                if player_control::take_xp(&p.id, cost).is_err() {
+                    return;
+                }
+            }
+            Err(Reject::MissingXp) => {
+                players::tell(&p.id, "You do not have enough XP to use elevators");
+                return;
+            }
+            Err(_) => return,
+        }
+        let dest = logic::destination(to, &target, p.x, p.z, cfg);
+        let yaw = match dest.yaw {
+            Yaw::Set(v) => Some(v),
+            Yaw::Keep => None,
+        };
+        let pitch = (dest.pitch == Pitch::Reset).then_some(0.0);
+        if player_control::teleport(&p.id, &p.dimension, dest.x, dest.y, dest.z, yaw, pitch).is_ok() {
+            player_control::play_sound(
+                &p.dimension,
+                TELEPORT_SOUND,
+                f64::from(to.x) + 0.5,
+                f64::from(to.y) + 0.5,
+                f64::from(to.z) + 0.5,
+                1.0,
+                1.0,
+            );
+        }
+    }
+}
+
+impl ServerMod for Elevators {
+    fn init() -> Result<(Self, Registration), String> {
+        let text = storage::get("config")
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let lines = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+            .collect();
+        Ok((
+            Elevators {
+                config: Config::from_toml(&text),
+                lines,
+                seen: HashMap::new(),
+            },
+            Registration::new().on_tick().command("elevator"),
+        ))
+    }
+
+    fn tick(&mut self, _tick: u64) {
+        let online = players::online();
+        self.seen.retain(|id, _| online.iter().any(|p| p.id == *id));
+        for p in &online {
+            let Some(m) = player_control::get_motion(&p.id) else {
+                continue;
+            };
+            let Some(&(was_sneaking, was_jumps)) = self.seen.get(&p.id) else {
+                self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
+                continue;
+            };
+            self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
+            // As in ElevatorHandler: the sneak key first, then the jump key.
+            if m.sneaking && !was_sneaking {
+                self.ride(p, &m, Dir::Down);
+            }
+            if m.jumps > was_jumps {
+                self.ride(p, &m, Dir::Up);
+            }
+        }
+    }
+
+    fn command(&mut self, _player: &Player, _name: &str, args: &Args) -> Result<Option<String>, String> {
+        let mut words = args.text().split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (None | Some("show"), _, _) => Ok(Some(self.show())),
+            (Some("set"), Some(key), Some(value)) => {
+                if players::online().len() > 1 {
+                    return Err("Settings can only be changed when you are alone on the server".into());
+                }
+                self.set(key, value).map(Some)
+            }
+            _ => Err("Use /elevator show, or /elevator set <setting> <value>".into()),
+        }
+    }
+}
+
+horizon_mod_sdk::export_server_mod!(Elevators);

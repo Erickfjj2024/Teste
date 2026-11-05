@@ -59,6 +59,10 @@ Ainda difere ou falta:
 * **Altura do mundo:** o cliente supõe as alturas padrão de cada dimensão.
 * **Outras formas de nascer:** spawners e geração de mundo não passam pelo `potential_spawns`.
 
+## Android
+
+Veja `ANDROID.md`: o mesmo elevador como mod WebAssembly, com um APK só.
+
 ## Como testar
 
 Veja `COMO-TESTAR.md`.

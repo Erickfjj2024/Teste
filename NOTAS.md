@@ -128,3 +128,9 @@
 - Fusão de teste (git merge-tree, base = último upstream mesclado pelo fork, 8c02c0b de 1 nov): o Horizon atual (f319701, 5 nov) mudou 2272 arquivos (+539 mil linhas) em 4 dias; o fork mudou 623. Resultado: 54 arquivos em conflito (a maioria em horizon-client-render, game.rs, mods.rs, native_hooks.rs, Cargo.*, launcher).
 - O Horizon principal ainda tem o executor WASM (wasmtime, recurso `runtime` em horizon-mods), mas removeu o crate `horizon-mod-sdk`; a doc diz "code is native now".
 - Conclusão: o caminho mais curto é adicionar à API WASM atual do fork (WIT + host em horizon-mods/game/mods.rs) as capacidades que o Elevator precisa; a ponte gerada completa fica para depois, sobre uma base atualizada.
+
+### Elevator em WebAssembly para o Horizon Android (feito)
+- Capacidade nova `player-control` (get-motion, teleport, take-xp, play-sound) + `world.get-collision`, API nível 8, no fork Vasysik/horizon-android (branch local `elevator-capabilities`). Patches em `ports/elevator/android-fork/` (aplicam limpos em 150a414).
+- Descoberta: o servidor integrado roda em thread própria por padrão (`HORIZON_SERVER_THREAD`), e o dono do mundo é um "convidado" para mods de servidor; a primeira versão só tratava o jogador local e não funcionaria no padrão. Corrigido.
+- `ports/elevator/wasm-mod/` (exemplo) e `dist/elevator-code-android.hmod`. 8 roteiros de teste passam na sandbox real; nada rodou num jogo/celular de verdade.
+- Limites: sem mobSpawn, sem tela/camuflagem, pulo só do chão, config por comando. Detalhes em `ports/elevator/ANDROID.md`.
