@@ -97,3 +97,8 @@
 - Caminho viável para o comportamento no Android: datapack de funções no mundo (`<world>/datapacks`), usando os critérios `minecraft.custom:minecraft.jump` e `sneak_time` (existem no Horizon) e `execute if block ... #elevatorid:elevators`. Não é exato (validade "não sufoca", arredondamento do XP, latência de 1 tick).
 - URL direta do .hmod (repo público): https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid.hmod
 - Bloqueado: compilar o fork Android (código externo não autorizado) para validar o .hmod contra ele.
+
+### Correção: um `.hmod` pode ter código (WebAssembly)
+- Eu tinha escrito que `.hmod` é só conteúdo. Isso vale para a documentação do Horizon principal; o fork Android ainda roda `.hmod` com `mod.wasm` (código em sandbox, Wasmtime, 64 bits).
+- No registro `horizon-mods` (125 versões): 102 são `.hnmod` (nativo, NÃO roda no Android), 13 são `.hmod` (alguns com código WASM, como compass_bar, e partes de "assets" de mods de duas partes), 7 shaders e 1 resource pack.
+- Mods de duas partes (ex.: Wayfarer Stones, Deepbore Quarry): o `.hmod` só traz modelos/texturas/receitas ("does nothing alone") e o código está no `.hnmod`. É exatamente o formato do Elevator.
