@@ -89,3 +89,11 @@
 ### Passo a passo de teste
 - `ports/elevator/COMO-TESTAR.md`: instalar o `.hmod` e compilar o mod nativo com `horizon-launcher native-build`, tabela de testes (inclui XP) e solução de problemas.
 - O pin do mod foi trocado para o Nightly `2026-11-05-f319701` (o launcher baixa o código-fonte por Nightly); o mod compila nesse commit.
+
+### Plataforma real do usuário: Horizon Android (github.com/Vasysik/horizon-android, fork de 4 nov 2026)
+- Importa `.hmod` por URL HTTPS direta ou seletor de arquivos do sistema (64 bits). Mods novos começam desligados (aba Installed).
+- Mods nativos `.hnmod` NÃO são suportados no Android. Logo o mod nativo `ports/elevator/api` não roda lá; só o `.hmod` (blocos, receitas, texturas, som).
+- O fork ainda tem mods WASM (API 0.1/0.3, `crates/horizon-mod-sdk/wit/horizon.wit`), mas o cliente não lê blocos nem teleporta (só `command.run-quiet`, `game.get-player`, teclas próprias). Servidor (0.3, experimental) lê blocos mas não teleporta.
+- Caminho viável para o comportamento no Android: datapack de funções no mundo (`<world>/datapacks`), usando os critérios `minecraft.custom:minecraft.jump` e `sneak_time` (existem no Horizon) e `execute if block ... #elevatorid:elevators`. Não é exato (validade "não sufoca", arredondamento do XP, latência de 1 tick).
+- URL direta do .hmod (repo público): https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevatorid.hmod
+- Bloqueado: compilar o fork Android (código externo não autorizado) para validar o .hmod contra ele.
