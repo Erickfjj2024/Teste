@@ -76,3 +76,12 @@
 - Config lida de `config/elevatorid-synced.toml` (mesmos nomes, padrões e limites).
 - `.hmod` pronto em `ports/elevator/hmod` (16 blocos, receitas, texturas, idiomas, som). Passa em `cargo horizon-mod build` e `check`.
 - Lista completa de diferenças e itens não verificados: `ports/elevator/README.md`. Nada rodou dentro do jogo ainda.
+
+### Elevator: conferência contra o código do Horizon (a pedido do usuário)
+- O usuário apontou que o Horizon usa a mesma lógica do Java, então algumas "limitações" podiam não ser reais. Conferido:
+  - Velocidade/queda no teleporte: o `/tp` do Horizon já zera ambas (igual ao Java). Não é limitação.
+  - Mobs nascendo: resolvido com o gancho `potential_spawns` quando `mobSpawn = false`.
+  - Som `elevatorid:teleport`: o `play_sound` do servidor aceita sons de mods (API 61).
+  - Jogo solo: segundo a doc, roda em servidor integrado e o cliente entra nele; deve funcionar, ainda não visto.
+- Correção de um palpite meu: eu tinha dito que no solo o elevador não funcionaria. Era uma conclusão apressada: li `native_net_send_to_server` e `native_run_command` do ponto de vista do jogo do servidor, não do cliente.
+- Ainda difere: elevador direcional/camuflagem/tela (precisa de entidade de bloco), config por mundo/sincronizada, spawners.

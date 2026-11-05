@@ -37,18 +37,27 @@ Com `useXP = true` o custo é cobrado como no Java:
 Nada disto rodou dentro do jogo ainda. O que foi checado: os testes da lógica, a compilação do mod
 contra a API real do Horizon e as checagens do pacote (`cargo horizon-mod build` e `check`).
 
-* **Mobs nascendo nos elevadores:** o original impede por padrão (`mobSpawn = false`). O formato de
-  bloco do Horizon não tem como dizer isso, então aqui os mobs nascem como na lã.
+Conferido no código do Horizon, que copia a lógica do Java (e por isso **não é** uma diferença):
+
+* **Velocidade e queda:** o `/tp` do Horizon, num jogador, zera a velocidade e a distância de queda,
+  como `ServerPlayer.teleportTo` do Java. O resultado é o mesmo do original.
+* **Mobs nascendo nos elevadores:** com `mobSpawn = false` (padrão), o gancho `potential_spawns` deixa
+  vazia a lista de mobs naturais de uma posição quando o bloco de baixo é um elevador. Cobre o
+  nascimento natural, que é onde o `isValidSpawn` do original atua.
+* **Som:** o `play_sound` do servidor aceita sons de mods (API 61), então o `elevatorid:teleport`
+  do `sounds.json` original deve tocar.
+* **Jogo solo:** a documentação diz que o jogo solo roda num servidor integrado (thread própria) e o
+  cliente entra nele como em qualquer servidor ("joining a server, single player's own included"). Por
+  isso o pedido do cliente deve chegar ao servidor. Isso ainda não foi visto funcionando.
+
+Ainda difere ou falta:
+
 * **Direcional, seta e camuflagem, tela de opções:** dependem de uma entidade de bloco, ainda não portada.
   O bloco já declara as propriedades `facing`, `directional` e `show_arrow` do original.
-* **Teleporte:** é feito com o comando `/tp`. O original zera a velocidade vertical do jogador
-  depois de teleportar, e isso não é possível para jogadores pela API atual.
-* **Solo:** o envio do pedido do cliente ao servidor (`net_send_to_server`) não foi testado em mundo
-  de um jogador só.
 * **Configuração:** lê só `config/elevatorid-synced.toml`, sem os ajustes por mundo e sem sincronizar
   do servidor para o cliente.
-* **Som:** usa `elevatorid:teleport` do `sounds.json` original; falta confirmar que o Horizon o registra.
 * **Altura do mundo:** o cliente supõe as alturas padrão de cada dimensão.
+* **Outras formas de nascer:** spawners e geração de mundo não passam pelo `potential_spawns`.
 
 ## Como construir
 

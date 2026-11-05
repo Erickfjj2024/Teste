@@ -14,8 +14,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use horizon_client::mod_api::{
-    Hooks, Host, LevelRef, MovementInputEvent, NetFromClientEvent, NativeServerPlayer, Tag, Text,
-    TickEvent,
+    Flow, Hooks, Host, LevelRef, MovementInputEvent, NativeServerPlayer, NetFromClientEvent,
+    PotentialSpawnsEvent, Tag, Text, TickEvent,
 };
 
 // Parte da lógica (elevador direcional) ainda não é usada pelo jogo.
@@ -266,6 +266,21 @@ impl Hooks for Mod {
         if self.last_jump.swap(jumping, Ordering::Relaxed) != jumping && jumping {
             self.client_try(host, Dir::Up);
         }
+    }
+
+    /// Servidor: com `mobSpawn = false` (o padrão do original), nenhum mob nasce em cima de um
+    /// elevador. O original faz isso com `isValidSpawn`; aqui a lista de mobs possíveis daquela
+    /// posição fica vazia quando o bloco de baixo é um elevador.
+    fn potential_spawns(&self, host: &dyn Host, event: &mut PotentialSpawnsEvent<'_>) -> Flow {
+        if self.config(host).mob_spawn {
+            return Flow::Continue;
+        }
+        let [x, y, z] = event.pos;
+        let on_elevator = host
+            .level(event.dimension)
+            .and_then(|level| host.level_block(level, [x, y - 1, z]))
+            .is_some_and(|name| DyeColor::from_block_name(&name).is_some());
+        if on_elevator { Flow::Cancel } else { Flow::Continue }
     }
 
     /// Servidor: o pedido de teleporte de um cliente.
