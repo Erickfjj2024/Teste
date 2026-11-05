@@ -180,3 +180,9 @@
 - Correção no mod (0.1.4, patch 0011): pousa em cima de blocos finos sobre o elevador (+1/16), e o `/elevator debug` lê o que o tick guardou (o comando digitado não recebe `motions` no snapshot; o ajuste por nome em 0.1.3 não resolvia).
 - `elevator-code-android.hmod` 0.1.4 SHA-256 7700c4eb…ff8f. 12 roteiros passam.
 - APK v3 compilado: versão 3, SHA-256 8e1c5ae3…a279, mesma assinatura (a685f10c…c765), auditoria passou. Instala por cima da v2.
+
+
+## Mekanism: decisão e levantamento
+- Usuário preferiu levantar todo o uso de API do Mekanism antes e implementar as primitivas de uma vez (um APK).
+- Levantamento em `ports/mekanism/API-SURVEY.md` (2416 arquivos Java; 154 entidades de bloco, 208 telas, 478 usos de transferência, 79 de químicos, 42 de multibloco).
+- Plano: etapas A–D de primitivas no APK; depois máquinas só como .hmod.
