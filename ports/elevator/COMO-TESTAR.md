@@ -69,7 +69,7 @@ horizon-launcher native-build . --instance NOME --trust-native-code
 - O `horizon-launcher` é o programa de linha de comando do launcher. Se o comando não for encontrado,
   procure o executável na pasta onde o launcher foi instalado.
 - Ele mostra um aviso: mods nativos **não ficam em sandbox** e rodam com os seus direitos de usuário.
-  Leia o código em `api/src/lib.rs` se quiser (cerca de 280 linhas).
+  Leia o código em `api/src/lib.rs` se quiser (cerca de 300 linhas).
 - A **primeira vez** ele baixa o Rust do próprio launcher e compila o jogo inteiro: 20 a 30 minutos.
 - O mod está fixado no Nightly **`2026-11-05-f319701`** do Horizon. O launcher compila o jogo nesse
   commit. Se ele avisar que há mods fixados em versões diferentes, escolha **Build anyway**.
