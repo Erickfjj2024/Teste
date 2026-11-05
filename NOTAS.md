@@ -186,3 +186,5 @@
 - Usuário preferiu levantar todo o uso de API do Mekanism antes e implementar as primitivas de uma vez (um APK).
 - Levantamento em `ports/mekanism/API-SURVEY.md` (2416 arquivos Java; 154 entidades de bloco, 208 telas, 478 usos de transferência, 79 de químicos, 42 de multibloco).
 - Plano: etapas A–D de primitivas no APK; depois máquinas só como .hmod.
+
+- Correcao do usuario: Mekanism inteiro = UM mod (conteudo+codigo). Fase 1: API completa no APK (14 blocos em ordem de dependencia, ver API-SURVEY.md); Fase 2: portar Mekanism inteiro.

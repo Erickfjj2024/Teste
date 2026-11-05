@@ -54,17 +54,37 @@ Isso exige mexer no fork (Rust, Android). O fork está 540k linhas atrás do ups
 as primitivas ficam como patches que podem ser propostos ao mantenedor (Vasysik) ou virar a
 "alternativa própria" que o usuário mencionou.
 
-## 4. Proposta de entrega por etapas (sem recompilar o APK a cada máquina)
+## 4. Decisão do usuário: o Mekanism inteiro é UM mod
 
-| Etapa | APK novo? | Conteúdo jogável |
+Correção ao plano anterior: não serão vários `.hmod` por máquina. O resultado final é
+**um único Mekanism** (conteúdo + código), cobrindo Mekanism, Generators, Additions e Tools
+(os 4 módulos do repositório). Por isso o trabalho vem em duas fases:
+
+**Fase 1: preparar a API inteira no APK (maior parte do esforço).** Nada do Mekanism é
+portado antes de a API existir e ser testada com mods de teste pequenos.
+**Fase 2: portar o Mekanism sobre a API pronta**, módulo por módulo, tudo dentro do mesmo mod.
+
+### Fase 1: lista de trabalho da API (dependências em ordem)
+
+| # | Bloco da API | Depende de |
 |---|---|---|
-| A | sim (1x) | primitivas 1–3: máquina declarativa, receitas, energia → Crusher, Enrichment Chamber, Energized Smelter, geradores simples |
-| B | sim (1x) | primitivas 4–6: fluidos/químicos, telas, rede → Electrolytic Separator, Chemical Infuser, tanques |
-| C | sim (1x) | primitivas 7: cabos, tubos, multiblocos → Turbina, Fusão, Fábrica |
-| D | sim (1x) | entidades, armaduras, worldgen → Robit, armaduras, minérios |
-| após | **não** | todas as máquinas novas = só `.hmod` |
+| 1 | Entidades de bloco para WASM (estado, NBT, tick, carregar/salvar) | nada |
+| 2 | Inventários e capacidade de itens (slots, lados, funis) | 1 |
+| 3 | Energia (capacidade, itens carregáveis, conversão de unidades) | 1 |
+| 4 | Fluidos e químicos (tipos registráveis, tanques) | 1 |
+| 5 | Data components em itens/blocos | 1 |
+| 6 | Tipos de receita próprios (dados + lógica) | 2 |
+| 7 | Menus e telas customizadas (slots, barras, botões, abas) | 2, 3, 4 |
+| 8 | Pacotes de rede genéricos cliente↔servidor | 7 |
+| 9 | Redes de transmissão (cabos, tubos, grafos) | 2, 3, 4 |
+| 10 | Multiblocos (validação de estrutura, estado compartilhado) | 1, 9 |
+| 11 | Renderização: modelos/estados, renderizadores de bloco e entidade, partículas | 1 |
+| 12 | Entidades (robit, projéteis), IA simples | 5 |
+| 13 | Itens com lógica, armaduras, ferramentas, efeitos, dano | 5 |
+| 14 | Worldgen (minérios, sal), chunk loading, comandos, config, teclas | — |
 
-Cada "sim" é um APK que cobre uma família inteira. Mecânica nova só entra no APK se for primitiva nova.
+Cada bloco é testado com um mod de teste mínimo antes do próximo. Ao final, um APK só.
+Não é possível prometer prazo: é a parte longa do projeto.
 
 ## 5. Antes de começar a etapa A
 
