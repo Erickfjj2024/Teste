@@ -168,3 +168,7 @@
 - Com o 0.1.2 o usuário relatou que o teste funcionou. Não sabemos qual dos três detectores de pulo resolveu (contador do jogo, flag de chão ou subida pelo movimento) nem se foi a faixa ampliada para 3 blocos; ele não mandou as linhas do /elevator watch.
 - `/elevator debug` respondeu "No motion is reported for you": o id do jogador que digita o comando não é o mesmo que `players::online` lista (dono do mundo no servidor integrado). O elevador em si usa os ids de `players::online`, por isso funciona. 0.1.3 acha o jogador pelo nome no debug, e deixa `watch` desligado por padrão. Patch `0008-…`. `elevator-code-android.hmod` SHA-256 cca08b59…b86c.
 - Possível problema relacionado a investigar depois: outros pontos do jogo que associam o id do comando ao jogador (se algum mod de servidor usar `player.id` de comando em `player-control`, falhará para o dono).
+
+### Tapete: "funcionou só para subir" (a esclarecer)
+- Usuário: cores diferentes funcionam; tapete só para subir. Em simulação (harness com tapete = laje de 1/16) o mod sobe e desce com tapete em cima de qualquer um dos elevadores (`tests/carpet_both_ways.toml`, patch 0009). Na simulação o pouso é no topo do elevador (a altura do tapete não conta), como no Java.
+- Faltam dados do aparelho: onde está o tapete, o que acontece ao agachar, e a linha de `/elevator debug` (corrigido na 0.1.3) no ponto em que descer falha.
