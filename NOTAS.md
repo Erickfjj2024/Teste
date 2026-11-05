@@ -179,3 +179,4 @@
 - Correção no jogo (APK v3, patch 0010): `sneaking` = tecla (hub `g.sneaking` para convidados; `shift_key_down` para o local), não a pose.
 - Correção no mod (0.1.4, patch 0011): pousa em cima de blocos finos sobre o elevador (+1/16), e o `/elevator debug` lê o que o tick guardou (o comando digitado não recebe `motions` no snapshot; o ajuste por nome em 0.1.3 não resolvia).
 - `elevator-code-android.hmod` 0.1.4 SHA-256 7700c4eb…ff8f. 12 roteiros passam.
+- APK v3 compilado: versão 3, SHA-256 8e1c5ae3…a279, mesma assinatura (a685f10c…c765), auditoria passou. Instala por cima da v2.

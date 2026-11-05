@@ -22,10 +22,10 @@ em Installed antes de importar o novo: os dois usam o mesmo identificador (`elev
 | | |
 |---|---|
 | Arquivo | `horizon-android-public.apk` (enviado no chat; **não** está no repositório, 37 MB) |
-| SHA-256 | `d891247803a3f8ad0ac710140b5088e8791fe4b98790825fbfae2caa069b58eb` (versão 3: a tecla de agachar é lida direto, não pela pose) |
+| SHA-256 | `8e1c5ae327271649b8dd9a468bce90540b3d4ebf4b6a7ac9bdf3f3c95aa8a279` (versão 3: a tecla de agachar é lida direto, não pela pose) |
 | Pacote | `dev.horizon.android.dev`, versão `0.7.7-dev.elevator`, código 3 |
 | Aparelho | 64 bits (`arm64-v8a`), Android 9 ou mais novo |
-| Base | `Vasysik/horizon-android` no commit `150a414` + os 5 patches de `android-fork/` |
+| Base | `Vasysik/horizon-android` no commit `150a414` + os patches de `android-fork/` (0001 a 0011; o APK v3 leva até o 0010) |
 
 **Ele se instala ao lado do seu Horizon Android atual.** O pacote é outro (`.dev`), então você **não precisa
 desinstalar nada** e seus mundos continuam onde estão. Os mundos do APK de teste ficam separados dos
