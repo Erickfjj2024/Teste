@@ -9,7 +9,7 @@ Pular sobe para o elevador de cima, agachar desce para o de baixo. Port em Rust 
 |---|---|
 | `src/lib.rs` | A lógica pura (busca, validação, XP, destino, configuração). 23 testes, sem depender do jogo. |
 | `api/` | O mod nativo ("trait mod"): liga a lógica aos ganchos do Horizon. |
-| `horizon-mixin.toml` | O manifesto do mod nativo (pinado no Horizon `a1e0c0db`). |
+| `horizon-mixin.toml` | O manifesto do mod nativo (pinado no Nightly `2026-11-05-f319701` do Horizon). |
 | `hmod/` | O conteúdo: 16 blocos, itens, receitas, texturas, idiomas e o som. Vira `elevatorid.hmod`. |
 
 ## Como funciona (igual ao original)
@@ -58,6 +58,10 @@ Ainda difere ou falta:
   do servidor para o cliente.
 * **Altura do mundo:** o cliente supõe as alturas padrão de cada dimensão.
 * **Outras formas de nascer:** spawners e geração de mundo não passam pelo `potential_spawns`.
+
+## Como testar
+
+Veja `COMO-TESTAR.md`.
 
 ## Como construir
 

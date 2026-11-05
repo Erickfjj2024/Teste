@@ -58,7 +58,7 @@
 - Avisos de licença e crédito em `ports/elevator/NOTICE.md` e `ports/elevator/LICENSE-ElevatorMod`.
 
 ### Integração do Elevator com o Horizon (feita)
-- Mod nativo "trait mod" em `ports/elevator/` (`horizon-mixin.toml` + `api/`), pinado no Horizon a1e0c0db (5 nov 2026).
+- Mod nativo "trait mod" em `ports/elevator/` (`horizon-mixin.toml` + `api/`), pinado no Nightly 2026-11-05-f319701 do Horizon (commit f319701e, compilado com sucesso).
 - Compila contra a API real do Horizon (`cargo check` com o `horizon-client` do commit pinado). Não rodou ainda dentro do jogo.
 - Como funciona: ganchos `player_jump` (sobe) e `player_toggle_sneak` (desce) guardam o pedido; no fim do tick (`server_tick`) executa `/tp`, porque `run_command` não funciona dentro do gancho de um jogador.
 - Limitações atuais: 
@@ -85,3 +85,7 @@
   - Jogo solo: segundo a doc, roda em servidor integrado e o cliente entra nele; deve funcionar, ainda não visto.
 - Correção de um palpite meu: eu tinha dito que no solo o elevador não funcionaria. Era uma conclusão apressada: li `native_net_send_to_server` e `native_run_command` do ponto de vista do jogo do servidor, não do cliente.
 - Ainda difere: elevador direcional/camuflagem/tela (precisa de entidade de bloco), config por mundo/sincronizada, spawners.
+
+### Passo a passo de teste
+- `ports/elevator/COMO-TESTAR.md`: instalar o `.hmod` e compilar o mod nativo com `horizon-launcher native-build`, tabela de testes (inclui XP) e solução de problemas.
+- O pin do mod foi trocado para o Nightly `2026-11-05-f319701` (o launcher baixa o código-fonte por Nightly); o mod compila nesse commit.
