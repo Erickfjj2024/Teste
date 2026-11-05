@@ -190,3 +190,5 @@
 - Correcao do usuario: Mekanism inteiro = UM mod (conteudo+codigo). Fase 1: API completa no APK (14 blocos em ordem de dependencia, ver API-SURVEY.md); Fase 2: portar Mekanism inteiro.
 
 - Bloco 1 (entidades de bloco WASM): WIT registration.block-entities + block-entities-tick; SDK Registration::block_entity; runtime Mods::block_entities_tick; harness expect.block-entities; exemplo block-counter (teste passa); jogo: collect_mod_entities/apply_mod_entity_updates em server_mods.rs e native_block_entity em native_hooks.rs (verificacao de compilacao Android em andamento). Mods antigos precisam ser recompilados (WIT mudou).
+
+- Bloco 2 (inventarios): container-spec/item-stack no WIT, SDK ContainerSpec::open, harness set-items/expect.block-items, exemplo block-mover (teste passa); jogo compila para Android (patch ports/api-fork/0002). Itens vao como id+count+SNBT dos componentes. Ainda nao testado dentro do jogo.
