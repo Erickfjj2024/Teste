@@ -38,12 +38,29 @@ const KEYS: [&str; 9] = [
     "XPPointsAmount",
 ];
 
+/// What a player was doing the tick before.
+#[derive(Clone)]
+struct Seen {
+    sneaking: bool,
+    jumps: u32,
+    on_ground: bool,
+    pos: [f64; 3],
+    dimension: String,
+    /// Ticks to wait before this player can ride again: a ride moves them, and the move
+    /// must not read as a jump or a sneak.
+    cooldown: u8,
+}
+
+/// A jump rises about 0.42 a block in its first tick (more with Jump Boost); a ride, a fall
+/// or a flight is outside this.
+const JUMP_RISE: std::ops::RangeInclusive<f64> = 0.3..=1.2;
+const RIDE_COOLDOWN: u8 = 3;
+
 struct Elevators {
     config: Config,
     /// The config as `key = value` lines, kept in `storage`.
     lines: BTreeMap<String, String>,
-    /// What each player was doing the last tick: (sneaking, jumps).
-    seen: HashMap<String, (bool, u32)>,
+    seen: HashMap<String, Seen>,
 }
 
 /// The world's height by dimension: (lowest block, height).
@@ -170,18 +187,18 @@ impl Elevators {
 
     /// `ElevatorHandler.tryTeleport` and `TeleportPacket.handle` in one place:
     /// finds the target, checks it as the server does, charges and moves the player.
-    fn ride(&self, p: &Player, motion: &player_control::Motion, dir: Dir) {
+    fn ride(&self, p: &Player, motion: &player_control::Motion, dir: Dir) -> bool {
         if p.health <= 0.0 || p.game_mode == GameMode::Spectator {
-            return;
+            return false;
         }
         let cfg = &self.config;
         let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
         let reader = Reader { dimension: &p.dimension };
         let Some(from) = logic::origin_elevator(&reader, here, cfg) else {
-            return;
+            return false;
         };
         let Some(to) = logic::find_target(&reader, from, dir, cfg) else {
-            return;
+            return false;
         };
         let rider = Rider {
             alive: true,
@@ -191,24 +208,24 @@ impl Elevators {
             xp_level: u32::try_from(motion.xp_level).unwrap_or(0),
         };
         if logic::validate(&reader, &rider, from, to, cfg).is_err() {
-            return;
+            return false;
         }
         let Some(target) = reader.elevator_at(to) else {
-            return;
+            return false;
         };
         // The experience check and charge: only with `useXP` on, and not in creative.
         match logic::xp_cost(&rider, cfg) {
             Ok(0) => {}
             Ok(cost) => {
                 if player_control::take_xp(&p.id, cost).is_err() {
-                    return;
+                    return false;
                 }
             }
             Err(Reject::MissingXp) => {
                 players::tell(&p.id, "You do not have enough XP to use elevators");
-                return;
+                return false;
             }
-            Err(_) => return,
+            Err(_) => return false,
         }
         let dest = logic::destination(to, &target, p.x, p.z, cfg);
         let yaw = match dest.yaw {
@@ -226,7 +243,43 @@ impl Elevators {
                 1.0,
                 1.0,
             );
+            return true;
         }
+        false
+    }
+
+    /// Whether the player stood on an elevator in `seen` (their feet on its top).
+    fn stood_on_elevator(seen: &Seen) -> bool {
+        let reader = Reader { dimension: &seen.dimension };
+        let below = BlockPos::new(
+            seen.pos[0].floor() as i32,
+            (seen.pos[1] - 0.001).floor() as i32,
+            seen.pos[2].floor() as i32,
+        );
+        reader.elevator_at(below).is_some()
+    }
+
+    /// `/elevator debug`: what the mod sees of the player who typed it.
+    fn debug(&self, p: &Player) -> String {
+        let Some(m) = player_control::get_motion(&p.id) else {
+            return "No motion is reported for you".into();
+        };
+        let reader = Reader { dimension: &p.dimension };
+        let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        let origin = logic::origin_elevator(&reader, here, &self.config);
+        let at = |d| origin.and_then(|o| logic::find_target(&reader, o, d, &self.config));
+        let show = |b: Option<BlockPos>| b.map_or("none".to_string(), |b| format!("{} {} {}", b.x, b.y, b.z));
+        format!(
+            "sneaking={} onGround={} jumps={} y={:.3} origin={} up={} down={} cooldown={}",
+            m.sneaking,
+            m.on_ground,
+            m.jumps,
+            p.y,
+            show(origin),
+            show(at(Dir::Up)),
+            show(at(Dir::Down)),
+            self.seen.get(&p.id).map_or(0, |s| s.cooldown)
+        )
     }
 }
 
@@ -257,32 +310,58 @@ impl ServerMod for Elevators {
             let Some(m) = player_control::get_motion(&p.id) else {
                 continue;
             };
-            let Some(&(was_sneaking, was_jumps)) = self.seen.get(&p.id) else {
-                self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
+            let mut now = Seen {
+                sneaking: m.sneaking,
+                jumps: m.jumps,
+                on_ground: m.on_ground,
+                pos: [p.x, p.y, p.z],
+                dimension: p.dimension.clone(),
+                cooldown: 0,
+            };
+            let Some(prev) = self.seen.get(&p.id).cloned() else {
+                self.seen.insert(p.id.clone(), now);
                 continue;
             };
-            self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
+            now.cooldown = prev.cooldown.saturating_sub(1);
+            let rise = p.y - prev.pos[1];
+            // A jump is seen three ways, any of which is enough: the game's jump count went up,
+            // the player left the ground going up, or they stood on an elevator and rose by a
+            // jump's height. (The count alone missed the owner of a world on an integrated
+            // server.) The two read from the player's movement wait a few ticks after a ride,
+            // whose own move must not read as a jump.
+            let from_movement = prev.cooldown == 0
+                && ((prev.on_ground && !m.on_ground && rise > 0.1 && rise <= *JUMP_RISE.end())
+                    || (prev.dimension == p.dimension
+                        && JUMP_RISE.contains(&rise)
+                        && Self::stood_on_elevator(&prev)));
+            let jumped = m.jumps > prev.jumps || from_movement;
+            let mut rode = false;
             // As in ElevatorHandler: the sneak key first, then the jump key.
-            if m.sneaking && !was_sneaking {
-                self.ride(p, &m, Dir::Down);
+            if m.sneaking && !prev.sneaking {
+                rode |= self.ride(p, &m, Dir::Down);
             }
-            if m.jumps > was_jumps {
-                self.ride(p, &m, Dir::Up);
+            if jumped {
+                rode |= self.ride(p, &m, Dir::Up);
             }
+            if rode {
+                now.cooldown = RIDE_COOLDOWN;
+            }
+            self.seen.insert(p.id.clone(), now);
         }
     }
 
-    fn command(&mut self, _player: &Player, _name: &str, args: &Args) -> Result<Option<String>, String> {
+    fn command(&mut self, player: &Player, _name: &str, args: &Args) -> Result<Option<String>, String> {
         let mut words = args.text().split_whitespace();
         match (words.next(), words.next(), words.next()) {
             (None | Some("show"), _, _) => Ok(Some(self.show())),
+            (Some("debug"), _, _) => Ok(Some(self.debug(player))),
             (Some("set"), Some(key), Some(value)) => {
                 if players::online().len() > 1 {
                     return Err("Settings can only be changed when you are alone on the server".into());
                 }
                 self.set(key, value).map(Some)
             }
-            _ => Err("Use /elevator show, or /elevator set <setting> <value>".into()),
+            _ => Err("Use /elevator show, /elevator debug, or /elevator set <setting> <value>".into()),
         }
     }
 }

@@ -67,6 +67,23 @@ Foi compilado com o perfil `fast` (sem LTO): é um pouco mais lento que o APK of
 **Diferenças em relação ao Java** (não são defeito): o pulo só conta quando você pula **do chão**; monstros ainda
 nascem nos elevadores; não há tela de opções nem camuflagem; a configuração é por comando. Mais detalhes em `ANDROID.md`.
 
+## Se pular não sobe (diagnóstico)
+
+O mod de código 0.1.1 tem um comando que mostra o que ele enxerga de você. Fique em cima de um elevador
+com outro acima e digite, **parado**:
+
+```
+/elevator debug
+```
+
+Ele responde algo como `sneaking=false onGround=true jumps=0 y=64.000 origin=0 63 0 up=0 68 0 down=none cooldown=0`:
+
+* `origin` é o elevador onde você está (se for `none`, ele não te viu em cima de um);
+* `up` é o elevador de destino para cima (se for `none`, falta espaço livre acima dele ou ele está longe demais);
+* `jumps` e `onGround` mostram se o jogo informa os seus pulos e o chão.
+
+Depois **pule uma vez** e digite o comando de novo: me diga os dois textos.
+
 ## Se não funcionar
 
 | Sintoma | Provável causa |

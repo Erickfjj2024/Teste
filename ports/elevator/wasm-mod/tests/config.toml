@@ -23,3 +23,10 @@ join = "Sam"
 as = "Alex"
 command = "elevator set range 20"
 expect.error = "Settings can only be changed when you are alone on the server"
+
+# /elevator debug says what the mod sees of you.
+[[step]]
+as = "Alex"
+motion = { sneaking = false, on-ground = true, jumps = 0 }
+command = "elevator debug"
+expect.feedback = "sneaking=false onGround=true jumps=0 y=64.000 origin=none up=none down=none cooldown=0"

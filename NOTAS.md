@@ -153,3 +153,8 @@
 ### Subir não funcionava (corrigido) e aprendizados
 - O usuário descobriu: os mods precisam ser LIGADOS antes de abrir o jogo/mundo; ligar dentro do jogo não faz os blocos aparecerem. Depois disso os blocos apareceram e DESCER funcionou (prova que ler estado, achar elevador, colisão e teleporte funcionam no APK).
 - Subir não funcionava: no servidor integrado o dono é "convidado" e o jogo não incrementava a estatística de pulos dele (só o jogador local, em game.rs). Corrigido em `lan_actions.rs` (5º patch, `0005-...`). APK versão 2: SHA-256 d8912478…58eb, mesma chave de assinatura do anterior (certificado a685f10c…c765), pacote dev.horizon.android.dev.
+
+### Elevator 0.1.1: subir ainda não funcionava com o APK v2
+- A correção do contador de pulos (patch 0005) foi compilada (biblioteca diferente da anterior) mas subir continuou sem funcionar; causa exata não confirmada (sem log do aparelho). Hipóteses descartadas por leitura: troca de estatísticas (igual nos dois caminhos), servidor em thread própria é o padrão.
+- Solução que não exige APK novo: o mod (0.1.1, só o .hmod) agora também enxerga o pulo pelo movimento (flag de chão saindo + subida de 0.3 a 1.2 blocos, ou subida a partir do topo de um elevador), com espera de 3 ticks só para esses dois. Comando `/elevator debug` para diagnóstico. 11 roteiros passam. Patch `0006-…`.
+- `elevator-code-android.hmod` agora 0.1.1, SHA-256 660c7ec0…a92d.
