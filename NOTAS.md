@@ -134,3 +134,11 @@
 - Descoberta: o servidor integrado roda em thread própria por padrão (`HORIZON_SERVER_THREAD`), e o dono do mundo é um "convidado" para mods de servidor; a primeira versão só tratava o jogador local e não funcionaria no padrão. Corrigido.
 - `ports/elevator/wasm-mod/` (exemplo) e `dist/elevator-code-android.hmod`. 8 roteiros de teste passam na sandbox real; nada rodou num jogo/celular de verdade.
 - Limites: sem mobSpawn, sem tela/camuflagem, pulo só do chão, config por comando. Detalhes em `ports/elevator/ANDROID.md`.
+
+### APK de teste compilado (arm64-v8a)
+- Autorizado pelo usuário (tem o Minecraft Java); liberados no ambiente: dl.google.com, maven.google.com, plugins.gradle.org, piston-meta/piston-data/launchermeta.mojang.com, libraries.minecraft.net, resources.download.minecraft.net.
+- SDK 35, build-tools 35.0.0, NDK 28.2.13676358 em /home/user/android-sdk; Mojang JDK via `tools/android_prepare.py` (26.3 baixado e verificado por hash).
+- Precisou de um 4º patch: aceitar o JSON de versão 26.3 republicado pela Mojang (hash 80608ff6…, já aceito pelo Horizon principal). Lista `research-lock.json` copiada do principal.
+- Build: `android_build.py --abi arm64-v8a --public --profile fast --dev-build elevator --dev-version-code 1`. Pacote `dev.horizon.android.dev` (instala ao lado do original, sem apagar mundos). Rust 7m46s; o Gradle precisou de retentativas por 429 do Maven Central.
+- APK 37 MB, SHA-256 e601f7e7…5ea7; assinado (v2), `passed: true` na auditoria do projeto. Não está no repositório (enviado pelo chat).
+- Roteiro de instalação e testes: `ports/elevator/TESTAR-APK.md`. Nada rodou num celular ainda.
