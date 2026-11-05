@@ -2,7 +2,7 @@
 
 Pack: SkyFactory 4 versão 4.2.4 (Minecraft 1.12.2, Forge), 202 mods. Lista tirada da API da FTB (api.modpacks.ch, projeto CurseForge 296062).
 
-Licenças: cada .jar foi procurado no Modrinth pelo hash SHA-1; vale a licença que o autor declarou lá. **Não é revisão jurídica.** Confira o arquivo de licença no repositório do mod antes de portar. Regras do Horizon para ports estão em  e .
+Licenças: cada .jar foi procurado no Modrinth pelo hash SHA-1; vale a licença que o autor declarou lá. **Não é revisão jurídica.** Confira o arquivo de licença no repositório do mod antes de portar. Regras do Horizon para ports estão em STONEBLOCK3-MODS.md e NOTAS.md.
 
 - Com licença encontrada: 77 mods
 - Sem correspondência no Modrinth (checagem manual): 125 mods
