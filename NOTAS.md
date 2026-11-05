@@ -149,3 +149,7 @@
 
 ### Elevador não aparecia no criativo (corrigido)
 - Faltava uma aba de inventário criativo. Adicionado `hmod/data/elevatorid/horizon/creative_tab/elevators.json` ("Elevators", 16 itens). `elevator-blocks-android.hmod` regenerado (SHA-256 d65cdce7…eb5e). Comando exato: `/give @s elevatorid:elevator_white`.
+
+### Subir não funcionava (corrigido) e aprendizados
+- O usuário descobriu: os mods precisam ser LIGADOS antes de abrir o jogo/mundo; ligar dentro do jogo não faz os blocos aparecerem. Depois disso os blocos apareceram e DESCER funcionou (prova que ler estado, achar elevador, colisão e teleporte funcionam no APK).
+- Subir não funcionava: no servidor integrado o dono é "convidado" e o jogo não incrementava a estatística de pulos dele (só o jogador local, em game.rs). Corrigido em `lan_actions.rs` (5º patch, `0005-...`). APK versão 2: SHA-256 d8912478…58eb, mesma chave de assinatura do anterior (certificado a685f10c…c765), pacote dev.horizon.android.dev.

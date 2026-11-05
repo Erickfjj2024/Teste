@@ -22,10 +22,10 @@ em Installed antes de importar o novo: os dois usam o mesmo identificador (`elev
 | | |
 |---|---|
 | Arquivo | `horizon-android-public.apk` (enviado no chat; **não** está no repositório, 37 MB) |
-| SHA-256 | `e601f7e758027d46064490a89e1d2b6b65156d54fd13ad3ddf9bca6bdb025ea7` |
-| Pacote | `dev.horizon.android.dev`, versão `0.7.7-dev.elevator` |
+| SHA-256 | `d891247803a3f8ad0ac710140b5088e8791fe4b98790825fbfae2caa069b58eb` (versão 2, com o contador de pulos corrigido) |
+| Pacote | `dev.horizon.android.dev`, versão `0.7.7-dev.elevator`, código 2 |
 | Aparelho | 64 bits (`arm64-v8a`), Android 9 ou mais novo |
-| Base | `Vasysik/horizon-android` no commit `150a414` + os 4 patches de `android-fork/` |
+| Base | `Vasysik/horizon-android` no commit `150a414` + os 5 patches de `android-fork/` |
 
 **Ele se instala ao lado do seu Horizon Android atual.** O pacote é outro (`.dev`), então você **não precisa
 desinstalar nada** e seus mundos continuam onde estão. Os mundos do APK de teste ficam separados dos
@@ -47,7 +47,7 @@ Foi compilado com o perfil `fast` (sem LTO): é um pouco mais lento que o APK of
    * `https://raw.githubusercontent.com/Erickfjj2024/Teste/ccr-8f7d1cb2-4mjir6/ports/elevator/dist/elevator-code-android.hmod`
 4. Em **Installed**, ligue os dois. O mod de código mostra o que pode fazer (ver quem está no servidor,
    ler e mudar blocos, ver se jogadores agacham e pulam, mover jogadores, tirar XP, tocar sons).
-5. **Reinicie o app** (o conteúdo só é lido ao abrir).
+5. **Reinicie o app** (o conteúdo só é lido ao abrir). **Ligue os mods em Installed ANTES de abrir o mundo**: se você ligar com o jogo já aberto, os blocos não aparecem.
 6. Crie um mundo em criativo (Superflat). Os elevadores ficam na aba **Elevators** do inventário criativo, ou pelo comando `/give @s elevatorid:elevator_white 2` (precisa de trapaças ligadas no mundo).
 
 ## Testes
