@@ -94,6 +94,10 @@ impl Book {
     pub fn recipe(&self, item: &str, chemical: &str) -> Option<&Recipe> {
         self.by_pair.get(&(item.to_owned(), chemical.to_owned()))
     }
+    /// Whether some recipe of the item uses its chemical a little each tick (what waits when the tank runs dry).
+    pub fn has_per_tick(&self, item: &str) -> bool {
+        self.by_pair.iter().any(|((i, _), r)| i == item && r.per_tick)
+    }
     /// Whether a chemical is one some recipe uses (the tank takes no other).
     pub fn accepts(&self, chemical: &str) -> bool {
         self.chemicals.contains(chemical)
@@ -180,9 +184,13 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
     let chem = if needs_chem { next.tank_in.chemical.as_str() } else { "" };
     let found = book.recipe(item, chem).filter(|_| !needs_chem || next.tank_in.amount > 0);
     let Some(recipe) = found else {
-        // The item has recipes but not with this chemical (or the tank is empty): short of the second input; a chemical
-        // with no recipe at all has none.
-        next.progress = 0;
+        // A per-tick recipe whose tank ran dry waits where it was (`ItemStackConstantChemicalToObjectCachedRecipe` does not
+        // force a reset on the secondary input); otherwise the item has recipes but not with this chemical, or none at
+        // all: short of the second input.
+        let dry = needs_chem && next.tank_in.amount == 0 && io.progress > 0 && input.is_some_and(|s| book.has_per_tick(&s.item));
+        if !dry {
+            next.progress = 0;
+        }
         return (next, if needs_item { Status::Blocked } else { Status::NoRecipe });
     };
     let room = match &recipe.out {
@@ -329,10 +337,18 @@ mod tests {
         // Short of the chemical: it waits where it was, with its progress.
         let dry = Io { progress: 40, tank_in: tank("mekanism:oxygen", 0), ..io.clone() };
         let (n, st) = run(&PURIFIER, &dry, 3);
-        assert_eq!((n.progress, st), (0, Status::Blocked), "an empty tank has no recipe to wait on");
+        assert_eq!((n.progress, st), (40, Status::Blocked), "an empty tank keeps the progress");
+        let idle = Io { progress: 0, tank_in: Tank::default(), ..io.clone() };
+        assert_eq!(run(&PURIFIER, &idle, 3).0.progress, 0);
         let one = Io { progress: 40, tank_in: tank("mekanism:oxygen", 1), ..io.clone() };
         let (n, _) = run(&PURIFIER, &one, 5);
-        assert_eq!(n.progress, 0, "the recipe needs the tank to hold its amount, then runs on");
+        assert_eq!(n.progress, 41, "it runs on the one it had, then waits with its progress");
+        // The tank running dry keeps the progress of a per-tick recipe; another chemical in it starts over.
+        let ran_dry = Io { progress: 40, tank_in: Tank::default(), ..io.clone() };
+        let (n, st) = run(&PURIFIER, &ran_dry, 3);
+        assert_eq!((n.progress, st), (40, Status::Blocked));
+        let other = Io { progress: 40, tank_in: tank("mekanism:hydrogen", 50), ..io };
+        assert_eq!(run(&PURIFIER, &other, 1).0.progress, 0);
     }
 
     #[test]

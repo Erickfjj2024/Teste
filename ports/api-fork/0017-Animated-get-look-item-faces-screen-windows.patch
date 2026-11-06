@@ -49,7 +49,7 @@ index 7bc73dd..0f549e8 100644
      MOD_MENU_TYPES.set(menus.collect()).is_ok()
  }
 diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
-index 0e48436..1c1456c 100644
+index 0e48436..6cefc98 100644
 --- a/crates/horizon-client/src/game.rs
 +++ b/crates/horizon-client/src/game.rs
 @@ -5747,6 +5747,16 @@ impl Game<'_> {
@@ -97,7 +97,23 @@ index 0e48436..1c1456c 100644
              500..504 => (8.0, 8.0 + (i - 500) as f32 * 18.0),
              // InventoryMenu: the shield slot.
              504 => (77.0, 62.0),
-@@ -16845,6 +16862,9 @@ impl Game<'_> {
+@@ -9888,10 +9905,11 @@ impl Game<'_> {
+             return (None, false);
+         };
+         let batch = HudBatch::new([r.config.width, r.config.height]);
+-        (
+-            self.slot_at(&batch, self.cursor.0, self.cursor.1),
+-            self.clicked_outside(&batch),
+-        )
++        let slot = self.slot_at(&batch, self.cursor.0, self.cursor.1);
++        // A mod screen's slots sit outside its 176-pixel window (its armor slots): over one, the cursor is not outside
++        // (`GuiMekanism.hasClickedOutside` is false over its elements).
++        let outside = self.clicked_outside(&batch) && !(slot.is_some() && self.native_screen_shown());
++        (slot, outside)
+     }
+     fn screen_button(right: bool) -> horizon_client::container_screen::Button {
+         use horizon_client::container_screen::Button;
+@@ -16845,6 +16863,9 @@ impl Game<'_> {
                          if self.dialog_open() {
                              self.dialog_drag();
                          }
@@ -107,7 +123,7 @@ index 0e48436..1c1456c 100644
                          if self.screen == Screen::BlockEditor {
                              self.block_editor_drag();
                          }
-@@ -17131,6 +17151,9 @@ impl Game<'_> {
+@@ -17131,6 +17152,9 @@ impl Game<'_> {
                      if pressed && (self.sort_mouse_press(button) || self.hdr_mouse_press(button)) {
                          return Ok(());
                      }

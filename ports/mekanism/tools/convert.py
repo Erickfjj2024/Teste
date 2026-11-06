@@ -248,7 +248,14 @@ for kind, medium in TRANSMITTERS:
             {'when': {'west': 'true'}, 'apply': {'model': arm, 'y': 270}},
             {'when': {'up': 'true'}, 'apply': {'model': arm, 'x': 270}},
             {'when': {'down': 'true'}, 'apply': {'model': arm, 'x': 90}}]})
-        put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/{n}_core'}})
+        # the item: a straight piece (the core with an arm at both ends), as the original's inventory icons are
+        put(f'{OUT}/assets/{NS}/models/block/{n}_item.json', {
+            'parent': 'minecraft:block/block', 'textures': {'t': tex, 'tv': tex + '_vertical', 'particle': tex},
+            'elements': [
+                {'from': [5, 5, 5], 'to': [11, 11, 11], 'faces': {d: {'texture': '#t'} for d in ('down', 'up', 'north', 'south', 'west', 'east')}},
+                {'from': [5, 5, 0], 'to': [11, 11, 5], 'faces': {d: {'texture': '#tv'} for d in ('down', 'up', 'north', 'west', 'east')}},
+                {'from': [5, 5, 11], 'to': [11, 11, 16], 'faces': {d: {'texture': '#tv'} for d in ('down', 'up', 'south', 'west', 'east')}}]})
+        put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/{n}_item'}})
         add_block(n, 'minecraft:chorus_plant', {'hardness': 0.5, 'explosion_resistance': 6.0},
                   {'connects_to': f'#{NS}:{medium}_connectable', 'thickness': 6.0})
 
@@ -620,7 +627,7 @@ def chemical_meta(cid):
     if cid in FLUIDS:
         return FLUIDS[cid], 'mek_liquid/liquid'
     name = cid.split(':')[1]
-    p = find(f'data/{NS}/mekanism/chemical/{name}.json', DATA_DIRS + ASSET_DIRS)
+    p = find(f'mekanism/chemical/{name}.json', DATA_DIRS)
     d = read_json(p) if p else {}
     tint = d.get('tint', '#ffffffff')
     icon = d.get('icon', f'{NS}:mek_liquid/liquid').split(':')[1]
@@ -799,7 +806,7 @@ def process_menu(m):
         # GuiGasMode: its icon by the mode and the mode's name beside it (to the left of the left button, right of the other)
         for k, name in enumerate(['idle', 'dump', 'dump_excess']):
             icon = {'idle': 'chemical_mode/idle', 'dump': 'chemical_mode/dump', 'dump_excess': 'chemical_mode/dump_excess'}[name]
-            tx = mx - 3 - text_width(MODE_TEXT[k]) if side == 'left' else mx + 13
+            tx = mx + 13 if side == 'left' else mx - 3 - text_width(MODE_TEXT[k])
             widgets.append({'type': 'show', 'when': {'data': {'value': {'data': mode_slot}, 'eq': k}}, 'widgets': [
                 {'type': 'sprite', 'texture': copy_gui(icon, f'mode_{name}'), 'x': mx, 'y': my, 'w': 10, 'h': 10},
                 {'type': 'text', 'x': tx, 'y': my + 1, 'text': MODE_TEXT[k], 'color': '#404040'}]})
@@ -809,7 +816,7 @@ def process_menu(m):
         {'type': 'text', 'x': (176 - title_w) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 92, 'y': 66, 'text': 'Status {5}', 'color': '#808080'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'},
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -903,7 +910,7 @@ def tank_menu(m):
                     'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'}]
+                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -932,7 +939,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -951,12 +958,12 @@ def tank_renderers():
     tints = {ty_id: ty['tint'] for ty_id, ty in zip(CHEMICALS, GAUGE_TYPES)}
     for m in FLUID_TANKS:
         put(f'{OUT}/data/{NS}/horizon/renderer/{m}.json', {'elements': [
-            {'type': 'fluid', 'tank': 0, 'from': [2.25, 2.25, 2.25], 'to': [13.75, 13.75, 13.75],
+            {'type': 'fluid', 'tank': 0, 'from': [2.6, 2.6, 2.6], 'to': [13.4, 13.4, 13.4],
              'sprites': {'minecraft:lava': 'minecraft:block/lava_still'}, 'default_sprite': f'{NS}:block/chem_liquid',
              'tints': {k: v for k, v in tints.items() if k != 'minecraft:lava'}}]})
     for m in CHEM_TANKS:
         put(f'{OUT}/data/{NS}/horizon/renderer/{m}.json', {'elements': [
-            {'type': 'fluid', 'tank': 0, 'from': [3.2, 1.2, 3.2], 'to': [12.8, 12.8, 12.8], 'default_sprite': f'{NS}:block/chem_liquid',
+            {'type': 'fluid', 'tank': 0, 'from': [3.6, 1.6, 3.6], 'to': [12.4, 12.4, 12.4], 'default_sprite': f'{NS}:block/chem_liquid',
              'tints': tints}]})
 tank_renderers()
 

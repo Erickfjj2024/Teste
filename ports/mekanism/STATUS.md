@@ -22,6 +22,28 @@ e **ainda não foi testada**). APK: v8.
 | Energy Cube: formato (não tapa vizinhos), textura (APK v9, mod 0.1.5) | funciona |
 | Núcleo do Energy Cube animado como o original: giro em dois eixos, balanço, brilho (APK v11, mod 0.1.6) | funciona, "perfeito" segundo o usuário |
 
+## 1b. Confirmado no plano de testes (APK v34, mod 0.1.31; `TESTES.md` respondido pelo usuário)
+
+**Funciona (visto):** Metallurgic Infuser sem esconder vizinhos; carbono não entra no compressor (filtro de tanque); oxidador (carvão → carbono) e
+o oxidador entregando ao infusor; infusor (cobre + redstone), compressor de ósmio, botão de despejo, dicas dos medidores; armadura vanilla
+nos slots (certa entra, errada é recusada), armadura continua ao reabrir; água do Fluid Tank ao separador encostado e por Mechanical Pipe;
+janela de lados do separador (4 abas); modo de edição do tanque, baldes (enchem e esvaziam, água e lava não se misturam); tanque criativo
+("Infinite"); despejo e janela do Chemical Tank; Purification Chamber (3 clumps por minério); telas das 5 máquinas sem fonte de químico
+(layout); Universal Cable dos 4 níveis, Pressurized Tube, Mechanical Pipe, regra de ligação e quebra no meio; minérios no mundo; funil;
+salvar e reabrir; serra de precisão (com serragem por sorte), combinador; Energy Cube básico.
+
+**Defeitos vistos e corrigidos no mod 0.1.32 / APK v35 (aguardam confirmação):**
+- armadura nos slots fora do painel (cubo e tanques) **não entrava com o cursor simulado do jogo** (só pelo toque) e o item "aparecia em todos os
+  slots" sem poder ser retirado: o clique fora da janela de 176 px era tratado como "fora" mesmo sobre um slot (um arrasto de empilhar);
+- a cor dos medidores era branca para quase todo químico (redstone, hidrogênio...): o arquivo do químico não era encontrado;
+- o texto dos botões de despejo do separador saía da tela (estava para o lado errado);
+- uma Purification Chamber com o tanque de oxigênio vazio **perdia o progresso**; agora espera com ele (receitas por tick);
+- a água no bloco do tanque ainda piscava (profundidade do celular): o líquido ficou mais para dentro do vidro;
+- o ícone dos canos, tubos e cabos no inventário era só o núcleo (quase invisível): agora é uma peça reta.
+
+**Ainda não visto:** minérios (cada um), blocos de armazenamento e Steel Casing, receitas na mesa, quebrar com conteúdo e recolocar, LAN,
+peças do MekaSuit nos slots (B3), item do Fluid Tank (A2), cor no Chemical Tank (A4).
+
 ## 2. Defeitos vistos pelo usuário (abertos)
 
 1. **Energy Cube com textura errada.** O modelo atual monta a moldura de 28 peças do Mekanism com o núcleo,
