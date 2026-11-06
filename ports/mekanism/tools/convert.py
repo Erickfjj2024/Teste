@@ -376,12 +376,120 @@ MACHINE_NAMES = {'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber
                  'precision_sawmill': 'Precision Sawmill', 'combiner': 'Combiner'}
 progress_full = copy_gui('progress/bar/full', 'progress_bar_full')
 power_fill = copy_gui('bar/vertical_power', 'bar_vertical_power')
+
+# ---- the side configuration window (GuiSideConfiguration), 156 by 135 at 10, 15 of the 176 wide screen
+ENUM_COLORS = {  # DataType -> EnumColor (rgb), by the data type's number: none, input, output, input/output, energy, extra
+    0: 0xCFCFCF, 1: 0xC9071F, 2: 0xFFA160, 3: 0xFFA160, 4: 0x366BD0, 5: 0x366BD0, 6: 0x00F3D0, 7: 0xA460D9, 8: 0x59C15F, 9: 0xFFDD4F}
+DATA_LABELS = {0: 'None', 1: 'Input', 2: 'Input (1)', 3: 'Input (2)', 4: 'Output', 5: 'Output (1)', 6: 'Output (2)',
+               7: 'Input/Output', 8: 'Energy', 9: 'Extra'}
+def lightened(rgb):
+    """BasicColorButton's colour: a little less saturated and a little brighter."""
+    import colorsys
+    r, g, b = ((rgb >> 16) & 255) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    r, g, b = colorsys.hsv_to_rgb(h, max(0, s - 0.1), min(1, v + 0.1))
+    return '#%02X%02X%02X' % (round(r * 255), round(g * 255), round(b * 255))
+SWATCH_COLORS = [lightened(ENUM_COLORS[i]) for i in range(10)]
+
+def tinted(img, rgb):
+    from PIL import Image
+    r, g, b = (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255
+    out = img.copy()
+    px = out.load()
+    for x in range(out.width):
+        for y in range(out.height):
+            pr, pg, pb, pa = px[x, y]
+            px[x, y] = (pr * r // 255, pg * g // 255, pb * b // 255, pa)
+    return out
+
+def tab_sprite(name, icon, tint):
+    """A tab of the side holder (26 by 26) with its icon inset (18 by 18), as GuiInsetElement draws it."""
+    from PIL import Image
+    holder = nine_slice(gui_sprite('holder_left'), 26, 26, 4)
+    if tint is not None:
+        holder = tinted(holder, tint)
+    holder.alpha_composite(gui_sprite(icon), (5, 4))
+    return save_gui(holder, name)
+
+def save_gui(img, name):
+    path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    img.save(path)
+    return f'{NS}:gui/{name}'
+
+def image_button(icon):
+    """MekanismImageButton: the button sprite with the icon in its middle (14 by 14)."""
+    b = nine_slice(gui_sprite('button'), 14, 14, 2)
+    b.alpha_composite(gui_sprite(icon), (0, 0))
+    return b
+
+WIN_W, WIN_H, WIN_X, WIN_Y = 156, 135, 10, 15
+SIDE_BUTTONS = {  # RelativeSide index (front, left, right, back, top, bottom) -> where its button is in the window
+    0: (67, 69), 1: (44, 69), 2: (90, 69), 3: (44, 92), 4: (67, 46), 5: (67, 92)}
+def side_config_window():
+    """The window's background: the base, the close button, the inner screen of the eject state, the frames of the six side
+    buttons, the clear button and its labels' places."""
+    win = nine_slice(gui_sprite('base'), WIN_W, WIN_H, 4)
+    win.alpha_composite(gui_sprite('button/close'), (6, 6))
+    # GuiInnerScreen at 38, 25 (80 by 12): a dark well with Mekanism's own edge
+    screen_img = nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 80, 12, 3)
+    win.alpha_composite(screen_img, (38, 25))
+    for x, y in SIDE_BUTTONS.values():
+        win.alpha_composite(nine_slice(gui_sprite('button'), 22, 22, 2), (x, y))
+    win.alpha_composite(image_button('button/clear_sides'), (136, 95))
+    return save_gui(win, 'side_config_window')
+
+window_tex = side_config_window()
+eject_tex = save_gui(image_button('button/auto_eject'), 'side_config_eject')
+tab_config = tab_sprite('tab_config', 'button/configuration', None)
+tab_items = tab_sprite('tab_items', 'transmission/items', 0xCFCFCF)
+tab_energy = tab_sprite('tab_energy', 'transmission/energy', 0x59C15F)
+
+def side_config_widgets():
+    """The window's widgets: for each transmission its tabs, title, the six side buttons coloured by their data type, the
+    eject state and the clear button; the transmission chosen is the screen's variable `type` (0 items, 1 energy)."""
+    widgets = []
+    # slot of the screen's data a transmission's sides are in: its first word, then the word with top and bottom
+    words = {0: (6, 7), 1: (8, 9)}
+    titles = {0: 'Items Config', 1: 'Energy Config'}
+    for ty in (0, 1):
+        group = []
+        # the title, centred between the close button and the eject button's end
+        group.append({'type': 'text', 'x': 20 + (116 - text_width(titles[ty])) // 2, 'y': 5, 'text': titles[ty], 'color': '#404040'})
+        for side, (x, y) in SIDE_BUTTONS.items():
+            slot, idx = (words[ty][0], side) if side < 4 else (words[ty][1], side - 4)
+            group.append({'type': 'swatch', 'x': x + 2, 'y': y + 2, 'w': 18, 'h': 18, 'value': {'nibble': [slot, idx]},
+                          'colors': SWATCH_COLORS, 'labels': [DATA_LABELS[i] for i in range(10)],
+                          'tooltip': ['Front', 'Left', 'Right', 'Back', 'Top', 'Bottom'][side] + '\n{label}'})
+            group.append({'type': 'button', 'x': x, 'y': y, 'w': 22, 'h': 22, 'id': 1000 + ty * 100 + side * 10,
+                          'alt_id': 1000 + ty * 100 + side * 10 + 1})
+        group.append({'type': 'button', 'x': 136, 'y': 95, 'w': 14, 'h': 14, 'id': 3000 + ty * 10, 'alt_id': 3000 + ty * 10 + 1,
+                      'tooltip': 'Clear sides\nClick to cycle every side, right click to go back'})
+        if ty == 0:
+            group.append({'type': 'sprite', 'texture': eject_tex, 'x': 136, 'y': 6, 'w': 14, 'h': 14})
+            group.append({'type': 'button', 'x': 136, 'y': 6, 'w': 14, 'h': 14, 'id': 2000, 'tooltip': 'Auto-eject'})
+            for on, text in ((0, 'Eject: Off'), (1, 'Eject: On')):
+                group.append({'type': 'show', 'when': {'data': {'value': {'nibble': [7, 2]}, 'eq': on}}, 'widgets': [
+                    {'type': 'text', 'x': 41, 'y': 28, 'text': text, 'color': '#3CFE9A'}]})
+        else:
+            group.append({'type': 'text', 'x': 41, 'y': 28, 'text': "Can't Eject", 'color': '#3CFE9A'})
+        widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': ty}}, 'widgets': group})
+    # the tabs of the other transmission, outside the window at its left (GuiConfigTypeTab)
+    for ty, tex, name in ((0, tab_items, 'Items'), (1, tab_energy, 'Energy')):
+        widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': 1 - ty}}, 'widgets': [
+            {'type': 'sprite', 'texture': tex, 'x': -26, 'y': 2 + 28 * ty, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 2 + 28 * ty, 'w': 26, 'h': 26, 'local': {'set': {'var': 'type', 'value': ty}},
+             'tooltip': name}]})
+    widgets.append({'type': 'text', 'x': (WIN_W - text_width('Slots')) // 2, 'y': 120, 'text': 'Slots', 'color': '#787878'})
+    widgets.append({'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'})
+    return widgets
+
 for m in MACHINES:
     layout = LAYOUTS.get(m, LAYOUTS['electric'])
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     px, py = layout['progress']
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': len(layout['slots']), 'data_slots': 6, 'results': layout['results'],
+        'slots': len(layout['slots']), 'data_slots': 10, 'results': layout['results'],
         'screen': {'texture': machine_panel(m, layout), 'slots': layout['slots'],
                    'widgets': [
             # the vertical power bar: its contents are 4 by 52 inside the frame
@@ -394,7 +502,12 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.16', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.17', 'color': '#808080'},
+            # GuiSideConfigurationTab at -26, 6: opens the side configuration window
+            {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
+                   'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
+                                'texture': window_tex, 'widgets': side_config_widgets()}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

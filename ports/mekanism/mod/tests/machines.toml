@@ -59,8 +59,18 @@ expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
-# The player looks west at the cube's east face from beside it and uses the configurator on it: that side,
-# an input, becomes an output (the cube is shown with its LEDs lit there), and the cables feed the smelter.
+# As the original's configurator does: sneaking in the air changes what it configures (items to start with); a plain
+# click on a side only tells what it is; sneaking, the click bumps the side to the next type.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Energy)"]
+
+[[step]]
+# The player looks west at the cube's east face from beside it (sneaking) and uses the configurator on it: that side,
+# an input, becomes an output, and the cables feed the smelter.
 as = "Alex"
 player = { x = 1.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
 use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
@@ -69,28 +79,53 @@ expect.claimed = true
 
 [[step]]
 ticks = 205
-expect.told = ["Alex: Energy: east side is now output"]
+expect.told = ["Alex: Energy behavior bumped to: Output (Blue)"]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]
 
 [[step]]
-# The precision sawmill makes planks and (here always) sawdust from a log, in front of its cube; the combiner makes
-# gravel from flint and cobblestone. The player stands south of the cubes looking south, so their fronts look
-# north at the machines.
+# Not sneaking, a click only tells the side's behaviour and changes nothing.
 as = "Alex"
-player = { x = 15.0, y = 64.0, z = 5.0, yaw = 0.0 }
-blocks = [
-    { x = 10, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
-    { x = 10, y = 64, z = -1, state = "mekanism:precision_sawmill[facing=north,lit=false]" },
-    { x = 20, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
-    { x = 20, y = 64, z = -1, state = "mekanism:combiner[facing=north,lit=false]" },
-]
-set-items = [
-    { x = 10, y = 64, z = -1, slots = ["minecraft:oak_log*1", "", ""] },
-    { x = 20, y = 64, z = -1, slots = ["minecraft:flint*1", "minecraft:cobblestone*1", ""] },
-]
-ticks = 230
-expect.block-items = [
-    { x = 10, y = 64, z = -1, slots = ["", "minecraft:oak_planks*6", "mekanism:sawdust*1"] },
-    { x = 20, y = 64, z = -1, slots = ["", "", "minecraft:gravel*1"] },
-]
+motion = { sneaking = false }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
+
+[[step]]
+# A new combiner has Mekanism's default side configuration (items: input at the front, left, top, right output, charge slot
+# at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
+blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
+ticks = 2
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17] }]
+
+[[step]]
+# A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
+# eject on.
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 1050 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17] }]
+
+[[step]]
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 2000 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17] }]
+
+[[step]]
+# The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
+# sides go to none.
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 3010 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0] }]
+
+[[step]]
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 3000 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0] }]

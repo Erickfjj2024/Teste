@@ -93,6 +93,37 @@ Só passaram no teste simulado (`horizon-mod test`: serrote faz tábuas e serrag
 - **Aproximações:** funil: serrote recebe por cima e pelos lados e esvazia por baixo; combinador recebe a entrada principal por
   cima, a extra pelos lados e esvazia por baixo (no original os lados são configuráveis). Sem fábricas, sem upgrades.
 
+## 2c. Configuração de faces de todas as máquinas (mod 0.1.17, APK v19, **não testada no jogo**)
+
+Passou no teste simulado (13 passos: botões da janela, eject, limpar, o Configurador, a energia seguindo as faces) e nos
+testes unitários; **ninguém viu na tela do celular**. O que existe, lido do código do Mekanism:
+- **Janela "Side Configuration"** (156x135, `GuiSideConfiguration`) aberta pela aba da esquerda da tela da máquina (a aba
+  `button/configuration`): abas de **Items** e **Energy** (as dos outros tipos, como no original), os 6 botões em cruz
+  (frente, esquerda, direita, trás, topo, base) coloridos pelo tipo de dado, o botão de **ejeção automática** (só itens), o
+  botão de **limpar lados** e os textos "Items Config", "Eject: On/Off", "Can't Eject" (energia) e "Slots". Clique = próximo tipo,
+  clique direito (toque longo) = o anterior. Cores e nomes são os do `DataType`/`EnumColor` (entrada vermelho escuro, saída azul,
+  entrada/saída roxo, energia verde, extra amarelo, nenhum cinza claro).
+- **Tipos suportados por máquina**, na ordem do original: itens = nenhum, entrada, saída, entrada/saída, energia (slot de carga), e
+  **extra** no combinador; energia = nenhum e entrada. **Configuração padrão do original** (`LightConfigInfo.MACHINE`/`EXTRA_MACHINE`):
+  itens entram por todos os lados, saem pela **direita**, o slot de carga fica **atrás** e o extra do combinador **embaixo**; energia entra
+  por todos; ejeção desligada. Os lados são **relativos à frente** da máquina (`facing`).
+- **Funcionamento:** o funil só alcança o que o tipo de cada face expõe (faces por entidade, `world.set-item-faces`, API 17);
+  **ejeção automática** de itens a cada 10 ticks pelas faces de saída para o contêiner vizinho (`world.set-item-eject`, API 17); a
+  energia só entra pelas faces com "entrada". A configuração é guardada na própria máquina (e vai junto no item que ela solta).
+- **Configurador como o original:** clicar numa face **só diz** o comportamento ("Current Items behavior: Output (Blue)"); **agachado**
+  passa para o próximo ("Items behavior bumped to: ..."); agachado no ar troca o que ele configura (Itens/Energia, "Configure State:
+  Configurate (Energy)"). Vale para as máquinas e para o Energy Cube (só energia). **Mudança de comportamento do cubo:** antes o clique
+  já mudava a face; agora é preciso trocar o Configurador para Energia (agachado no ar) e clicar agachado.
+- **Serragem:** a "sorte" da serragem do Precision Sawmill agora é sorteada de verdade a cada receita (um gerador que guarda o estado,
+  iniciado pelas posições dos jogadores e pelo tick), como o `level.random` do Java, e não mais determinística.
+- **Motor de telas do jogo (fork):** telas ganharam **janelas** sobre o painel, grupos condicionais (`show`), amostras de cor por valor
+  (`swatch`), botões com ação local (abrir/fechar janela, variável da tela) e um segundo id para o clique direito, e valores `nibble`.
+
+**Ainda não tem** (do original): aba de **Transporter Config** (não há transportadores), as abas de redstone, segurança, upgrades e
+energia; **arrastar** a janela e o fixar; o **ícone do bloco vizinho** em cada botão de lado; configuração de **fluidos e químicos**
+(não há tanques no porte); os modos **Vazio, Girar e Chave inglesa** do Configurador; o **Energy Cube não tem tela** (a configuração dele
+é só pelo Configurador). Os itens guardados nas máquinas aparecem por cima da janela (no original ficam por baixo).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

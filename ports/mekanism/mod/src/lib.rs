@@ -5,6 +5,7 @@
 //! What runs so far: the crusher, the enrichment chamber and the energized
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
+mod config;
 mod machine;
 mod sawmill;
 mod sides;
@@ -15,9 +16,10 @@ use horizon_mod_sdk::server::{
     BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, players,
     recipe_types, serde_json, world,
 };
-use sides::{Mode, SIDES};
+use config::{Config, Data, Layout, Transmission};
+use sides::Mode;
 use machine::{Book, Io, Recipe, Stack, Status, step};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Where a machine's recipes come from.
 #[derive(Clone, Copy)]
@@ -46,6 +48,17 @@ struct Def {
     kind: Kind,
 }
 
+impl Def {
+    /// How its slots are laid out, which says what the data types of its sides reach.
+    fn layout(&self) -> Layout {
+        match self.kind {
+            Kind::Electric => Layout::Electric,
+            Kind::Sawmill => Layout::Sawmill,
+            Kind::Combiner => Layout::Combiner,
+        }
+    }
+}
+
 const MACHINES: [Def; 5] = [
     Def { block: "mekanism:crusher", source: Source::Files("mekanism:crushing"), usage: 8, kind: Kind::Electric },
     Def { block: "mekanism:enrichment_chamber", source: Source::Files("mekanism:enriching"), usage: 5, kind: Kind::Electric },
@@ -69,8 +82,15 @@ struct Mekanism {
     tried: HashMap<&'static str, u64>,
     saws: sawmill::Book,
     combs: combiner::Book,
-    /// Clicks of the configurator waiting for their cube's next tick (a use can't change a block entity).
+    /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
+    /// What each player's configurator is set to configure (Mekanism keeps it in the item).
+    tool: HashMap<String, Transmission>,
+    /// The machines whose item faces and eject were given to the game since the mod started: a machine loaded from the
+    /// world or from an item gives them again once.
+    applied: HashSet<(String, i32, i32, i32)>,
+    /// The dice's state (see `Mekanism::roll`).
+    rng: u64,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -80,7 +100,8 @@ struct Click {
     pos: BlockPos,
     /// The relative-to-world face clicked: down, up, north, south, west, east.
     face: usize,
-    back: bool,
+    /// Sneaking: the click changes the side; otherwise it only tells what it is.
+    sneak: bool,
     tick: u64,
 }
 
@@ -205,34 +226,50 @@ fn item(s: &Option<Stack>) -> Option<ItemStack> {
     })
 }
 
-/// The screen's data slots: progress, then the energy and its capacity as low
-/// and high 16 bits.
-fn menu_data(progress: u32, energy: u64, capacity: u64, status: Status) -> Vec<i32> {
+/// The screen's data slots: progress, the energy and its capacity as low and high 16 bits, the status, then the four words
+/// of the side configuration (`Config::screen_words`).
+fn menu_data(progress: u32, energy: u64, capacity: u64, status: Status, cfg: &Config) -> Vec<i32> {
     let half = |v: u64, shift: u32| ((v >> shift) & 0xFFFF) as i32;
-    vec![
+    let mut data = vec![
         progress as i32,
         half(energy, 0),
         half(energy, 16),
         half(capacity, 0),
         half(capacity, 16),
         status as i32,
-    ]
-}
-
-/// A roll of dice for a tick of a machine at a position, 0 up to 1: the same everywhere for the same tick and place, which
-/// is what a test needs and all the sawmill's secondary output asks of it.
-fn roll(tick: u64, pos: &BlockPos) -> f64 {
-    let mut h = tick.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ (pos.x as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
-        ^ (pos.y as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
-        ^ (pos.z as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
-    h ^= h >> 30;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 27;
-    (h % 1_000_000) as f64 / 1_000_000.0
+    ];
+    data.extend(cfg.screen_words());
+    data
 }
 
 impl Mekanism {
+    /// A roll of dice, 0 up to 1, for the sawmill's secondary output (Java rolls `level.random.nextDouble()`): a generator
+    /// that keeps its state between rolls, started from where the players stand and the tick, and mixed again with the
+    /// tick and the place each time, so two machines and two ticks never repeat each other.
+    fn roll(&mut self, tick: u64, pos: &BlockPos) -> f64 {
+        if self.rng == 0 {
+            let mut seed = tick.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x2545_F491_4F6C_DD1D;
+            for p in players::online() {
+                seed = seed.rotate_left(13) ^ p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42);
+            }
+            self.rng = seed | 1;
+        }
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng = x;
+        let mix = (pos.x as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+            ^ (pos.y as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
+            ^ (pos.z as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
+            ^ tick.rotate_left(29);
+        let mut h = x.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ mix;
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h >> 11) as f64 / (1u64 << 53) as f64
+    }
+
     /// Loads the recipes of a machine when it has none (the game lends them a little after the mod starts, so a
     /// book that came out empty is asked again every second).
     fn refresh(&mut self, def: &Def, tick: u64) {
@@ -254,13 +291,68 @@ impl Mekanism {
         }
     }
 
+    /// What a tool click on a machine does: it tells the side's behaviour, and while sneaking bumps it to the next
+    /// (`ItemConfigurator.useOn`). Whether the configuration changed.
+    fn configure(&mut self, cfg: &mut Config, facing: &str, layout: Layout, click: &Click) -> bool {
+        let t = self.tool.get(&click.player).copied().unwrap_or(Transmission::Items);
+        let side = config::side_of(facing, click.face);
+        let now = cfg.side(t)[side];
+        if !click.sneak {
+            let _ = players::tell(
+                &click.player,
+                &format!("Current {} behavior: {} ({})", t.label(), now.label(), now.color_name()),
+            );
+            return false;
+        }
+        let next = config::cycle(layout, t, now, false);
+        cfg.side_mut(t)[side] = next;
+        let _ = players::tell(
+            &click.player,
+            &format!("{} behavior bumped to: {} ({})", t.label(), next.label(), next.color_name()),
+        );
+        next != now
+    }
+
+    /// Gives the game what a machine's configuration says: the slots each face reaches, whether it ejects, and (as the
+    /// return) where energy comes in.
+    fn apply_config(&mut self, e: &BlockEntity, layout: Layout, facing: &str, cfg: &Config) -> Vec<FlowSide> {
+        let faces = config::item_faces(layout, facing, &cfg.items);
+        let _ = world::set_item_faces(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &faces);
+        let _ = world::set_item_eject(&e.dimension, e.pos.x, e.pos.y, e.pos.z, cfg.eject_items);
+        self.applied.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z));
+        config::energy_in(facing, &cfg.energy)
+            .iter()
+            .map(|on| if *on { FlowSide::Input } else { FlowSide::None })
+            .collect()
+    }
+
+    /// The tool click waiting for the entity at this place, if any.
+    fn take_click(&mut self, e: &BlockEntity) -> Option<Click> {
+        let i = self
+            .pending
+            .iter()
+            .position(|c| c.dimension == e.dimension && (c.pos.x, c.pos.y, c.pos.z) == (e.pos.x, e.pos.y, e.pos.z))?;
+        Some(self.pending.remove(i))
+    }
+
     /// A machine's tick: what it holds after, if that differs from before.
     fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         self.refresh(def, tick);
+        let layout = def.layout();
+        let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress = e
             .data
             .get(..2)
             .map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
+        // Its side configuration: what its data holds after the progress, or a new machine's.
+        let stored = Config::decode(e.data.get(2..).unwrap_or(&[]), layout);
+        let mut cfg = stored.unwrap_or_else(|| config::default_config(layout));
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        let mut dirty = stored.is_none() || !self.applied.contains(&key);
+        if let Some(click) = self.take_click(e) {
+            dirty |= self.configure(&mut cfg, &facing, layout, &click);
+        }
+        let dice = if def.kind == Kind::Sawmill { self.roll(tick, &e.pos) } else { 0.0 };
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
         // The slots after, the energy and progress after, what it did, and whether anything changed.
         let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = match def.kind {
@@ -272,7 +364,7 @@ impl Mekanism {
             }
             Kind::Sawmill => {
                 let io = sawmill::Io { input: slot(0), main: slot(1), secondary: slot(2), energy: e.energy, progress };
-                let (next, status) = sawmill::step(def.usage, &self.saws, &io, roll(tick, &e.pos));
+                let (next, status) = sawmill::step(def.usage, &self.saws, &io, dice);
                 (
                     vec![item(&next.input), item(&next.main), item(&next.secondary)],
                     next.energy,
@@ -299,24 +391,32 @@ impl Mekanism {
         if active != lit {
             let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
         }
+        let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let capacity = def.usage * STORED_TICKS;
-        let data = menu_data(next_progress, energy, capacity, status);
-        if !changed && data == e.menu_data {
+        let data = menu_data(next_progress, energy, capacity, status, &cfg);
+        if !changed && !dirty && data == e.menu_data {
             return None;
         }
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: (next_progress as u16).to_le_bytes().to_vec(),
+            data: machine_data(next_progress, &cfg),
             items: Some(items),
             energy: Some(energy),
-            energy_faces: None,
+            energy_faces,
             tanks: None,
             tank_faces: None,
             menu_data: Some(data),
             transmitter_faces: None,
         })
     }
+}
+
+/// What a machine keeps in its data: its progress (two bytes), then its side configuration.
+fn machine_data(progress: u32, cfg: &Config) -> Vec<u8> {
+    let mut data = (progress as u16).to_le_bytes().to_vec();
+    data.extend(cfg.encode());
+    data
 }
 
 impl Mekanism {
@@ -327,18 +427,31 @@ impl Mekanism {
         let mut changed = stored.is_none();
         // A new cube's front looks at the nearest player, as one placed in front of them does.
         let mut modes = stored.unwrap_or_else(|| sides::default_modes(front_for(e)));
-        if let Some(i) = self
-            .pending
-            .iter()
-            .position(|c| c.dimension == e.dimension && (c.pos.x, c.pos.y, c.pos.z) == (e.pos.x, e.pos.y, e.pos.z))
-        {
-            let click = self.pending.remove(i);
-            modes[click.face] = modes[click.face].step(click.back);
-            changed = true;
-            let _ = players::tell(
-                &click.player,
-                &format!("Energy: {} side is now {}", SIDES[click.face], modes[click.face].name()),
-            );
+        if let Some(click) = self.take_click(e) {
+            // The cube configures energy only: a configurator set to items has nothing to do here.
+            if self.tool.get(&click.player).copied().unwrap_or(Transmission::Items) == Transmission::Energy {
+                let now = modes[click.face];
+                let d = |m: Mode| match m {
+                    Mode::None => Data::None,
+                    Mode::Input => Data::Input,
+                    Mode::Output => Data::Output,
+                    Mode::Both => Data::InputOutput,
+                };
+                if click.sneak {
+                    modes[click.face] = now.step(false);
+                    changed = true;
+                    let next = d(modes[click.face]);
+                    let _ = players::tell(
+                        &click.player,
+                        &format!("Energy behavior bumped to: {} ({})", next.label(), next.color_name()),
+                    );
+                } else {
+                    let _ = players::tell(
+                        &click.player,
+                        &format!("Current Energy behavior: {} ({})", d(now).label(), d(now).color_name()),
+                    );
+                }
+            }
         }
         let flow = sides::flow_faces(&modes);
         let faces: Vec<FlowSide> = flow.iter().map(|f| flow_side(*f)).collect();
@@ -390,27 +503,27 @@ impl ServerMod for Mekanism {
         for def in &MACHINES {
             let mut k = kind(def.block, true);
             k.container = Some(match def.kind {
-                // Hoppers feed the input from above and the sides, and empty the output below.
+                // The faces are the default configuration's, the machine's own once it has one.
                 Kind::Electric => ContainerSpec {
                     slots: 2,
-                    faces: vec![vec![1], vec![0], vec![0], vec![0], vec![0], vec![0]],
+                    faces: config::item_faces(Layout::Electric, "north", &config::default_config(Layout::Electric).items),
                     inputs: vec![0],
                     outputs: vec![1],
                     menu: true,
                 },
-                // The input, the main and the secondary output: both outputs are emptied below.
+                // The input, the main and the secondary output; the faces are the default configuration's, the
+                // machine's own once it has one.
                 Kind::Sawmill => ContainerSpec {
                     slots: 3,
-                    faces: vec![vec![1, 2], vec![0], vec![0], vec![0], vec![0], vec![0]],
+                    faces: config::item_faces(Layout::Sawmill, "north", &config::default_config(Layout::Sawmill).items),
                     inputs: vec![0],
                     outputs: vec![1, 2],
                     menu: true,
                 },
-                // The main input from above, the extra one from the sides, the output below (the original's
-                // sides are configurable; the port's are fixed).
+                // The main input, the extra one and the output, on the faces of the default configuration.
                 Kind::Combiner => ContainerSpec {
                     slots: 3,
-                    faces: vec![vec![2], vec![0], vec![1], vec![1], vec![1], vec![1]],
+                    faces: config::item_faces(Layout::Combiner, "north", &config::default_config(Layout::Combiner).items),
                     inputs: vec![0, 1],
                     outputs: vec![2],
                     menu: true,
@@ -439,6 +552,9 @@ impl ServerMod for Mekanism {
             saws: sawmill::Book::default(),
             combs: combiner::Book::default(),
             pending: Vec::new(),
+            tool: HashMap::new(),
+            applied: HashSet::new(),
+            rng: 0,
         }, r.on_chunks().on_items()))
     }
 
@@ -465,15 +581,25 @@ impl ServerMod for Mekanism {
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
-        let Some(pos) = pos else { return false };
         if stack.item != CONFIGURATOR {
             return false;
         }
+        let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+        let Some(pos) = pos else {
+            // Sneaking in the air changes what the tool configures (`ItemConfigurator.use`).
+            if sneaking {
+                let t = self.tool.entry(player.id.clone()).or_insert(Transmission::Items);
+                *t = t.next();
+                let _ = players::tell(&player.id, &format!("Configure State: Configurate ({})", t.label()));
+                return true;
+            }
+            return false;
+        };
         let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
-        if !block.contains("_energy_cube") {
+        let name = block.split('[').next().unwrap_or("");
+        if !name.ends_with("_energy_cube") && !MACHINES.iter().any(|d| d.block == name) {
             return false;
         }
-        let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
         let eye = [player.x, player.y + if sneaking { EYE_SNEAKING } else { EYE }, player.z];
         let block = [pos.x, pos.y, pos.z];
         // The side the look meets; when the look is not known, or misses, the one toward the player.
@@ -485,10 +611,48 @@ impl ServerMod for Mekanism {
             dimension: player.dimension.clone(),
             pos,
             face,
-            back: sneaking,
+            sneak: sneaking,
             tick: 0,
         });
         true
+    }
+
+    /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
+    fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
+        let block = e.state.split('[').next()?;
+        let def = MACHINES.iter().find(|d| d.block == block)?;
+        let layout = def.layout();
+        let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
+        let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
+        match config::click_of(id)? {
+            config::Click::Side { t, side, back } => {
+                let now = cfg.side(t)[side];
+                cfg.side_mut(t)[side] = config::cycle(layout, t, now, back);
+            }
+            config::Click::Eject => cfg.eject_items = !cfg.eject_items,
+            config::Click::Clear { t, back } => {
+                let target = config::clear_target(layout, t, cfg.side(t), back);
+                *cfg.side_mut(t) = [target; 6];
+            }
+        }
+        let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
+        let faces = self.apply_config(&e, layout, &facing, &cfg);
+        // The screen's first six numbers stay; the configuration's four follow them.
+        let mut data = e.menu_data.clone();
+        data.resize(6, 0);
+        data.extend(cfg.screen_words());
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: machine_data(progress, &cfg),
+            items: None,
+            energy: None,
+            energy_faces: Some(faces),
+            tanks: None,
+            tank_faces: None,
+            menu_data: Some(data),
+            transmitter_faces: None,
+        })
     }
 
     fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {

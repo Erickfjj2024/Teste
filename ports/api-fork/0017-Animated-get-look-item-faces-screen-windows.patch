@@ -1,0 +1,1972 @@
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 47e9d18..c013d2a 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -281,6 +281,8 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
+             Output::SetBlockProperty { property, value, .. } => format!("set {property}={value}"),
++            Output::SetItemFaces { faces, .. } => format!("item faces {faces:?}"),
++            Output::SetItemEject { on, .. } => format!("item eject {on}"),
+             Output::Chunk { chunk, forced, .. } => {
+                 format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
+             }
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 0e48436..e81265e 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -5747,6 +5747,16 @@ impl Game<'_> {
+                 return Ok(true);
+             }
+         }
++        // A server mod's item takes the click before the block does (NeoForge's `onItemUseFirst`, and what
++        // `server-events.item-used` says): a configurator used on a cube must not open the cube's own use.
++        #[cfg(feature = "mods")]
++        if let Some(hit) = block_hit
++            && let Some(stack) = self.held().cloned()
++            && self.mod_item_use(&stack, Some(hit.pos))
++        {
++            self.swing_arm();
++            return Ok(true);
++        }
+         // MultiPlayerGameMode.useItemOn: blocks react first.
+         if !(sneaking && hands_full)
+             && let Some(hit) = block_hit
+diff --git a/crates/horizon-client/src/game/block_entity_ticks.rs b/crates/horizon-client/src/game/block_entity_ticks.rs
+index 5b75319..2a936c7 100644
+--- a/crates/horizon-client/src/game/block_entity_ticks.rs
++++ b/crates/horizon-client/src/game/block_entity_ticks.rs
+@@ -37,6 +37,7 @@ impl Game<'_> {
+             let containers = self.native_containers();
+             self.world.block_entities.set_mod_containers(containers);
+         }
++        self.tick_mod_ejectors();
+         // Only lingering cooldowns are dropped; a hopper that ticks checks
+         // its own block. Once a second is soon enough for the rest.
+         if self.world.game_time % 20 == 0 {
+diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
+index 6b1a3e5..333ad92 100644
+--- a/crates/horizon-client/src/game/block_renderers.rs
++++ b/crates/horizon-client/src/game/block_renderers.rs
+@@ -7,7 +7,7 @@
+ use super::{Game, native_block_entity_draw::{BlockEntityDraw, CubeFace}};
+ use horizon_client::containers::ModBlockEntity;
+ use horizon_mods::{
+-    block_render::{fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees},
++    block_render::{bounce_offset, fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees, turn_degrees},
+     content::{BlockRenderer, RenderElement, parse_color},
+ };
+ use horizon_world::nbt::{JavaString, Tag};
+@@ -67,9 +67,20 @@ pub(super) fn display_signature(entity: &ModBlockEntity) -> u64 {
+     let energy = long(entity.nbt.get(&key("energy")));
+     let cap = long(entity.nbt.get(&key("energy_cap")));
+     sixteenths(energy, cap).hash(&mut h);
++    if renderer_of(&entity.id).is_some_and(BlockRenderer::uses_data) {
++        data_of(entity).hash(&mut h);
++    }
+     h.finish()
+ }
+ 
++/// The bytes the mod saved with its last update (what a part's test reads).
++fn data_of(entity: &ModBlockEntity) -> &[u8] {
++    match entity.nbt.get(&key("data")) {
++        Some(Tag::ByteArray(b)) => b.as_slice(),
++        _ => &[],
++    }
++}
++
+ /// The part of a block entity's `nbt` the clients are sent.
+ pub(super) fn display_tag(entity: &ModBlockEntity) -> Option<horizon_world::nbt::Compound> {
+     let mut tag = horizon_world::nbt::Compound::new();
+@@ -78,6 +89,12 @@ pub(super) fn display_tag(entity: &ModBlockEntity) -> Option<horizon_world::nbt:
+             tag.insert(key(k), v.clone());
+         }
+     }
++    // The data, for the parts a renderer draws by it (a few bytes: the first 64).
++    if renderer_of(&entity.id).is_some_and(BlockRenderer::uses_data) {
++        let data = data_of(entity);
++        let n = data.len().min(64);
++        tag.insert(key("data"), Tag::ByteArray(data[..n].to_vec().into()));
++    }
+     (!tag.is_empty()).then_some(tag)
+ }
+ 
+@@ -119,6 +136,63 @@ impl Game<'_> {
+                     let tint = fluid_tint(tints, &t.substance);
+                     self.native_draw_cube(draw, lo, hi, all(sprite), tint);
+                 }
++                RenderElement::Part { block, when } => {
++                    if when.as_ref().is_none_or(|w| w.matches(data_of(entity))) {
++                        self.native_draw_block(draw, block, &[]);
++                    }
++                }
++                RenderElement::Animated {
++                    from,
++                    to,
++                    sprite,
++                    scale,
++                    center,
++                    bounce,
++                    rotations,
++                    fullbright,
++                    only_with_energy,
++                    energy_fade,
++                } => {
++                    if *only_with_energy && long(entity.nbt.get(&key("energy"))) == 0 {
++                        continue;
++                    }
++                    let time = draw.game_time as f32 + draw.partial;
++                    let middle = center.unwrap_or_else(|| [0, 1, 2].map(|i| (from[i] + to[i]) / 2.0));
++                    let at = middle.map(|v| v / 16.0);
++                    let size = scale.unwrap_or(1.0);
++                    draw.push();
++                    draw.translate(at);
++                    draw.scale([size; 3]);
++                    if let Some(b) = bounce {
++                        draw.translate([0.0, bounce_offset(time, b.amplitude, b.degrees_per_tick), 0.0]);
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>().sqrt();
++                        if len > 0.0 {
++                            let axis = r.axis.map(|v| v / len);
++                            draw.rotate_about(axis, turn_degrees(time, r.degrees_per_tick, r.offset), [0.0; 3]);
++                        }
++                    }
++                    let lit = draw.light;
++                    if *fullbright {
++                        // 16 times sky light in the low byte, block light in the next.
++                        draw.light = 0xF0F0;
++                    }
++                    // The box keeps its own texel coordinates (they set its texture mapping);
++                    // the pose moves its centre back to the origin it turns about.
++                    draw.translate(at.map(|v| -v));
++                    let tint = if *energy_fade {
++                        // Not below a fifth, so a nearly empty cube still shows its core.
++                        let full = sixteenths(long(entity.nbt.get(&key("energy"))), long(entity.nbt.get(&key("energy_cap"))));
++                        let level = (u32::from(full.max(3)) * 255 / 16).min(255);
++                        level << 16 | level << 8 | level
++                    } else {
++                        0xFFFFFF
++                    };
++                    self.native_draw_cube(draw, *from, *to, all(sprite), tint);
++                    draw.light = lit;
++                    draw.pop();
++                }
+                 RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
+                     let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
+                     let centre = pivot.unwrap_or_else(|| {
+@@ -148,15 +222,20 @@ impl Game<'_> {
+             return;
+         }
+         let mut changed: Vec<[i32; 3]> = Vec::new();
+-        for (pos, e) in self.world.block_entities.iter_mut() {
++        let mut seen: Vec<([i32; 3], u64)> = Vec::new();
++        for (pos, e) in self.world.block_entities.iter() {
+             let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
+                 continue;
+             };
+             if renderer_of(&m.id).is_none() {
+                 continue;
+             }
+-            let sig = display_signature(m);
+-            let at = [pos.0, pos.1, pos.2];
++            // A change of the block's state (a side's look) makes the clients build its entity again,
++            // empty: what they are shown is sent again with it.
++            let state = u64::from(self.world.block(pos.0, pos.1, pos.2).0);
++            seen.push(([pos.0, pos.1, pos.2], display_signature(m) ^ state.wrapping_mul(0x9E37_79B9_7F4A_7C15)));
++        }
++        for (at, sig) in seen {
+             if self.mods.shown_displays.insert(at, sig) != Some(sig) {
+                 changed.push(at);
+             }
+diff --git a/crates/horizon-client/src/game/machines.rs b/crates/horizon-client/src/game/machines.rs
+index e82b6ca..1c31d7b 100644
+--- a/crates/horizon-client/src/game/machines.rs
++++ b/crates/horizon-client/src/game/machines.rs
+@@ -107,6 +107,11 @@ impl View {
+     }
+ }
+ 
++/// Slots a mask can name: a bit past the container's slots is none.
++fn own_slots(slots: usize) -> usize {
++    slots
++}
++
+ pub(super) fn dir_from_name(name: &str) -> Option<Direction> {
+     Some(match name {
+         "down" => Direction::Down,
+@@ -199,7 +204,19 @@ impl Containers<'_> {
+             if m.id.is_empty() {
+                 return None;
+             }
+-            let container = Arc::clone(self.world.block_entities.mod_container(state.0)?);
++            let mut container = Arc::clone(self.world.block_entities.mod_container(state.0)?);
++            // A mod may give this entity its own faces (a machine's side configuration): a byte for each face,
++            // a bit for each slot, kept in the entity.
++            if let Some(horizon_world::nbt::Tag::ByteArray(masks)) =
++                m.nbt.get(&horizon_world::nbt::JavaString::from("item_faces"))
++                && masks.len() == 6
++            {
++                let mut own = (*container).clone();
++                for (face, mask) in own.faces.iter_mut().zip(masks.iter()) {
++                    *face = (0..8).filter(|s| *mask as u8 & (1 << s) != 0).filter(|s| *s < own_slots(container.slots)).collect();
++                }
++                container = Arc::new(own);
++            }
+             return Some(View {
+                 parts: vec![(pos, container.slots)],
+                 kind: Kind::Mod,
+@@ -689,6 +706,78 @@ impl Game<'_> {
+     }
+     /// `HopperBlockEntity.pushItemsTick` of the hopper at `pos`, if its block
+     /// is still a hopper (`BlockEntityType.isValid`).
++    /// Mod machines with auto-eject on (`eject_items` in their entity) push items out every 10 ticks, from the slots of
++    /// their `outputs` that a face reaches into the container beside that face (Mekanism's `TileComponentEjector`).
++    pub(super) fn tick_mod_ejectors(&mut self) {
++        if self.world.game_time % 10 != 0 {
++            return;
++        }
++        let ejecting: Vec<Pos> = self
++            .world
++            .block_entities
++            .iter()
++            .filter_map(|(pos, e)| match e {
++                BlockEntity::Mod(m)
++                    if matches!(
++                        m.nbt.get(&horizon_world::nbt::JavaString::from("eject_items")),
++                        Some(horizon_world::nbt::Tag::Byte(1))
++                    ) =>
++                {
++                    Some(*pos)
++                }
++                _ => None,
++            })
++            .collect();
++        for pos in ejecting {
++            self.mod_eject(pos);
++        }
++    }
++    fn mod_eject(&mut self, pos: Pos) {
++        let Some(view) = self.containers().view(pos, false) else {
++            return;
++        };
++        let Some(container) = view.container.clone() else {
++            return;
++        };
++        let mut moved = false;
++        for face in [
++            Direction::Down,
++            Direction::Up,
++            Direction::North,
++            Direction::South,
++            Direction::West,
++            Direction::East,
++        ] {
++            let slots: Vec<usize> = container.faces[face as usize]
++                .iter()
++                .copied()
++                .filter(|s| container.outputs.contains(s))
++                .collect();
++            if slots.is_empty() {
++                continue;
++            }
++            let Some(target) = self.containers().view(offset(pos, face), false) else {
++                continue;
++            };
++            for slot in slots {
++                while let Some(one) = self.take_one(&view, slot) {
++                    match self.add_item(None, &target, one, Some(face.opposite())) {
++                        None => {
++                            self.view_changed(&target);
++                            moved = true;
++                        }
++                        Some(rest) => {
++                            self.put_back(&view, slot, rest);
++                            break;
++                        }
++                    }
++                }
++            }
++        }
++        if moved {
++            self.container_changed(pos);
++        }
++    }
+     pub(super) fn tick_hopper(&mut self, pos: Pos) {
+         let time = self.world.game_time;
+         let waiting = {
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 609127a..b14c6ee 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -7,13 +7,33 @@ use super::{Game, native_hooks::NativeScreen};
+ use horizon_client::hud::HudBatch;
+ use horizon_mods::{
+     content::{MenuScreen, Widget, parse_color},
+-    screen::{button_at, fill_text, filled, fraction, hovered, read},
++    screen::{Locals, Press, fill_text, filled, fraction, hovered, open_window, press, read, showing},
++};
++use std::{
++    collections::HashMap,
++    sync::{Mutex, OnceLock},
+ };
+-use std::{collections::HashMap, sync::OnceLock};
+ 
+ /// The mods' menu screens by menu type id, set once with the menu types.
+ pub(super) static MENU_SCREENS: OnceLock<HashMap<String, MenuScreen>> = OnceLock::new();
+ 
++/// What the open screen keeps on this client alone (the window open, a tab chosen): one screen is open at a time.
++static LOCALS: Mutex<Option<Locals>> = Mutex::new(None);
++
++/// The id a press that stays on this client gives `native_screen_click`'s `button`: not a menu button.
++pub(super) const LOCAL_PRESS: i32 = i32::MIN;
++
++/// A new screen opened: its windows are closed and its variables unset.
++pub(super) fn reset_locals() {
++    if let Ok(mut l) = LOCALS.lock() {
++        *l = None;
++    }
++}
++
++fn locals() -> Locals {
++    LOCALS.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
++}
++
+ /// The screen of menu type `id`, if it has one.
+ pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
+     MENU_SCREENS.get()?.get(id)
+@@ -37,29 +57,10 @@ impl Game<'_> {
+         })
+     }
+ 
+-    /// Draws block `block`'s declared screen at `origin`; false when it has none.
+-    pub(super) fn draw_declared_screen(
+-        &self,
+-        block: &str,
+-        data: &[i32],
+-        batch: &mut HudBatch,
+-        origin: [f32; 2],
+-    ) -> bool {
+-        let Some(def) = screen_of(block) else {
+-            return false;
+-        };
++    /// Draws a list of widgets (showing now) with their origin at `origin`.
++    fn draw_widgets(&self, widgets: &[Widget], data: &[i32], locals: &Locals, batch: &mut HudBatch, origin: [f32; 2]) {
+         let [ox, oy] = origin;
+-        if let Some(texture) = &def.texture
+-            && let Some([sw, sh]) = self.native_sprite_size(texture)
+-        {
+-            self.native_sprite(
+-                batch,
+-                texture,
+-                [0.0, 0.0, sw, sh],
+-                [ox, oy, def.width as f32, def.height as f32],
+-            );
+-        }
+-        for w in &def.widgets {
++        for w in showing(widgets, data, locals) {
+             match w {
+                 Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
+                     let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
+@@ -95,15 +96,71 @@ impl Game<'_> {
+                     let text = fill_text(text, data);
+                     self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
+                 }
+-                Widget::Button { .. } => {}
++                Widget::Swatch { x, y, w, h, value, colors, .. } => {
++                    let i = read(value, data).max(0) as usize;
++                    let argb = colors.get(i).or(colors.last()).and_then(|c| parse_color(c)).unwrap_or(0xFF80_8080);
++                    self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
++                }
++                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
++                Widget::Button { .. } | Widget::Show { .. } => {}
+             }
+         }
++    }
++
++    /// Draws block `block`'s declared screen at `origin`; false when it has none.
++    pub(super) fn draw_declared_screen(
++        &self,
++        block: &str,
++        data: &[i32],
++        batch: &mut HudBatch,
++        origin: [f32; 2],
++    ) -> bool {
++        let Some(def) = screen_of(block) else {
++            return false;
++        };
++        let [ox, oy] = origin;
++        let locals = locals();
++        if let Some(texture) = &def.texture
++            && let Some([sw, sh]) = self.native_sprite_size(texture)
++        {
++            self.native_sprite(
++                batch,
++                texture,
++                [0.0, 0.0, sw, sh],
++                [ox, oy, def.width as f32, def.height as f32],
++            );
++        }
++        self.draw_widgets(&def.widgets, data, &locals, batch, origin);
++        // The window open, over the panel.
++        if let Some(window) = open_window(def, &locals) {
++            let at = [ox + window.x as f32, oy + window.y as f32];
++            if let Some(texture) = &window.texture
++                && let Some([sw, sh]) = self.native_sprite_size(texture)
++            {
++                self.native_sprite(
++                    batch,
++                    texture,
++                    [0.0, 0.0, sw, sh],
++                    [at[0], at[1], window.width as f32, window.height as f32],
++                );
++            }
++            self.draw_widgets(&window.widgets, data, &locals, batch, at);
++        }
+         true
+     }
+ 
+-    /// The menu button a press at `at` hits on block `block`'s declared screen.
+-    pub(super) fn declared_screen_button(&self, block: &str, at: [f32; 2]) -> Option<i32> {
+-        button_at(screen_of(block)?, at)
++    /// What a press at `at` does on block `block`'s declared screen: a menu button for the server, or something done
++    /// here (a window opened); `alt` is a right press.
++    pub(super) fn declared_screen_press(&self, block: &str, data: &[i32], at: [f32; 2], alt: bool) -> Option<i32> {
++        let screen = screen_of(block)?;
++        let mut l = LOCALS.lock().ok()?;
++        let mut now = l.take().unwrap_or_default();
++        let result = press(screen, data, &mut now, at, alt);
++        *l = Some(now);
++        match result? {
++            Press::Send(id) => Some(id),
++            Press::Local => Some(LOCAL_PRESS),
++        }
+     }
+ 
+     /// The tooltip under `at` on block `block`'s declared screen.
+@@ -114,8 +171,7 @@ impl Game<'_> {
+         at: [f32; 2],
+     ) -> Vec<String> {
+         screen_of(block)
+-            .and_then(|s| hovered(s, data, at))
++            .and_then(|s| hovered(s, data, &locals(), at))
+             .unwrap_or_default()
+     }
+ }
+-
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 003737e..886916c 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -613,6 +613,7 @@ impl Game<'_> {
+             font_widths: self.mods.font_widths.clone(),
+             players,
+             motions: Vec::new(),
++            looks: Vec::new(),
+             mobs: Vec::new(),
+             mobs_dimension: String::new(),
+             inventories: Vec::new(),
+@@ -854,7 +855,9 @@ impl Game<'_> {
+                 | Output::Entity { .. }
+                 | Output::PlayerItems { .. }
+                 | Output::Chunk { .. }
+-                | Output::SetBlockProperty { .. }) => {
++                | Output::SetBlockProperty { .. }
++                | Output::SetItemFaces { .. }
++                | Output::SetItemEject { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 325afbf..6f55b10 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1941,8 +1941,8 @@ impl Game<'_> {
+         right: bool,
+         button: &mut Option<i32>,
+     ) {
+-        if button.is_none() && !right {
+-            *button = self.declared_screen_button(block, at);
++        if button.is_none() {
++            *button = self.declared_screen_press(block, data, at, right);
+         }
+         let _ = (block, data, at, right, button);
+     }
+@@ -2130,10 +2130,7 @@ impl Game<'_> {
+         face: [i32; 3],
+         claimed: &mut bool,
+     ) {
+-        #[cfg(feature = "mods")]
+-        if !*claimed && self.mod_item_use(stack, Some(pos)) {
+-            *claimed = true;
+-        }
++        // Server mods took the click before the block (`use_hand`).
+         let _ = (stack, pos, face, claimed);
+     }
+     /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
+@@ -4132,6 +4129,7 @@ impl Game<'_> {
+         menu: &str,
+     ) {
+         self.mod_screen = None;
++        super::menu_screens::reset_locals();
+         let Some(t) = target else {
+             return;
+         };
+@@ -4384,6 +4382,11 @@ impl Game<'_> {
+         let Some(button) = button else {
+             return false;
+         };
++        // A press that stays on this client (a window opening, a tab chosen) is not a menu button.
++        if button == super::menu_screens::LOCAL_PRESS {
++            self.audio.play_button_click();
++            return true;
++        }
+         let window = self
+             .remote
+             .as_ref()
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index fcc3158..f44181d 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -310,6 +310,7 @@ mod run {
+             let mut snapshot = self.mod_snapshot_with(players.clone());
+             if self.mods.world {
+                 snapshot.motions = self.server_motions();
++                snapshot.looks = self.server_looks();
+             }
+             if self.mods.mods.wants_player_items() {
+                 snapshot.inventories = self.server_inventories(&players);
+@@ -511,6 +512,30 @@ mod run {
+         }
+ 
+         /// What the window's own player is doing, as capability `player-control` reads it.
++        /// Where each player looks, `(yaw, pitch)`: the window's own player in-frame and the guests.
++        fn server_looks(&mut self) -> Vec<(String, (f32, f32))> {
++            let mut out = Vec::new();
++            if self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++            {
++                out.push((uuid_string(self.player_uuid()), (self.yaw, self.pitch)));
++            }
++            let guests: Vec<(u32, u128)> = self
++                .lan
++                .iter()
++                .flat_map(|h| &h.hub.guests)
++                .filter(|g| g.placed)
++                .map(|g| (g.conn, g.uuid))
++                .collect();
++            for (conn, uuid) in guests {
++                if let Some(look) = self.for_player(Target::Guest(conn), |g| (g.yaw, g.pitch)) {
++                    out.push((uuid_string(uuid), look));
++                }
++            }
++            out
++        }
++
+         fn own_motion(&self) -> Motion {
+             let p = self.player.as_ref();
+             Motion {
+@@ -657,6 +682,27 @@ mod run {
+         fn jname(s: &str) -> horizon_world::nbt::JavaString {
+             horizon_world::nbt::JavaString::from(s)
+         }
++        /// A mod's `world.set-item-faces`: the slots each face of the entity's container reaches, kept in it.
++        pub(in crate::game) fn native_set_item_faces(&mut self, pos: [i32; 3], faces: &[Vec<u32>]) {
++            let key = (pos[0], pos[1], pos[2]);
++            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                self.world.block_entities.get_mut(&key)
++            {
++                let masks: Vec<u8> = faces.iter().map(|f| f.iter().fold(0u8, |a, s| a | (1 << (*s & 7)))).collect();
++                m.nbt.insert(Self::jname("item_faces"), horizon_world::nbt::Tag::ByteArray(masks));
++                self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++            }
++        }
++        /// A mod's `world.set-item-eject`: whether the entity pushes its output items out.
++        pub(in crate::game) fn native_set_item_eject(&mut self, pos: [i32; 3], on: bool) {
++            let key = (pos[0], pos[1], pos[2]);
++            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                self.world.block_entities.get_mut(&key)
++            {
++                m.nbt.insert(Self::jname("eject_items"), horizon_world::nbt::Tag::Byte(i8::from(on)));
++                self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++            }
++        }
+         /// The faces a transmitter connects through: what its mod last set
+         /// (`transmitter_faces`), else all of them.
+         fn transmitter_connect(
+@@ -1350,7 +1396,13 @@ mod run {
+                 return false;
+             };
+             let stack = Self::mod_stack(stack);
+-            self.mods.mods.item_used(&player, &stack, pos)
++            // The world is lent for the call, as it is for a tick or a command: the mod reads the block it
++            // was used on.
++            self.lend_world();
++            let claimed = self.mods.mods.item_used(&player, &stack, pos);
++            self.return_world();
++            self.apply_mod_block_writes();
++            claimed
+         }
+ 
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+@@ -1660,6 +1712,20 @@ mod run {
+                         log::debug!("Horizon: mod {name} set a property in another level");
+                     }
+                 }
++                Output::SetItemFaces { name, dimension, pos, faces } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_item_faces(pos, &faces);
++                    } else {
++                        log::debug!("Horizon: mod {name} set item faces in another level");
++                    }
++                }
++                Output::SetItemEject { name, dimension, pos, on } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_item_eject(pos, on);
++                    } else {
++                        log::debug!("Horizon: mod {name} set item eject in another level");
++                    }
++                }
+                 Output::Chunk {
+                     name,
+                     id,
+diff --git a/crates/horizon-client/src/mod_content.rs b/crates/horizon-client/src/mod_content.rs
+index 667d135..e7f098f 100644
+--- a/crates/horizon-client/src/mod_content.rs
++++ b/crates/horizon-client/src/mod_content.rs
+@@ -74,6 +74,18 @@ enum J {
+     Str(String),
+     Arr(Vec<J>),
+     Obj(Vec<(String, J)>),
++    /// A vanilla row of a big per-state table, kept as the text it was read from: the tables hold tens of
++    /// thousands of rows, a tree of them is ten times their size, and only the rows a mod copies are read
++    /// (`J::parsed`). Written back as the tree would be.
++    Raw(Raw),
++}
++/// A piece of JSON kept as text.
++#[derive(Clone, Debug)]
++struct Raw(Box<serde_json::value::RawValue>);
++impl PartialEq for Raw {
++    fn eq(&self, other: &Raw) -> bool {
++        self.0.get() == other.0.get()
++    }
+ }
+ impl<'de> Deserialize<'de> for J {
+     fn deserialize<D: de::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+@@ -152,10 +164,23 @@ impl Serialize for J {
+                 }
+                 map.end()
+             }
++            // Written as the tree of the row would be, one row at a time: the table comes out byte for byte as when
++            // every row was a tree (`\u003d` becomes `=`), and only one row is a tree at once.
++            J::Raw(r) => match serde_json::from_str::<J>(r.0.get()) {
++                Ok(row) => row.serialize(s),
++                Err(e) => Err(serde::ser::Error::custom(e)),
++            },
+         }
+     }
+ }
+ impl J {
++    /// This value as a tree: a kept row is read now, anything else is cloned.
++    fn parsed(&self) -> J {
++        match self {
++            J::Raw(r) => serde_json::from_str(r.0.get()).unwrap_or(J::Null),
++            other => other.clone(),
++        }
++    }
+     fn get(&self, key: &str) -> Option<&J> {
+         match self {
+             J::Obj(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+@@ -602,6 +627,47 @@ fn read_json(path: &Path) -> Result<J> {
+     Ok(serde_json::from_slice(&fs::read(path)?).map_err(|e| format!("{}: {e}", path.display()))?)
+ }
+ 
++/// A table with a `states` list at its top, which stays as text row by row (`J::Raw`): the rows of vanilla's
++/// 35,000 states are the bulk of the table, and the build copies them as they are.
++fn read_json_rows(path: &Path) -> Result<J> {
++    struct Lazy(J);
++    impl<'de> Deserialize<'de> for Lazy {
++        fn deserialize<D: de::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
++            struct V;
++            impl<'de> de::Visitor<'de> for V {
++                type Value = Lazy;
++                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
++                    f.write_str("a JSON object")
++                }
++                fn visit_map<A: de::MapAccess<'de>>(
++                    self,
++                    mut a: A,
++                ) -> std::result::Result<Lazy, A::Error> {
++                    let mut out = Vec::new();
++                    while let Some(key) = a.next_key::<String>()? {
++                        let value = if key == "states" {
++                            let rows: Vec<Box<serde_json::value::RawValue>> = a.next_value()?;
++                            J::Arr(rows.into_iter().map(|r| J::Raw(Raw(r))).collect())
++                        } else {
++                            a.next_value::<J>()?
++                        };
++                        out.push((key, value));
++                    }
++                    Ok(Lazy(J::Obj(out)))
++                }
++            }
++            d.deserialize_map(V)
++        }
++    }
++    let bytes = fs::read(path)?;
++    let lazy: Lazy =
++        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
++    Ok(lazy.0)
++}
++
++/// Tables whose `states` rows are kept as text while they are rewritten.
++const ROW_TABLES: [&str; 2] = ["facts.json", "gameplay-facts.json"];
++
+ impl Plan<'_> {
+     /// `entity-types.json` with a row for each mod type: its template's, so its
+     /// size, eyes and category are the template's (`execute anchored eyes`,
+@@ -645,11 +711,11 @@ impl<'a> Plan<'a> {
+             },
+             false => BTreeSet::new(),
+         };
+-        let mut facts = read_json(&base.join("facts.json"))?;
++        let mut facts = read_json_rows(&base.join("facts.json"))?;
+         let names: Vec<String> = match facts.at("states") {
+             Some(J::Arr(states)) => states
+                 .iter()
+-                .map(|s| match s {
++                .map(|s| match s.parsed() {
+                     J::Arr(row) => match row.first() {
+                         Some(J::Str(name)) => Ok(name.clone()),
+                         _ => Err("facts.json: a state without a name"),
+@@ -695,7 +761,8 @@ impl<'a> Plan<'a> {
+                     let mut used = BTreeSet::new();
+                     let mut out = Vec::new();
+                     for id in states.clone() {
+-                        let J::Arr(row) = &rows[id as usize] else {
++                        let row = rows[id as usize].parsed();
++                        let J::Arr(row) = &row else {
+                             unreachable!()
+                         };
+                         let Some(J::Str(value)) = row
+@@ -712,7 +779,7 @@ impl<'a> Plan<'a> {
+                         let boxes = spec.values.get(value).ok_or_else(|| {
+                             format!("{}: no shape for {}={value}", decl.id, spec.property)
+                         })?;
+-                        used.insert(value.as_str());
++                        used.insert(value.clone());
+                         let mut shape = VoxelShape::empty();
+                         for b in boxes {
+                             let part = VoxelShape::from_box(Aabb::new(
+@@ -736,12 +803,13 @@ impl<'a> Plan<'a> {
+                         unreachable!()
+                     };
+                     let shapes = states.clone().map(|id| {
+-                        let props = match &rows[id as usize] {
+-                            J::Arr(row) => row.get(4).and_then(|p| p.get("properties")),
++                        let props = match rows[id as usize].parsed() {
++                            J::Arr(row) => row.get(4).and_then(|p| p.get("properties")).cloned(),
+                             _ => None,
+                         };
+-                        let sides = ["down", "up", "north", "south", "west", "east"]
+-                            .map(|k| matches!(props.and_then(|p| p.get(k)), Some(J::Str(v)) if v == "true"));
++                        let sides = ["down", "up", "north", "south", "west", "east"].map(
++                            |k| matches!(props.as_ref().and_then(|p| p.get(k)), Some(J::Str(v)) if v == "true"),
++                        );
+                         horizon_world::collision::pipe_shape(size.into(), sides)
+                     });
+                     Some(shapes.collect::<std::io::Result<_>>()?)
+@@ -757,11 +825,11 @@ impl<'a> Plan<'a> {
+                 let Some(J::Arr(rows)) = facts.get("states") else {
+                     unreachable!()
+                 };
+-                let properties = |id: u32| -> Option<&J> {
+-                    let J::Arr(row) = rows.get(id as usize)? else {
++                let properties = |id: u32| -> Option<J> {
++                    let J::Arr(row) = rows.get(id as usize)?.parsed() else {
+                         return None;
+                     };
+-                    row.get(4)?.get("properties")
++                    row.get(4)?.get("properties").cloned()
+                 };
+                 for key in decl.state_properties.keys() {
+                     if properties(default).is_some_and(|p| p.get(key).is_some()) {
+@@ -786,7 +854,7 @@ impl<'a> Plan<'a> {
+                     .keys()
+                     .any(|key| !decl.state_properties.contains_key(key));
+                 if on_template {
+-                    let mut wanted = properties(default).cloned().ok_or_else(|| {
++                    let mut wanted = properties(default).ok_or_else(|| {
+                         format!("{}: template default has no state properties", decl.id)
+                     })?;
+                     for (key, value) in &decl.default_state {
+@@ -806,7 +874,7 @@ impl<'a> Plan<'a> {
+                         .clone()
+                         .filter(|id| {
+                             properties(*id).is_some_and(|p| {
+-                                let (J::Obj(a), J::Obj(b)) = (p, &wanted) else {
++                                let (J::Obj(a), J::Obj(b)) = (&p, &wanted) else {
+                                     return false;
+                                 };
+                                 a.len() == b.len() && b.iter().all(|(k, v)| p.get(k) == Some(v))
+@@ -865,19 +933,19 @@ impl<'a> Plan<'a> {
+             .into());
+         }
+         // Block items copy the template block's item.
+-        let gameplay = read_json(&base.join("gameplay-facts.json"))?;
++        let gameplay = read_json_rows(&base.join("gameplay-facts.json"))?;
+         let rows = match gameplay.get("states") {
+             Some(J::Arr(rows)) if rows.len() == names.len() => rows,
+             _ => return Err("gameplay-facts.json does not match facts.json".into()),
+         };
+         let mut sounds = BTreeMap::new();
+         for s in wanted_sounds {
+-            let row = &rows[defaults[&s] as usize];
++            let row = rows[defaults[&s] as usize].parsed();
+             sounds.insert(s, row.get("sound").cloned().unwrap_or(J::Null));
+         }
+         let mut items = Vec::new();
+         for b in &mut blocks {
+-            let row = &rows[b.rename.states.start as usize];
++            let row = rows[b.rename.states.start as usize].parsed();
+             b.item = match row.get("item") {
+                 Some(J::Str(i)) if i != "minecraft:air" => Some(i.clone()),
+                 _ => None,
+@@ -962,7 +1030,7 @@ impl<'a> Plan<'a> {
+             // so its states stay one run in registry order.
+             for (next, (id, combo)) in (b.rename.first..).zip(b.state_combinations()) {
+                 let t = (id - b.rename.states.start) as usize;
+-                let mut row = list[id as usize].clone();
++                let mut row = list[id as usize].parsed();
+                 for r in &renames {
+                     row.rename(r, ids);
+                 }
+@@ -1932,10 +2000,10 @@ impl TagMerge {
+     }
+ }
+ 
+-/// Threads rewriting the tables at once. Each holds a whole table as a tree
+-/// (gameplay-facts.json's is over a gigabyte with ATM10's mods), so more
+-/// would mostly add memory.
+-const TABLE_THREADS: usize = 3;
++/// Threads rewriting the tables at once. Each holds a table while it rewrites it (the per-state ones keep
++/// vanilla's rows as text, the NBT ones as trees), so more would mostly add memory: with two, the build of
++/// vanilla and a mod peaks near 300 MB; it was 1.2 GB when every table was a tree of JSON, and a phone gave up.
++const TABLE_THREADS: usize = 2;
+ 
+ /// Rewrites the base's per-state tables for the mods' states into the
+ /// overlay. They are independent: [`TABLE_THREADS`] threads take them,
+@@ -1959,7 +2027,7 @@ fn tables(base: &Path, plan: &Plan, overlay: &Overlay<'_>) -> Result<()> {
+             plan.entity_types_json(&fs::read(&path)?)
+                 .map_err(|e| format!("{name}: {e}"))?
+         } else if JSON_TABLES.contains(&name) {
+-            let mut doc = read_json(&path)?;
++            let mut doc = if ROW_TABLES.contains(&name) { read_json_rows(&path)? } else { read_json(&path)? };
+             plan.json(name, &mut doc)
+                 .map_err(|e| format!("{name}: {e}"))?;
+             serde_json::to_vec(&doc)?
+@@ -2290,7 +2358,7 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
+             modified.as_nanos()
+         ))
+     };
+-    let mut parts = vec!["horizon mod content 1".to_owned()];
++    let mut parts = vec!["horizon mod content 2".to_owned()];
+     parts.push(meta(&std::env::current_exe()?)?);
+     let base = std::path::absolute(base)?;
+     parts.push(
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 783da48..7baa0bf 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -713,6 +713,19 @@ interface %world {
+     /// happens for a block with no such property or value, or one already set.
+     /// At most 4096 per call.
+     set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
++    /// Sets which slots of the block entity's container each face reaches: the
++    /// six lists are down, up, north, south, west, east, each of slot numbers
++    /// (0 to 7). A hopper or dropper put through a face uses its list, as it
++    /// would the kind's own `faces`, which this replaces for that one entity
++    /// (kept with it). Made after this call returns; nothing happens for a
++    /// block with no mod container. API 17.
++    set-item-faces: func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>;
++    /// Turns on or off the block entity pushing items out: every 10 ticks, from
++    /// the slots of the kind's `outputs` that a face reaches, into the
++    /// container beside that face (a chest, a hopper, another machine), as
++    /// Mekanism's machines do with auto-eject on. Kept with the entity. Made
++    /// after this call returns. API 17.
++    set-item-eject: func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>;
+ }
+ 
+ /// Capability `player-control`, server mods only (manifest `api = "0.3"`,
+@@ -736,6 +749,11 @@ interface player-control {
+     }
+     /// What the player with this id is doing; none for an id that is not online.
+     get-motion: func(player: string) -> option<motion>;
++    /// Where the player with this id looks, `(yaw, pitch)` in degrees as F3
++    /// shows them (yaw 0 faces south, pitch -90 looks straight up); none for
++    /// an id that is not online. With the eye (the feet and 1.62 blocks, 1.27
++    /// sneaking) it gives the face of a block a use met. API 16.
++    get-look: func(player: string) -> option<tuple<f32, f32>>;
+     /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
+     /// distance reset. `yaw` and `pitch` stay as they are when none. The
+     /// move is made after this call returns, before the next tick. An error
+@@ -1254,7 +1272,7 @@ interface server-events {
+     /// the use: the hand swings and neither the item's own use nor the
+     /// block's runs after it; false leaves it to the game. It is asked at the
+     /// moment of the click, so what it asks for through imports is made at the
+-    /// end of the tick.
++    /// end of the tick; `world.get-block` reads the blocks as they are now.
+     item-used: func(player: player, stack: item-stack, pos: option<block-pos>) -> bool;
+     /// A player hit the entity `entity` of `kind` holding `stack`
+     /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 7a52a62..eb9285d 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 15;
++pub const LEVEL: u32 = 17;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 73] = [
++pub const FUNCTIONS: [(&str, u32); 76] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -87,6 +87,9 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
+     ("chunks.set-forced", 13),
+     ("world.set-block-property", 14),
+     ("recipe-types.cooking-recipes", 15),
++    ("player-control.get-look", 16),
++    ("world.set-item-faces", 17),
++    ("world.set-item-eject", 17),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+index 6eafee2..e0b33ae 100644
+--- a/crates/horizon-mods/src/block_render.rs
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -49,6 +49,18 @@ pub fn spin_degrees(game_time: i64, partial: f32, degrees_per_tick: f32) -> f32
+     ((game_time % 360_000) as f32 + partial) * degrees_per_tick % 360.0
+ }
+ 
++/// The angle of a turn at time `time` (ticks and the partial tick): `offset` degrees
++/// plus `degrees_per_tick` a tick, kept within a turn.
++pub fn turn_degrees(time: f32, degrees_per_tick: f32, offset: f32) -> f32 {
++    (offset + time * degrees_per_tick) % 360.0
++}
++
++/// How far a bounce has lifted a part at `time`: `amplitude` times the sine of
++/// `degrees_per_tick` degrees a tick.
++pub fn bounce_offset(time: f32, amplitude: f32, degrees_per_tick: f32) -> f32 {
++    amplitude * (time * degrees_per_tick).to_radians().sin()
++}
++
+ /// A value in sixteenths (0 to 16), for telling clients of a change only when
+ /// what they draw does.
+ pub fn sixteenths(value: u64, max: u64) -> u8 {
+@@ -87,6 +99,15 @@ mod tests {
+         assert_eq!(fluid_tint(&tints, "minecraft:lava"), 0xFFFFFF);
+     }
+     #[test]
++    fn turns_and_bounces() {
++        assert_eq!(turn_degrees(10.0, 4.0, 36.0), 76.0);
++        assert!(turn_degrees(1.0e6, 4.0, 36.0) < 360.0);
++        assert!(bounce_offset(0.0, 0.5, 3.0).abs() < 1e-6);
++        // A quarter of the sine's period at 3 degrees a tick is 30 ticks.
++        assert!((bounce_offset(30.0, 0.5, 3.0) - 0.5).abs() < 1e-5);
++        assert!((bounce_offset(90.0, 0.5, 3.0) + 0.5).abs() < 1e-5);
++    }
++    #[test]
+     fn spin_and_quantising() {
+         assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
+         assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index e2ee6c7..49ab253 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -338,6 +338,48 @@ pub struct MenuScreen {
+     /// Drawn in this order, over the panel and under the items.
+     #[serde(default)]
+     pub widgets: Vec<Widget>,
++    /// Windows a button can open over the panel (a machine's side configuration), each with widgets of its own at
++    /// its own origin. One is open at a time; a press inside it goes to it alone.
++    #[serde(default)]
++    pub windows: Vec<Window>,
++}
++
++/// A window of a menu screen: a rectangle over the panel with its own widgets.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct Window {
++    pub id: String,
++    pub x: i32,
++    pub y: i32,
++    pub width: i32,
++    pub height: i32,
++    /// A sprite drawn over the whole window, behind its widgets.
++    #[serde(default)]
++    pub texture: Option<String>,
++    #[serde(default)]
++    pub widgets: Vec<Widget>,
++}
++
++/// When a conditional group of widgets shows.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields, rename_all = "snake_case")]
++pub enum When {
++    /// A variable of the screen (set by a button's `local` action; unset is 0) is `eq`.
++    Local { var: String, eq: i64 },
++    /// What a value reads from the menu's data slots is `eq`.
++    Data { value: Value, eq: i64 },
++}
++
++/// What a button does on this client, with no word to the server.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields, rename_all = "snake_case")]
++pub enum LocalAction {
++    /// Opens the window with this id (and closes the one open).
++    Open(String),
++    /// Closes the open window.
++    Close,
++    /// Sets a variable of the screen.
++    Set { var: String, value: i64 },
+ }
+ 
+ /// A number a widget reads: a constant, a data slot of the menu, or two data
+@@ -349,6 +391,9 @@ pub enum Value {
+     Const(i64),
+     Data(u16),
+     Pair([u16; 2]),
++    /// One nibble (4 bits) of a data slot: the slot and which nibble, 0 (lowest) to 3. A data slot carries four small
++    /// numbers, as a machine's side configuration needs.
++    Nibble([u16; 2]),
+ }
+ 
+ /// The way a bar or a progress arrow fills.
+@@ -408,16 +453,38 @@ pub enum Widget {
+         #[serde(default)]
+         color: Option<String>,
+     },
+-    /// A press inside it sends menu button `id` to the server.
++    /// A press inside it sends menu button `id` to the server, or does its `local` action here and sends nothing.
++    /// A right press (a long press on a touch screen) sends `alt_id` when there is one.
+     Button {
+         x: i32,
+         y: i32,
+         w: i32,
+         h: i32,
++        #[serde(default)]
+         id: i32,
+         #[serde(default)]
++        alt_id: Option<i32>,
++        #[serde(default)]
++        local: Option<LocalAction>,
++        #[serde(default)]
+         tooltip: Option<String>,
+     },
++    /// A rectangle filled with `colors[value]` (`#RRGGBB`), the last when `value` is past the list; its tooltip fills
++    /// `{label}` with `labels[value]`.
++    Swatch {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        value: Value,
++        colors: Vec<String>,
++        #[serde(default)]
++        labels: Vec<String>,
++        #[serde(default)]
++        tooltip: Option<String>,
++    },
++    /// Widgets shown while a condition holds.
++    Show { when: When, widgets: Vec<Widget> },
+ }
+ 
+ /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
+@@ -461,81 +528,155 @@ impl MenuScreen {
+         if let Some(t) = &self.texture {
+             sprite(t)?;
+         }
+-        let data = |v: &Value| -> Result<(), String> {
+-            let bad = |i: u16| i >= data_slots;
+-            match v {
+-                Value::Data(i) if bad(*i) => Err(format!(
+-                    "{name}: data slot {i} is past the last one, {}",
+-                    i64::from(data_slots) - 1
+-                )),
+-                Value::Pair([a, b]) if bad(*a) || bad(*b) => Err(format!(
+-                    "{name}: data slots {a} and {b} must both exist ({data_slots})"
+-                )),
+-                _ => Ok(()),
++        let windows: Vec<&str> = self.windows.iter().map(|w| w.id.as_str()).collect();
++        if windows.len() > 8 {
++            return Err(format!("{name}: 8 windows at most"));
++        }
++        for (i, w) in self.windows.iter().enumerate() {
++            if w.id.is_empty() || windows[..i].contains(&w.id.as_str()) {
++                return Err(format!("{name}: window ids are not empty and not repeated"));
+             }
+-        };
+-        let rect = |x: i32, y: i32, w: i32, h: i32| {
+-            if w < 1 || h < 1 || x < -1024 || y < -1024 || x > 4096 || y > 4096 || w > 1024 || h > 1024 {
+-                Err(format!("{name}: a widget at {x}, {y} of {w} by {h} is out of range"))
+-            } else {
+-                Ok(())
++            if !(16..=1024).contains(&w.width) || !(16..=1024).contains(&w.height) {
++                return Err(format!("{name}: a window's width and height are 16 to 1024"));
+             }
+-        };
++            if let Some(t) = &w.texture {
++                sprite(t)?;
++            }
++        }
+         for w in &self.widgets {
+-            match w {
+-                Widget::Bar { x, y, w, h, value, max, color, .. } => {
+-                    rect(*x, *y, *w, *h)?;
+-                    data(value)?;
+-                    data(max)?;
+-                    parse_color(color)
+-                        .ok_or_else(|| format!("{name}: colour {color:?} is #RRGGBB or #AARRGGBB"))?;
++            check_widget(w, name, data_slots, &windows, &sprite, 0)?;
++        }
++        for window in &self.windows {
++            for w in &window.widgets {
++                check_widget(w, name, data_slots, &windows, &sprite, 0)?;
++            }
++        }
++        Ok(())
++    }
++}
++
++/// Checks one widget (and what it holds) against the menu's data slot count and the screen's windows.
++fn check_widget(
++    w: &Widget,
++    name: &str,
++    data_slots: u16,
++    windows: &[&str],
++    sprite: &dyn Fn(&str) -> Result<(), String>,
++    depth: u8,
++) -> Result<(), String> {
++    let data = |v: &Value| -> Result<(), String> {
++        let bad = |i: u16| i >= data_slots;
++        match v {
++            Value::Data(i) if bad(*i) => Err(format!(
++                "{name}: data slot {i} is past the last one, {}",
++                i64::from(data_slots) - 1
++            )),
++            Value::Pair([a, b]) if bad(*a) || bad(*b) => Err(format!(
++                "{name}: data slots {a} and {b} must both exist ({data_slots})"
++            )),
++            Value::Nibble([slot, which]) if bad(*slot) || *which > 3 => Err(format!(
++                "{name}: a nibble is a data slot that exists and 0 to 3"
++            )),
++            _ => Ok(()),
++        }
++    };
++    let rect = |x: i32, y: i32, w: i32, h: i32| {
++        if w < 1 || h < 1 || x < -1024 || y < -1024 || x > 4096 || y > 4096 || w > 1024 || h > 1024 {
++            Err(format!("{name}: a widget at {x}, {y} of {w} by {h} is out of range"))
++        } else {
++            Ok(())
++        }
++    };
++    let colour = |c: &str| {
++        parse_color(c)
++            .map(|_| ())
++            .ok_or_else(|| format!("{name}: colour {c:?} is #RRGGBB or #AARRGGBB"))
++    };
++    match w {
++        Widget::Bar { x, y, w, h, value, max, color, .. } => {
++            rect(*x, *y, *w, *h)?;
++            data(value)?;
++            data(max)?;
++            colour(color)?;
++        }
++        Widget::Sprite { texture, x, y, w, h, src, value, max, .. } => {
++            sprite(texture)?;
++            rect(*x, *y, *w, *h)?;
++            if value.is_some() != max.is_some() {
++                return Err(format!("{name}: a sprite takes value and max together"));
++            }
++            if let Some(v) = value {
++                data(v)?;
++            }
++            if let Some(v) = max {
++                data(v)?;
++            }
++            if let Some([_, _, sw, sh]) = src
++                && (*sw < 1 || *sh < 1)
++            {
++                return Err(format!("{name}: a sprite's src is x, y, w, h with w and h over 0"));
++            }
++        }
++        Widget::Text { x, y, text, color } => {
++            rect(*x, *y, 1, 1)?;
++            if text.len() > 256 {
++                return Err(format!("{name}: text is 256 bytes at most"));
++            }
++            if let Some(c) = color {
++                colour(c)?;
++            }
++            // `{n}` must name a data slot.
++            let mut rest = text.as_str();
++            while let Some(open) = rest.find('{') {
++                let after = &rest[open + 1..];
++                let Some(close) = after.find('}') else { break };
++                if let Ok(i) = after[..close].parse::<u16>()
++                    && i >= data_slots
++                {
++                    return Err(format!("{name}: text names data slot {i}, past the last one"));
+                 }
+-                Widget::Sprite { texture, x, y, w, h, src, value, max, .. } => {
+-                    sprite(texture)?;
+-                    rect(*x, *y, *w, *h)?;
+-                    if value.is_some() != max.is_some() {
+-                        return Err(format!("{name}: a sprite takes value and max together"));
+-                    }
+-                    if let Some(v) = value {
+-                        data(v)?;
+-                    }
+-                    if let Some(v) = max {
+-                        data(v)?;
+-                    }
+-                    if let Some([_, _, sw, sh]) = src
+-                        && (*sw < 1 || *sh < 1)
+-                    {
+-                        return Err(format!("{name}: a sprite's src is x, y, w, h with w and h over 0"));
+-                    }
++                rest = &after[close + 1..];
++            }
++        }
++        Widget::Button { x, y, w, h, local, .. } => {
++            rect(*x, *y, *w, *h)?;
++            match local {
++                Some(LocalAction::Open(id)) if !windows.contains(&id.as_str()) => {
++                    return Err(format!("{name}: a button opens window {id:?}, which the screen does not have"));
+                 }
+-                Widget::Text { x, y, text, color } => {
+-                    rect(*x, *y, 1, 1)?;
+-                    if text.len() > 256 {
+-                        return Err(format!("{name}: text is 256 bytes at most"));
+-                    }
+-                    if let Some(c) = color {
+-                        parse_color(c).ok_or_else(|| {
+-                            format!("{name}: colour {c:?} is #RRGGBB or #AARRGGBB")
+-                        })?;
+-                    }
+-                    // `{n}` must name a data slot.
+-                    let mut rest = text.as_str();
+-                    while let Some(open) = rest.find('{') {
+-                        let after = &rest[open + 1..];
+-                        let Some(close) = after.find('}') else { break };
+-                        if let Ok(i) = after[..close].parse::<u16>()
+-                            && i >= data_slots
+-                        {
+-                            return Err(format!("{name}: text names data slot {i}, past the last one"));
+-                        }
+-                        rest = &after[close + 1..];
+-                    }
++                Some(LocalAction::Set { var, .. }) if var.is_empty() || var.len() > 32 => {
++                    return Err(format!("{name}: a variable's name is 1 to 32 bytes"));
+                 }
+-                Widget::Button { x, y, w, h, .. } => rect(*x, *y, *w, *h)?,
++                _ => {}
++            }
++        }
++        Widget::Swatch { x, y, w, h, value, colors, labels, .. } => {
++            rect(*x, *y, *w, *h)?;
++            data(value)?;
++            if colors.is_empty() || colors.len() > 32 || labels.len() > 32 {
++                return Err(format!("{name}: a swatch has 1 to 32 colours"));
++            }
++            for c in colors {
++                colour(c)?;
++            }
++        }
++        Widget::Show { when, widgets } => {
++            if depth >= 3 || widgets.len() > 64 {
++                return Err(format!("{name}: groups nest 3 deep and hold 64 widgets"));
++            }
++            match when {
++                When::Data { value, .. } => data(value)?,
++                When::Local { var, .. } if var.is_empty() || var.len() > 32 => {
++                    return Err(format!("{name}: a variable's name is 1 to 32 bytes"));
++                }
++                When::Local { .. } => {}
++            }
++            for w in widgets {
++                check_widget(w, name, data_slots, windows, sprite, depth + 1)?;
+             }
+         }
+-        Ok(())
+     }
++    Ok(())
+ }
+ 
+ /// the most container or data slots a mod menu type has, as many as a mod
+@@ -583,6 +724,42 @@ pub enum RenderElement {
+         #[serde(default)]
+         tints: std::collections::BTreeMap<String, String>,
+     },
++    /// The model of another block (never placed: a mod's own part, with `item = false`), drawn in this
++    /// block's place when a byte of the block entity's data (what the mod saved with its updates)
++    /// is one of `values`: what the original does with the data of a block entity, as Mekanism's energy
++    /// cube shows a port only where its side is configured, without a state for each combination.
++    Part {
++        block: String,
++        /// Draw only when this byte (an index in the entity's data) is one of these; always when none.
++        #[serde(default)]
++        when: Option<DataTest>,
++    },
++    /// A box that moves and turns as code draws a part of a machine: scaled about
++    /// `center` (texels, the box's own centre by default), moved up and down by a sine
++    /// (`bounce`), and turned by each of `rotations` in order, all from the game's
++    /// time. `fullbright` draws it as bright as can be, and `only_with_energy`
++    /// only while the block holds energy (its `energy` the server sent).
++    Animated {
++        from: [f32; 3],
++        to: [f32; 3],
++        sprite: String,
++        #[serde(default)]
++        scale: Option<f32>,
++        #[serde(default)]
++        center: Option<[f32; 3]>,
++        #[serde(default)]
++        bounce: Option<Bounce>,
++        #[serde(default)]
++        rotations: Vec<Rotation>,
++        #[serde(default)]
++        fullbright: bool,
++        #[serde(default)]
++        only_with_energy: bool,
++        /// Fades with the energy: as bright as the block's energy is full, over a dark inside (what the
++        /// original does with the alpha of the energy cube's core).
++        #[serde(default)]
++        energy_fade: bool,
++    },
+     /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
+     /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
+     Spin {
+@@ -596,6 +773,50 @@ pub enum RenderElement {
+     },
+ }
+ 
++/// A test on a byte of a block entity's data: `data[byte]` is one of `values` (a byte past the end is 0).
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct DataTest {
++    pub byte: u32,
++    pub values: Vec<u8>,
++}
++
++impl DataTest {
++    pub fn matches(&self, data: &[u8]) -> bool {
++        let b = data.get(self.byte as usize).copied().unwrap_or(0);
++        self.values.contains(&b)
++    }
++}
++
++impl BlockRenderer {
++    /// Whether the clients need the block entity's data to draw it.
++    pub fn uses_data(&self) -> bool {
++        self.elements
++            .iter()
++            .any(|e| matches!(e, RenderElement::Part { when: Some(_), .. }))
++    }
++}
++
++/// A sine of the time that moves a part up and down: `amplitude` blocks (before the
++/// element's scale), at `degrees_per_tick` of the sine's angle.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Bounce {
++    pub amplitude: f32,
++    pub degrees_per_tick: f32,
++}
++
++/// A turn about `axis` (any direction, as `x, y, z`) of `offset` degrees plus
++/// `degrees_per_tick` a tick.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Rotation {
++    pub axis: [f32; 3],
++    pub degrees_per_tick: f32,
++    #[serde(default)]
++    pub offset: f32,
++}
++
+ impl BlockRenderer {
+     fn check(&self, name: &str) -> Result<(), String> {
+         let sprite = |s: &str| {
+@@ -643,6 +864,48 @@ impl BlockRenderer {
+                         colour(c)?;
+                     }
+                 }
++                RenderElement::Part { block, when } => {
++                    if !block.contains(':') || block.len() > 128 {
++                        return Err(format!("{name}: a part is a block id, mymod:part"));
++                    }
++                    if let Some(w) = when
++                        && (w.byte >= 4096 || w.values.is_empty() || w.values.len() > 16)
++                    {
++                        return Err(format!("{name}: a part's test is a byte below 4096 and 1 to 16 values"));
++                    }
++                }
++                RenderElement::Animated { from, to, sprite: s, scale, center, bounce, rotations, .. } => {
++                    boxed(from, to)?;
++                    sprite(s)?;
++                    if scale.is_some_and(|v| !(0.01..=4.0).contains(&v)) {
++                        return Err(format!("{name}: scale is 0.01 to 4"));
++                    }
++                    if center.is_some_and(|c| c.iter().any(|v| !v.is_finite())) {
++                        return Err(format!("{name}: center is numbers"));
++                    }
++                    if let Some(b) = bounce
++                        && (!b.amplitude.is_finite()
++                            || b.amplitude.abs() > 4.0
++                            || !b.degrees_per_tick.is_finite()
++                            || b.degrees_per_tick.abs() > 360.0)
++                    {
++                        return Err(format!("{name}: a bounce is an amplitude within 4 and degrees_per_tick within 360"));
++                    }
++                    if rotations.len() > 4 {
++                        return Err(format!("{name}: 4 rotations at most"));
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>();
++                        if !len.is_finite()
++                            || len < 1e-6
++                            || !r.degrees_per_tick.is_finite()
++                            || r.degrees_per_tick.abs() > 360.0
++                            || !r.offset.is_finite()
++                        {
++                            return Err(format!("{name}: a rotation has an axis and degrees_per_tick within 360"));
++                        }
++                    }
++                }
+                 RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
+                     boxed(from, to)?;
+                     sprite(s)?;
+@@ -1208,6 +1471,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn a_part_is_drawn_by_a_byte_of_the_data() {
++        let w = DataTest { byte: 2, values: vec![2, 3] };
++        assert!(w.matches(&[0, 0, 2]));
++        assert!(w.matches(&[0, 0, 3, 9]));
++        assert!(!w.matches(&[0, 0, 1]));
++        assert!(!w.matches(&[0]));
++        assert!(DataTest { byte: 5, values: vec![0] }.matches(&[1]));
++    }
++
+     use super::*;
+     use crate::manifest::Package;
+ 
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index d3024e4..190ddf2 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -248,6 +248,8 @@ pub struct Snapshot {
+     /// What each of those players is doing, by player id, for capability
+     /// `player-control`'s `motion`.
+     pub motions: Vec<(String, Motion)>,
++    /// Where each of those players looks, `(yaw, pitch)`, by player id.
++    pub looks: Vec<(String, (f32, f32))>,
+     /// The living mobs of the level in place (`mobs_dimension`), for
+     /// capability `entities`.
+     pub mobs: Vec<MobInfo>,
+@@ -366,6 +368,20 @@ pub enum Output {
+         property: String,
+         value: String,
+     },
++    /// `world.set-item-faces`: the slots each face of a block entity's container reaches.
++    SetItemFaces {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        faces: Vec<Vec<u32>>,
++    },
++    /// `world.set-item-eject`: a block entity pushing its output items out, or not.
++    SetItemEject {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        on: bool,
++    },
+     /// `chunks.set-forced` of mod `id`.
+     Chunk {
+         name: String,
+@@ -2152,6 +2168,40 @@ impl mod_world::Host for State {
+         });
+         Ok(())
+     }
++    fn set_item_faces(
++        &mut self,
++        dimension: String,
++        x: i32,
++        y: i32,
++        z: i32,
++        faces: Vec<Vec<u32>>,
++    ) -> Result<(), String> {
++        if faces.len() != 6 || faces.iter().any(|f| f.len() > 8 || f.iter().any(|s| *s > 7)) {
++            return Err("six faces, each with at most 8 slots numbered 0 to 7".into());
++        }
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::SetItemFaces { .. } | Output::SetItemEject { .. }))
++            .count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} container changes a call"));
++        }
++        self.out.push(Output::SetItemFaces { name: self.name.clone(), dimension, pos: [x, y, z], faces });
++        Ok(())
++    }
++    fn set_item_eject(&mut self, dimension: String, x: i32, y: i32, z: i32, on: bool) -> Result<(), String> {
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::SetItemFaces { .. } | Output::SetItemEject { .. }))
++            .count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} container changes a call"));
++        }
++        self.out.push(Output::SetItemEject { name: self.name.clone(), dimension, pos: [x, y, z], on });
++        Ok(())
++    }
+     fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
+         let view = self.world.lock().ok()?;
+         view.as_ref()?.block(&dimension, x, y, z)
+@@ -2589,6 +2639,13 @@ impl player_control::Host for State {
+             .find(|(id, _)| *id == player)
+             .map(|(_, m)| m.clone())
+     }
++    fn get_look(&mut self, player: String) -> Option<(f32, f32)> {
++        self.snapshot
++            .looks
++            .iter()
++            .find(|(id, _)| *id == player)
++            .map(|(_, l)| *l)
++    }
+     fn teleport(
+         &mut self,
+         player: String,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index bb9b346..477114f 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -1,7 +1,8 @@
+ //! What a declared menu screen computes without drawing (API block 7): the
+ //! number a widget reads, how much of a bar or arrow is filled, which button
+ //! a press hits and a tooltip's or a label's text. The game draws with these.
+-use crate::content::{Direction, MenuScreen, Value, Widget};
++use crate::content::{Direction, LocalAction, MenuScreen, Value, When, Widget, Window};
++use std::collections::BTreeMap;
+ 
+ /// What a widget reads from the menu's data slots `data`: a constant, a data
+ /// slot (16 bits on the wire) or two read as low and high halves.
+@@ -11,9 +12,119 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
+         Value::Const(c) => *c,
+         Value::Data(i) => slot(*i),
+         Value::Pair([lo, hi]) => (slot(*hi) << 16) | slot(*lo),
++        Value::Nibble([i, which]) => (slot(*i) >> (4 * u32::from(*which & 3))) & 0xF,
+     }
+ }
+ 
++/// What a screen keeps on this client alone: the window open and its variables (a selected tab).
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Locals {
++    pub window: Option<String>,
++    pub vars: BTreeMap<String, i64>,
++}
++
++impl Locals {
++    /// A variable, 0 when it was never set.
++    pub fn var(&self, name: &str) -> i64 {
++        self.vars.get(name).copied().unwrap_or(0)
++    }
++}
++
++/// Whether a condition holds now.
++pub fn shown(when: &When, data: &[i32], locals: &Locals) -> bool {
++    match when {
++        When::Local { var, eq } => locals.var(var) == *eq,
++        When::Data { value, eq } => read(value, data) == *eq,
++    }
++}
++
++/// The widgets showing now, in drawing order, with the conditional groups opened.
++pub fn showing<'a>(widgets: &'a [Widget], data: &[i32], locals: &Locals) -> Vec<&'a Widget> {
++    let mut out = Vec::new();
++    for w in widgets {
++        match w {
++            Widget::Show { when, widgets } => {
++                if shown(when, data, locals) {
++                    out.extend(showing(widgets, data, locals));
++                }
++            }
++            other => out.push(other),
++        }
++    }
++    out
++}
++
++/// The window open now, if the screen has it.
++pub fn open_window<'a>(screen: &'a MenuScreen, locals: &Locals) -> Option<&'a Window> {
++    let id = locals.window.as_deref()?;
++    screen.windows.iter().find(|w| w.id == id)
++}
++
++/// What a press did.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Press {
++    /// Menu button `id`, for the server.
++    Send(i32),
++    /// Something here: a local action, or a press a window took.
++    Local,
++}
++
++fn inside(at: [f32; 2], x: i32, y: i32, w: i32, h: i32) -> bool {
++    at[0] >= x as f32 && at[1] >= y as f32 && at[0] < (x + w) as f32 && at[1] < (y + h) as f32
++}
++
++/// The first button showing under `at` among `widgets` (at their origin) and what pressing it does.
++fn press_in(
++    widgets: &[Widget],
++    data: &[i32],
++    locals: &mut Locals,
++    at: [f32; 2],
++    alt: bool,
++) -> Option<Press> {
++    let hit = showing(widgets, data, locals).into_iter().find_map(|w| match w {
++        Widget::Button { x, y, w, h, id, alt_id, local, .. } if inside(at, *x, *y, *w, *h) => {
++            Some((*id, *alt_id, local.clone()))
++        }
++        _ => None,
++    })?;
++    let (id, alt_id, local) = hit;
++    if let Some(action) = local {
++        match action {
++            LocalAction::Open(window) => {
++                // The button of the window open closes it, as a tab does.
++                locals.window = if locals.window.as_deref() == Some(window.as_str()) { None } else { Some(window) };
++            }
++            LocalAction::Close => locals.window = None,
++            LocalAction::Set { var, value } => {
++                locals.vars.insert(var, value);
++            }
++        }
++        return Some(Press::Local);
++    }
++    if alt {
++        return alt_id.map(Press::Send);
++    }
++    Some(Press::Send(id))
++}
++
++/// What a press at `at` (from the screen's top left) does: the open window takes what lands on it (a press on none of its
++/// buttons is its own), anything else goes to the screen's buttons. `alt` is a right press or a long one.
++pub fn press(
++    screen: &MenuScreen,
++    data: &[i32],
++    locals: &mut Locals,
++    at: [f32; 2],
++    alt: bool,
++) -> Option<Press> {
++    if let Some(window) = open_window(screen, locals).cloned()
++        && inside(at, window.x, window.y, window.width, window.height)
++    {
++        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
++        return press_in(&window.widgets, data, locals, rel, alt).or(Some(Press::Local));
++    }
++    press_in(&screen.widgets, data, locals, at, alt)
++}
++
+ /// `value` of `max` as 0 to 1; 0 when `max` is not over 0.
+ pub fn fraction(value: i64, max: i64) -> f32 {
+     if max <= 0 {
+@@ -34,21 +145,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
+     }
+ }
+ 
+-/// The id of the first button a press at `at` (from the screen's top left) hits.
+-pub fn button_at(screen: &MenuScreen, at: [f32; 2]) -> Option<i32> {
+-    screen.widgets.iter().find_map(|w| match w {
+-        Widget::Button { x, y, w, h, id, .. }
+-            if at[0] >= *x as f32
+-                && at[1] >= *y as f32
+-                && at[0] < (*x + *w) as f32
+-                && at[1] < (*y + *h) as f32 =>
+-        {
+-            Some(*id)
+-        }
+-        _ => None,
+-    })
+-}
+-
+ /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
+ pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
+     let percent = (fraction(value, max) * 100.0).round() as i64;
+@@ -85,27 +181,42 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+     out
+ }
+ 
+-/// The rectangle and tooltip of a widget under `at`, with what it reads.
+-pub fn hovered(screen: &MenuScreen, data: &[i32], at: [f32; 2]) -> Option<Vec<String>> {
+-    let inside = |x: i32, y: i32, w: i32, h: i32| {
+-        at[0] >= x as f32 && at[1] >= y as f32 && at[0] < (x + w) as f32 && at[1] < (y + h) as f32
+-    };
+-    screen.widgets.iter().rev().find_map(|w| match w {
+-        Widget::Bar { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++/// A widget's tooltip under `at` among `widgets` (at their origin).
++fn hover_in(widgets: &[Widget], data: &[i32], locals: &Locals, at: [f32; 2]) -> Option<Vec<String>> {
++    showing(widgets, data, locals).into_iter().rev().find_map(|w| match w {
++        Widget::Bar { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
+             Some(tooltip_lines(t, read(value, data), read(max, data)))
+         }
+-        Widget::Sprite { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++        Widget::Sprite { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
+             let v = value.as_ref().map_or(0, |v| read(v, data));
+             let m = max.as_ref().map_or(0, |m| read(m, data));
+             Some(tooltip_lines(t, v, m))
+         }
+-        Widget::Button { x, y, w, h, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++        Widget::Button { x, y, w, h, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
+             Some(tooltip_lines(t, 0, 0))
+         }
++        Widget::Swatch { x, y, w, h, value, labels, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
++            let v = read(value, data).max(0) as usize;
++            let label = labels.get(v).or(labels.last()).map_or("", String::as_str);
++            Some(tooltip_lines(&t.replace("{label}", label), v as i64, 0))
++        }
+         _ => None,
+     })
+ }
+ 
++/// The tooltip of what is under `at`: the open window's widgets first, then the screen's.
++pub fn hovered(screen: &MenuScreen, data: &[i32], locals: &Locals, at: [f32; 2]) -> Option<Vec<String>> {
++    if let Some(window) = open_window(screen, locals)
++        && inside(at, window.x, window.y, window.width, window.height)
++    {
++        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
++        if let Some(lines) = hover_in(&window.widgets, data, locals, rel) {
++            return Some(lines);
++        }
++    }
++    hover_in(&screen.widgets, data, locals, at)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -141,18 +252,84 @@ mod tests {
+             ["Energy: 25 / 100", "25%"]
+         );
+     }
++    fn screen(json: &str) -> MenuScreen {
++        serde_json::from_str(json).unwrap()
++    }
++
+     #[test]
+     fn a_press_hits_the_first_button_under_it() {
+-        let screen: MenuScreen = serde_json::from_str(
++        let s = screen(
+             r#"{"slots":[],"widgets":[
+                 {"type":"button","x":10,"y":10,"w":20,"h":10,"id":1},
+                 {"type":"button","x":10,"y":10,"w":20,"h":10,"id":2},
+-                {"type":"button","x":40,"y":10,"w":20,"h":10,"id":3}]}"#,
+-        )
+-        .unwrap();
+-        assert_eq!(button_at(&screen, [15.0, 12.0]), Some(1));
+-        assert_eq!(button_at(&screen, [40.0, 10.0]), Some(3));
+-        assert_eq!(button_at(&screen, [30.0, 12.0]), None);
+-        assert_eq!(button_at(&screen, [15.0, 20.0]), None);
++                {"type":"button","x":40,"y":10,"w":20,"h":10,"id":3,"alt_id":4}]}"#,
++        );
++        let mut l = Locals::default();
++        assert_eq!(press(&s, &[], &mut l, [15.0, 12.0], false), Some(Press::Send(1)));
++        assert_eq!(press(&s, &[], &mut l, [40.0, 10.0], false), Some(Press::Send(3)));
++        // A right press sends the button's alt id; a button with none does nothing for it.
++        assert_eq!(press(&s, &[], &mut l, [40.0, 10.0], true), Some(Press::Send(4)));
++        assert_eq!(press(&s, &[], &mut l, [15.0, 12.0], true), None);
++        assert_eq!(press(&s, &[], &mut l, [30.0, 12.0], false), None);
++        assert_eq!(press(&s, &[], &mut l, [15.0, 20.0], false), None);
++    }
++
++    const WINDOWED: &str = r#"{"slots":[],"widgets":[
++        {"type":"button","x":0,"y":0,"w":20,"h":20,"local":{"open":"config"}},
++        {"type":"button","x":30,"y":0,"w":20,"h":20,"id":9}],
++      "windows":[{"id":"config","x":10,"y":30,"width":100,"height":60,"widgets":[
++        {"type":"button","x":5,"y":5,"w":10,"h":10,"local":{"set":{"var":"tab","value":1}}},
++        {"type":"show","when":{"local":{"var":"tab","eq":1}},"widgets":[
++            {"type":"button","x":20,"y":5,"w":10,"h":10,"id":7,"alt_id":8}]},
++        {"type":"button","x":80,"y":5,"w":10,"h":10,"local":"close"}]}]}"#;
++
++    #[test]
++    fn a_button_opens_a_window_and_a_press_inside_it_stays_there() {
++        let s = screen(WINDOWED);
++        let mut l = Locals::default();
++        assert_eq!(press(&s, &[], &mut l, [5.0, 5.0], false), Some(Press::Local));
++        assert_eq!(l.window.as_deref(), Some("config"));
++        // A press on the window that hits none of its buttons is the window's.
++        assert_eq!(press(&s, &[], &mut l, [60.0, 60.0], false), Some(Press::Local));
++        // A press outside it still reaches the screen's buttons.
++        assert_eq!(press(&s, &[], &mut l, [35.0, 5.0], false), Some(Press::Send(9)));
++        // The same button closes it, as a tab does; so does the window's own close button.
++        assert_eq!(press(&s, &[], &mut l, [5.0, 5.0], false), Some(Press::Local));
++        assert_eq!(l.window, None);
++        press(&s, &[], &mut l, [5.0, 5.0], false);
++        press(&s, &[], &mut l, [10.0 + 85.0, 30.0 + 8.0], false);
++        assert_eq!(l.window, None);
++    }
++
++    #[test]
++    fn a_window_button_sets_a_variable_that_shows_a_group() {
++        let s = screen(WINDOWED);
++        let mut l = Locals { window: Some("config".into()), ..Locals::default() };
++        let at = |x: f32, y: f32| [10.0 + x, 30.0 + y];
++        // The group is hidden until the variable is set, so its button is not there.
++        assert_eq!(press(&s, &[], &mut l, at(25.0, 8.0), false), Some(Press::Local));
++        assert_eq!(press(&s, &[], &mut l, at(7.0, 8.0), false), Some(Press::Local));
++        assert_eq!(l.var("tab"), 1);
++        assert_eq!(press(&s, &[], &mut l, at(25.0, 8.0), false), Some(Press::Send(7)));
++        assert_eq!(press(&s, &[], &mut l, at(25.0, 8.0), true), Some(Press::Send(8)));
++    }
++
++    #[test]
++    fn nibbles_conditions_and_swatches_read_the_data() {
++        let data = [0x4321, 0];
++        assert_eq!(read(&Value::Nibble([0, 0]), &data), 1);
++        assert_eq!(read(&Value::Nibble([0, 3]), &data), 4);
++        let s = screen(
++            r##"{"slots":[],"widgets":[
++                {"type":"show","when":{"data":{"value":{"nibble":[0,1]},"eq":2}},"widgets":[
++                    {"type":"swatch","x":0,"y":0,"w":10,"h":10,"value":{"nibble":[0,2]},
++                     "colors":["#808080","#AA0000","#0000AA"],"labels":["None","Input","Output"],"tooltip":"Side: {label}"}]}]}"##,
++        );
++        let l = Locals::default();
++        assert_eq!(showing(&s.widgets, &data, &l).len(), 1);
++        assert_eq!(showing(&s.widgets, &[0x4311, 0], &l).len(), 0);
++        // nibble 2 of 0x4321 is 3: past the labels, the last one stands.
++        assert_eq!(hovered(&s, &data, &l, [5.0, 5.0]), Some(vec!["Side: Output".to_owned()]));
++        assert_eq!(hovered(&s, &data, &l, [50.0, 5.0]), None);
+     }
+ }
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index feecac5..07ad996 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -30,6 +30,8 @@ pub struct TestGame {
+     /// What each of those players is doing, by player id (capability
+     /// `player-control`); a player with no entry is standing still with no experience.
+     pub motions: Vec<(String, Motion)>,
++    /// Where each player looks, `(yaw, pitch)`, by player id; none listed looks south, level.
++    pub looks: Vec<(String, (f32, f32))>,
+     /// Every name that joined, for their id.
+     names: Vec<String>,
+     tick: u64,
+@@ -174,6 +176,7 @@ impl TestGame {
+             }),
+             players: Vec::new(),
+             motions: Vec::new(),
++            looks: Vec::new(),
+             names: Vec::new(),
+             tick: 0,
+             world: Default::default(),
+@@ -215,6 +218,7 @@ impl TestGame {
+             clock: self.clock,
+             players: self.players.clone(),
+             motions: self.motions.clone(),
++            looks: self.looks.clone(),
+             mobs: self.mobs.clone(),
+             mobs_dimension: "minecraft:overworld".into(),
+             inventories: self.inventories.clone(),
+@@ -762,7 +766,7 @@ pub struct RecipeSet {
+ }
+ 
+ /// Fields of the player to change; the others keep their values. A server
+-/// mod's players have no `yaw`, `pitch` or `food`, and a client mod's player
++/// mod's players have no `food` (their `yaw` and `pitch` are what `get-look` answers), and a client mod's player
+ /// no `game-mode`.
+ #[derive(Debug, Default, Deserialize)]
+ #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+@@ -1338,7 +1342,22 @@ impl Step {
+         };
+         if let Some(set) = &self.player {
+             match actor {
+-                Some(i) => set.apply_server(&mut game.players[i]),
++                Some(i) => {
++                    set.apply_server(&mut game.players[i]);
++                    if set.yaw.is_some() || set.pitch.is_some() {
++                        let id = game.players[i].id.clone();
++                        let at = match game.looks.iter().position(|(p, _)| *p == id) {
++                            Some(at) => at,
++                            None => {
++                                game.looks.push((id, (0.0, 0.0)));
++                                game.looks.len() - 1
++                            }
++                        };
++                        let look = &mut game.looks[at].1;
++                        look.0 = set.yaw.unwrap_or(look.0);
++                        look.1 = set.pitch.unwrap_or(look.1);
++                    }
++                }
+                 None => set.apply(game.player.get_or_insert_with(default_player)),
+             }
+         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 151d098..a4642bf 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 15);
++    assert_eq!(LEVEL, 17);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 57a0edc..b8c95d7 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -715,6 +715,8 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
+ | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
+ | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
++| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 7). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
++| `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
+ 
+ ## `player-control`
+ 
+@@ -737,6 +739,7 @@ What a player is doing as of the last server tick.
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
++| `get-look` | `func(player: string) -> option<tuple<f32, f32>>` | Where the player with this id looks, `(yaw, pitch)` in degrees as F3 shows them (yaw 0 faces south, pitch -90 looks straight up); none for an id that is not online. With the eye (the feet and 1.62 blocks, 1.27 sneaking) it gives the face of a block a use met. API 16. |
+ | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
+ | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
+ | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+@@ -1146,5 +1149,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+ | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
+ | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |
+-| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick. |
++| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick; `world.get-block` reads the blocks as they are now. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
