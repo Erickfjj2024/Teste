@@ -192,8 +192,15 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
             copy_model(d['model']['model'])
             put(f'{OUT}/assets/{NS}/items/{n}.json', d)
         elif d.get('model', {}).get('type') == 'minecraft:special' and d['model'].get('base') and copy_model(d['model']['base']):
-            # the fluid tank's item: its base model (the original draws the fluid in it with a special renderer)
-            put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': d['model']['base']}})
+            # the fluid tank's item: its base model only has the display transforms (the original draws the tank and its
+            # fluid with a special renderer), so the item shows the tank's block model with those transforms
+            base = d['model']['base']
+            bm = read_json(f'{OUT}/assets/{NS}/models/{base.split(":")[1]}.json')
+            shown = f'{NS}:block/fluid_tank'
+            if copy_model(shown):
+                bm['parent'] = shown
+                put(f'{OUT}/assets/{NS}/models/{base.split(":")[1]}.json', bm)
+            put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': base}})
     # loot: ores and storage as Mekanism has them; machines drop themselves (keeping their data)
     if kind == 'machine':
         loot = {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [{'type': 'minecraft:item', 'name': f'{NS}:{n}'}],
@@ -802,7 +809,7 @@ def process_menu(m):
         {'type': 'text', 'x': (176 - title_w) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 92, 'y': 66, 'text': 'Status {5}', 'color': '#808080'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.29', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'},
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -896,7 +903,7 @@ def tank_menu(m):
                     'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.29', 'color': '#808080'}]
+                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -925,7 +932,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.29', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
