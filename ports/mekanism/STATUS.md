@@ -71,6 +71,14 @@ e **ainda não foi testada**). APK: v8.
    de antes arquivo por arquivo (só espaços diferem em `facts.json`). Falta: as tabelas NBT (oclusão, colisão,
    movimento) ainda são árvores e o custo por estado continua ~10 KB.
 
+11. **APK v16: as portas e LEDs do cubo sumiram (relatado), com o núcleo e o configurador funcionando; no v15 apareciam.**
+    A raiz montada pelo carregador novo era igual à do antigo em todos os arquivos, menos o `facts.json`, que tinha
+    `\u003d` no lugar de `=` (mesmo JSON). Não achei no código quem dependa disso, nem consegui reproduzir no computador
+    (catálogo de modelos, itens e colisões carregam igual). APK v17: a saída do carregador novo é **idêntica byte a byte**
+    à do antigo (as linhas originais são reescritas uma por vez), 327 MB de pico, e a raiz em cache é refeita na primeira
+    abertura (o selo do cache passou a `2`; ele não mudava com o carregador, então um APK novo podia reaproveitar a
+    raiz de outro). **Não testado no celular.**
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
