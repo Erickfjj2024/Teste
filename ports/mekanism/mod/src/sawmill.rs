@@ -36,6 +36,8 @@ pub struct Io {
     pub secondary: Option<Stack>,
     pub energy: u64,
     pub progress: u32,
+    /// The ticks a recipe takes with this machine's speed upgrades; 0 is the base (`TICKS`).
+    pub ticks: u32,
 }
 
 fn fits(slot: &Option<Stack>, item: &str, count: u32) -> bool {
@@ -79,7 +81,7 @@ pub fn step(usage: u64, book: &Book, io: &Io, roll: f64) -> (Io, Status) {
     }
     next.energy -= usage;
     next.progress += 1;
-    if next.progress >= TICKS {
+    if next.progress >= if io.ticks == 0 { TICKS } else { io.ticks } {
         next.progress = 0;
         let left = input.count - recipe.count;
         next.input = (left > 0).then(|| Stack { count: left, ..input.clone() });

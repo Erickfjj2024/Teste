@@ -54,8 +54,7 @@ Também falta a geração retroativa (retrogen) dos minérios em chunks já gera
 
 [conhecido] e [código]:
 
-1. **Upgrades:** nenhuma máquina tem a aba/slots de upgrade (velocidade, energia, silêncio, gás, filtro, pedra de chunk). Afeta as ~20
-   máquinas e a Rotary (`baselineMaxOperations`, 2^upgrades).
+1. **Upgrades: feitos (mod 0.1.37)**, menos o som, a experiência, e a instalação com Shift+clique no bloco (ver `STATUS.md` 2j).
 2. **Controle de redstone: feito (mod 0.1.36).** Segurança e dono continuam sem (a aba de segurança não existe; sem dono/proteção).
 3. **Aba de energia** das máquinas: feita (mod 0.1.36).
 4. **Itens químicos:** não há latas de gás nem conta-gotas (gauge dropper); por isso os slots de gás (Rotary, Gas-Burning, químico das

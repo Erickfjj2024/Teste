@@ -1,22 +1,23 @@
 diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
-index 47e9d18..f9b0c79 100644
+index 47e9d18..be79dbc 100644
 --- a/crates/cargo-horizon-mod/src/check.rs
 +++ b/crates/cargo-horizon-mod/src/check.rs
-@@ -281,6 +281,9 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+@@ -281,6 +281,10 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
              Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
              Output::PlaySound { sound, .. } => format!("played {sound}"),
              Output::SetBlockProperty { property, value, .. } => format!("set {property}={value}"),
 +            Output::SetItemFaces { faces, .. } => format!("item faces {faces:?}"),
 +            Output::SetItemEject { on, .. } => format!("item eject {on}"),
 +            Output::SetTankFilter { tank, accepts, .. } => format!("tank {tank} takes {accepts:?}"),
++            Output::SetEnergyCapacity { capacity, .. } => format!("energy capacity {capacity}"),
              Output::Chunk { chunk, forced, .. } => {
                  format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
              }
 diff --git a/crates/horizon-client-render/src/containers.rs b/crates/horizon-client-render/src/containers.rs
-index 7bc73dd..0f549e8 100644
+index 7bc73dd..513ff4e 100644
 --- a/crates/horizon-client-render/src/containers.rs
 +++ b/crates/horizon-client-render/src/containers.rs
-@@ -18,25 +18,28 @@ pub struct ModMenuType {
+@@ -18,25 +18,42 @@ pub struct ModMenuType {
      pub slots: usize,
      pub data_slots: usize,
      pub results: Vec<usize>,
@@ -26,6 +27,20 @@ index 7bc73dd..0f549e8 100644
  
  static MOD_MENU_TYPES: std::sync::OnceLock<Vec<ModMenuType>> = std::sync::OnceLock::new();
  
++/// What each mod menu type's slots take, by menu id: `(slot, item ids)` (`Slot.mayPlace`).
++type MenuAccepts = std::collections::HashMap<String, Vec<(usize, Vec<String>)>>;
++static MOD_MENU_ACCEPTS: std::sync::OnceLock<MenuAccepts> = std::sync::OnceLock::new();
++
++/// Registers the slots of mod menu types that take only some items (once per process).
++pub fn register_mod_menu_accepts(accepts: MenuAccepts) -> bool {
++    MOD_MENU_ACCEPTS.set(accepts).is_ok()
++}
++
++/// The slots of menu type `id` that take only some items.
++pub fn mod_menu_accepts(id: &str) -> Vec<(usize, Vec<String>)> {
++    MOD_MENU_ACCEPTS.get().and_then(|m| m.get(id)).cloned().unwrap_or_default()
++}
++
  /// registers the content mods' menu types, `(id, slots, data slots,
 -/// results)`, a list set once per process (false when it already was).
 +/// results, armor)`, a list set once per process (false when it already was).
@@ -417,10 +432,10 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..54c519d 100644
+index 609127a..4f47a7e 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
-@@ -4,16 +4,60 @@
+@@ -4,16 +4,77 @@
  //! the client. The pure parts (what a value reads, where a bar fills, which
  //! button a press hits, a tooltip's text) are free functions with tests.
  use super::{Game, native_hooks::NativeScreen};
@@ -469,6 +484,23 @@ index 609127a..54c519d 100644
 +    LOCALS.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
 +}
 +
++/// Where container slot `slot` of the screen of menu type `id` is while a window of it that holds the slot is open, from the
++/// panel's top left (the window's own place, dragged or not, and the slot's place in it); None when no window has it open.
++pub(super) fn window_slot_position(id: &str, slot: usize) -> Option<(f32, f32)> {
++    let def = screen_of(id)?;
++    let l = locals();
++    let open = l.window.as_ref()?;
++    let window = def.windows.iter().find(|w| &w.id == open)?;
++    let at = window.slots.iter().find(|s| usize::from(s.slot) == slot)?;
++    let o = horizon_mods::screen::window_origin(window, &l);
++    Some((o[0] + at.x as f32, o[1] + at.y as f32))
++}
++
++/// Whether a window of the screen of menu type `id` holds container slot `slot` (shown only while it is open).
++pub(super) fn window_holds_slot(id: &str, slot: usize) -> bool {
++    screen_of(id).is_some_and(|d| d.windows.iter().any(|w| w.slots.iter().any(|s| usize::from(s.slot) == slot)))
++}
++
 +/// The armor slots of the mods' menu types by id (`armor` in the menu file), set once with the screens.
 +pub(super) static MENU_ARMOR: OnceLock<HashMap<String, ArmorSlots>> = OnceLock::new();
 +
@@ -485,7 +517,7 @@ index 609127a..54c519d 100644
  /// The screen of menu type `id`, if it has one.
  pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
      MENU_SCREENS.get()?.get(id)
-@@ -33,33 +77,15 @@ impl Game<'_> {
+@@ -33,33 +94,15 @@ impl Game<'_> {
                  .collect(),
              inventory_y: def.inventory_y as f32,
              inventory_x: def.inventory_x as f32,
@@ -524,11 +556,23 @@ index 609127a..54c519d 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +121,206 @@ impl Game<'_> {
-                     let text = fill_text(text, data);
-                     self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
+@@ -90,20 +133,217 @@ impl Game<'_> {
+                     };
+                     self.native_sprite(batch, texture, src, dst);
                  }
--                Widget::Button { .. } => {}
+-                Widget::Text { x, y, text, color } => {
++                Widget::Text { x, y, text, color, scale } => {
+                     let rgb = color.as_deref().and_then(parse_color).unwrap_or(0xFF40_4040);
+                     let text = fill_text(text, data);
+-                    self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
++                    let at = [ox + *x as f32, oy + *y as f32];
++                    let start = batch.vertices.len();
++                    self.native_text(batch, &text, at, rgb, false);
++                    if let Some(s) = scale {
++                        let f = f32::from(*s) / 100.0;
++                        batch.scale_since(start, at[0], at[1], f, f);
++                    }
++                }
 +                Widget::Swatch { x, y, w, h, value, colors, .. } => {
 +                    let i = read(value, data).max(0) as usize;
 +                    let argb = colors.get(i).or(colors.last()).and_then(|c| parse_color(c)).unwrap_or(0xFF80_8080);
@@ -554,7 +598,8 @@ index 609127a..54c519d 100644
 +                    if let Ok(icon) = self.neighbor_icon(*side) {
 +                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
 +                    }
-+                }
+                 }
+-                Widget::Button { .. } => {}
 +                Widget::Button { .. } | Widget::Show { .. } => {}
 +            }
 +        }
@@ -735,7 +780,7 @@ index 609127a..54c519d 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +331,7 @@ impl Game<'_> {
+@@ -114,8 +354,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -746,7 +791,7 @@ index 609127a..54c519d 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..94e4464 100644
+index 003737e..9bfe346 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
 @@ -63,6 +63,10 @@ pub(super) struct ModsState {
@@ -760,7 +805,7 @@ index 003737e..94e4464 100644
      /// A running server mod has capability `world`: its calls get the
      /// levels' chunks to read.
      #[cfg(feature = "mods")]
-@@ -394,6 +398,11 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+@@ -394,14 +398,26 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
          .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
          .collect();
      let _ = super::menu_screens::MENU_SCREENS.set(screens);
@@ -772,8 +817,15 @@ index 003737e..94e4464 100644
      let renderers = horizon_client::mod_content::block_renderers(mods)
          .into_iter()
          .map(|r| (r.id.clone(), r.clone()))
-@@ -401,7 +410,7 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+         .collect();
      let _ = super::block_renderers::BLOCK_RENDERERS.set(renderers);
++    let _ = containers::register_mod_menu_accepts(
++        menus
++            .iter()
++            .filter(|m| !m.accepts.is_empty())
++            .map(|m| (m.id.clone(), m.accepts.iter().map(|a| (usize::from(a.slot), a.items.clone())).collect()))
++            .collect(),
++    );
      let set = containers::register_mod_menu_types(menus.iter().map(|m| {
          let results = m.results.iter().map(|&r| usize::from(r)).collect();
 -        (m.id.clone(), m.slots.into(), m.data_slots.into(), results)
@@ -781,7 +833,7 @@ index 003737e..94e4464 100644
      }));
      if !set
          && containers::mod_menu_types()
-@@ -613,6 +622,7 @@ impl Game<'_> {
+@@ -613,6 +629,7 @@ impl Game<'_> {
              font_widths: self.mods.font_widths.clone(),
              players,
              motions: Vec::new(),
@@ -789,7 +841,7 @@ index 003737e..94e4464 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +864,10 @@ impl Game<'_> {
+@@ -854,7 +871,11 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -797,12 +849,13 @@ index 003737e..94e4464 100644
 +                | Output::SetBlockProperty { .. }
 +                | Output::SetItemFaces { .. }
 +                | Output::SetItemEject { .. }
-+                | Output::SetTankFilter { .. }) => {
++                | Output::SetTankFilter { .. }
++                | Output::SetEnergyCapacity { .. }) => {
                      self.route_server_output(host.as_deref_mut(), server);
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..e16b112 100644
+index 325afbf..b5edd05 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -847,20 +900,22 @@ index 325afbf..e16b112 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -4118,7 +4120,12 @@ impl Game<'_> {
+@@ -4118,8 +4120,13 @@ impl Game<'_> {
          let Some(screen) = screen else {
              return Vec::new();
          };
 -        (0..size)
+-            .filter(|&i| screen.slots.get(i).is_none_or(Option::is_none))
 +        // The player's armor slots the menu adds at its end are drawn by the game, not listed in the screen.
 +        let armor = self
 +            .mod_menu_at(pos)
 +            .and_then(horizon_client::containers::mod_menu_type)
 +            .map_or(0, |m| m.armor);
 +        (0..size.saturating_sub(armor))
-             .filter(|&i| screen.slots.get(i).is_none_or(Option::is_none))
++            .filter(|&i| screen.slots.get(i).is_none_or(Option::is_none) && !super::menu_screens::window_holds_slot(&block, i))
              .collect()
      }
+     /// A menu opened on this client with its slots under `key`, on block
 @@ -4132,6 +4139,7 @@ impl Game<'_> {
          menu: &str,
      ) {
@@ -888,9 +943,11 @@ index 325afbf..e16b112 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4202,22 +4215,31 @@ impl Game<'_> {
+@@ -4201,23 +4214,40 @@ impl Game<'_> {
+             .copied()
              .flatten()
              .map(|p| (p[0], p[1]))
++            .or_else(|| super::menu_screens::window_slot_position(&s.block, slot))
      }
 -    /// The container slots the open mod screen shows (300.. ids).
 +    /// Where the open mod screen puts the player's armor or off-hand slot `id` (500 to 504), if it has one.
@@ -913,7 +970,7 @@ index 325afbf..e16b112 100644
 -                .collect(),
 -        )
 +        let mut v: Vec<usize> = shown
-+            .filter(|(_, p)| p.is_some())
++            .filter(|(i, p)| p.is_some() || super::menu_screens::window_slot_position(&s.block, *i).is_some())
 +            .map(|(i, _)| 300 + i)
 +            .collect();
 +        v.extend(s.screen.armor.iter().map(|(i, _)| *i));
@@ -924,11 +981,18 @@ index 325afbf..e16b112 100644
      pub(super) fn native_screen_slot_count(&self) -> Option<usize> {
          let s = self.shown_native_screen()?;
 -        Some(s.screen.slots.iter().filter(|p| p.is_some()).count())
-+        Some(s.screen.slots.iter().filter(|p| p.is_some()).count() + s.screen.armor.len())
++        let shown = s
++            .screen
++            .slots
++            .iter()
++            .enumerate()
++            .filter(|(i, p)| p.is_some() || super::menu_screens::window_slot_position(&s.block, *i).is_some())
++            .count();
++        Some(shown + s.screen.armor.len())
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4382,17 @@ impl Game<'_> {
+@@ -4360,6 +4390,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -946,7 +1010,7 @@ index 325afbf..e16b112 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4417,11 @@ impl Game<'_> {
+@@ -4384,6 +4425,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -958,7 +1022,7 @@ index 325afbf..e16b112 100644
          let window = self
              .remote
              .as_ref()
-@@ -4884,6 +4922,7 @@ mod tests {
+@@ -4884,6 +4930,7 @@ mod tests {
      fn mod_screen_data_is_its_windows_only() {
          let mut s = super::OpenNativeScreen {
              key: (0, 0, 0),
@@ -988,7 +1052,7 @@ index 8554dc2..863b3a0 100644
                  let kind = Self::remote_station_kind(m)?;
                  let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..937d02a 100644
+index fcc3158..1cce71c 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -101,8 +101,36 @@ mod run {
@@ -1124,7 +1188,7 @@ index fcc3158..937d02a 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +739,71 @@ mod run {
+@@ -657,6 +739,97 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -1170,6 +1234,32 @@ index fcc3158..937d02a 100644
 +                self.world.modified.insert((key.0 >> 4, key.2 >> 4));
 +            }
 +        }
++        /// A mod's `world.set-energy-capacity`: the most the block entity holds (kept as `energy_limit`; 0 removes it).
++        pub(in crate::game) fn native_set_energy_capacity(&mut self, pos: [i32; 3], capacity: u64) {
++            use horizon_world::nbt::Tag;
++            let key = (pos[0], pos[1], pos[2]);
++            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&key) {
++                let name = Self::jname("energy_limit");
++                if capacity == 0 {
++                    m.nbt.remove(&name);
++                } else {
++                    m.nbt.insert(name, Tag::Long(capacity.min(i64::MAX as u64) as i64));
++                    // What it holds above the new limit is lost.
++                    let held = Self::stored_energy(m);
++                    if held > capacity {
++                        m.nbt.insert(Self::jname("energy"), Tag::Long(capacity.min(i64::MAX as u64) as i64));
++                    }
++                }
++                self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++            }
++        }
++        /// How much energy a block entity holds at most: its mod's `energy_limit` or its kind's capacity.
++        fn energy_capacity(m: &horizon_client_render::containers::ModBlockEntity, spec: &horizon_mods::EnergySpec) -> u64 {
++            match m.nbt.get(&Self::jname("energy_limit")) {
++                Some(horizon_world::nbt::Tag::Long(v)) if *v > 0 => *v as u64,
++                _ => spec.capacity,
++            }
++        }
 +        /// What each tank of a block entity takes in (empty: anything of its kind).
 +        fn tank_accepts(
 +            m: &horizon_client_render::containers::ModBlockEntity,
@@ -1196,7 +1286,42 @@ index fcc3158..937d02a 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -1230,17 +1377,20 @@ mod run {
+@@ -990,7 +1163,7 @@ mod run {
+             let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
+             let (energy, energy_faces) = match &kind.energy {
+                 Some(spec) => (
+-                    Self::stored_energy(m).min(spec.capacity),
++                    Self::stored_energy(m).min(Self::energy_capacity(m, spec)),
+                     Self::energy_faces(m, spec).to_vec(),
+                 ),
+                 None => (0, Vec::new()),
+@@ -1055,11 +1228,12 @@ mod run {
+                     {
+                         let name = |s: &str| horizon_world::nbt::JavaString::from(s);
+                         if let Some(e) = u.energy {
+-                            let e = e.min(spec.capacity).min(i64::MAX as u64) as i64;
++                            let limit = Self::energy_capacity(m, spec);
++                            let e = e.min(limit).min(i64::MAX as u64) as i64;
+                             m.nbt.insert(name("energy"), horizon_world::nbt::Tag::Long(e));
+                             m.nbt.insert(
+                                 name("energy_cap"),
+-                                horizon_world::nbt::Tag::Long(spec.capacity.min(i64::MAX as u64) as i64),
++                                horizon_world::nbt::Tag::Long(limit.min(i64::MAX as u64) as i64),
+                             );
+                         }
+                         if let Some(f) = &u.energy_faces {
+@@ -1173,8 +1347,8 @@ mod run {
+                     let spec = kinds.iter().find(|k| k.block == m.id)?.energy.as_ref()?;
+                     Some(horizon_mods::energy::EnergyNode {
+                         pos: [pos.0, pos.1, pos.2],
+-                        energy: Self::stored_energy(m).min(spec.capacity),
+-                        capacity: spec.capacity,
++                        energy: Self::stored_energy(m).min(Self::energy_capacity(m, spec)),
++                        capacity: Self::energy_capacity(m, spec),
+                         max_receive: spec.max_receive,
+                         max_extract: spec.max_extract,
+                         faces: Self::energy_faces(m, spec),
+@@ -1230,17 +1404,20 @@ mod run {
                      }
                      let held = Self::stored_tanks(m, specs);
                      let sides = Self::tank_sides(m, specs);
@@ -1218,7 +1343,7 @@ index fcc3158..937d02a 100644
                          })
                          .collect();
                      Some(horizon_mods::flow::TankNode {
-@@ -1350,7 +1500,13 @@ mod run {
+@@ -1350,7 +1527,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -1233,7 +1358,7 @@ index fcc3158..937d02a 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1558,15 @@ mod run {
+@@ -1402,9 +1585,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -1250,7 +1375,7 @@ index fcc3158..937d02a 100644
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1580,7 @@ mod run {
+@@ -1418,7 +1607,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -1259,7 +1384,7 @@ index fcc3158..937d02a 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1822,27 @@ mod run {
+@@ -1660,6 +1849,34 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
@@ -1268,6 +1393,13 @@ index fcc3158..937d02a 100644
 +                        self.native_set_item_faces(pos, &faces);
 +                    } else {
 +                        log::debug!("Horizon: mod {name} set item faces in another level");
++                    }
++                }
++                Output::SetEnergyCapacity { name, dimension, pos, capacity } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_energy_capacity(pos, capacity);
++                    } else {
++                        log::debug!("Horizon: mod {name} set an energy capacity in another level");
 +                    }
 +                }
 +                Output::SetTankFilter { name, dimension, pos, tank, accepts } => {
@@ -1288,55 +1420,65 @@ index fcc3158..937d02a 100644
                      name,
                      id,
 diff --git a/crates/horizon-client/src/lan/containers.rs b/crates/horizon-client/src/lan/containers.rs
-index f3f8ca0..cdb1592 100644
+index f3f8ca0..549e452 100644
 --- a/crates/horizon-client/src/lan/containers.rs
 +++ b/crates/horizon-client/src/lan/containers.rs
-@@ -265,6 +265,7 @@ impl Hub {
+@@ -265,6 +265,8 @@ impl Hub {
              sent_data: Vec::new(),
              hidden: Vec::new(),
              results: mod_type.map_or_else(Vec::new, |t| t.results.clone()),
 +            equip: mod_type.map_or(0, |t| t.armor),
++            accepts: crate::containers::mod_menu_accepts(menu_kind),
              data_slots: mod_type.map(|t| t.data_slots),
          });
          self.send_menu_content(i, items);
-@@ -325,6 +326,7 @@ impl Hub {
+@@ -325,6 +327,8 @@ impl Hub {
              sent_data: Vec::new(),
              hidden: Vec::new(),
              results: Vec::new(),
 +            equip: 0,
++            accepts: Vec::new(),
              data_slots: None,
          });
          self.send_menu_content(i, items);
-@@ -567,6 +569,7 @@ impl Hub {
+@@ -567,6 +571,12 @@ impl Hub {
              .as_ref()
              .filter(|_| in_menu)
              .map_or_else(Vec::new, |m| m.results.clone());
 +        let equip = self.guests[i].menu.as_ref().filter(|_| in_menu).map_or(0, |m| m.equip);
++        let accepts = self.guests[i]
++            .menu
++            .as_ref()
++            .filter(|_| in_menu)
++            .map_or_else(Vec::new, |m| m.accepts.clone());
          let guest = &mut self.guests[i];
          let mut items = source.and_then(|s| s.read(world, guest));
          if in_menu && items.is_none() {
-@@ -578,6 +581,7 @@ impl Hub {
+@@ -578,6 +588,8 @@ impl Hub {
              shulker,
              hidden: &hidden,
              results: &results,
 +            equip,
++            accepts: &accepts,
          };
          let (drops, changed) = menu::click(
              &mut view,
 diff --git a/crates/horizon-client/src/lan/menu.rs b/crates/horizon-client/src/lan/menu.rs
-index a696e8a..dc6c8a7 100644
+index a696e8a..0ac70b4 100644
 --- a/crates/horizon-client/src/lan/menu.rs
 +++ b/crates/horizon-client/src/lan/menu.rs
-@@ -42,6 +42,8 @@ pub struct Menu {
+@@ -42,6 +42,10 @@ pub struct Menu {
      pub hidden: Vec<usize>,
      /// A mod menu type's take-only slots (`FurnaceResultSlot.mayPlace`).
      pub results: Vec<usize>,
 +    /// The armor and off-hand slots at the end of `size` (a mod menu's `armor`): 0, 4 or 5.
 +    pub equip: usize,
++    /// The slots of a mod menu type that take only some items.
++    pub accepts: Vec<(usize, Vec<String>)>,
      /// A mod menu type's data slot count (`addDataSlots`); None for vanilla's.
      pub data_slots: Option<usize>,
  }
-@@ -128,6 +130,9 @@ impl Slots {
+@@ -128,6 +132,9 @@ impl Slots {
                  return slots[n].clone();
              }
              n -= slots.len();
@@ -1346,7 +1488,7 @@ index a696e8a..dc6c8a7 100644
          }
          None
      }
-@@ -142,6 +147,10 @@ impl Slots {
+@@ -142,6 +149,10 @@ impl Slots {
          let mut items = Vec::new();
          for k in self.halves() {
              items.extend_from_slice(shown(world, k)?);
@@ -1357,7 +1499,7 @@ index a696e8a..dc6c8a7 100644
          }
          Some(items)
      }
-@@ -158,15 +167,48 @@ impl Slots {
+@@ -158,15 +169,48 @@ impl Slots {
          let mut rest = items.into_iter();
          for k in self.halves() {
              let n = shown(world, k).map_or(0, <[_]>::len);
@@ -1406,16 +1548,18 @@ index a696e8a..dc6c8a7 100644
  /// The slots of the block entity at `k` its menu shows: a mod container's
  /// count, though items past it stay saved.
  fn shown(world: &World, k: (i32, i32, i32)) -> Option<&[Option<ItemStack>]> {
-@@ -194,6 +236,8 @@ pub struct View<'a> {
+@@ -194,6 +238,10 @@ pub struct View<'a> {
      pub hidden: &'a [usize],
      /// Container slots nothing is put into (see [`Menu::results`]).
      pub results: &'a [usize],
 +    /// How many of the container's last slots are the guest's own armor and off-hand (a mod menu's `armor` slots).
 +    pub equip: usize,
++    /// Container slots that take only some items (see [`Menu::accepts`]).
++    pub accepts: &'a [(usize, Vec<String>)],
  }
  
  impl View<'_> {
-@@ -232,7 +276,17 @@ impl View<'_> {
+@@ -232,7 +280,17 @@ impl View<'_> {
      fn enabled(&self, i: usize) -> bool {
          (self.container.is_some() || i >= 5) && !self.hidden.contains(&i)
      }
@@ -1433,7 +1577,19 @@ index a696e8a..dc6c8a7 100644
          if self.container.is_none() && (5..=8).contains(&i) {
              return rules.armor_index(&stack.item) == Some(i - 5);
          }
-@@ -249,6 +303,9 @@ impl View<'_> {
+@@ -242,6 +300,11 @@ impl View<'_> {
+         {
+             return false;
+         }
++        if self.container.as_ref().is_some_and(|c| i < c.len())
++            && self.accepts.iter().any(|(slot, items)| *slot == i && !items.iter().any(|i| i.as_str() == &*stack.item))
++        {
++            return false;
++        }
+         self.enabled(i) && !self.result(i)
+     }
+     /// A take-only container slot of a mod menu type.
+@@ -249,6 +312,9 @@ impl View<'_> {
          self.container.is_some() && self.results.contains(&i)
      }
      fn slot_max(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> u32 {
@@ -1443,59 +1599,66 @@ index a696e8a..dc6c8a7 100644
          if self.container.is_none() && (5..=8).contains(&i) {
              return 1;
          }
-@@ -838,6 +895,7 @@ mod tests {
+@@ -838,6 +904,8 @@ mod tests {
              shulker: false,
              hidden: &[],
              results: &[],
 +            equip: 0,
++            accepts: &[],
          };
          view.guest.carried = Some(ItemStack::new("minecraft:bundle", 1));
          // Left click with the bundle: the stone goes in.
-@@ -912,6 +970,7 @@ mod tests {
+@@ -912,6 +980,8 @@ mod tests {
                  shulker: false,
                  hidden: &[],
                  results: &[],
 +                equip: 0,
++            accepts: &[],
              };
              click(&mut view, &mut drag, 5 + 27, 0, input::QUICK_MOVE, &rules);
              assert_eq!(view.get(0).map(|s| s.item), Some("minecraft:dirt".into()));
-@@ -950,6 +1009,7 @@ mod tests {
+@@ -950,6 +1020,8 @@ mod tests {
              shulker: false,
              hidden: &hidden,
              results: &[],
 +            equip: 0,
++            accepts: &[],
          };
          // The hotbar's first slot (menu slot 3 + 27) lands in the one slot shown.
          click(&mut view, &mut drag, 3 + 27, 0, input::QUICK_MOVE, &rules);
-@@ -980,6 +1040,7 @@ mod tests {
+@@ -980,6 +1052,8 @@ mod tests {
              shulker: false,
              hidden: &[],
              results: &results,
 +            equip: 0,
++            accepts: &[],
          };
          // The hotbar's first slot (menu slot 2 + 27) goes to slot 0, not onto the result.
          click(&mut view, &mut drag, 2 + 27, 0, input::QUICK_MOVE, &rules);
-@@ -1026,6 +1087,7 @@ mod tests {
+@@ -1026,6 +1100,8 @@ mod tests {
              shulker: false,
              hidden: &[],
              results: &results,
 +            equip: 0,
++            accepts: &[],
          };
          // A hotbar key and F over the result: the stone goes nowhere.
          click(&mut view, &mut drag, 1, 0, input::SWAP, &rules);
-@@ -1075,6 +1137,7 @@ mod tests {
+@@ -1075,6 +1151,8 @@ mod tests {
              shulker: false,
              hidden: &[],
              results: &[],
 +            equip: 0,
++            accepts: &[],
          };
          click(&mut view, &mut drag, 0, 40, input::SWAP, &rules);
          assert_eq!(
-@@ -1121,6 +1184,7 @@ mod tests {
+@@ -1121,6 +1199,8 @@ mod tests {
                  shulker,
                  hidden: &[],
                  results: &[],
 +                equip: 0,
++            accepts: &[],
              };
              // Carried onto an empty slot, shift-clicked from the hotbar
              // (menu slot 27 + 27) and swapped in with the number key 1.
@@ -1744,10 +1907,10 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..5e8f0d5 100644
+index 783da48..ca0130b 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
-@@ -686,6 +686,29 @@ interface %world {
+@@ -686,6 +686,33 @@ interface %world {
      /// The biome at a position (`minecraft:plains`, ...), as the server
      /// stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded.
      get-biome: func(dimension: string, x: s32, y: s32, z: s32) -> option<string>;
@@ -1774,10 +1937,14 @@ index 783da48..5e8f0d5 100644
 +    /// entity, 0 to 15 (the strongest of the six neighbours, what a dispenser
 +    /// reads), as of the start of this tick: 0 for any other position.
 +    get-redstone: func(dimension: string, x: s32, y: s32, z: s32) -> u8;
++    /// Sets how much energy a block entity of the mod holds at most, in place
++    /// of its kind's `energy.capacity` (a machine whose upgrades raise it):
++    /// 0 gives the kind's back. What it holds above the new capacity is lost.
++    set-energy-capacity: func(dimension: string, x: s32, y: s32, z: s32, capacity: u64) -> result<_, string>;
      /// One collision box of a block, in blocks, relative to the block's own
      /// corner (a full cube is `0,0,0` to `1,1,1`).
      record collision-box {
-@@ -713,6 +736,23 @@ interface %world {
+@@ -713,6 +740,23 @@ interface %world {
      /// happens for a block with no such property or value, or one already set.
      /// At most 4096 per call.
      set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
@@ -1801,7 +1968,7 @@ index 783da48..5e8f0d5 100644
  }
  
  /// Capability `player-control`, server mods only (manifest `api = "0.3"`,
-@@ -736,6 +776,11 @@ interface player-control {
+@@ -736,6 +780,11 @@ interface player-control {
      }
      /// What the player with this id is doing; none for an id that is not online.
      get-motion: func(player: string) -> option<motion>;
@@ -1813,7 +1980,7 @@ index 783da48..5e8f0d5 100644
      /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
      /// distance reset. `yaw` and `pitch` stay as they are when none. The
      /// move is made after this call returns, before the next tick. An error
-@@ -1254,7 +1299,7 @@ interface server-events {
+@@ -1254,7 +1303,7 @@ interface server-events {
      /// the use: the hand swings and neither the item's own use nor the
      /// block's runs after it; false leaves it to the game. It is asked at the
      /// moment of the click, so what it asks for through imports is made at the
@@ -1823,7 +1990,7 @@ index 783da48..5e8f0d5 100644
      /// A player hit the entity `entity` of `kind` holding `stack`
      /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
 diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
-index 7a52a62..8e01c2d 100644
+index 7a52a62..39587be 100644
 --- a/crates/horizon-mods/src/api_level.rs
 +++ b/crates/horizon-mods/src/api_level.rs
 @@ -7,13 +7,13 @@
@@ -1831,18 +1998,18 @@ index 7a52a62..8e01c2d 100644
  
  /// The newest level this Horizon serves.
 -pub const LEVEL: u32 = 15;
-+pub const LEVEL: u32 = 20;
++pub const LEVEL: u32 = 21;
  
  /// Every function the game offers mods, as `interface.function`, with its
  /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
  /// function takes the next level and raises [`LEVEL`] (the `api_reference`
  /// test fails until it is listed here).
 -pub const FUNCTIONS: [(&str, u32); 73] = [
-+pub const FUNCTIONS: [(&str, u32); 79] = [
++pub const FUNCTIONS: [(&str, u32); 80] = [
      ("log.write", 0),
      ("game.get-player", 0),
      ("game.get-clock", 0),
-@@ -87,6 +87,12 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
+@@ -87,6 +87,13 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
      ("chunks.set-forced", 13),
      ("world.set-block-property", 14),
      ("recipe-types.cooking-recipes", 15),
@@ -1852,6 +2019,7 @@ index 7a52a62..8e01c2d 100644
 +    ("world.set-tank-filter", 18),
 +    ("world.get-environment", 19),
 +    ("world.get-redstone", 20),
++    ("world.set-energy-capacity", 21),
  ];
  
  /// What the game's program carries so the launcher can read its level
@@ -1895,10 +2063,10 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..2622b86 100644
+index e2ee6c7..f01de5f 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
-@@ -295,12 +295,42 @@ pub struct MenuType {
+@@ -295,12 +295,63 @@ pub struct MenuType {
      /// slots a player takes from but never puts into, each below `slots`.
      #[serde(default)]
      pub results: Vec<u16>,
@@ -1906,12 +2074,33 @@ index e2ee6c7..2622b86 100644
 +    /// menu after its own, which hold the armor of whoever has it open.
 +    #[serde(default)]
 +    pub armor: Option<ArmorSlots>,
++    /// Slots that take only some items (an upgrade slot): a player puts into `slot` only these item ids.
++    #[serde(default)]
++    pub accepts: Vec<SlotAccepts>,
      /// How the screen of a block of the same id is laid out and drawn, from
      /// the menu's data slots, without a line of code (API block 7).
      #[serde(default)]
      pub screen: Option<MenuScreen>,
  }
  
++/// A slot of a menu that takes only the items listed (`Slot.mayPlace`).
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct SlotAccepts {
++    pub slot: u16,
++    pub items: Vec<String>,
++}
++
++/// A container slot that sits in a window of the screen: shown (and clickable) only while that window is open, at a place
++/// relative to the window's top left (so it follows the window when dragged).
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct WindowSlot {
++    pub slot: u16,
++    pub x: i32,
++    pub y: i32,
++}
++
 +/// Where the player's armor slots are on a menu's screen: four slots going down from `x`, `y` (the helmet first, then the
 +/// chestplate, the leggings and the boots, 18 apart), and the off-hand's `offhand` pixels under the last when given.
 +#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -1941,7 +2130,7 @@ index e2ee6c7..2622b86 100644
  fn default_width() -> i32 {
      176
  }
-@@ -332,12 +362,57 @@ pub struct MenuScreen {
+@@ -332,12 +383,60 @@ pub struct MenuScreen {
      /// over the whole panel instead of the plain grey one.
      #[serde(default)]
      pub texture: Option<String>,
@@ -1974,6 +2163,9 @@ index e2ee6c7..2622b86 100644
 +    pub texture: Option<String>,
 +    #[serde(default)]
 +    pub widgets: Vec<Widget>,
++    /// Container slots that show in this window while it is open (their entry in the screen's `slots` is `null`).
++    #[serde(default)]
++    pub slots: Vec<WindowSlot>,
 +}
 +
 +/// When a conditional group of widgets shows.
@@ -1999,7 +2191,7 @@ index e2ee6c7..2622b86 100644
  }
  
  /// A number a widget reads: a constant, a data slot of the menu, or two data
-@@ -349,6 +424,9 @@ pub enum Value {
+@@ -349,6 +448,9 @@ pub enum Value {
      Const(i64),
      Data(u16),
      Pair([u16; 2]),
@@ -2009,7 +2201,7 @@ index e2ee6c7..2622b86 100644
  }
  
  /// The way a bar or a progress arrow fills.
-@@ -362,6 +440,16 @@ pub enum Direction {
+@@ -362,6 +464,16 @@ pub enum Direction {
      Right,
  }
  
@@ -2026,9 +2218,13 @@ index e2ee6c7..2622b86 100644
  #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
  #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
  pub enum Widget {
-@@ -408,16 +496,61 @@ pub enum Widget {
+@@ -407,17 +519,65 @@ pub enum Widget {
+         text: String,
          #[serde(default)]
          color: Option<String>,
++        /// Percent of the usual size, drawn from `x`, `y` (60 is the small print of an upgrade's description); 100 when unset.
++        #[serde(default)]
++        scale: Option<u16>,
      },
 -    /// A press inside it sends menu button `id` to the server.
 +    /// A press inside it sends menu button `id` to the server, or does its `local` action here and sends nothing.
@@ -2045,8 +2241,8 @@ index e2ee6c7..2622b86 100644
 +        #[serde(default)]
 +        local: Option<LocalAction>,
 +        #[serde(default)]
-         tooltip: Option<String>,
-     },
++        tooltip: Option<String>,
++    },
 +    /// A rectangle filled with `colors[value]` (`#RRGGBB`), the last when `value` is past the list; its tooltip fills
 +    /// `{label}` with `labels[value]`.
 +    Swatch {
@@ -2059,8 +2255,8 @@ index e2ee6c7..2622b86 100644
 +        #[serde(default)]
 +        labels: Vec<String>,
 +        #[serde(default)]
-+        tooltip: Option<String>,
-+    },
+         tooltip: Option<String>,
+     },
 +    /// A tank: a rectangle filled from the bottom up to `value` of `max` with the chemical (or fluid) that `kind` says, a
 +    /// number from 1 into `types` (0 is an empty tank): the type's sprite tiled over it and tinted with its colour. Its
 +    /// tooltip fills `{label}` (the type's), `{value}` and `{max}`; `empty` is shown instead while `kind` is 0.
@@ -2089,7 +2285,7 @@ index e2ee6c7..2622b86 100644
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +594,179 @@ impl MenuScreen {
+@@ -461,81 +621,185 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -2124,6 +2320,9 @@ index e2ee6c7..2622b86 100644
 -        };
 +            if let Some(t) = &w.texture {
 +                sprite(t)?;
++            }
++            if w.slots.iter().any(|s| s.slot >= slots) {
++                return Err(format!("{name}: a window's slots are slots of the menu"));
 +            }
 +        }
          for w in &self.widgets {
@@ -2224,7 +2423,10 @@ index e2ee6c7..2622b86 100644
 +                return Err(format!("{name}: a sprite's src is x, y, w, h with w and h over 0"));
 +            }
 +        }
-+        Widget::Text { x, y, text, color } => {
++        Widget::Text { x, y, text, color, scale } => {
++            if scale.is_some_and(|s| !(10..=400).contains(&s)) {
++                return Err(format!("{name}: a text's scale is 10 to 400 percent"));
++            }
 +            rect(*x, *y, 1, 1)?;
 +            if text.len() > 256 {
 +                return Err(format!("{name}: text is 256 bytes at most"));
@@ -2274,11 +2476,11 @@ index e2ee6c7..2622b86 100644
 +            match local {
 +                Some(LocalAction::Open(id)) if !windows.contains(&id.as_str()) => {
 +                    return Err(format!("{name}: a button opens window {id:?}, which the screen does not have"));
-+                }
-+                Some(LocalAction::Set { var, .. }) if var.is_empty() || var.len() > 32 => {
-+                    return Err(format!("{name}: a variable's name is 1 to 32 bytes"));
                  }
 -                Widget::Button { x, y, w, h, .. } => rect(*x, *y, *w, *h)?,
++                Some(LocalAction::Set { var, .. }) if var.is_empty() || var.len() > 32 => {
++                    return Err(format!("{name}: a variable's name is 1 to 32 bytes"));
++                }
 +                _ => {}
 +            }
 +        }
@@ -2335,7 +2537,7 @@ index e2ee6c7..2622b86 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +814,42 @@ pub enum RenderElement {
+@@ -583,6 +847,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -2378,7 +2580,7 @@ index e2ee6c7..2622b86 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +863,50 @@ pub enum RenderElement {
+@@ -596,6 +896,50 @@ pub enum RenderElement {
      },
  }
  
@@ -2429,7 +2631,7 @@ index e2ee6c7..2622b86 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +954,48 @@ impl BlockRenderer {
+@@ -643,6 +987,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -2478,7 +2680,17 @@ index e2ee6c7..2622b86 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1023,6 +1376,15 @@ impl Content {
+@@ -1011,6 +1397,9 @@ impl Content {
+                     "{name}: slots is 1 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
+                 ));
+             }
++            if file.accepts.iter().any(|a| a.slot >= file.slots || a.items.is_empty() || a.items.len() > 64) {
++                return Err(format!("{name}: accepts lists slots of the menu, each with 1 to 64 items"));
++            }
+             let mut seen = BTreeSet::new();
+             for &r in &file.results {
+                 if r >= file.slots {
+@@ -1023,6 +1412,15 @@ impl Content {
                      return Err(format!("{name}: result {r} is listed twice"));
                  }
              }
@@ -2494,7 +2706,7 @@ index e2ee6c7..2622b86 100644
              if let Some(screen) = &file.screen {
                  screen.check(&name, file.slots, file.data_slots)?;
              }
-@@ -1208,6 +1570,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1606,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
@@ -2621,7 +2833,7 @@ index 02de080..12e459b 100644
          let d = data();
          assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
-index d3024e4..3061646 100644
+index d3024e4..35894c7 100644
 --- a/crates/horizon-mods/src/runtime.rs
 +++ b/crates/horizon-mods/src/runtime.rs
 @@ -58,7 +58,7 @@ pub use server_bindings::{
@@ -2642,7 +2854,7 @@ index d3024e4..3061646 100644
      /// The living mobs of the level in place (`mobs_dimension`), for
      /// capability `entities`.
      pub mobs: Vec<MobInfo>,
-@@ -366,6 +368,28 @@ pub enum Output {
+@@ -366,6 +368,35 @@ pub enum Output {
          property: String,
          value: String,
      },
@@ -2668,10 +2880,17 @@ index d3024e4..3061646 100644
 +        tank: u32,
 +        accepts: Vec<String>,
 +    },
++    /// `world.set-energy-capacity`: how much one block entity holds at most (0: its kind's).
++    SetEnergyCapacity {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        capacity: u64,
++    },
      /// `chunks.set-forced` of mod `id`.
      Chunk {
          name: String,
-@@ -426,6 +450,10 @@ pub trait WorldView: std::any::Any + Send {
+@@ -426,6 +457,10 @@ pub trait WorldView: std::any::Any + Send {
      fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
      /// The biome at a position, `minecraft:plains`; `None` as for blocks.
      fn biome(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
@@ -2682,7 +2901,7 @@ index d3024e4..3061646 100644
      /// The collision boxes of the block at a position, relative to the
      /// block's corner; `None` where no chunk of that dimension is loaded.
      fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>>;
-@@ -2152,6 +2180,63 @@ impl mod_world::Host for State {
+@@ -2152,6 +2187,71 @@ impl mod_world::Host for State {
          });
          Ok(())
      }
@@ -2743,10 +2962,18 @@ index d3024e4..3061646 100644
 +        self.out.push(Output::SetTankFilter { name: self.name.clone(), dimension, pos: [x, y, z], tank, accepts });
 +        Ok(())
 +    }
++    fn set_energy_capacity(&mut self, dimension: String, x: i32, y: i32, z: i32, capacity: u64) -> Result<(), String> {
++        let made = self.out.iter().filter(|o| matches!(o, Output::SetEnergyCapacity { .. })).count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} energy capacities a call"));
++        }
++        self.out.push(Output::SetEnergyCapacity { name: self.name.clone(), dimension, pos: [x, y, z], capacity });
++        Ok(())
++    }
      fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.block(&dimension, x, y, z)
-@@ -2160,6 +2245,14 @@ impl mod_world::Host for State {
+@@ -2160,6 +2260,14 @@ impl mod_world::Host for State {
          let view = self.world.lock().ok()?;
          view.as_ref()?.biome(&dimension, x, y, z)
      }
@@ -2761,7 +2988,7 @@ index d3024e4..3061646 100644
      fn get_collision(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.collision(&dimension, x, y, z)
-@@ -2589,6 +2682,13 @@ impl player_control::Host for State {
+@@ -2589,6 +2697,13 @@ impl player_control::Host for State {
              .find(|(id, _)| *id == player)
              .map(|(_, m)| m.clone())
      }
@@ -3399,7 +3626,7 @@ index feecac5..a4ed7a3 100644
              }
          }
 diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
-index 151d098..b7c5f59 100644
+index 151d098..e390609 100644
 --- a/crates/horizon-mods/tests/sandbox.rs
 +++ b/crates/horizon-mods/tests/sandbox.rs
 @@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
@@ -3410,12 +3637,12 @@ index 151d098..b7c5f59 100644
 +    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`.
      assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
 -    assert_eq!(LEVEL, 15);
-+    assert_eq!(LEVEL, 20);
++    assert_eq!(LEVEL, 21);
  }
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..ab74b79 100644
+index 57a0edc..a9c43c0 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -3439,12 +3666,13 @@ index 57a0edc..ab74b79 100644
  ### record `collision-box`
  
  One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
-@@ -712,9 +726,14 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+@@ -712,9 +726,15 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
  | --- | --- | --- |
  | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
  | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
 +| `get-environment` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<environment>` | The sky and weather at a position, as of this call: none where no chunk is loaded. |
 +| `get-redstone` | `func(dimension: string, x: s32, y: s32, z: s32) -> u8` | The redstone signal reaching a block of the mod that carries a block entity, 0 to 15 (the strongest of the six neighbours, what a dispenser reads), as of the start of this tick: 0 for any other position. |
++| `set-energy-capacity` | `func(dimension: string, x: s32, y: s32, z: s32, capacity: u64) -> result<_, string>` | Sets how much energy a block entity of the mod holds at most, in place of its kind's `energy.capacity` (a machine whose upgrades raise it): 0 gives the kind's back. What it holds above the new capacity is lost. |
  | `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
  | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
  | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
@@ -3454,7 +3682,7 @@ index 57a0edc..ab74b79 100644
  
  ## `player-control`
  
-@@ -737,6 +756,7 @@ What a player is doing as of the last server tick.
+@@ -737,6 +757,7 @@ What a player is doing as of the last server tick.
  | Function | Signature | What it does |
  | --- | --- | --- |
  | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
@@ -3462,7 +3690,7 @@ index 57a0edc..ab74b79 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
-@@ -1146,5 +1166,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+@@ -1146,5 +1167,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
  | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
  | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
  | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |

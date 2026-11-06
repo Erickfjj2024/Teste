@@ -30,6 +30,8 @@ pub struct Spec {
     /// A per-tick recipe uses the chemical by chance (the "randomized consumption" of the config), a mean of one a tick;
     /// otherwise one a tick.
     pub random_use: bool,
+    /// The mean of that chance (1, or what the speed and chemical upgrades make it).
+    pub mean: f64,
 }
 
 /// What an output is.
@@ -209,7 +211,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
     }
     // What a per-tick recipe uses this tick.
     let uses = if needs_chem && recipe.per_tick {
-        if spec.random_use { inverse_poisson(1.0, dice) } else { 1 }
+        if spec.random_use { inverse_poisson(spec.mean, dice) } else { 1 }
     } else {
         0
     };
@@ -252,11 +254,11 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
 mod tests {
     use super::*;
 
-    const INFUSER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 5, ticks: 200, cap_in: 1000, cap_out: 0, random_use: false };
-    const PURIFIER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 10, ticks: 200, cap_in: 210, cap_out: 0, random_use: false };
-    const OXIDIZER: Spec = Spec { shape: Shape::ItemToChem, usage: 15, ticks: 100, cap_in: 0, cap_out: 10_000, random_use: false };
-    const DISSOLVER: Spec = Spec { shape: Shape::ItemChemToChem, usage: 16, ticks: 100, cap_in: 10_000, cap_out: 10_000, random_use: false };
-    const CRYSTALLIZER: Spec = Spec { shape: Shape::ChemToItem, usage: 15, ticks: 200, cap_in: 10_000, cap_out: 0, random_use: false };
+    const INFUSER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 5, ticks: 200, cap_in: 1000, cap_out: 0, random_use: false, mean: 1.0 };
+    const PURIFIER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 10, ticks: 200, cap_in: 210, cap_out: 0, random_use: false, mean: 1.0 };
+    const OXIDIZER: Spec = Spec { shape: Shape::ItemToChem, usage: 15, ticks: 100, cap_in: 0, cap_out: 10_000, random_use: false, mean: 1.0 };
+    const DISSOLVER: Spec = Spec { shape: Shape::ItemChemToChem, usage: 16, ticks: 100, cap_in: 10_000, cap_out: 10_000, random_use: false, mean: 1.0 };
+    const CRYSTALLIZER: Spec = Spec { shape: Shape::ChemToItem, usage: 15, ticks: 200, cap_in: 10_000, cap_out: 0, random_use: false, mean: 1.0 };
 
     fn stack(item: &str, count: u32) -> Option<Stack> {
         Some(Stack { item: item.into(), count, components: String::new() })

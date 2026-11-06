@@ -318,6 +318,34 @@ unitários. Lido do código 26.3 (`TileEntityMekanism.isRedstoneActivated`, `Gui
 - **Diferenças:** o original só pára a parte que processa e deixa o resto (trocar itens de lata por tanque) trabalhar; aqui a máquina
   inteira descansa. Tanques de fluido/químico e Energy Cubes não têm a aba (também não têm no original).
 
+## 2j. Upgrades (mod 0.1.37, APK v38, API 21, **não testados no jogo**)
+
+Passou no teste simulado (55 passos: dois upgrades de velocidade num Crusher instalam em um segundo e cortam a receita de 200 para 112
+ticks; o upgrade de gás é recusado e fica no slot; o botão da janela devolve um upgrade) e em 71 testes unitários; **ninguém viu na tela
+do celular**. Lido do código 26.3 (`TileComponentUpgrade`, `UpgradeUtils`, `GuiUpgradeWindow`, `GuiUpgradeScrollList`,
+`GuiSupportedUpgrades`, `AttributeUpgradeSupport` e os tags `upgrade_support`):
+- **Os 8 itens** (velocidade, energia, químico, silenciamento, contenção de XP, âncora, filtro e gerador de pedra), com a textura, o nome
+  ("Speed Upgrade"...) e a receita do original. **Diferença:** no original é um item só (`mekanism:upgrade`) com o tipo num componente; aqui
+  cada tipo é um item (`mekanism:upgrade_speed`...), porque a API do Horizon não tem componentes de dado de mod no modelo do item.
+- **A aba de upgrades** (176, 6; 26 por 18) em todas as máquinas e geradores abre uma **janela** de 198 por 94 (arrastável como a de
+  configuração) com: título, lista dos instalados (até 4 linhas, cada uma na cor do upgrade, a escolhida acesa), a tela de descrição ("No
+  selection." ou o nome, "Amount: n/máx" e "Effect: ...x" em letra pequena a 60%), a seta que enche enquanto instala, o botão
+  "Uninstall" (toque esquerdo tira um, **toque direito tira todos**: no original é com Shift), os dois slots (entrada e saída) dentro da
+  janela e a fileira "Supported:" com todos os ícones, os não suportados esmaecidos.
+- **Efeitos:** instala em 20 ticks, até o máximo (8 para velocidade, energia e químico; 1 para os outros). **Velocidade:** receita em
+  `max(1, base × 10^(-n/8))` ticks e uso de energia `ceil(base × 10^(2·vel/8 − energia/8))`; nas máquinas de fluxo contínuo (infusor, lavadora,
+  separador, rotary) é `2^n` operações por tick. **Energia:** uso menor e capacidade `base × 10^(energia/8)` (API 21: `set-energy-capacity`).
+  **Químico:** a média do gasto aleatório sobe/desce (`10^(2·vel/8 − gás/8)`) nas três câmaras que o aceitam.
+- **Quem aceita o quê:** velocidade, energia, silenciamento e XP nas máquinas de processo; mais químico na Purification Chamber, na
+  Injection Chamber e na Dissolution Chamber; só silenciamento nos geradores. Um upgrade que a máquina não aceita nem entra no slot.
+- **Fork (APK v38):** `MenuType.accepts` (slot que só aceita certos itens, checado no servidor), `Window.slots` (slots que só existem
+  com uma janela aberta, no lugar dela e seguindo-a quando arrastada), `Widget::Text.scale` e a API 21 (`world.set-energy-capacity`).
+- **Falta / diferenças:** silenciamento e contenção de XP são só guardados (o porte não tem som nem experiência); a lista não rola (a
+  quinta linha, só nas câmaras com os cinco tipos instalados, fica escondida); o realce ao passar o dedo na lista não existe; instalar
+  com Shift+clique direito do item no bloco não existe (só pelo slot da janela); a dica "Using" da aba de energia mostra o uso básico, não o
+  com upgrades; o ritmo de despejo do Electrolytic Separator não acompanha a velocidade; os três upgrades que nenhuma máquina portada
+  aceita (âncora, filtro, gerador de pedra) existem mas não têm uso.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

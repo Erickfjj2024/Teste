@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket", "mekanism:upgrade_speed", "mekanism:upgrade_chemical"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -73,14 +73,14 @@ set-items = [
 ]
 ticks = 1
 # One tick in: the cube fills itself and feeds the crusher in front of it.
-expect.block-items = [{ x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", ""] }]
+expect.block-items = [{ x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
 
 [[step]]
 ticks = 220
 # 200 ticks later, the first ingot is a dust; the smelter, with no cable to the cube, never started.
 expect.block-items = [
-    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1"] },
-    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] },
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", ""] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", ""] },
 ]
 expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=true]" }]
 
@@ -91,7 +91,7 @@ blocks = [
     { x = 2, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
 ]
 ticks = 205
-expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] }]
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", ""] }]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
@@ -129,7 +129,7 @@ expect.claimed = true
 ticks = 205
 expect.told = ["Alex: Energy behavior bumped to: Output (Blue)"]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
-expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1", "", ""] }]
 
 [[step]]
 # Not sneaking, a click only tells the side's behaviour and changes nothing.
@@ -148,7 +148,7 @@ expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
 # at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
 blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
 ticks = 2
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
@@ -156,13 +156,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 1050 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 2000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
@@ -170,13 +170,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3010 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
@@ -224,7 +224,7 @@ blocks = [
 ]
 set-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "minecraft:redstone*3"] }]
 ticks = 25
-expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", ""] }]
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "", "", ""] }]
 expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"] }]
 
 [[step]]
@@ -232,7 +232,7 @@ expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"]
 # metallurgic_infusing), and the tank keeps what is left.
 set-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*2", "", ""] }]
 ticks = 205
-expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", ""] }]
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", "", "", ""] }]
 expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*20"] }]
 
 [[step]]
@@ -254,7 +254,7 @@ set-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*2", ""] }]
 
 [[step]]
 ticks = 110
-expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*1", ""] }]
+expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*1", "", "", ""] }]
 expect.block-tanks = [{ x = 100, y = 64, z = -1, tanks = ["mekanism:carbon*10"] }]
 
 [[step]]
@@ -272,7 +272,7 @@ ticks = 25
 
 [[step]]
 ticks = 190
-expect.block-items = [{ x = 120, y = 64, z = -1, slots = ["", "mekanism:ingot_refined_obsidian*1", ""] }]
+expect.block-items = [{ x = 120, y = 64, z = -1, slots = ["", "mekanism:ingot_refined_obsidian*1", "", "", ""] }]
 expect.block-tanks = [{ x = 120, y = 64, z = -1, tanks = ["mekanism:osmium*10"] }]
 
 [[step]]
@@ -289,7 +289,7 @@ ticks = 230
 
 [[step]]
 ticks = 5
-expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1"] }]
+expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1", "", ""] }]
 expect.block-tanks = [{ x = 140, y = 64, z = -1, tanks = ["mekanism:clean_gold*250"] }]
 
 [[step]]
@@ -395,8 +395,8 @@ set-items = [
 set-tanks = [{ x = 330, y = 64, z = 0, tanks = ["mekanism:hydrogen*1000"] }]
 ticks = 2
 expect.block-items = [
-    { x = 300, y = 64, z = 0, slots = ["", ""] },
-    { x = 310, y = 64, z = 0, slots = ["", ""] },
+    { x = 300, y = 64, z = 0, slots = ["", "", "", ""] },
+    { x = 310, y = 64, z = 0, slots = ["", "", "", ""] },
 ]
 expect.block-tanks = [
     { x = 300, y = 64, z = 0, tanks = ["mekanismgenerators:bioethanol*126"] },
@@ -425,9 +425,38 @@ ticks = 1
 [[step]]
 set-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
 ticks = 230
-expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "", ""] }]
 
 [[step]]
 power = [{ x = 340, y = 64, z = 0, level = 15 }]
 ticks = 230
-expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1"] }]
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", ""] }]
+
+[[step]]
+# Upgrades: two speed upgrades put in a crusher's upgrade slot (the third) install after a second and cut a 200 tick recipe to
+# 112 (200 * 10^(-2/8)); a chemical upgrade is not taken by a crusher and stays where it is.
+blocks = [
+    { x = 350, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 350, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 350, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "mekanism:upgrade_speed*2", ""] }]
+ticks = 130
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", ""] }]
+
+[[step]]
+set-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", ""] }]
+ticks = 40
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", ""] }]
+
+[[step]]
+# The window's remove button for speed (6100): one upgrade comes out into the output slot.
+set-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", ""] }]
+press = { x = 350, y = 64, z = 0, id = 6100 }
+ticks = 2
+
+[[step]]
+ticks = 2
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", "mekanism:upgrade_speed*1"] }]

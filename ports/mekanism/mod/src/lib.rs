@@ -18,6 +18,7 @@ mod machine;
 mod sawmill;
 mod sides;
 mod tank;
+mod upgrades;
 mod worldgen;
 
 use horizon_mod_sdk::server::{
@@ -123,7 +124,7 @@ const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, 
 use process::Shape;
 
 const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, random_use: bool) -> process::Spec {
-    process::Spec { shape, usage, ticks, cap_in, cap_out, random_use }
+    process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, mean: 1.0 }
 }
 
 const MACHINES: [Def; 30] = [
@@ -215,6 +216,12 @@ struct Mekanism {
     /// The redstone signal each machine had the tick before (`redstoneLastTick`), and whether the one being run may work.
     last_power: HashMap<(String, i32, i32, i32), bool>,
     can: bool,
+    /// How long the upgrade in each machine's slot has waited, the window's remove buttons since the last tick, the energy
+    /// capacity each machine was given, and whether upgrades changed the machine being run (so it answers even if idle).
+    install: HashMap<(String, i32, i32, i32), u32>,
+    removals: HashMap<(String, i32, i32, i32), Vec<i32>>,
+    capacity: HashMap<(String, i32, i32, i32), u64>,
+    force: bool,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -580,6 +587,10 @@ impl Mekanism {
         let mut tank_next = [process::Tank::default(), process::Tank::default()];
         // The slots after, the energy and progress after, what it did, and whether anything changed.
         let can = self.can;
+        let counts = upgrades::counts_of(def, e);
+        let (speed, energy_up, chem_up) = (counts[upgrades::SPEED], counts[upgrades::ENERGY], counts[upgrades::CHEMICAL]);
+        let usage_now = upgrades::energy_per_tick(def.usage, speed, energy_up);
+        let ticks_now = upgrades::ticks(machine::TICKS, speed);
         let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = if !can {
             // `canFunction` is false: the machine rests where it is, its tanks as they were.
             if let Some(spec) = def.proc {
@@ -598,13 +609,13 @@ impl Mekanism {
         } else { match def.kind {
             Kind::Electric => {
                 let book = self.books.entry(def.block).or_default();
-                let io = Io { input: slot(0), output: slot(1), energy: e.energy, progress };
-                let (next, status) = step(def.usage, book, &io);
+                let io = Io { input: slot(0), output: slot(1), energy: e.energy, progress, ticks: ticks_now };
+                let (next, status) = step(usage_now, book, &io);
                 (vec![item(&next.input), item(&next.output)], next.energy, next.progress, status, next != io)
             }
             Kind::Sawmill => {
-                let io = sawmill::Io { input: slot(0), main: slot(1), secondary: slot(2), energy: e.energy, progress };
-                let (next, status) = sawmill::step(def.usage, &self.saws, &io, dice);
+                let io = sawmill::Io { input: slot(0), main: slot(1), secondary: slot(2), energy: e.energy, progress, ticks: ticks_now };
+                let (next, status) = sawmill::step(usage_now, &self.saws, &io, dice);
                 (
                     vec![item(&next.input), item(&next.main), item(&next.secondary)],
                     next.energy,
@@ -648,6 +659,10 @@ impl Mekanism {
                     progress,
                 };
                 let book = self.procs.entry(def.block).or_default();
+                let mut spec = spec;
+                spec.usage = usage_now;
+                spec.ticks = upgrades::ticks(spec.ticks, speed);
+                spec.mean = upgrades::gas_mean(speed, chem_up);
                 let (next, status) = process::step(&spec, book, &io, dice);
                 tank_next = [next.tank_in.clone(), next.tank_out.clone()];
                 let mut slots: Vec<Option<ItemStack>> = (0..e.items.len()).map(|i| item(&slot(i))).collect();
@@ -664,8 +679,8 @@ impl Mekanism {
             }
             Kind::Continuous | Kind::Tank | Kind::Generator => unreachable!("they have their own ticks"),
             Kind::Combiner => {
-                let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress };
-                let (next, status) = combiner::step(def.usage, &self.combs, &io);
+                let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress, ticks: ticks_now };
+                let (next, status) = combiner::step(usage_now, &self.combs, &io);
                 (
                     vec![item(&next.main), item(&next.extra), item(&next.output)],
                     next.energy,
@@ -675,6 +690,10 @@ impl Mekanism {
                 )
             }
         } };
+        // The upgrade slots after the machine's own stay as they are.
+        let mut items = items;
+        let have = items.len();
+        items.extend(e.items.iter().skip(have).cloned());
         let active = status == Status::Running;
         // The block shows when it runs, with its entity kept.
         let lit = e.state.contains("lit=true");
@@ -691,7 +710,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = def.usage * STORED_TICKS;
+        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
         let mut data = menu_data(next_progress, energy, capacity, status, &cfg);
         let spec = def.proc;
         if let Some(spec) = spec {
@@ -702,8 +721,10 @@ impl Mekanism {
         }
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
         let mut saved = machine_data(next_progress, &cfg);
-        redstone::stamp(def.kind, control, capacity.saturating_sub(energy), &mut saved, &mut data);
-        if !changed && !dirty && data == e.menu_data && saved == e.data {
+        let base_ticks = def.proc.map_or(machine::TICKS, |s| s.ticks);
+        let shown = (upgrades::ticks(base_ticks, speed), self.install.get(&(e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).copied().unwrap_or(0), counts);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(energy), shown, &mut saved, &mut data);
+        if !changed && !dirty && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
         let tanks = spec
@@ -938,6 +959,12 @@ impl ServerMod for Mekanism {
                     menu: true,
                 },
             });
+            // The slot upgrades are put in and the one they come out in.
+            if def.kind != Kind::Tank
+                && let Some(c) = &mut k.container
+            {
+                c.slots += 2;
+            }
             if def.kind == Kind::Generator {
                 // It gives its energy by the faces the generator tick sets (the front, the bottom for the solar one).
                 let kind = def.generator.unwrap_or(GenKind::Solar);
@@ -1038,6 +1065,10 @@ impl ServerMod for Mekanism {
             suns: HashMap::new(),
             last_power: HashMap::new(),
             can: true,
+            install: HashMap::new(),
+            removals: HashMap::new(),
+            capacity: HashMap::new(),
+            force: false,
         }, r.on_chunks().on_items()))
     }
 
@@ -1122,6 +1153,10 @@ impl ServerMod for Mekanism {
         if id == redstone::NEXT || id == redstone::PREVIOUS {
             return self.redstone_button(def, id, &e);
         }
+        if upgrades::is_removal(id) {
+            self.removals.entry((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).or_default().push(id);
+            return None;
+        }
         if def.kind == Kind::Generator {
             return None;
         }
@@ -1197,9 +1232,14 @@ impl ServerMod for Mekanism {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {
                 self.can = true;
+                self.force = false;
+                // Upgrades install and come out before the machine works, in a copy it then runs from.
+                let mut e2 = e.clone();
                 if def.kind != Kind::Tank {
-                    self.read_control(def, e);
+                    self.read_control(def, &e2);
+                    self.force = self.tick_upgrades(def, &mut e2);
                 }
+                let e = &e2;
                 out.extend(match def.kind {
                     Kind::Continuous => self.run_continuous(def, e, tick),
                     Kind::Tank => self.run_tank(def, e),

@@ -140,8 +140,12 @@ impl Mekanism {
     pub(crate) fn run_continuous(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         let spec = def.cont?;
         self.refresh_cont(def, tick);
+        let counts = upgrades::counts_of(def, e);
+        let mut spec = spec;
+        spec.usage = upgrades::energy_per_tick(spec.usage, counts[upgrades::SPEED], counts[upgrades::ENERGY]);
+        let ops = upgrades::operations(counts[upgrades::SPEED]);
         if spec.shape == continuous::Shape::Rotary {
-            return self.run_rotary(def, e);
+            return self.run_rotary(def, e, spec, ops, counts);
         }
         let layout = def.layout;
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
@@ -185,7 +189,7 @@ impl Mekanism {
             }
         }
         let book = self.conts.entry(def.block).or_default();
-        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode: false };
+        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode: false, ops };
         let (next, status) = if self.can { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
         let mut tanks = next.tanks.clone();
         if def.layout == Layout::Separator {
@@ -218,7 +222,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 };
+        let capacity = upgrades::max_energy(def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 }, counts[upgrades::ENERGY]);
         let mut data = menu_data(u32::from(active), next.energy, capacity, status, &cfg);
         for t in &tanks {
             data.extend(chem::screen(t));
@@ -227,16 +231,16 @@ impl Mekanism {
         let mut saved = machine_data(progress, &cfg);
         saved.extend([modes[0] as u8, modes[1] as u8]);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), &mut saved, &mut data);
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts), &mut saved, &mut data);
         let tanks_changed = tanks != io.tanks || e.tanks.len() != 3;
-        if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data {
+        if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
             data: saved,
-            items: items_changed.then(|| items.iter().map(item).collect()),
+            items: (items_changed || self.force).then(|| items.iter().map(item).collect()),
             energy: Some(next.energy),
             energy_faces,
             tanks: tanks_changed.then(|| tanks.iter().map(as_tank).collect()),
@@ -248,8 +252,7 @@ impl Mekanism {
 
     /// A tick of the rotary condensentrator (`TileEntityRotaryCondensentrator`): the mode says which of its two tanks takes in
     /// and which gives; the fluid slots handle buckets (the gas slots wait for the chemical items the port has not yet).
-    fn run_rotary(&mut self, def: &Def, e: &BlockEntity) -> Option<BlockEntityUpdate> {
-        let spec = def.cont?;
+    fn run_rotary(&mut self, def: &Def, e: &BlockEntity, spec: continuous::Spec, ops: u32, counts: [u8; 8]) -> Option<BlockEntityUpdate> {
         let layout = def.layout;
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
@@ -290,7 +293,7 @@ impl Mekanism {
         }
         let book_key = if mode { ROTARY_FLUID_BOOK } else { def.block };
         let book = self.conts.entry(book_key).or_default();
-        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode };
+        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode, ops };
         let (next, status) = if self.can { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
         let tanks = next.tanks.clone();
         let active = status == Status::Running;
@@ -310,7 +313,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = def.usage * STORED_TICKS;
+        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
         let mut data = menu_data(u32::from(active), next.energy, capacity, status, &cfg);
         for t in &tanks {
             data.extend(chem::screen(t));
@@ -320,9 +323,9 @@ impl Mekanism {
         saved.extend([0, 0]);
         saved[37] = u8::from(mode);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), &mut saved, &mut data);
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts), &mut saved, &mut data);
         let tanks_changed = tanks[..2] != io.tanks[..2] || e.tanks.len() != 2;
-        if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data {
+        if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
         self.applied.insert(key);
@@ -330,7 +333,7 @@ impl Mekanism {
             dimension: e.dimension.clone(),
             pos: e.pos,
             data: saved,
-            items: items_changed.then(|| items.iter().map(item).collect()),
+            items: (items_changed || self.force).then(|| items.iter().map(item).collect()),
             energy: Some(next.energy),
             energy_faces,
             tanks: tanks_changed.then(|| tanks[..2].iter().map(as_tank).collect()),
@@ -433,7 +436,7 @@ impl Mekanism {
             dimension: e.dimension.clone(),
             pos: e.pos,
             data: saved,
-            items: items_changed.then(|| items.iter().map(item).collect()),
+            items: (items_changed || self.force).then(|| items.iter().map(item).collect()),
             energy: None,
             energy_faces: None,
             tanks: tanks_changed.then(|| vec![as_tank(&tank_now)]),

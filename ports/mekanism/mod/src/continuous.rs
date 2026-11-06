@@ -77,6 +77,8 @@ pub struct Io {
     pub energy: u64,
     /// The rotary condensentrator's mode: false condensentrates (gas to fluid), true decondensentrates (fluid to gas).
     pub mode: bool,
+    /// The most operations a tick (the speed upgrades: 2 to their number); 0 is one.
+    pub ops: u32,
 }
 
 fn room(tank: &Tank, cap: u64, id: &str, amount: u64) -> bool {
@@ -123,13 +125,27 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
     if io.energy < spec.usage {
         return (next, Status::NoEnergy);
     }
-    next.energy -= spec.usage;
-    next.tanks[in_tank].amount -= recipe.a;
-    if second.is_some() {
-        next.tanks[1].amount -= recipe.b;
+    // How many operations this tick: the most it may, what the inputs, the room and the energy allow.
+    let mut times = u64::from(io.ops.max(1)).min(first.amount / recipe.a.max(1));
+    if let Some(t) = second {
+        times = times.min(t.amount / recipe.b.max(1));
     }
     for ((id, n), t) in recipe.outs.iter().zip(&out_tanks) {
-        put(&mut next.tanks[*t], id, *n);
+        let tank = &io.tanks[*t];
+        let space = if tank.amount == 0 || tank.chemical == *id { spec.caps[*t].saturating_sub(tank.amount) } else { 0 };
+        times = times.min(space / (*n).max(1));
+    }
+    if spec.usage > 0 {
+        times = times.min(io.energy / spec.usage);
+    }
+    let times = times.max(1);
+    next.energy -= spec.usage * times;
+    next.tanks[in_tank].amount -= recipe.a * times;
+    if second.is_some() {
+        next.tanks[1].amount -= recipe.b * times;
+    }
+    for ((id, n), t) in recipe.outs.iter().zip(&out_tanks) {
+        put(&mut next.tanks[*t], id, *n * times);
     }
     for t in &mut next.tanks {
         if t.amount == 0 {
@@ -206,19 +222,19 @@ mod tests {
         let mut fluid_book = Book::default();
         fluid_book.add(&s("minecraft:water"), &[], Recipe { a: 1, b: 0, outs: vec![("mekanism:water_vapor".into(), 1)] }, false);
         // Mode false: the gas tank (1) gives to the fluid tank (0).
-        let io = Io { tanks: [Tank::default(), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false };
+        let io = Io { tanks: [Tank::default(), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false, ops: 0 };
         let (n, st) = step(&ROTARY, &gas_book, &io);
         assert_eq!(st, Status::Running);
         assert_eq!((n.tanks[0].clone(), n.tanks[1].clone(), n.energy), (t("minecraft:water", 1), t("mekanism:water_vapor", 4), 8));
         // Mode true: the fluid tank gives to the gas tank.
-        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: true };
+        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: true, ops: 0 };
         let (n, st) = step(&ROTARY, &fluid_book, &io);
         assert_eq!((st, n.tanks[0].amount, n.tanks[1].clone()), (Status::Running, 4, t("mekanism:water_vapor", 1)));
         // Nothing to take in the tank this mode reads: idle.
-        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: false };
+        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: false, ops: 0 };
         assert_eq!(step(&ROTARY, &gas_book, &io).1, Status::Idle);
         // The output tank full stops it.
-        let io = Io { tanks: [t("minecraft:water", 10_000), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false };
+        let io = Io { tanks: [t("minecraft:water", 10_000), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false, ops: 0 };
         assert_eq!(step(&ROTARY, &gas_book, &io).1, Status::Blocked);
     }
 

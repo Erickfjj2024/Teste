@@ -37,6 +37,8 @@ pub struct Io {
     pub output: Option<Stack>,
     pub energy: u64,
     pub progress: u32,
+    /// The ticks a recipe takes with this machine's speed upgrades; 0 is the base (`TICKS`).
+    pub ticks: u32,
 }
 
 /// One tick: it runs when the two inputs have a recipe and have enough, there is room for the output and energy.
@@ -67,7 +69,7 @@ pub fn step(usage: u64, book: &Book, io: &Io) -> (Io, Status) {
     }
     next.energy -= usage;
     next.progress += 1;
-    if next.progress >= TICKS {
+    if next.progress >= if io.ticks == 0 { TICKS } else { io.ticks } {
         next.progress = 0;
         let take = |s: &Stack, n: u32| (s.count > n).then(|| Stack { count: s.count - n, ..s.clone() });
         next.main = take(main, recipe.main_count);
