@@ -38,6 +38,15 @@ e **ainda não foi testada**). APK: v8.
 4. A tela das máquinas é "mais simples que a original": só um painel liso, as barras de energia e de progresso, o
    texto de status e a versão. Falta o fundo e o aspecto do Mekanism. **Não é defeito de função, é visual.**
 
+5. **Mod 0.1.8 travava na seleção de mundo e reiniciava o app (relatado pelo usuário, APK v12).** Causa provável (hipótese,
+   sem log do celular): cada Energy Cube passou de 16 para 5832 estados (modelo do baú de Ender com `facing` e
+   `waterlogged`, vezes 3 valores em 6 faces), 11.664 estados novos para os 35.727 do jogo; o jogo guarda uma linha por
+   estado em tabelas grandes (`gameplay-facts.json` tem 55 MB), então a memória acabou. Mod 0.1.9: o bloco usa o modelo
+   da mesa de encantamento (1 estado, formato que não tapa vizinhos), sem `facing`, e as faces são as do mundo
+   (`side_down`... `side_east`): 729 estados por cubo, 1.458 no total. A frente do cubo novo é a que olha para o
+   jogador mais próximo, escolhida no primeiro tick. Efeito colateral: a caixa de seleção do cubo tem 12/16 de altura
+   (a da mesa de encantamento). **Ainda não testado no celular.**
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
@@ -123,7 +132,7 @@ original usa, e o que o porte tem hoje:
 | Estados do bloco trocando o modelo (`facing`, `active`) | **funciona** (confirmado) |
 | Modelos JSON comuns (máquinas, minérios, blocos) | feito, copiados do original |
 | Portas e LEDs do Energy Cube (mod 0.1.7) | **confirmado pelo usuário** ("ficou ótimo"): configuração padrão do original, frente = saída com LEDs acesos, outras 5 faces = entrada |
-| **Configurador** (mod 0.1.8, APK v12, **não testado no jogo**) | item `mekanism:configurator`: clicar numa face do Energy Cube passa o modo daquela face (desligada → entrada → saída → entrada/saída), agachado volta; a face é a que o olhar do jogador acerta (nova função `player-control.get-look`, API 16); o bloco mostra o modo (propriedades `side_*`: portas e LEDs mudam) e a energia só passa pelas faces conforme o modo. Só o modo de configuração de energia, só nos cubos; sem os outros modos do original (vazio, girar, chave inglesa) nem a aba de configuração na tela das máquinas |
+| **Configurador** (mod 0.1.9, APK v12, **não testado no jogo**; o mod 0.1.8 derrubou o app, ver defeito abaixo) | item `mekanism:configurator`: clicar numa face do Energy Cube passa o modo daquela face (desligada → entrada → saída → entrada/saída), agachado volta; a face é a que o olhar do jogador acerta (nova função `player-control.get-look`, API 16); o bloco mostra o modo (propriedades `side_*`: portas e LEDs mudam) e a energia só passa pelas faces conforme o modo. Só o modo de configuração de energia, só nos cubos; sem os outros modos do original (vazio, girar, chave inglesa) nem a aba de configuração na tela das máquinas |
 | Carregadores de modelo próprios (cubo de energia, cabos, tanques, fábricas, modelos `.obj.mek`) | **aproximados à mão**: moldura do cubo sim, portas e LEDs por face não; cabos com núcleo e braços simples, sem os modelos grandes/pequenos do original |
 | Núcleo do Energy Cube animado como o original (**confirmado**) | elemento novo `animated` do renderizador: escala 0,4, giro em Y a 4°/tick, giro em torno de (0,1,1) a 36°+4°/tick, balanço `sin(3°·t)/7`, brilho total, só aparece com energia |
 | Partes desenhadas por código (TESR): núcleo do cubo, nível de fluido nos tanques, rotores, o Digital Miner | **mecanismo existe** (bloco 11: `cube`, `fluid` que sobe, `spin`), **nunca testado no jogo**; o núcleo girando do cubo é o primeiro uso (mod 0.1.5) |

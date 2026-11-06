@@ -247,6 +247,8 @@ for tier in ('basic', 'creative'):
                           for d, f in e['faces'].items()}
         return e
     SIDES = ('front', 'back', 'left', 'right', 'top', 'bottom')
+    FACES = ('down', 'up', 'north', 'south', 'west', 'east')
+    FACE_MODEL = {'down': 'bottom', 'up': 'top', 'north': 'front', 'south': 'back', 'west': 'right', 'east': 'left'}
     for side in ('bottom', 'top', 'front', 'back', 'right', 'left'):
         elements += [plain(e, lit=side == 'front') for e in base['leds'][side]]
         elements += [plain(e) for e in base['ports'][side]]
@@ -275,21 +277,23 @@ for tier in ('basic', 'creative'):
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     n = f'{tier}_energy_cube'
+    # The sides are the faces of the world (the block has no facing, so it has few states: 3 to the 6th,
+    # a template with one state). The model of the north face is the one the original calls its front.
     parts = [{'apply': {'model': f'{NS}:block/energy_cube_{tier}_frame'}}]
-    for f, y in (('north', 0), ('east', 90), ('south', 180), ('west', 270)):
-        for side in SIDES:
-            for state in ('off', 'in', 'out'):
-                parts.append({'when': {'facing': f, f'side_{side}': state},
-                              'apply': {'model': f'{NS}:block/energy_cube_{tier}_{side}_{state}', **({'y': y} if y else {})}})
+    for face in FACES:
+        for state in ('off', 'in', 'out'):
+            parts.append({'when': {f'side_{face}': state},
+                          'apply': {'model': f'{NS}:block/energy_cube_{tier}_{FACE_MODEL[face]}_{state}'}})
     put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'multipart': parts})
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
-    # An ender chest's shape is not a full cube, so it does not hide the blocks beside the cube's open frame
-    # (a furnace's does); its light is switched off.
+    # An enchanting table has one state and a shape that is not a full cube, so the cube's open frame does not
+    # hide the blocks beside it (a furnace's shape does) and the block has few states: the game keeps a row of
+    # tables for each state, and a cube with a facing and a waterlogged state made it 11,000 (and the phone gave up).
     # Its side states are the visual of the side configuration (`off` nothing, `in` input, `out` output or both):
-    # the mod keeps the exact mode in the entity and sets these; the default is the original's, front out.
-    add_block(n, 'minecraft:ender_chest', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0},
-              {'state_properties': {f'side_{s}': {'type': 'enum', 'values': ['in', 'out', 'off']} for s in SIDES},
-               'default_state': {f'side_{s}': 'out' if s == 'front' else 'in' for s in SIDES}})
+    # the mod keeps the exact mode in the entity and sets these; its front, `out`, is set when it is placed.
+    add_block(n, 'minecraft:enchanting_table', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0},
+              {'state_properties': {f'side_{f}': {'type': 'enum', 'values': ['in', 'out', 'off']} for f in FACES},
+               'default_state': {f'side_{f}': 'out' if f == 'north' else 'in' for f in FACES}})
 
 # what joins a cable: the cables, the cubes and the machines
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
@@ -305,7 +309,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.8', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.9', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

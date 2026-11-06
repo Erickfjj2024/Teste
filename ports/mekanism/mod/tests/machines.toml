@@ -19,7 +19,7 @@ output = "minecraft:iron_ingot"
 join = "Alex"
 # The cube faces north: its front outputs (Mekanism's default), its other sides only take.
 blocks = [
-    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[facing=north]" },
+    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
     { x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=false]" },
     { x = 3, y = 64, z = 0, state = "mekanism:energized_smelter[facing=north,lit=false]" },
 ]
@@ -41,14 +41,14 @@ expect.block-items = [
 expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=true]" }]
 
 [[step]]
-# Two cables beside the cube: its east side (its left) only takes energy, so the smelter gets none.
+# Two cables beside the cube: its east side only takes energy, so the smelter gets none.
 blocks = [
     { x = 1, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
     { x = 2, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
 ]
 ticks = 205
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] }]
-expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[facing=north,side_front=out,side_back=in,side_left=in,side_right=in,side_top=in,side_bottom=in]" }]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[side_down=in,side_up=in,side_north=out,side_south=in,side_west=in,side_east=in]" }]
 
 [[step]]
 # The player looks west at the cube's east face from beside it and uses the configurator on it: that side,
@@ -61,6 +61,6 @@ expect.claimed = true
 
 [[step]]
 ticks = 205
-expect.told = ["Alex: Energy: left side is now output"]
-expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[facing=north,side_front=out,side_back=in,side_left=out,side_right=in,side_top=in,side_bottom=in]" }]
+expect.told = ["Alex: Energy: east side is now output"]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[side_down=in,side_up=in,side_north=out,side_south=in,side_west=in,side_east=out]" }]
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]

@@ -211,21 +211,21 @@ impl Mekanism {
     /// An energy cube's tick: a configurator click changes the mode of the side it met, the block shows the
     /// modes (its `side_*` states), and the game's energy flow follows them.
     fn cube(&mut self, e: &BlockEntity, creative: bool) -> Option<BlockEntityUpdate> {
-        let facing = sides::property(&e.state, "facing").unwrap_or("north");
-        let mut modes = sides::decode(&e.data);
-        let mut changed = e.data.len() < 6;
+        let stored = sides::decode(&e.data);
+        let mut changed = stored.is_none();
+        // A new cube's front looks at the nearest player, as one placed in front of them does.
+        let mut modes = stored.unwrap_or_else(|| sides::default_modes(front_for(e)));
         if let Some(i) = self
             .pending
             .iter()
             .position(|c| c.dimension == e.dimension && (c.pos.x, c.pos.y, c.pos.z) == (e.pos.x, e.pos.y, e.pos.z))
         {
             let click = self.pending.remove(i);
-            let side = sides::side_of(facing, click.face);
-            modes[side] = modes[side].step(click.back);
+            modes[click.face] = modes[click.face].step(click.back);
             changed = true;
             let _ = players::tell(
                 &click.player,
-                &format!("Energy: {} side is now {}", SIDES[side], modes[side].name()),
+                &format!("Energy: {} side is now {}", SIDES[click.face], modes[click.face].name()),
             );
         }
         for (s, name) in SIDES.iter().enumerate() {
@@ -235,7 +235,7 @@ impl Mekanism {
                 let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &prop, want);
             }
         }
-        let flow = sides::flow_faces(facing, &modes);
+        let flow = sides::flow_faces(&modes);
         let faces: Vec<FlowSide> = flow.iter().map(|f| flow_side(*f)).collect();
         let refill = creative && e.energy < CREATIVE_CUBE;
         if !changed && !refill && e.energy_faces == faces {
@@ -254,6 +254,20 @@ impl Mekanism {
             transmitter_faces: None,
         })
     }
+}
+
+/// The face a new cube at `e` takes as its front: it looks at the nearest player (within 12 blocks, in its
+/// dimension) as it does when placed in front of one; north when none is near.
+fn front_for(e: &BlockEntity) -> usize {
+    let at = (f64::from(e.pos.x) + 0.5, f64::from(e.pos.z) + 0.5);
+    players::online()
+        .into_iter()
+        .filter(|p| p.dimension == e.dimension)
+        .map(|p| ((p.x - at.0).powi(2) + (p.z - at.1).powi(2), p))
+        .filter(|(d, _)| *d < 144.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .and_then(|(_, p)| player_control::get_look(&p.id))
+        .map_or(sides::NORTH, |(yaw, _)| sides::front_toward(yaw))
 }
 
 fn flow_side(f: u8) -> FlowSide {

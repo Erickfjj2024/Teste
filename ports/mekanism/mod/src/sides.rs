@@ -48,34 +48,9 @@ impl Mode {
     }
 }
 
-/// The sides relative to the cube's facing, in the order of the data bytes and of `RelativeSide`
-/// as the model names them.
-pub const SIDES: [&str; 6] = ["front", "back", "left", "right", "top", "bottom"];
-
-/// The configuration a cube starts with (Mekanism's `FRONT_OUT_EJECT`): the front outputs, the rest take.
-pub fn default_modes() -> [Mode; 6] {
-    let mut m = [Mode::Input; 6];
-    m[0] = Mode::Output;
-    m
-}
-
-/// The six modes a cube's data holds; a new cube's (no data) has the default.
-pub fn decode(data: &[u8]) -> [Mode; 6] {
-    if data.len() < 6 {
-        return default_modes();
-    }
-    let mut m = [Mode::None; 6];
-    for (i, b) in data.iter().take(6).enumerate() {
-        m[i] = Mode::from_byte(*b);
-    }
-    m
-}
-
-pub fn encode(modes: &[Mode; 6]) -> Vec<u8> {
-    modes.iter().map(|m| *m as u8).collect()
-}
-
-/// The faces, in the order the game lists them: down, up, north, south, west, east.
+/// The six sides are the faces of the world, in the order the game lists them (down, up, north, south,
+/// west, east): the block shows them as `side_<name>` states, and a cube's data holds one byte for each.
+pub const SIDES: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
 pub const DOWN: usize = 0;
 pub const UP: usize = 1;
 pub const NORTH: usize = 2;
@@ -83,53 +58,47 @@ pub const SOUTH: usize = 3;
 pub const WEST: usize = 4;
 pub const EAST: usize = 5;
 
-/// A horizontal direction turned a quarter clockwise seen from above: north, east, south, west.
-fn clockwise(face: usize) -> usize {
-    match face {
-        NORTH => EAST,
-        EAST => SOUTH,
-        SOUTH => WEST,
-        _ => NORTH,
+/// The configuration a cube starts with (Mekanism's `FRONT_OUT_EJECT`): the front outputs, the rest take.
+/// The front is the face the cube was placed to look at the player with.
+pub fn default_modes(front: usize) -> [Mode; 6] {
+    let mut m = [Mode::Input; 6];
+    m[front] = Mode::Output;
+    m
+}
+
+/// The six modes a cube's data holds; None when it has no data yet (a new cube).
+pub fn decode(data: &[u8]) -> Option<[Mode; 6]> {
+    if data.len() < 6 {
+        return None;
+    }
+    let mut m = [Mode::None; 6];
+    for (i, b) in data.iter().take(6).enumerate() {
+        m[i] = Mode::from_byte(*b);
+    }
+    Some(m)
+}
+
+pub fn encode(modes: &[Mode; 6]) -> Vec<u8> {
+    modes.iter().map(|m| *m as u8).collect()
+}
+
+/// The horizontal face a placed block's front takes so that it looks at a player who looks `yaw`
+/// (0 faces south): the opposite of where they look.
+pub fn front_toward(yaw: f32) -> usize {
+    let y = f64::from(yaw).to_radians();
+    let (dx, dz) = (-y.sin(), y.cos());
+    if dx.abs() > dz.abs() {
+        if dx > 0.0 { WEST } else { EAST }
+    } else if dz > 0.0 {
+        NORTH
+    } else {
+        SOUTH
     }
 }
 
-/// The face of the world a relative side is, for a cube facing `facing` (`north`...). The model faces
-/// north: its right is the west face; turning it clockwise by the facing turns every side with it.
-pub fn face_of(facing: &str, side: usize) -> usize {
-    let turns = match facing {
-        "east" => 1,
-        "south" => 2,
-        "west" => 3,
-        _ => 0,
-    };
-    let mut face = match SIDES[side] {
-        "front" => NORTH,
-        "back" => SOUTH,
-        "right" => WEST,
-        "left" => EAST,
-        "top" => UP,
-        _ => DOWN,
-    };
-    if face != UP && face != DOWN {
-        for _ in 0..turns {
-            face = clockwise(face);
-        }
-    }
-    face
-}
-
-/// The relative side a world face is of a cube facing `facing`.
-pub fn side_of(facing: &str, face: usize) -> usize {
-    (0..6).find(|s| face_of(facing, *s) == face).unwrap_or(0)
-}
-
-/// The sides of the six faces for the game, in its order of faces.
-pub fn flow_faces(facing: &str, modes: &[Mode; 6]) -> [u8; 6] {
-    let mut out = [0u8; 6];
-    for (s, m) in modes.iter().enumerate() {
-        out[face_of(facing, s)] = m.flow();
-    }
-    out
+/// The sides of the six faces for the game, as `Mode::flow` numbers.
+pub fn flow_faces(modes: &[Mode; 6]) -> [u8; 6] {
+    modes.map(Mode::flow)
 }
 
 /// The value of a property in a state string, `mekanism:basic_energy_cube[facing=north,...]`.
@@ -207,33 +176,25 @@ mod tests {
 
     #[test]
     fn a_new_cube_outputs_in_front_and_takes_elsewhere() {
-        let m = decode(&[]);
-        assert_eq!(m[0], Mode::Output);
-        assert!(m[1..].iter().all(|m| *m == Mode::Input));
-        assert_eq!(decode(&encode(&m)), m);
+        assert_eq!(decode(&[]), None);
+        let m = default_modes(SOUTH);
+        assert_eq!(m[SOUTH], Mode::Output);
+        assert_eq!(m.iter().filter(|m| **m == Mode::Input).count(), 5);
+        assert_eq!(decode(&encode(&m)), Some(m));
     }
 
     #[test]
-    fn sides_turn_with_the_facing() {
-        assert_eq!(face_of("north", 0), NORTH);
-        assert_eq!(face_of("north", 3), WEST); // right
-        assert_eq!(face_of("east", 0), EAST);
-        assert_eq!(face_of("east", 3), NORTH); // right of an east-facing cube
-        assert_eq!(face_of("south", 2), WEST); // left
-        assert_eq!(face_of("west", 1), EAST); // back
-        for f in ["north", "east", "south", "west"] {
-            let mut seen: Vec<usize> = (0..6).map(|s| face_of(f, s)).collect();
-            seen.sort();
-            assert_eq!(seen, vec![0, 1, 2, 3, 4, 5]);
-            for s in 0..6 {
-                assert_eq!(side_of(f, face_of(f, s)), s);
-            }
-        }
+    fn the_front_looks_at_the_player() {
+        // A player looking south (yaw 0) has the cube's front toward them, on its north face.
+        assert_eq!(front_toward(0.0), NORTH);
+        assert_eq!(front_toward(180.0), SOUTH);
+        assert_eq!(front_toward(90.0), EAST); // looking west
+        assert_eq!(front_toward(-90.0), WEST); // looking east
     }
 
     #[test]
     fn faces_of_the_game_get_their_modes() {
-        let flow = flow_faces("east", &default_modes());
+        let flow = flow_faces(&default_modes(EAST));
         assert_eq!(flow[EAST], 2);
         assert_eq!(flow[WEST], 1);
         assert_eq!(flow[UP], 1);
@@ -241,10 +202,10 @@ mod tests {
 
     #[test]
     fn a_state_string_gives_its_properties() {
-        let s = "mekanism:basic_energy_cube[facing=east,side_front=out,waterlogged=false]";
-        assert_eq!(property(s, "facing"), Some("east"));
-        assert_eq!(property(s, "side_front"), Some("out"));
-        assert_eq!(property(s, "side_top"), None);
+        let s = "mekanism:basic_energy_cube[side_north=out,side_up=in]";
+        assert_eq!(property(s, "side_north"), Some("out"));
+        assert_eq!(property(s, "side_up"), Some("in"));
+        assert_eq!(property(s, "side_down"), None);
         assert_eq!(property("mekanism:crusher", "facing"), None);
     }
 
