@@ -127,12 +127,22 @@ for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
 shutil.rmtree(f'{OUT}/data', ignore_errors=True)
 shutil.rmtree(f'{OUT}/assets', ignore_errors=True)
 
+# the armor of the mod and the slot it is worn in (the DataComponents.EQUIPPABLE of its item classes)
+WORN = {'mekasuit_helmet': 'head', 'mekasuit_bodyarmor': 'chest', 'mekasuit_pants': 'legs', 'mekasuit_boots': 'feet',
+        'hazmat_mask': 'head', 'hazmat_gown': 'chest', 'hazmat_pants': 'legs', 'hazmat_boots': 'feet',
+        'jetpack': 'chest', 'jetpack_armored': 'chest', 'free_runners': 'feet', 'free_runners_armored': 'feet',
+        'scuba_mask': 'head', 'scuba_tank': 'chest'}
 kept_items = []
 for n, model in items.items():
     if not copy_model(model):
         continue
     kept_items.append(n)
-    put(f'{OUT}/data/{NS}/horizon/item/{n}.json', {'template': 'minecraft:stick'})
+    item = {'template': 'minecraft:stick'}
+    if n in WORN:
+        # Equippable(slot): a player wears it in its armor slot, one at a time (the worn model is still to do)
+        item['max_stack_size'] = 1
+        item['components'] = {'minecraft:equippable': {'slot': WORN[n]}}
+    put(f'{OUT}/data/{NS}/horizon/item/{n}.json', item)
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': model}})
 
 kept_blocks = []
@@ -522,7 +532,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.24', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.25', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -588,7 +598,7 @@ for cube_name, (cube_title, rate) in CUBES.items():
             {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
             {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.24', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.25', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},

@@ -139,7 +139,7 @@ redstone (90000)** em energia, um por tick, como as receitas `energy_conversion`
 (176, 36) com capacete, peitoral, calça, botas e a mão secundária em 180, 41 e 18 abaixo. São slots do **próprio jogador** (não do
 bloco): o menu ganhou o campo `armor` (`{x, y, offhand}`), o servidor os acrescenta depois dos slots do contêiner (`Slots::read/write`,
 `View::worn`: só a peça certa em cada um, uma por slot, a mão secundária aceita qualquer coisa) e o cliente os liga aos ids de slot
-500 a 504, com os ícones de slot vazio. **Falta nesse trecho:** o arrastar (distribuir) e o shift-click mandam para esses slots como
+500 a 504, com os ícones de slot vazio. **Armaduras do Mekanism (0.1.25):** as peças de MekaSuit, Hazmat, Jetpack, Free Runners e Scuba agora são equipáveis (`minecraft:equippable` com o slot de cada uma), então entram nesses slots e nos da pessoa; **o modelo vestido** delas (`mekanism:equipment/*`) e o que cada peça faz (energia, jato, queda) **não existem ainda**. **Falta nesse trecho:** o arrastar (distribuir) e o shift-click mandam para esses slots como
 qualquer outro, sem a regra de prioridade do `MekanismContainer.quickMoveStack`.
 
 **Falta:** o slot de **carga** não faz nada (o port não tem itens que guardem energia); a aba de **Itens** do cubo; as abas de redstone/segurança; funil nas faces do cubo; o medidor mostra números crus (sem kFE).
