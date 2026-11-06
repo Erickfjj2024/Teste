@@ -65,6 +65,10 @@ e **ainda não foi testada**). APK: v8.
    (35.727 estados; `gameplay-facts.json` tem 55 MB), e cada estado novo de um mod clona uma linha em cada tabela. Um
    modpack grande (221 mods) não escalaria assim. Trabalho planejado: medir e compartilhar ou adiar essas linhas.
 
+10. **Configurador (mod 0.1.12, medido no celular):** o mod foi chamado ("heard at 108 63 113") mas `world.get-block`
+    devolveu vazio: o jogo só empresta o mundo ao mod durante ticks e comandos, não durante `item-used`. APK v15: o jogo
+    empresta o mundo também nessa chamada. O mod 0.1.12 tem mensagens de diagnóstico no clique (a tirar depois).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
