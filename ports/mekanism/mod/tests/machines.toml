@@ -48,7 +48,7 @@ blocks = [
 ]
 ticks = 205
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] }]
-expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[side_down=in,side_up=in,side_north=out,side_south=in,side_west=in,side_east=in]" }]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
 # The player looks west at the cube's east face from beside it and uses the configurator on it: that side,
@@ -62,5 +62,5 @@ expect.claimed = true
 [[step]]
 ticks = 205
 expect.told = ["Alex: Energy: east side is now output"]
-expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[side_down=in,side_up=in,side_north=out,side_south=in,side_west=in,side_east=out]" }]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]

@@ -265,7 +265,20 @@ for tier in ('basic', 'creative'):
                 {'parent': 'minecraft:block/block', 'textures': textures, 'elements': side_model(side, state)})
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}_frame.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': list(base['frame'])})
-    put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': [
+    n = f'{tier}_energy_cube'
+    # The block is its frame alone, one state. The ports and LEDs are parts the renderer draws by the bytes of
+    # the cube's data (one for each face of the world: 0 off, 1 input, 2 output, 3 both), as the original
+    # draws them from the entity's model data; a part is the model of a block of the mod's own, never placed.
+    part_elements = []
+    for index, face in enumerate(FACES):
+        for state, values in (('off', [0]), ('in', [1]), ('out', [2, 3])):
+            part = f'energy_cube_part_{tier}_{face}_{state}'
+            put(f'{OUT}/data/{NS}/horizon/block/{part}.json',
+                {'template': 'minecraft:stone', 'properties': {'hardness': 1.0}, 'item': False})
+            put(f'{OUT}/assets/{NS}/blockstates/{part}.json',
+                {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}_{FACE_MODEL[face]}_{state}'}}})
+            part_elements.append({'type': 'part', 'block': f'{NS}:{part}', 'when': {'byte': index, 'values': values}})
+    put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': part_elements + [
         # RenderEnergyCube: scale 0.4 of a 16-unit cube, bounce sin(3 deg * t) / 7, a turn about Y at 4 deg a
         # tick and one about (0, 1, 1) from 36 deg at 4 deg a tick, full bright, only with energy.
         {'type': 'animated', 'from': [0, 0, 0], 'to': [16, 16, 16], 'sprite': textures['core'],
@@ -276,25 +289,13 @@ for tier in ('basic', 'creative'):
          'fullbright': True, 'only_with_energy': True}]})
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
-    n = f'{tier}_energy_cube'
-    # The sides are the faces of the world (the block has no facing, so it has few states: 3 to the 6th,
-    # a template with one state). The model of the north face is the one the original calls its front.
-    parts = [{'apply': {'model': f'{NS}:block/energy_cube_{tier}_frame'}}]
-    for face in FACES:
-        for state in ('off', 'in', 'out'):
-            parts.append({'when': {f'side_{face}': state},
-                          'apply': {'model': f'{NS}:block/energy_cube_{tier}_{FACE_MODEL[face]}_{state}'}})
-    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'multipart': parts})
+    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}_frame'}}})
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
     # A beacon has one state, a full cube shape and does not occlude (it is `noOcclusion`), so the cube's open
     # frame does not hide the blocks beside it (a furnace's shape does) and the block has few states: the game keeps
-    # a row of tables for each state, and a cube with a facing and a waterlogged state made it 11,000 (and the phone
-    # gave up). An enchanting table's bottom hid the block below it.
-    # Its side states are the visual of the side configuration (`off` nothing, `in` input, `out` output or both):
-    # the mod keeps the exact mode in the entity and sets these; its front, `out`, is set when it is placed.
-    add_block(n, 'minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0},
-              {'state_properties': {f'side_{f}': {'type': 'enum', 'values': ['in', 'out', 'off']} for f in FACES},
-               'default_state': {f'side_{f}': 'out' if f == 'north' else 'in' for f in FACES}})
+    # a row of tables for each state, and a cube with a facing, a waterlogged state and a state for each side's look
+    # made it 11,000 (and the phone gave up). An enchanting table's bottom hid the block below it.
+    add_block(n, 'minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0})
 
 # what joins a cable: the cables, the cubes and the machines
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
@@ -310,7 +311,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.10', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.11', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

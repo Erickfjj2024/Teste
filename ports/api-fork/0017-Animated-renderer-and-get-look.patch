@@ -1,5 +1,26 @@
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 0e48436..e81265e 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -5747,6 +5747,16 @@ impl Game<'_> {
+                 return Ok(true);
+             }
+         }
++        // A server mod's item takes the click before the block does (NeoForge's `onItemUseFirst`, and what
++        // `server-events.item-used` says): a configurator used on a cube must not open the cube's own use.
++        #[cfg(feature = "mods")]
++        if let Some(hit) = block_hit
++            && let Some(stack) = self.held().cloned()
++            && self.mod_item_use(&stack, Some(hit.pos))
++        {
++            self.swing_arm();
++            return Ok(true);
++        }
+         // MultiPlayerGameMode.useItemOn: blocks react first.
+         if !(sneaking && hands_full)
+             && let Some(hit) = block_hit
 diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
-index 6b1a3e5..ba975b4 100644
+index 6b1a3e5..d4cf8f1 100644
 --- a/crates/horizon-client/src/game/block_renderers.rs
 +++ b/crates/horizon-client/src/game/block_renderers.rs
 @@ -7,7 +7,7 @@
@@ -11,10 +32,49 @@ index 6b1a3e5..ba975b4 100644
      content::{BlockRenderer, RenderElement, parse_color},
  };
  use horizon_world::nbt::{JavaString, Tag};
-@@ -119,6 +119,49 @@ impl Game<'_> {
+@@ -67,9 +67,20 @@ pub(super) fn display_signature(entity: &ModBlockEntity) -> u64 {
+     let energy = long(entity.nbt.get(&key("energy")));
+     let cap = long(entity.nbt.get(&key("energy_cap")));
+     sixteenths(energy, cap).hash(&mut h);
++    if renderer_of(&entity.id).is_some_and(BlockRenderer::uses_data) {
++        data_of(entity).hash(&mut h);
++    }
+     h.finish()
+ }
+ 
++/// The bytes the mod saved with its last update (what a part's test reads).
++fn data_of(entity: &ModBlockEntity) -> &[u8] {
++    match entity.nbt.get(&key("data")) {
++        Some(Tag::ByteArray(b)) => b.as_slice(),
++        _ => &[],
++    }
++}
++
+ /// The part of a block entity's `nbt` the clients are sent.
+ pub(super) fn display_tag(entity: &ModBlockEntity) -> Option<horizon_world::nbt::Compound> {
+     let mut tag = horizon_world::nbt::Compound::new();
+@@ -78,6 +89,12 @@ pub(super) fn display_tag(entity: &ModBlockEntity) -> Option<horizon_world::nbt:
+             tag.insert(key(k), v.clone());
+         }
+     }
++    // The data, for the parts a renderer draws by it (a few bytes: the first 64).
++    if renderer_of(&entity.id).is_some_and(BlockRenderer::uses_data) {
++        let data = data_of(entity);
++        let n = data.len().min(64);
++        tag.insert(key("data"), Tag::ByteArray(data[..n].to_vec().into()));
++    }
+     (!tag.is_empty()).then_some(tag)
+ }
+ 
+@@ -119,6 +136,54 @@ impl Game<'_> {
                      let tint = fluid_tint(tints, &t.substance);
                      self.native_draw_cube(draw, lo, hi, all(sprite), tint);
                  }
++                RenderElement::Part { block, when } => {
++                    if when.as_ref().is_none_or(|w| w.matches(data_of(entity))) {
++                        self.native_draw_block(draw, block, &[]);
++                    }
++                }
 +                RenderElement::Animated {
 +                    from,
 +                    to,
@@ -61,7 +121,7 @@ index 6b1a3e5..ba975b4 100644
                  RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
                      let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
                      let centre = pivot.unwrap_or_else(|| {
-@@ -148,15 +191,20 @@ impl Game<'_> {
+@@ -148,15 +213,20 @@ impl Game<'_> {
              return;
          }
          let mut changed: Vec<[i32; 3]> = Vec::new();
@@ -97,6 +157,22 @@ index 003737e..32e1721 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 325afbf..a81b795 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2130,10 +2130,7 @@ impl Game<'_> {
+         face: [i32; 3],
+         claimed: &mut bool,
+     ) {
+-        #[cfg(feature = "mods")]
+-        if !*claimed && self.mod_item_use(stack, Some(pos)) {
+-            *claimed = true;
+-        }
++        // Server mods took the click before the block (`use_hand`).
+         let _ = (stack, pos, face, claimed);
+     }
+     /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
 index fcc3158..14fdc26 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
@@ -224,13 +300,23 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..bafbade 100644
+index e2ee6c7..00d9919 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
-@@ -583,6 +583,28 @@ pub enum RenderElement {
+@@ -583,6 +583,38 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
++    /// The model of another block (never placed: a mod's own part, with `item = false`), drawn in this
++    /// block's place when a byte of the block entity's data (what the mod saved with its updates)
++    /// is one of `values`: what the original does with the data of a block entity, as Mekanism's energy
++    /// cube shows a port only where its side is configured, without a state for each combination.
++    Part {
++        block: String,
++        /// Draw only when this byte (an index in the entity's data) is one of these; always when none.
++        #[serde(default)]
++        when: Option<DataTest>,
++    },
 +    /// A box that moves and turns as code draws a part of a machine: scaled about
 +    /// `center` (texels, the box's own centre by default), moved up and down by a sine
 +    /// (`bounce`), and turned by each of `rotations` in order, all from the game's
@@ -256,10 +342,34 @@ index e2ee6c7..bafbade 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +618,26 @@ pub enum RenderElement {
+@@ -596,6 +628,50 @@ pub enum RenderElement {
      },
  }
  
++/// A test on a byte of a block entity's data: `data[byte]` is one of `values` (a byte past the end is 0).
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct DataTest {
++    pub byte: u32,
++    pub values: Vec<u8>,
++}
++
++impl DataTest {
++    pub fn matches(&self, data: &[u8]) -> bool {
++        let b = data.get(self.byte as usize).copied().unwrap_or(0);
++        self.values.contains(&b)
++    }
++}
++
++impl BlockRenderer {
++    /// Whether the clients need the block entity's data to draw it.
++    pub fn uses_data(&self) -> bool {
++        self.elements
++            .iter()
++            .any(|e| matches!(e, RenderElement::Part { when: Some(_), .. }))
++    }
++}
++
 +/// A sine of the time that moves a part up and down: `amplitude` blocks (before the
 +/// element's scale), at `degrees_per_tick` of the sine's angle.
 +#[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -283,10 +393,20 @@ index e2ee6c7..bafbade 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +685,38 @@ impl BlockRenderer {
+@@ -643,6 +719,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
++                RenderElement::Part { block, when } => {
++                    if !block.contains(':') || block.len() > 128 {
++                        return Err(format!("{name}: a part is a block id, mymod:part"));
++                    }
++                    if let Some(w) = when
++                        && (w.byte >= 4096 || w.values.is_empty() || w.values.len() > 16)
++                    {
++                        return Err(format!("{name}: a part's test is a byte below 4096 and 1 to 16 values"));
++                    }
++                }
 +                RenderElement::Animated { from, to, sprite: s, scale, center, bounce, rotations, .. } => {
 +                    boxed(from, to)?;
 +                    sprite(s)?;
@@ -322,6 +442,23 @@ index e2ee6c7..bafbade 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
+@@ -1208,6 +1326,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn a_part_is_drawn_by_a_byte_of_the_data() {
++        let w = DataTest { byte: 2, values: vec![2, 3] };
++        assert!(w.matches(&[0, 0, 2]));
++        assert!(w.matches(&[0, 0, 3, 9]));
++        assert!(!w.matches(&[0, 0, 1]));
++        assert!(!w.matches(&[0]));
++        assert!(DataTest { byte: 5, values: vec![0] }.matches(&[1]));
++    }
++
+     use super::*;
+     use crate::manifest::Package;
+ 
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
 index d3024e4..4d9f648 100644
 --- a/crates/horizon-mods/src/runtime.rs

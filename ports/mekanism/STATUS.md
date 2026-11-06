@@ -53,6 +53,18 @@ e **ainda não foi testada**). APK: v8.
    a energia mudava (agora reenvia também quando o estado muda); a face do configurador cai para "a face virada para o
    jogador" se o olhar do jogador não for conhecido (hipótese: o jogo do servidor interno não tem a direção do olhar).
 
+7. **Configurador sem nenhuma mensagem (relatado com o mod 0.1.10/APK v13).** Causa (lida no código): o jogo
+   deixa o bloco reagir primeiro ao clique (`use_hand`), e só depois chama `item-used` do mod; o modelo do cubo (baú de
+   Ender, farol) consome o clique, então o mod nunca era chamado. A documentação da API já dizia que o mod vem antes do
+   bloco (como o `onItemUseFirst` do NeoForge). APK v14: o jogo chama o mod antes do bloco.
+8. **Estados do cubo (ver 5):** o mod 0.1.11 volta o cubo a **um estado só**, como o original, que desenha as portas
+   pelos dados da entidade do bloco. Isso é o elemento novo `part` do renderizador (API do fork): desenha o modelo de
+   um bloco auxiliar (36 blocos de um estado, sem item) quando um byte dos dados do mod bate; o servidor manda ao cliente
+   os primeiros 64 bytes dos dados. **Não testado no jogo.**
+9. **Pendente (carregador):** o jogo guarda ~2,4 KB em disco por estado de bloco, em tabelas JSON genéricas na memória
+   (35.727 estados; `gameplay-facts.json` tem 55 MB), e cada estado novo de um mod clona uma linha em cada tabela. Um
+   modpack grande (221 mods) não escalaria assim. Trabalho planejado: medir e compartilhar ou adiar essas linhas.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

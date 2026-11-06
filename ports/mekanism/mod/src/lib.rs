@@ -209,7 +209,7 @@ impl Mekanism {
 
 impl Mekanism {
     /// An energy cube's tick: a configurator click changes the mode of the side it met, the block shows the
-    /// modes (its `side_*` states), and the game's energy flow follows them.
+    /// modes (the bytes of its data, which the clients draw its ports from), and the game's energy flow follows them.
     fn cube(&mut self, e: &BlockEntity, creative: bool) -> Option<BlockEntityUpdate> {
         let stored = sides::decode(&e.data);
         let mut changed = stored.is_none();
@@ -227,13 +227,6 @@ impl Mekanism {
                 &click.player,
                 &format!("Energy: {} side is now {}", SIDES[click.face], modes[click.face].name()),
             );
-        }
-        for (s, name) in SIDES.iter().enumerate() {
-            let prop = format!("side_{name}");
-            let want = modes[s].look();
-            if sides::property(&e.state, &prop) != Some(want) {
-                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &prop, want);
-            }
         }
         let flow = sides::flow_faces(&modes);
         let faces: Vec<FlowSide> = flow.iter().map(|f| flow_side(*f)).collect();
