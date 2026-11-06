@@ -2261,6 +2261,36 @@ index e2ee6c7..6f07621 100644
      use super::*;
      use crate::manifest::Package;
  
+diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
+index 02de080..12e459b 100644
+--- a/crates/horizon-mods/src/recipe_types.rs
++++ b/crates/horizon-mods/src/recipe_types.rs
+@@ -77,6 +77,10 @@ impl RecipeData {
+                 if let Some(items) = o.get("items") {
+                     self.collect(items, out);
+                 }
++                // NeoForge's `neoforge:or` ingredient: any of its `values`.
++                if let Some(values) = o.get("values") {
++                    self.collect(values, out);
++                }
+             }
+             _ => {}
+         }
+@@ -123,6 +127,14 @@ mod tests {
+         );
+     }
+     #[test]
++    fn a_neoforge_or_is_any_of_its_values() {
++        let d = data();
++        assert_eq!(
++            d.ingredient_items(r##"{"type":"neoforge:or","values":["#c:dusts/redstone","minecraft:stone"]}"##),
++            ["minecraft:redstone", "mymod:redstone_dust", "minecraft:stone"]
++        );
++    }
++    #[test]
+     fn unknown_things_are_left_out() {
+         let d = data();
+         assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
 index d3024e4..190ddf2 100644
 --- a/crates/horizon-mods/src/runtime.rs
