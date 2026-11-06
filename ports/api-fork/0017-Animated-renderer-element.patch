@@ -1,5 +1,5 @@
 diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
-index 6b1a3e5..468ec25 100644
+index 6b1a3e5..0a7f291 100644
 --- a/crates/horizon-client/src/game/block_renderers.rs
 +++ b/crates/horizon-client/src/game/block_renderers.rs
 @@ -7,7 +7,7 @@
@@ -51,10 +51,10 @@ index 6b1a3e5..468ec25 100644
 +                        // 16 times sky light in the low byte, block light in the next.
 +                        draw.light = 0xF0F0;
 +                    }
-+                    // The box, about the origin the pose now has.
-+                    let lo = [0, 1, 2].map(|i| from[i] - middle[i]);
-+                    let hi = [0, 1, 2].map(|i| to[i] - middle[i]);
-+                    self.native_draw_cube(draw, lo, hi, all(sprite), 0xFFFFFF);
++                    // The box keeps its own texel coordinates (they set its texture mapping);
++                    // the pose moves its centre back to the origin it turns about.
++                    draw.translate(at.map(|v| -v));
++                    self.native_draw_cube(draw, *from, *to, all(sprite), 0xFFFFFF);
 +                    draw.light = lit;
 +                    draw.pop();
 +                }
