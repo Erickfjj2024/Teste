@@ -321,9 +321,16 @@ def nine_slice(src, w, h, border):
             out.paste(piece, (dx0, dy0))
     return out
 
-def machine_panel(name, slots_xy):
-    """The 176 by 166 panel: base, the inventory's slot frames, the machine's input and output frames, the empty arrow
-    and the frame of the energy bar."""
+# Vanilla's font: the width each character takes with its spacing (most take 6), to centre a title.
+NARROW = {' ': 4, '!': 2, '"': 5, "'": 3, '(': 5, ')': 5, '*': 5, ',': 2, '.': 2, ':': 2, ';': 2, '<': 5, '>': 5,
+          '@': 7, 'I': 4, '[': 4, ']': 4, 'f': 5, 'i': 2, 'k': 5, 'l': 3, 't': 4, '|': 2, '`': 3, '{': 5, '}': 5, '~': 7}
+def text_width(text):
+    return sum(NARROW.get(c, 6) for c in text) - 1
+
+def machine_panel(name, input_xy, output_xy, energy_xy):
+    """The 176 by 166 panel as Mekanism's machine screen draws it (GuiElectricMachine): the base, the inventory's slot
+    frames, the machine's slots (a frame is drawn at the slot's x and y less one), the up arrow of the charge slot, the empty
+    progress bar and the frame of the energy bar."""
     from PIL import Image
     panel = nine_slice(gui_sprite('base'), 176, 166, 4)
     slot = gui_sprite('slot/normal')
@@ -332,11 +339,12 @@ def machine_panel(name, slots_xy):
             panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
     for col in range(9):
         panel.paste(slot, (7 + 18 * col, 141))
-    panel.paste(gui_sprite('slot/input'), (slots_xy[0][0] - 1, slots_xy[0][1] - 1), gui_sprite('slot/input'))
-    panel.paste(gui_sprite('slot/output'), (slots_xy[1][0] - 1, slots_xy[1][1] - 1), gui_sprite('slot/output'))
-    panel.alpha_composite(gui_sprite('progress/right/empty'), (79, 39))
-    frame = nine_slice(gui_sprite('bar/base'), 8, 56, 1)
-    panel.alpha_composite(frame, (163, 15))
+    for sprite, (x, y) in (('slot/input', input_xy), ('slot/output', output_xy), ('slot/power', energy_xy)):
+        panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
+    panel.alpha_composite(gui_sprite('arrow/up'), (68, 38))
+    panel.alpha_composite(gui_sprite('progress/bar/empty'), (86, 38))
+    # GuiBar: a frame two pixels wider and higher than its contents, which are 4 by 52 at 165, 17
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 16))
     path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     panel.save(path)
@@ -349,21 +357,27 @@ def copy_gui(rel, name):
     return f'{NS}:gui/{name}'
 
 MACHINE_NAMES = {'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter'}
-arrow = copy_gui('progress/right/full', 'progress_right_full')
+progress_full = copy_gui('progress/bar/full', 'progress_bar_full')
+power_fill = copy_gui('bar/vertical_power', 'bar_vertical_power')
 for m in MACHINES:
-    slots_xy = [[56, 17], [116, 35]]
+    # TileEntityElectricMachine: the input at 64, 17, the output at 116, 35 and the charge slot at 64, 53
+    input_xy, output_xy, energy_xy = [64, 17], [116, 35], [64, 53]
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
         'slots': 2, 'data_slots': 6, 'results': [1],
-        'screen': {'texture': machine_panel(m, slots_xy), 'slots': slots_xy, 'widgets': [
-            # the bar's own green, `bar/vertical_power`'s
-            {'type': 'bar', 'x': 164, 'y': 16, 'w': 6, 'h': 54, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]},
-             'color': '#3BFB98', 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
-            {'type': 'sprite', 'texture': arrow, 'x': 79, 'y': 39, 'w': 32, 'h': 8, 'value': {'data': 0},
+        'screen': {'texture': machine_panel(m, input_xy, output_xy, energy_xy), 'slots': [input_xy, output_xy],
+                   'widgets': [
+            # GuiVerticalPowerBar at 164, 16: the contents are 4 by 52 inside the frame
+            {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 17, 'w': 4, 'h': 52, 'value': {'pair': [1, 2]},
+             'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+            # GuiProgress, ProgressType.BAR at 86, 38
+            {'type': 'sprite', 'texture': progress_full, 'x': 86, 'y': 38, 'w': 25, 'h': 9, 'value': {'data': 0},
              'max': {'const': 200}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
-            {'type': 'text', 'x': (176 - 6 * len(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
-            {'type': 'text', 'x': 90, 'y': 60, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 74, 'text': 'v0.1.14', 'color': '#808080'}]}})
+            # the title, centred at the top, and the inventory's, at 8, 72 (vanilla's own places)
+            {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+            {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
+            {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.15', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
