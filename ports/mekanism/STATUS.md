@@ -27,7 +27,12 @@ e **ainda não foi testada**). APK: v8.
    debaixo). Causa provável: o bloco usa o formato do forno (cubo inteiro, que tapa as faces dos vizinhos), mas o
    modelo é oco; o jogo então não desenha as faces dos blocos encostados. Correção planejada: trocar o formato do
    bloco por um que não tape os vizinhos (por exemplo o do baú) ou dar um modelo sólido ao cubo. **Não corrigido.**
-3. A tela das máquinas é "mais simples que a original": só um painel liso, as barras de energia e de progresso, o
+3. **As máquinas não mudam de textura ao trabalhar, não acendem e não têm a textura animada** (o original troca para
+   o modelo "ativo", animado, e emite luz). Funcionalmente elas processam, mas o bloco nunca vira `lit=true`. Hipótese:
+   o jogo recusava a troca de propriedade (`native_set_block_property`) porque a sua checagem "este jogo é um servidor"
+   não vale para o jogo do servidor interno do celular (a mesma checagem vale para `summon` e outras funções de
+   entidade). Correção feita no jogo (APK v9, **ainda não testada no celular**).
+4. A tela das máquinas é "mais simples que a original": só um painel liso, as barras de energia e de progresso, o
    texto de status e a versão. Falta o fundo e o aspecto do Mekanism. **Não é defeito de função, é visual.**
 
 ## 3. NÃO testado no jogo (o usuário não viu)
@@ -42,7 +47,7 @@ Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
 - Tabelas de saque: se os minérios soltam o minério bruto, se as máquinas soltam a si mesmas com a energia e os itens
   dentro (`keep-data`).
 - Funil alimentando e esvaziando as máquinas, e o lado de cada face.
-- O bloco acender (propriedade `lit`) quando a máquina trabalha, e a textura "ativa".
+- O bloco acender (propriedade `lit`) quando a máquina trabalha, e a textura "ativa" animada: **visto que não acontece** (defeito 3); a correção do APK v9 não foi testada.
 - Cubo básico de energia guardando e entregando energia (o Creative foi usado como fonte, mas o usuário relatou
   só o cabo e as três máquinas); o limite de 1024 por tick do cabo.
 - As barras de energia e de progresso e as dicas ao passar o dedo: o usuário viu o texto de status, mas não relatou
@@ -71,7 +76,7 @@ Só o que o Mekanism usou até agora, e só o que o usuário viu funcionar (cabo
 | 12 Entidades | **não** |
 | 13 Itens com lógica | **não** |
 | 14 Chunks e geração de mundo | **não** (a geração de minérios não foi vista) |
-| `world.set-block-property` (o `lit`) | não relatado |
+| `world.set-block-property` (o `lit`) | **não funcionou** (as máquinas não acendem); correção no APK v9 sem teste |
 
 Nenhum dos blocos "não" tem teste no jogo: só testes simulados e a compilação.
 
