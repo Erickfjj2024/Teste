@@ -124,6 +124,11 @@ energia; **arrastar** a janela e o fixar; o **ícone do bloco vizinho** em cada 
 (não há tanques no porte); os modos **Vazio, Girar e Chave inglesa** do Configurador; o **Energy Cube não tem tela** (a configuração dele
 é só pelo Configurador). Os itens guardados nas máquinas aparecem por cima da janela (no original ficam por baixo).
 
+**Defeito visto no teste da 2c (mod 0.1.18 corrige, não testado):** ao clicar agachado numa máquina, o Configurador mudava a face e
+também o modo dele. O cliente manda um uso no bloco e logo depois um uso no ar para o mesmo clique; o segundo, agachado, era lido como
+a troca de modo. Agora o mod ignora o uso no ar até 2 ticks depois de um clique que ele aceitou num bloco (no original o clique numa
+máquina não chega ao uso no ar). Clicar agachado num bloco que o Configurador não configura continua trocando o modo, como no original.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

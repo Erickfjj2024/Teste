@@ -91,6 +91,10 @@ struct Mekanism {
     applied: HashSet<(String, i32, i32, i32)>,
     /// The dice's state (see `Mekanism::roll`).
     rng: u64,
+    /// The server tick the mod last saw, and when each player's configurator last took a click on a block: the client
+    /// sends a use in the air after the use on a block for the same click, which must not change the tool's mode.
+    now: u64,
+    last_block_use: HashMap<String, u64>,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -555,6 +559,8 @@ impl ServerMod for Mekanism {
             tool: HashMap::new(),
             applied: HashSet::new(),
             rng: 0,
+            now: 0,
+            last_block_use: HashMap::new(),
         }, r.on_chunks().on_items()))
     }
 
@@ -586,7 +592,16 @@ impl ServerMod for Mekanism {
         }
         let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
         let Some(pos) = pos else {
-            // Sneaking in the air changes what the tool configures (`ItemConfigurator.use`).
+            // Sneaking in the air changes what the tool configures (`ItemConfigurator.use`), unless this is the use in
+            // the air that follows a click the tool just took on a machine: that click is one, and does nothing more.
+            if sneaking
+                && self
+                    .last_block_use
+                    .get(&player.id)
+                    .is_some_and(|t| self.now.saturating_sub(*t) <= 2)
+            {
+                return true;
+            }
             if sneaking {
                 let t = self.tool.entry(player.id.clone()).or_insert(Transmission::Items);
                 *t = t.next();
@@ -614,6 +629,7 @@ impl ServerMod for Mekanism {
             sneak: sneaking,
             tick: 0,
         });
+        self.last_block_use.insert(player.id.clone(), self.now);
         true
     }
 
@@ -656,6 +672,7 @@ impl ServerMod for Mekanism {
     }
 
     fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
+        self.now = tick;
         let mut out = Vec::new();
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");

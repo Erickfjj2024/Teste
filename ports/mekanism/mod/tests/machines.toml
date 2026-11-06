@@ -129,3 +129,26 @@ as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3000 }
 ticks = 1
 expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0] }]
+
+[[step]]
+# The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
+# sneaking, a click on the cube is followed at once by one in the air, and the tool stays on energy.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+as = "Alex"
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Energy behavior bumped to: Input/Output (Purple)"]
+
+[[step]]
+# A while later, sneaking in the air does change the mode, as before.
+as = "Alex"
+ticks = 10
+use-item = { stack = "mekanism:configurator*1" }
+expect.told = ["Alex: Configure State: Configurate (Items)"]
