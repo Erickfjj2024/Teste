@@ -114,6 +114,9 @@ for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
         continue
     d = read_json(p)
     model = d.get('model', {})
+    if n == 'configurator':
+        # Its model picks by a component of Mekanism's own (the tool's mode); the port has the one mode, configuring.
+        model = {'type': 'minecraft:model', 'model': f'{NS}:item/configurator'}
     if model.get('type') != 'minecraft:model':
         continue  # a special item model the engine can't draw (jetpack, tablet...)
     if model['model'].startswith(NS + ':block/'):
@@ -233,7 +236,7 @@ for tier in ('basic', 'creative'):
     elements = list(base['frame'])
     # Ports and LEDs. The default side configuration of Mekanism's cube (FRONT_OUT_EJECT) is the front an
     # output (ACTIVE_LIT: lit LEDs, shifted uvs, full light) and the other five sides inputs (ACTIVE_UNLIT),
-    # so every side has its port and its LEDs. The configurator is not in the port: the sides do not change.
+    # so every side has its port and its LEDs.
     shift_u, shift_v = base['leds']['lit_uv_shift']
     def plain(e, lit=False):
         e = {k: v for k, v in e.items() if k != 'shade_direction_override'}
@@ -243,10 +246,23 @@ for tier in ('basic', 'creative'):
                                          f['uv'][2] + shift_u, f['uv'][3] + shift_v]) if 'uv' in f else f
                           for d, f in e['faces'].items()}
         return e
+    SIDES = ('front', 'back', 'left', 'right', 'top', 'bottom')
     for side in ('bottom', 'top', 'front', 'back', 'right', 'left'):
         elements += [plain(e, lit=side == 'front') for e in base['leds'][side]]
         elements += [plain(e) for e in base['ports'][side]]
-    # The core is not in the model: Mekanism draws it in code, turning, and so does the port (a renderer).
+    # The block: the frame, and for each side the part its state says (off: LEDs only; in: LEDs and port;
+    # out: lit LEDs and port), as the original's EnergyCubeModel does. The item has the default configuration.
+    def side_model(side, state):
+        els = [plain(e, lit=state == 'out') for e in base['leds'][side]]
+        if state != 'off':
+            els += [plain(e) for e in base['ports'][side]]
+        return els
+    for side in SIDES:
+        for state in ('off', 'in', 'out'):
+            put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}_{side}_{state}.json',
+                {'parent': 'minecraft:block/block', 'textures': textures, 'elements': side_model(side, state)})
+    put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}_frame.json',
+        {'parent': 'minecraft:block/block', 'textures': textures, 'elements': list(base['frame'])})
     put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': [
         # RenderEnergyCube: scale 0.4 of a 16-unit cube, bounce sin(3 deg * t) / 7, a turn about Y at 4 deg a
         # tick and one about (0, 1, 1) from 36 deg at 4 deg a tick, full bright, only with energy.
@@ -259,13 +275,21 @@ for tier in ('basic', 'creative'):
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     n = f'{tier}_energy_cube'
-    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {
-        f'facing={f}': {'model': f'{NS}:block/energy_cube_{tier}', **({'y': y} if y else {})}
-        for f, y in (('north', 0), ('east', 90), ('south', 180), ('west', 270))}})
+    parts = [{'apply': {'model': f'{NS}:block/energy_cube_{tier}_frame'}}]
+    for f, y in (('north', 0), ('east', 90), ('south', 180), ('west', 270)):
+        for side in SIDES:
+            for state in ('off', 'in', 'out'):
+                parts.append({'when': {'facing': f, f'side_{side}': state},
+                              'apply': {'model': f'{NS}:block/energy_cube_{tier}_{side}_{state}', **({'y': y} if y else {})}})
+    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'multipart': parts})
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
     # An ender chest's shape is not a full cube, so it does not hide the blocks beside the cube's open frame
     # (a furnace's does); its light is switched off.
-    add_block(n, 'minecraft:ender_chest', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0})
+    # Its side states are the visual of the side configuration (`off` nothing, `in` input, `out` output or both):
+    # the mod keeps the exact mode in the entity and sets these; the default is the original's, front out.
+    add_block(n, 'minecraft:ender_chest', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0},
+              {'state_properties': {f'side_{s}': {'type': 'enum', 'values': ['in', 'out', 'off']} for s in SIDES},
+               'default_state': {f'side_{s}': 'out' if s == 'front' else 'in' for s in SIDES}})
 
 # what joins a cable: the cables, the cubes and the machines
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
@@ -281,7 +305,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.7', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.8', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

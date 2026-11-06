@@ -5,12 +5,15 @@
 //! What runs so far: the crusher, the enrichment chamber and the energized
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod machine;
+mod sides;
 mod worldgen;
 
 use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack,
-    BlockChange, Registration, ServerMod, TransmitterMedium, TransmitterSpec, recipe_types, serde_json, world,
+    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, players,
+    recipe_types, serde_json, world,
 };
+use sides::{Mode, SIDES};
 use machine::{Book, Io, Recipe, Stack, Status, step};
 use std::collections::HashMap;
 
@@ -50,7 +53,25 @@ struct Mekanism {
     /// The tick each book was last asked for: the game lends its recipes a little
     /// after the mod starts, so a book that came out empty is asked again.
     tried: HashMap<&'static str, u64>,
+    /// Clicks of the configurator waiting for their cube's next tick (a use can't change a block entity).
+    pending: Vec<Click>,
 }
+
+/// A configurator click on a block: the cube there is changed in its next tick.
+struct Click {
+    player: String,
+    dimension: String,
+    pos: BlockPos,
+    /// The relative-to-world face clicked: down, up, north, south, west, east.
+    face: usize,
+    back: bool,
+    tick: u64,
+}
+
+const CONFIGURATOR: &str = "mekanism:configurator";
+/// The eye above the feet, standing and sneaking.
+const EYE: f64 = 1.62;
+const EYE_SNEAKING: f64 = 1.27;
 
 fn kind(block: &str, ticks: bool) -> BlockEntityKind {
     BlockEntityKind {
@@ -186,6 +207,64 @@ impl Mekanism {
     }
 }
 
+impl Mekanism {
+    /// An energy cube's tick: a configurator click changes the mode of the side it met, the block shows the
+    /// modes (its `side_*` states), and the game's energy flow follows them.
+    fn cube(&mut self, e: &BlockEntity, creative: bool) -> Option<BlockEntityUpdate> {
+        let facing = sides::property(&e.state, "facing").unwrap_or("north");
+        let mut modes = sides::decode(&e.data);
+        let mut changed = e.data.len() < 6;
+        if let Some(i) = self
+            .pending
+            .iter()
+            .position(|c| c.dimension == e.dimension && (c.pos.x, c.pos.y, c.pos.z) == (e.pos.x, e.pos.y, e.pos.z))
+        {
+            let click = self.pending.remove(i);
+            let side = sides::side_of(facing, click.face);
+            modes[side] = modes[side].step(click.back);
+            changed = true;
+            let _ = players::tell(
+                &click.player,
+                &format!("Energy: {} side is now {}", SIDES[side], modes[side].name()),
+            );
+        }
+        for (s, name) in SIDES.iter().enumerate() {
+            let prop = format!("side_{name}");
+            let want = modes[s].look();
+            if sides::property(&e.state, &prop) != Some(want) {
+                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &prop, want);
+            }
+        }
+        let flow = sides::flow_faces(facing, &modes);
+        let faces: Vec<FlowSide> = flow.iter().map(|f| flow_side(*f)).collect();
+        let refill = creative && e.energy < CREATIVE_CUBE;
+        if !changed && !refill && e.energy_faces == faces {
+            return None;
+        }
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: sides::encode(&modes),
+            items: None,
+            energy: refill.then_some(CREATIVE_CUBE),
+            energy_faces: Some(faces),
+            tanks: None,
+            tank_faces: None,
+            menu_data: None,
+            transmitter_faces: None,
+        })
+    }
+}
+
+fn flow_side(f: u8) -> FlowSide {
+    match Mode::from_byte(f) {
+        Mode::None => FlowSide::None,
+        Mode::Input => FlowSide::Input,
+        Mode::Output => FlowSide::Output,
+        Mode::Both => FlowSide::Both,
+    }
+}
+
 impl ServerMod for Mekanism {
     fn init() -> Result<(Self, Registration), String> {
         let mut r = Registration::new();
@@ -202,7 +281,7 @@ impl ServerMod for Mekanism {
             k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
             r = r.block_entity_kind(k);
         }
-        let mut basic = kind("mekanism:basic_energy_cube", false);
+        let mut basic = kind("mekanism:basic_energy_cube", true);
         basic.energy = Some(energy(BASIC_CUBE, BASIC_CUBE_RATE, FlowSide::Both));
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -216,7 +295,7 @@ impl ServerMod for Mekanism {
             .block_entity_kind(basic)
             .block_entity_kind(creative)
             .block_entity_kind(cable);
-        Ok((Mekanism { books: HashMap::new(), tried: HashMap::new() }, r.on_chunks()))
+        Ok((Mekanism { books: HashMap::new(), tried: HashMap::new(), pending: Vec::new() }, r.on_chunks().on_items()))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -241,28 +320,46 @@ impl ServerMod for Mekanism {
         }
     }
 
+    fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        let Some(pos) = pos else { return false };
+        if stack.item != CONFIGURATOR {
+            return false;
+        }
+        let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
+        if !block.contains("_energy_cube") {
+            return false;
+        }
+        let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+        let eye = [player.x, player.y + if sneaking { EYE_SNEAKING } else { EYE }, player.z];
+        let Some((yaw, pitch)) = player_control::get_look(&player.id) else { return false };
+        let dir = sides::look(yaw, pitch);
+        let Some(face) = sides::face_hit(eye, dir, [pos.x, pos.y, pos.z]) else { return false };
+        self.pending.push(Click {
+            player: player.id.clone(),
+            dimension: player.dimension.clone(),
+            pos,
+            face,
+            back: sneaking,
+            tick: 0,
+        });
+        true
+    }
+
     fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
         let mut out = Vec::new();
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {
                 out.extend(self.run(def, e, tick));
-            } else if block == "mekanism:creative_energy_cube" && e.energy < CREATIVE_CUBE {
-                // Creative: never empty.
-                out.push(BlockEntityUpdate {
-                    dimension: e.dimension.clone(),
-                    pos: e.pos,
-                    data: e.data.clone(),
-                    items: None,
-                    energy: Some(CREATIVE_CUBE),
-                    energy_faces: None,
-                    tanks: None,
-                    tank_faces: None,
-                    menu_data: None,
-                    transmitter_faces: None,
-                });
+            } else if block.ends_with("_energy_cube") {
+                out.extend(self.cube(e, block == "mekanism:creative_energy_cube"));
             }
         }
+        // A click whose cube did not tick (it was not there) is dropped after a few ticks.
+        for c in &mut self.pending {
+            c.tick += 1;
+        }
+        self.pending.retain(|c| c.tick < 5);
         out
     }
 }

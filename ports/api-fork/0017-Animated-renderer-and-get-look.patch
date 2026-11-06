@@ -1,0 +1,417 @@
+diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
+index 6b1a3e5..0a7f291 100644
+--- a/crates/horizon-client/src/game/block_renderers.rs
++++ b/crates/horizon-client/src/game/block_renderers.rs
+@@ -7,7 +7,7 @@
+ use super::{Game, native_block_entity_draw::{BlockEntityDraw, CubeFace}};
+ use horizon_client::containers::ModBlockEntity;
+ use horizon_mods::{
+-    block_render::{fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees},
++    block_render::{bounce_offset, fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees, turn_degrees},
+     content::{BlockRenderer, RenderElement, parse_color},
+ };
+ use horizon_world::nbt::{JavaString, Tag};
+@@ -119,6 +119,49 @@ impl Game<'_> {
+                     let tint = fluid_tint(tints, &t.substance);
+                     self.native_draw_cube(draw, lo, hi, all(sprite), tint);
+                 }
++                RenderElement::Animated {
++                    from,
++                    to,
++                    sprite,
++                    scale,
++                    center,
++                    bounce,
++                    rotations,
++                    fullbright,
++                    only_with_energy,
++                } => {
++                    if *only_with_energy && long(entity.nbt.get(&key("energy"))) == 0 {
++                        continue;
++                    }
++                    let time = draw.game_time as f32 + draw.partial;
++                    let middle = center.unwrap_or_else(|| [0, 1, 2].map(|i| (from[i] + to[i]) / 2.0));
++                    let at = middle.map(|v| v / 16.0);
++                    let size = scale.unwrap_or(1.0);
++                    draw.push();
++                    draw.translate(at);
++                    draw.scale([size; 3]);
++                    if let Some(b) = bounce {
++                        draw.translate([0.0, bounce_offset(time, b.amplitude, b.degrees_per_tick), 0.0]);
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>().sqrt();
++                        if len > 0.0 {
++                            let axis = r.axis.map(|v| v / len);
++                            draw.rotate_about(axis, turn_degrees(time, r.degrees_per_tick, r.offset), [0.0; 3]);
++                        }
++                    }
++                    let lit = draw.light;
++                    if *fullbright {
++                        // 16 times sky light in the low byte, block light in the next.
++                        draw.light = 0xF0F0;
++                    }
++                    // The box keeps its own texel coordinates (they set its texture mapping);
++                    // the pose moves its centre back to the origin it turns about.
++                    draw.translate(at.map(|v| -v));
++                    self.native_draw_cube(draw, *from, *to, all(sprite), 0xFFFFFF);
++                    draw.light = lit;
++                    draw.pop();
++                }
+                 RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
+                     let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
+                     let centre = pivot.unwrap_or_else(|| {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 003737e..32e1721 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -613,6 +613,7 @@ impl Game<'_> {
+             font_widths: self.mods.font_widths.clone(),
+             players,
+             motions: Vec::new(),
++            looks: Vec::new(),
+             mobs: Vec::new(),
+             mobs_dimension: String::new(),
+             inventories: Vec::new(),
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index fcc3158..14fdc26 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -310,6 +310,7 @@ mod run {
+             let mut snapshot = self.mod_snapshot_with(players.clone());
+             if self.mods.world {
+                 snapshot.motions = self.server_motions();
++                snapshot.looks = self.server_looks();
+             }
+             if self.mods.mods.wants_player_items() {
+                 snapshot.inventories = self.server_inventories(&players);
+@@ -511,6 +512,30 @@ mod run {
+         }
+ 
+         /// What the window's own player is doing, as capability `player-control` reads it.
++        /// Where each player looks, `(yaw, pitch)`: the window's own player in-frame and the guests.
++        fn server_looks(&mut self) -> Vec<(String, (f32, f32))> {
++            let mut out = Vec::new();
++            if self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++            {
++                out.push((uuid_string(self.player_uuid()), (self.yaw, self.pitch)));
++            }
++            let guests: Vec<(u32, u128)> = self
++                .lan
++                .iter()
++                .flat_map(|h| &h.hub.guests)
++                .filter(|g| g.placed)
++                .map(|g| (g.conn, g.uuid))
++                .collect();
++            for (conn, uuid) in guests {
++                if let Some(look) = self.for_player(Target::Guest(conn), |g| (g.yaw, g.pitch)) {
++                    out.push((uuid_string(uuid), look));
++                }
++            }
++            out
++        }
++
+         fn own_motion(&self) -> Motion {
+             let p = self.player.as_ref();
+             Motion {
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 783da48..5c6180f 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -736,6 +736,11 @@ interface player-control {
+     }
+     /// What the player with this id is doing; none for an id that is not online.
+     get-motion: func(player: string) -> option<motion>;
++    /// Where the player with this id looks, `(yaw, pitch)` in degrees as F3
++    /// shows them (yaw 0 faces south, pitch -90 looks straight up); none for
++    /// an id that is not online. With the eye (the feet and 1.62 blocks, 1.27
++    /// sneaking) it gives the face of a block a use met. API 16.
++    get-look: func(player: string) -> option<tuple<f32, f32>>;
+     /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
+     /// distance reset. `yaw` and `pitch` stay as they are when none. The
+     /// move is made after this call returns, before the next tick. An error
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 7a52a62..88ab7dc 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 15;
++pub const LEVEL: u32 = 16;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 73] = [
++pub const FUNCTIONS: [(&str, u32); 74] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -87,6 +87,7 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
+     ("chunks.set-forced", 13),
+     ("world.set-block-property", 14),
+     ("recipe-types.cooking-recipes", 15),
++    ("player-control.get-look", 16),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+index 6eafee2..e0b33ae 100644
+--- a/crates/horizon-mods/src/block_render.rs
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -49,6 +49,18 @@ pub fn spin_degrees(game_time: i64, partial: f32, degrees_per_tick: f32) -> f32
+     ((game_time % 360_000) as f32 + partial) * degrees_per_tick % 360.0
+ }
+ 
++/// The angle of a turn at time `time` (ticks and the partial tick): `offset` degrees
++/// plus `degrees_per_tick` a tick, kept within a turn.
++pub fn turn_degrees(time: f32, degrees_per_tick: f32, offset: f32) -> f32 {
++    (offset + time * degrees_per_tick) % 360.0
++}
++
++/// How far a bounce has lifted a part at `time`: `amplitude` times the sine of
++/// `degrees_per_tick` degrees a tick.
++pub fn bounce_offset(time: f32, amplitude: f32, degrees_per_tick: f32) -> f32 {
++    amplitude * (time * degrees_per_tick).to_radians().sin()
++}
++
+ /// A value in sixteenths (0 to 16), for telling clients of a change only when
+ /// what they draw does.
+ pub fn sixteenths(value: u64, max: u64) -> u8 {
+@@ -87,6 +99,15 @@ mod tests {
+         assert_eq!(fluid_tint(&tints, "minecraft:lava"), 0xFFFFFF);
+     }
+     #[test]
++    fn turns_and_bounces() {
++        assert_eq!(turn_degrees(10.0, 4.0, 36.0), 76.0);
++        assert!(turn_degrees(1.0e6, 4.0, 36.0) < 360.0);
++        assert!(bounce_offset(0.0, 0.5, 3.0).abs() < 1e-6);
++        // A quarter of the sine's period at 3 degrees a tick is 30 ticks.
++        assert!((bounce_offset(30.0, 0.5, 3.0) - 0.5).abs() < 1e-5);
++        assert!((bounce_offset(90.0, 0.5, 3.0) + 0.5).abs() < 1e-5);
++    }
++    #[test]
+     fn spin_and_quantising() {
+         assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
+         assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index e2ee6c7..bafbade 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -583,6 +583,28 @@ pub enum RenderElement {
+         #[serde(default)]
+         tints: std::collections::BTreeMap<String, String>,
+     },
++    /// A box that moves and turns as code draws a part of a machine: scaled about
++    /// `center` (texels, the box's own centre by default), moved up and down by a sine
++    /// (`bounce`), and turned by each of `rotations` in order, all from the game's
++    /// time. `fullbright` draws it as bright as can be, and `only_with_energy`
++    /// only while the block holds energy (its `energy` the server sent).
++    Animated {
++        from: [f32; 3],
++        to: [f32; 3],
++        sprite: String,
++        #[serde(default)]
++        scale: Option<f32>,
++        #[serde(default)]
++        center: Option<[f32; 3]>,
++        #[serde(default)]
++        bounce: Option<Bounce>,
++        #[serde(default)]
++        rotations: Vec<Rotation>,
++        #[serde(default)]
++        fullbright: bool,
++        #[serde(default)]
++        only_with_energy: bool,
++    },
+     /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
+     /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
+     Spin {
+@@ -596,6 +618,26 @@ pub enum RenderElement {
+     },
+ }
+ 
++/// A sine of the time that moves a part up and down: `amplitude` blocks (before the
++/// element's scale), at `degrees_per_tick` of the sine's angle.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Bounce {
++    pub amplitude: f32,
++    pub degrees_per_tick: f32,
++}
++
++/// A turn about `axis` (any direction, as `x, y, z`) of `offset` degrees plus
++/// `degrees_per_tick` a tick.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Rotation {
++    pub axis: [f32; 3],
++    pub degrees_per_tick: f32,
++    #[serde(default)]
++    pub offset: f32,
++}
++
+ impl BlockRenderer {
+     fn check(&self, name: &str) -> Result<(), String> {
+         let sprite = |s: &str| {
+@@ -643,6 +685,38 @@ impl BlockRenderer {
+                         colour(c)?;
+                     }
+                 }
++                RenderElement::Animated { from, to, sprite: s, scale, center, bounce, rotations, .. } => {
++                    boxed(from, to)?;
++                    sprite(s)?;
++                    if scale.is_some_and(|v| !(0.01..=4.0).contains(&v)) {
++                        return Err(format!("{name}: scale is 0.01 to 4"));
++                    }
++                    if center.is_some_and(|c| c.iter().any(|v| !v.is_finite())) {
++                        return Err(format!("{name}: center is numbers"));
++                    }
++                    if let Some(b) = bounce
++                        && (!b.amplitude.is_finite()
++                            || b.amplitude.abs() > 4.0
++                            || !b.degrees_per_tick.is_finite()
++                            || b.degrees_per_tick.abs() > 360.0)
++                    {
++                        return Err(format!("{name}: a bounce is an amplitude within 4 and degrees_per_tick within 360"));
++                    }
++                    if rotations.len() > 4 {
++                        return Err(format!("{name}: 4 rotations at most"));
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>();
++                        if !len.is_finite()
++                            || len < 1e-6
++                            || !r.degrees_per_tick.is_finite()
++                            || r.degrees_per_tick.abs() > 360.0
++                            || !r.offset.is_finite()
++                        {
++                            return Err(format!("{name}: a rotation has an axis and degrees_per_tick within 360"));
++                        }
++                    }
++                }
+                 RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
+                     boxed(from, to)?;
+                     sprite(s)?;
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index d3024e4..4d9f648 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -248,6 +248,8 @@ pub struct Snapshot {
+     /// What each of those players is doing, by player id, for capability
+     /// `player-control`'s `motion`.
+     pub motions: Vec<(String, Motion)>,
++    /// Where each of those players looks, `(yaw, pitch)`, by player id.
++    pub looks: Vec<(String, (f32, f32))>,
+     /// The living mobs of the level in place (`mobs_dimension`), for
+     /// capability `entities`.
+     pub mobs: Vec<MobInfo>,
+@@ -2589,6 +2591,13 @@ impl player_control::Host for State {
+             .find(|(id, _)| *id == player)
+             .map(|(_, m)| m.clone())
+     }
++    fn get_look(&mut self, player: String) -> Option<(f32, f32)> {
++        self.snapshot
++            .looks
++            .iter()
++            .find(|(id, _)| *id == player)
++            .map(|(_, l)| *l)
++    }
+     fn teleport(
+         &mut self,
+         player: String,
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index feecac5..07ad996 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -30,6 +30,8 @@ pub struct TestGame {
+     /// What each of those players is doing, by player id (capability
+     /// `player-control`); a player with no entry is standing still with no experience.
+     pub motions: Vec<(String, Motion)>,
++    /// Where each player looks, `(yaw, pitch)`, by player id; none listed looks south, level.
++    pub looks: Vec<(String, (f32, f32))>,
+     /// Every name that joined, for their id.
+     names: Vec<String>,
+     tick: u64,
+@@ -174,6 +176,7 @@ impl TestGame {
+             }),
+             players: Vec::new(),
+             motions: Vec::new(),
++            looks: Vec::new(),
+             names: Vec::new(),
+             tick: 0,
+             world: Default::default(),
+@@ -215,6 +218,7 @@ impl TestGame {
+             clock: self.clock,
+             players: self.players.clone(),
+             motions: self.motions.clone(),
++            looks: self.looks.clone(),
+             mobs: self.mobs.clone(),
+             mobs_dimension: "minecraft:overworld".into(),
+             inventories: self.inventories.clone(),
+@@ -762,7 +766,7 @@ pub struct RecipeSet {
+ }
+ 
+ /// Fields of the player to change; the others keep their values. A server
+-/// mod's players have no `yaw`, `pitch` or `food`, and a client mod's player
++/// mod's players have no `food` (their `yaw` and `pitch` are what `get-look` answers), and a client mod's player
+ /// no `game-mode`.
+ #[derive(Debug, Default, Deserialize)]
+ #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+@@ -1338,7 +1342,22 @@ impl Step {
+         };
+         if let Some(set) = &self.player {
+             match actor {
+-                Some(i) => set.apply_server(&mut game.players[i]),
++                Some(i) => {
++                    set.apply_server(&mut game.players[i]);
++                    if set.yaw.is_some() || set.pitch.is_some() {
++                        let id = game.players[i].id.clone();
++                        let at = match game.looks.iter().position(|(p, _)| *p == id) {
++                            Some(at) => at,
++                            None => {
++                                game.looks.push((id, (0.0, 0.0)));
++                                game.looks.len() - 1
++                            }
++                        };
++                        let look = &mut game.looks[at].1;
++                        look.0 = set.yaw.unwrap_or(look.0);
++                        look.1 = set.pitch.unwrap_or(look.1);
++                    }
++                }
+                 None => set.apply(game.player.get_or_insert_with(default_player)),
+             }
+         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 151d098..06560bb 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 15);
++    assert_eq!(LEVEL, 16);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 57a0edc..3d3c688 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -737,6 +737,7 @@ What a player is doing as of the last server tick.
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
++| `get-look` | `func(player: string) -> option<tuple<f32, f32>>` | Where the player with this id looks, `(yaw, pitch)` in degrees as F3 shows them (yaw 0 faces south, pitch -90 looks straight up); none for an id that is not online. With the eye (the feet and 1.62 blocks, 1.27 sneaking) it gives the face of a block a use met. API 16. |
+ | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
+ | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
+ | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
