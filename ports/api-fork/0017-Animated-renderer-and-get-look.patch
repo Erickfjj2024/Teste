@@ -1,5 +1,5 @@
 diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
-index 6b1a3e5..0a7f291 100644
+index 6b1a3e5..ba975b4 100644
 --- a/crates/horizon-client/src/game/block_renderers.rs
 +++ b/crates/horizon-client/src/game/block_renderers.rs
 @@ -7,7 +7,7 @@
@@ -61,6 +61,30 @@ index 6b1a3e5..0a7f291 100644
                  RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
                      let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
                      let centre = pivot.unwrap_or_else(|| {
+@@ -148,15 +191,20 @@ impl Game<'_> {
+             return;
+         }
+         let mut changed: Vec<[i32; 3]> = Vec::new();
+-        for (pos, e) in self.world.block_entities.iter_mut() {
++        let mut seen: Vec<([i32; 3], u64)> = Vec::new();
++        for (pos, e) in self.world.block_entities.iter() {
+             let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
+                 continue;
+             };
+             if renderer_of(&m.id).is_none() {
+                 continue;
+             }
+-            let sig = display_signature(m);
+-            let at = [pos.0, pos.1, pos.2];
++            // A change of the block's state (a side's look) makes the clients build its entity again,
++            // empty: what they are shown is sent again with it.
++            let state = u64::from(self.world.block(pos.0, pos.1, pos.2).0);
++            seen.push(([pos.0, pos.1, pos.2], display_signature(m) ^ state.wrapping_mul(0x9E37_79B9_7F4A_7C15)));
++        }
++        for (at, sig) in seen {
+             if self.mods.shown_displays.insert(at, sig) != Some(sig) {
+                 changed.push(at);
+             }
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
 index 003737e..32e1721 100644
 --- a/crates/horizon-client/src/game/mods.rs

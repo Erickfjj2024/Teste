@@ -151,6 +151,21 @@ pub fn face_hit(eye: [f64; 3], dir: [f64; 3], pos: [i32; 3]) -> Option<usize> {
     entered
 }
 
+/// The face of the block at `pos` that is toward `eye`: the way from its centre to the player, on the axis it
+/// runs furthest along. What a click falls back on when the look is not known.
+pub fn face_toward(eye: [f64; 3], pos: [i32; 3]) -> usize {
+    let d = [0, 1, 2].map(|i| eye[i] - (f64::from(pos[i]) + 0.5));
+    let axis = (0..3).max_by(|a, b| d[*a].abs().total_cmp(&d[*b].abs())).unwrap_or(1);
+    match (axis, d[axis] > 0.0) {
+        (0, false) => WEST,
+        (0, true) => EAST,
+        (1, false) => DOWN,
+        (1, true) => UP,
+        (_, false) => NORTH,
+        (_, true) => SOUTH,
+    }
+}
+
 /// The look of a player (`yaw` 0 faces south, `pitch` -90 looks up), as a direction.
 pub fn look(yaw: f32, pitch: f32) -> [f64; 3] {
     let (y, p) = (f64::from(yaw).to_radians(), f64::from(pitch).to_radians());
@@ -207,6 +222,13 @@ mod tests {
         assert_eq!(property(s, "side_up"), Some("in"));
         assert_eq!(property(s, "side_down"), None);
         assert_eq!(property("mekanism:crusher", "facing"), None);
+    }
+
+    #[test]
+    fn without_a_look_the_face_is_the_one_toward_the_player() {
+        assert_eq!(face_toward([13.5, 65.0, 10.5], [10, 64, 10]), EAST);
+        assert_eq!(face_toward([10.5, 63.0, 10.4], [10, 64, 10]), DOWN);
+        assert_eq!(face_toward([10.5, 64.5, 7.0], [10, 64, 10]), NORTH);
     }
 
     #[test]

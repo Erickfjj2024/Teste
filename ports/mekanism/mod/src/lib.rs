@@ -345,9 +345,11 @@ impl ServerMod for Mekanism {
         }
         let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
         let eye = [player.x, player.y + if sneaking { EYE_SNEAKING } else { EYE }, player.z];
-        let Some((yaw, pitch)) = player_control::get_look(&player.id) else { return false };
-        let dir = sides::look(yaw, pitch);
-        let Some(face) = sides::face_hit(eye, dir, [pos.x, pos.y, pos.z]) else { return false };
+        let block = [pos.x, pos.y, pos.z];
+        // The side the look meets; when the look is not known, or misses, the one toward the player.
+        let face = player_control::get_look(&player.id)
+            .and_then(|(yaw, pitch)| sides::face_hit(eye, sides::look(yaw, pitch), block))
+            .unwrap_or_else(|| sides::face_toward(eye, block));
         self.pending.push(Click {
             player: player.id.clone(),
             dimension: player.dimension.clone(),

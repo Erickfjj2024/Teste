@@ -45,7 +45,13 @@ e **ainda não foi testada**). APK: v8.
    da mesa de encantamento (1 estado, formato que não tapa vizinhos), sem `facing`, e as faces são as do mundo
    (`side_down`... `side_east`): 729 estados por cubo, 1.458 no total. A frente do cubo novo é a que olha para o
    jogador mais próximo, escolhida no primeiro tick. Efeito colateral: a caixa de seleção do cubo tem 12/16 de altura
-   (a da mesa de encantamento). **Ainda não testado no celular.**
+   (a da mesa de encantamento). **O app voltou a abrir com o 0.1.9 (confirmado pelo usuário), o que confirma a causa.**
+6. **Mod 0.1.9 (relatado pelo usuário):** o cubo deixa invisível o bloco de baixo (o fundo da mesa de encantamento é um
+   quadrado cheio e cobre a face do vizinho), o núcleo girando sumiu e o configurador não mudou nada na tela.
+   Mod 0.1.10 e APK v13 (**não testados**): o bloco usa o farol como modelo (1 estado, caixa cheia, não oclui); o
+   núcleo sumia porque mudar o estado do bloco faz o cliente refazer a entidade vazia e o servidor só reenviava quando
+   a energia mudava (agora reenvia também quando o estado muda); a face do configurador cai para "a face virada para o
+   jogador" se o olhar do jogador não for conhecido (hipótese: o jogo do servidor interno não tem a direção do olhar).
 
 ## 3. NÃO testado no jogo (o usuário não viu)
 
