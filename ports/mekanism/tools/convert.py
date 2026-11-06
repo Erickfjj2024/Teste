@@ -286,7 +286,7 @@ for tier in ('basic', 'creative'):
          'bounce': {'amplitude': 1 / 7, 'degrees_per_tick': 3.0},
          'rotations': [{'axis': [0, 1, 0], 'degrees_per_tick': 4.0},
                        {'axis': [0, 1, 1], 'degrees_per_tick': 4.0, 'offset': 36.0}],
-         'fullbright': True, 'only_with_energy': True}]})
+         'fullbright': True, 'only_with_energy': True, 'energy_fade': True}]})
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}_frame'}}})
@@ -301,17 +301,69 @@ for tier in ('basic', 'creative'):
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
     f'{NS}:basic_universal_cable', f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in MACHINES]]})
 
-# menus of the machines: slots at Mekanism's places, an energy bar, the progress and the title
+# menus of the machines: slots at Mekanism's places, an energy bar, the progress and the title.
+# The panel is Mekanism's own GUI sprites put together here: the nine-slice base, the slot frames and the arrow.
+def gui_sprite(rel):
+    from PIL import Image
+    return Image.open(find(f'textures/gui/sprites/{rel}.png', ASSET_DIRS)).convert('RGBA')
+
+def nine_slice(src, w, h, border):
+    """Mekanism's `base.png` stretched to w by h: the corners as they are, the edges and the middle stretched."""
+    from PIL import Image
+    sw, sh = src.size
+    out = Image.new('RGBA', (w, h))
+    b = border
+    cuts_x = [(0, b, 0, b), (b, sw - b, b, w - b), (sw - b, sw, w - b, w)]
+    cuts_y = [(0, b, 0, b), (b, sh - b, b, h - b), (sh - b, sh, h - b, h)]
+    for sx0, sx1, dx0, dx1 in cuts_x:
+        for sy0, sy1, dy0, dy1 in cuts_y:
+            piece = src.crop((sx0, sy0, sx1, sy1)).resize((dx1 - dx0, dy1 - dy0), Image.NEAREST)
+            out.paste(piece, (dx0, dy0))
+    return out
+
+def machine_panel(name, slots_xy):
+    """The 176 by 166 panel: base, the inventory's slot frames, the machine's input and output frames, the empty arrow
+    and the frame of the energy bar."""
+    from PIL import Image
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    panel.paste(gui_sprite('slot/input'), (slots_xy[0][0] - 1, slots_xy[0][1] - 1), gui_sprite('slot/input'))
+    panel.paste(gui_sprite('slot/output'), (slots_xy[1][0] - 1, slots_xy[1][1] - 1), gui_sprite('slot/output'))
+    panel.alpha_composite(gui_sprite('progress/right/empty'), (79, 39))
+    frame = nine_slice(gui_sprite('bar/base'), 8, 56, 1)
+    panel.alpha_composite(frame, (163, 15))
+    path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    panel.save(path)
+    return f'{NS}:gui/{name}'
+
+def copy_gui(rel, name):
+    path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    gui_sprite(rel).save(path)
+    return f'{NS}:gui/{name}'
+
+MACHINE_NAMES = {'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter'}
+arrow = copy_gui('progress/right/full', 'progress_right_full')
 for m in MACHINES:
+    slots_xy = [[56, 17], [116, 35]]
+    title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
         'slots': 2, 'data_slots': 6, 'results': [1],
-        'screen': {'slots': [[56, 17], [116, 35]], 'widgets': [
+        'screen': {'texture': machine_panel(m, slots_xy), 'slots': slots_xy, 'widgets': [
+            # the bar's own green, `bar/vertical_power`'s
             {'type': 'bar', 'x': 164, 'y': 16, 'w': 6, 'h': 54, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]},
-             'color': '#FFC83C', 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
-            {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
-             'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
-            {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.13', 'color': '#808080'}]}})
+             'color': '#3BFB98', 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+            {'type': 'sprite', 'texture': arrow, 'x': 79, 'y': 39, 'w': 32, 'h': 8, 'value': {'data': 0},
+             'max': {'const': 200}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
+            {'type': 'text', 'x': (176 - 6 * len(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
+            {'type': 'text', 'x': 90, 'y': 60, 'text': 'Status {5}', 'color': '#404040'},
+            {'type': 'text', 'x': 140, 'y': 74, 'text': 'v0.1.14', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

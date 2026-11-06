@@ -20,7 +20,7 @@ index 0e48436..e81265e 100644
          if !(sneaking && hands_full)
              && let Some(hit) = block_hit
 diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
-index 6b1a3e5..d4cf8f1 100644
+index 6b1a3e5..333ad92 100644
 --- a/crates/horizon-client/src/game/block_renderers.rs
 +++ b/crates/horizon-client/src/game/block_renderers.rs
 @@ -7,7 +7,7 @@
@@ -66,7 +66,7 @@ index 6b1a3e5..d4cf8f1 100644
      (!tag.is_empty()).then_some(tag)
  }
  
-@@ -119,6 +136,54 @@ impl Game<'_> {
+@@ -119,6 +136,63 @@ impl Game<'_> {
                      let tint = fluid_tint(tints, &t.substance);
                      self.native_draw_cube(draw, lo, hi, all(sprite), tint);
                  }
@@ -85,6 +85,7 @@ index 6b1a3e5..d4cf8f1 100644
 +                    rotations,
 +                    fullbright,
 +                    only_with_energy,
++                    energy_fade,
 +                } => {
 +                    if *only_with_energy && long(entity.nbt.get(&key("energy"))) == 0 {
 +                        continue;
@@ -114,14 +115,22 @@ index 6b1a3e5..d4cf8f1 100644
 +                    // The box keeps its own texel coordinates (they set its texture mapping);
 +                    // the pose moves its centre back to the origin it turns about.
 +                    draw.translate(at.map(|v| -v));
-+                    self.native_draw_cube(draw, *from, *to, all(sprite), 0xFFFFFF);
++                    let tint = if *energy_fade {
++                        // Not below a fifth, so a nearly empty cube still shows its core.
++                        let full = sixteenths(long(entity.nbt.get(&key("energy"))), long(entity.nbt.get(&key("energy_cap"))));
++                        let level = (u32::from(full.max(3)) * 255 / 16).min(255);
++                        level << 16 | level << 8 | level
++                    } else {
++                        0xFFFFFF
++                    };
++                    self.native_draw_cube(draw, *from, *to, all(sprite), tint);
 +                    draw.light = lit;
 +                    draw.pop();
 +                }
                  RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
                      let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
                      let centre = pivot.unwrap_or_else(|| {
-@@ -148,15 +213,20 @@ impl Game<'_> {
+@@ -148,15 +222,20 @@ impl Game<'_> {
              return;
          }
          let mut changed: Vec<[i32; 3]> = Vec::new();
@@ -568,10 +577,10 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..00d9919 100644
+index e2ee6c7..ab6a2e2 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
-@@ -583,6 +583,38 @@ pub enum RenderElement {
+@@ -583,6 +583,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -606,11 +615,15 @@ index e2ee6c7..00d9919 100644
 +        fullbright: bool,
 +        #[serde(default)]
 +        only_with_energy: bool,
++        /// Fades with the energy: as bright as the block's energy is full, over a dark inside (what the
++        /// original does with the alpha of the energy cube's core).
++        #[serde(default)]
++        energy_fade: bool,
 +    },
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +628,50 @@ pub enum RenderElement {
+@@ -596,6 +632,50 @@ pub enum RenderElement {
      },
  }
  
@@ -661,7 +674,7 @@ index e2ee6c7..00d9919 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +719,48 @@ impl BlockRenderer {
+@@ -643,6 +723,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -710,7 +723,7 @@ index e2ee6c7..00d9919 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1208,6 +1326,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1330,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
@@ -833,7 +846,7 @@ index 151d098..06560bb 100644
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..3d3c688 100644
+index 57a0edc..ffb7908 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -737,6 +737,7 @@ What a player is doing as of the last server tick.
@@ -844,3 +857,10 @@ index 57a0edc..3d3c688 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+@@ -1146,5 +1147,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+ | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
+ | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |
+-| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick. |
++| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick; `world.get-block` reads the blocks as they are now. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
