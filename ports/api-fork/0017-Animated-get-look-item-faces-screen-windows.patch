@@ -684,7 +684,7 @@ index 325afbf..bd16474 100644
              .remote
              .as_ref()
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..3955b08 100644
+index fcc3158..07fa27c 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -310,6 +310,7 @@ mod run {
@@ -798,15 +798,30 @@ index fcc3158..3955b08 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,6 +1466,7 @@ mod run {
+@@ -1402,9 +1466,12 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
 +                log::warn!("Horizon: a menu button reached a game that does not hear players");
                  return;
              }
-             let who = self.lan_acting.map_or(Who::Local, Who::Conn);
-@@ -1660,6 +1725,20 @@ mod run {
+-            let who = self.lan_acting.map_or(Who::Local, Who::Conn);
++            // The player by their id, as an item use finds them (`acting_server_player`): the connection's guest is not
++            // always in the list the tick looks it up in.
++            let who = Who::Uuid(self.native_acting_id());
+             self.mods.events.push(ModEvent::MenuButton { who, pos, id });
+         }
+ 
+@@ -1418,7 +1485,7 @@ mod run {
+             if !self.hears_players() {
+                 return;
+             }
+-            let who = self.lan_acting.map_or(Who::Local, Who::Conn);
++            let who = Who::Uuid(self.native_acting_id());
+             let state = self.state_string(state);
+             self.mods.events.push(ModEvent::Block {
+                 who,
+@@ -1660,6 +1727,20 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }

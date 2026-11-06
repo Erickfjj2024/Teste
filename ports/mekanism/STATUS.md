@@ -140,6 +140,12 @@ cliente manda e "(config button N reached the mod)" quando o mod recebe, para ve
 janela só tem Itens e Energia porque as máquinas atuais só têm isso no Mekanism; fluidos e químicos (gás) entram com as primeiras
 máquinas que têm tanques (a janela e o modelo de configuração devem ser genéricos para qualquer tipo de transmissão).
 
+**Causa achada dos botões da janela (APK v23 corrige, não testado):** com as mensagens de diagnóstico (APK v22) o clique chegou ao servidor,
+foi aceito e enfileirado para o mod, e parava em "o jogador do botão não é um que os mods conhecem": o evento era guardado com o número
+da conexão do convidado e, na hora do tick, o jogo traduzia esse número pela lista de convidados, que não devolvia o jogador. O uso de
+item (`acting_server_player`) já achava o jogador pelo id dele. Agora os eventos de botão de menu e de bloco guardam o id do jogador que
+age. (Os eventos de bloco quebrado/colocado tinham o mesmo defeito e nunca chegavam aos mods em partida de um jogador.)
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
