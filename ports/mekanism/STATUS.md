@@ -129,6 +129,17 @@ também o modo dele. O cliente manda um uso no bloco e logo depois um uso no ar 
 a troca de modo. Agora o mod ignora o uso no ar até 2 ticks depois de um clique que ele aceitou num bloco (no original o clique numa
 máquina não chega ao uso no ar). Clicar agachado num bloco que o Configurador não configura continua trocando o modo, como no original.
 
+**Resultado do teste da 2c (usuário, APK v19): a janela abre, mas nenhum botão dela funciona (as cores não mudam, a ejeção não liga),
+os itens do inventário aparecem por cima da janela e não há seletor entre Itens e Energia.** Defeitos achados (APK v20 e mod 0.1.19,
+**não testados**): (1) as abas de tipo ficam fora do retângulo da janela e o clique só procurava botões da janela dentro dela, por isso o
+seletor nunca respondia (corrigido, com teste); (2) os slots sob a janela continuavam desenhados e recebiam os cliques antes dos
+botões: agora a janela cobre os slots que ela tapa (não são desenhados nem clicáveis, como no Mekanism). **Causa dos botões que mandam
+ao servidor (lados, ejeção, limpar) não achada:** a lógica de clique com o JSON real da tela dá o id certo e o teste simulado do mod
+passa, então o defeito está no caminho do jogo; o APK v20 e o mod 0.1.19 escrevem no chat "(menu button N sent to window W)" quando o
+cliente manda e "(config button N reached the mod)" quando o mod recebe, para ver onde o clique para. **Falta de fidelidade assumida:** a
+janela só tem Itens e Energia porque as máquinas atuais só têm isso no Mekanism; fluidos e químicos (gás) entram com as primeiras
+máquinas que têm tanques (a janela e o modelo de configuração devem ser genéricos para qualquer tipo de transmissão).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

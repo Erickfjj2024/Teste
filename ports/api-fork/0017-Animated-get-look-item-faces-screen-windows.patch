@@ -12,7 +12,7 @@ index 47e9d18..c013d2a 100644
                  format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
              }
 diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
-index 0e48436..e81265e 100644
+index 0e48436..f0e234c 100644
 --- a/crates/horizon-client/src/game.rs
 +++ b/crates/horizon-client/src/game.rs
 @@ -5747,6 +5747,16 @@ impl Game<'_> {
@@ -32,6 +32,26 @@ index 0e48436..e81265e 100644
          // MultiPlayerGameMode.useItemOn: blocks react first.
          if !(sneaking && hands_full)
              && let Some(hit) = block_hit
+@@ -8407,6 +8417,8 @@ impl Game<'_> {
+         let mut v: Vec<usize> = (0..36).collect();
+         if let Some(shown) = self.native_screen_slots() {
+             v.extend(shown);
++            // A window open on the screen covers the slots under it.
++            v.retain(|i| !self.window_covers_slot(*i));
+             return v;
+         }
+         match self.container_kind() {
+@@ -8509,6 +8521,10 @@ impl Game<'_> {
+         };
+         inventory + container
+     }
++    /// A slot's place, for the window that may cover it.
++    pub(super) fn slot_position_for_window(&self, i: usize) -> (f32, f32) {
++        self.slot_position(i)
++    }
+     /// InventoryMenu / CraftingMenu slot layouts.
+     fn slot_position(&self, i: usize) -> (f32, f32) {
+         if self.creative_inventory_open()
 diff --git a/crates/horizon-client/src/game/block_entity_ticks.rs b/crates/horizon-client/src/game/block_entity_ticks.rs
 index 5b75319..2a936c7 100644
 --- a/crates/horizon-client/src/game/block_entity_ticks.rs
@@ -296,7 +316,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..b14c6ee 100644
+index 609127a..9b1d9c4 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -7,13 +7,33 @@ use super::{Game, native_hooks::NativeScreen};
@@ -368,7 +388,7 @@ index 609127a..b14c6ee 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +96,71 @@ impl Game<'_> {
+@@ -95,15 +96,89 @@ impl Game<'_> {
                      let text = fill_text(text, data);
                      self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
                  }
@@ -380,8 +400,8 @@ index 609127a..b14c6ee 100644
 +                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
 +                Widget::Button { .. } | Widget::Show { .. } => {}
-             }
-         }
++            }
++        }
 +    }
 +
 +    /// Draws block `block`'s declared screen at `origin`; false when it has none.
@@ -420,15 +440,33 @@ index 609127a..b14c6ee 100644
 +                    [0.0, 0.0, sw, sh],
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
-+            }
+             }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at);
-+        }
+         }
          true
      }
  
 -    /// The menu button a press at `at` hits on block `block`'s declared screen.
 -    pub(super) fn declared_screen_button(&self, block: &str, at: [f32; 2]) -> Option<i32> {
 -        button_at(screen_of(block)?, at)
++    /// The rectangle `[x, y, w, h]` (from the screen's top left) of the window open on the screen shown now, if any.
++    pub(super) fn open_window_rect(&self) -> Option<[f32; 4]> {
++        let block = self.native_screen_block()?;
++        let screen = screen_of(&block)?;
++        let w = open_window(screen, &locals())?;
++        Some([w.x as f32, w.y as f32, w.width as f32, w.height as f32])
++    }
++
++    /// Whether the open window covers container slot `slot` (16 by 16 at its position): a window is over everything, so
++    /// the slots under it are neither drawn nor pressed (as Mekanism's windows take the clicks that land on them).
++    pub(super) fn window_covers_slot(&self, slot: usize) -> bool {
++        let Some([wx, wy, ww, wh]) = self.open_window_rect() else {
++            return false;
++        };
++        let (sx, sy) = self.slot_position_for_window(slot);
++        sx + 16.0 > wx && sx < wx + ww && sy + 16.0 > wy && sy < wy + wh
++    }
++
 +    /// What a press at `at` does on block `block`'s declared screen: a menu button for the server, or something done
 +    /// here (a window opened); `alt` is a right press.
 +    pub(super) fn declared_screen_press(&self, block: &str, data: &[i32], at: [f32; 2], alt: bool) -> Option<i32> {
@@ -444,7 +482,7 @@ index 609127a..b14c6ee 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +171,7 @@ impl Game<'_> {
+@@ -114,8 +189,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -478,7 +516,7 @@ index 003737e..886916c 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..6f55b10 100644
+index 325afbf..bd16474 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -1941,8 +1941,8 @@ impl Game<'_> {
@@ -512,7 +550,18 @@ index 325afbf..6f55b10 100644
          let Some(t) = target else {
              return;
          };
-@@ -4384,6 +4382,11 @@ impl Game<'_> {
+@@ -4166,6 +4164,10 @@ impl Game<'_> {
+             });
+         }
+     }
++    /// The block whose mod screen is showing now.
++    pub(super) fn native_screen_block(&self) -> Option<String> {
++        self.shown_native_screen().map(|s| s.block.clone())
++    }
+     /// The mod screen showing now, if any.
+     fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
+         self.mod_screen
+@@ -4384,6 +4386,21 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -521,6 +570,16 @@ index 325afbf..6f55b10 100644
 +            self.audio.play_button_click();
 +            return true;
 +        }
++        let said = self
++            .remote
++            .as_ref()
++            .and_then(|r| r.menu.as_ref())
++            .map(|(w, _)| format!("(menu button {button} sent to window {w})"))
++            .unwrap_or_else(|| format!("(menu button {button} not sent: no menu window)"));
++        self.chat_line(
++            horizon_client::text::Text::literal(said),
++            horizon_client::chat::ChatSource::Client,
++        );
          let window = self
              .remote
              .as_ref()
@@ -1564,7 +1623,7 @@ index d3024e4..190ddf2 100644
          &mut self,
          player: String,
 diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
-index bb9b346..477114f 100644
+index bb9b346..2649046 100644
 --- a/crates/horizon-mods/src/screen.rs
 +++ b/crates/horizon-mods/src/screen.rs
 @@ -1,7 +1,8 @@
@@ -1577,7 +1636,7 @@ index bb9b346..477114f 100644
  
  /// What a widget reads from the menu's data slots `data`: a constant, a data
  /// slot (16 bits on the wire) or two read as low and high halves.
-@@ -11,9 +12,119 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
+@@ -11,9 +12,124 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
          Value::Const(c) => *c,
          Value::Data(i) => slot(*i),
          Value::Pair([lo, hi]) => (slot(*hi) << 16) | slot(*lo),
@@ -1685,11 +1744,16 @@ index bb9b346..477114f 100644
 +    at: [f32; 2],
 +    alt: bool,
 +) -> Option<Press> {
-+    if let Some(window) = open_window(screen, locals).cloned()
-+        && inside(at, window.x, window.y, window.width, window.height)
-+    {
++    if let Some(window) = open_window(screen, locals).cloned() {
++        // A window's own widgets are hit wherever they are, outside it too (its tabs sit at its side); a press that
++        // lands on the window and on none of them is the window's.
 +        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
-+        return press_in(&window.widgets, data, locals, rel, alt).or(Some(Press::Local));
++        if let Some(pressed) = press_in(&window.widgets, data, locals, rel, alt) {
++            return Some(pressed);
++        }
++        if inside(at, window.x, window.y, window.width, window.height) {
++            return Some(Press::Local);
++        }
 +    }
 +    press_in(&screen.widgets, data, locals, at, alt)
 +}
@@ -1697,7 +1761,7 @@ index bb9b346..477114f 100644
  /// `value` of `max` as 0 to 1; 0 when `max` is not over 0.
  pub fn fraction(value: i64, max: i64) -> f32 {
      if max <= 0 {
-@@ -34,21 +145,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
+@@ -34,21 +150,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
      }
  }
  
@@ -1719,7 +1783,7 @@ index bb9b346..477114f 100644
  /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
  pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
      let percent = (fraction(value, max) * 100.0).round() as i64;
-@@ -85,27 +181,42 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -85,27 +186,40 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
      out
  }
  
@@ -1757,9 +1821,7 @@ index bb9b346..477114f 100644
  
 +/// The tooltip of what is under `at`: the open window's widgets first, then the screen's.
 +pub fn hovered(screen: &MenuScreen, data: &[i32], locals: &Locals, at: [f32; 2]) -> Option<Vec<String>> {
-+    if let Some(window) = open_window(screen, locals)
-+        && inside(at, window.x, window.y, window.width, window.height)
-+    {
++    if let Some(window) = open_window(screen, locals) {
 +        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
 +        if let Some(lines) = hover_in(&window.widgets, data, locals, rel) {
 +            return Some(lines);
@@ -1771,7 +1833,7 @@ index bb9b346..477114f 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -141,18 +252,84 @@ mod tests {
+@@ -141,18 +255,100 @@ mod tests {
              ["Energy: 25 / 100", "25%"]
          );
      }
@@ -1830,6 +1892,22 @@ index bb9b346..477114f 100644
 +        press(&s, &[], &mut l, [5.0, 5.0], false);
 +        press(&s, &[], &mut l, [10.0 + 85.0, 30.0 + 8.0], false);
 +        assert_eq!(l.window, None);
++    }
++
++    #[test]
++    fn a_window_tab_outside_the_window_is_pressed_too() {
++        let s = screen(
++            r#"{"slots":[],"widgets":[{"type":"button","x":0,"y":0,"w":10,"h":10,"id":5}],
++              "windows":[{"id":"w","x":50,"y":10,"width":40,"height":40,"widgets":[
++                {"type":"button","x":-26,"y":2,"w":26,"h":26,"local":{"set":{"var":"type","value":1}},"tooltip":"Energy"}]}]}"#,
++        );
++        let mut l = Locals { window: Some("w".into()), ..Locals::default() };
++        // The tab is at the window's -26, 2: the screen's 24, 12, outside the window, yet it is pressed.
++        assert_eq!(press(&s, &[], &mut l, [30.0, 20.0], false), Some(Press::Local));
++        assert_eq!(l.var("type"), 1);
++        assert_eq!(hovered(&s, &[], &l, [30.0, 20.0]), Some(vec!["Energy".to_owned()]));
++        // The screen's own buttons still work outside the window.
++        assert_eq!(press(&s, &[], &mut l, [5.0, 5.0], false), Some(Press::Send(5)));
 +    }
 +
 +    #[test]
