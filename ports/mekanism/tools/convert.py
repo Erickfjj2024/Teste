@@ -237,13 +237,53 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.1', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.2', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
 tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)]
 put(f'{OUT}/data/{NS}/horizon/creative_tab/mekanism.json', {'title': 'Mekanism', 'icon': f'{NS}:steel_casing', 'items': tab_items})
 
+
+# recipes of the machines (data, as Mekanism has them)
+have = set(kept_items) | set(kept_blocks)
+def refs(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from refs(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from refs(x)
+nrec = 0
+MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching'}
+for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
+    rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
+    r = read_json(p)
+    if r.get('type') not in MACHINE_TYPES:
+        continue
+    outid = r.get('output', {}).get('id', '')
+    if outid.startswith(NS + ':') and outid.split(':')[1] not in have:
+        continue  # makes something the port doesn't have yet
+    put(f'{OUT}/data/{NS}/recipe/{rel}', r)
+    nrec += 1
+# crafting recipes of what was kept (vanilla types only)
+for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
+    r = read_json(p)
+    if not str(r.get('type', '')).startswith('minecraft:crafting_'):
+        continue
+    res = r.get('result', {})
+    rid = res.get('id', '') if isinstance(res, dict) else ''
+    if rid.startswith(NS + ':') and rid.split(':')[1] in have:
+        # every ingredient must be vanilla, a tag, or ours
+        ok = True
+        for s in refs(r.get('key', r.get('ingredients', []))):
+            if s.startswith(NS + ':') and s.split(':')[1] not in have:
+                ok = False
+        if ok:
+            put(f'{OUT}/data/{NS}/recipe/{os.path.basename(p)}', r)
+            nrec += 1
 
 # ---------------------------------------------------------------- tags
 def filtered_tag(v):
@@ -266,6 +306,54 @@ for kind in ('item', 'block'):
         if v['values']:
             put(f'{OUT}/data/c/tags/{kind}/{rel}', v)
             ntags += 1
+# NeoForge gives the vanilla items their convention tags (`c:ingots/iron`...), which Mekanism's recipes
+# use and Mekanism's own data does not define: make the ones the recipes ask for.
+VANILLA_METALS = ['iron', 'gold', 'copper', 'netherite']
+VANILLA_GEMS = {'diamond': 'minecraft:diamond', 'emerald': 'minecraft:emerald', 'lapis': 'minecraft:lapis_lazuli',
+                'quartz': 'minecraft:quartz', 'amethyst': 'minecraft:amethyst_shard'}
+def vanilla_members(cat, mat):
+    v = []
+    if cat == 'ingots' and mat in VANILLA_METALS:
+        v = [f'minecraft:{mat}_ingot']
+    elif cat == 'nuggets' and mat in VANILLA_METALS:
+        v = [f'minecraft:{mat}_nugget']
+    elif cat == 'raw_materials' and mat in VANILLA_METALS[:3]:
+        v = [f'minecraft:raw_{mat}']
+    elif cat == 'storage_blocks':
+        if mat in VANILLA_METALS or mat in ('coal', 'diamond', 'emerald', 'lapis', 'redstone', 'quartz', 'amethyst'):
+            v = [f'minecraft:{mat}_block' if mat != 'lapis' else 'minecraft:lapis_block']
+        elif mat.startswith('raw_'):
+            v = [f'minecraft:{mat}_block']
+    elif cat == 'ores':
+        if mat in VANILLA_METALS[:3] or mat in ('coal', 'diamond', 'emerald', 'lapis', 'redstone'):
+            v = [f'minecraft:{mat}_ore', f'minecraft:deepslate_{mat}_ore']
+    elif cat == 'gems' and mat in VANILLA_GEMS:
+        v = [VANILLA_GEMS[mat]]
+    elif cat == 'dusts':
+        v = {'redstone': ['minecraft:redstone'], 'glowstone': ['minecraft:glowstone_dust']}.get(mat, [])
+    elif cat == 'rods' and mat in ('wooden', 'blaze', 'bone'):
+        v = {'wooden': ['minecraft:stick'], 'blaze': ['minecraft:blaze_rod'], 'bone': ['minecraft:bone']}[mat]
+    elif cat == 'fuels' and mat == 'coal':
+        v = ['minecraft:coal', 'minecraft:charcoal']
+    return v
+
+def tag_refs(v):
+    for s in refs(v):
+        if s.startswith('#c:'):
+            yield s[3:]
+asked = set()
+for p in glob.glob(f'{OUT}/data/**/recipe/**/*.json', recursive=True):
+    asked.update(tag_refs(read_json(p)))
+for tag in sorted(asked):
+    path = f'{OUT}/data/c/tags/item/{tag}.json'
+    if os.path.exists(path) or '/' not in tag:
+        continue
+    cat, mat = tag.split('/', 1)
+    members = vanilla_members(cat, mat)
+    if members:
+        put(path, {'values': members})
+        ntags += 1
+
 # mining: pickaxe for ores, storage, casings and machines; ores need a stone or iron tool
 pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube']
 put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe.json', {'values': pick})
@@ -281,44 +369,6 @@ keep = {f'item.{NS}.{n}' for n in kept_items} | {f'block.{NS}.{n}' for n in kept
 out = {k: v for k, v in lang.items() if k in keep}
 # Item and block names the lang file keeps under other keys: block items use block.*
 put(f'{OUT}/assets/{NS}/lang/en_us.json', out)
-
-# recipes of the machines (data, as Mekanism has them)
-have = set(kept_items) | set(kept_blocks)
-def refs(v):
-    if isinstance(v, str):
-        yield v
-    elif isinstance(v, dict):
-        for x in v.values():
-            yield from refs(x)
-    elif isinstance(v, list):
-        for x in v:
-            yield from refs(x)
-nrec = 0
-for kind in ('crushing', 'enriching', 'smelting'):
-    for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/{kind}/**/*.json', recursive=True)):
-        rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
-        r = read_json(p)
-        outid = r.get('output', {}).get('id', '')
-        if outid.startswith(NS + ':') and outid.split(':')[1] not in have:
-            continue  # makes something the port doesn't have yet
-        put(f'{OUT}/data/{NS}/recipe/{rel}', r)
-        nrec += 1
-# crafting recipes of what was kept (vanilla types only)
-for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
-    r = read_json(p)
-    if not str(r.get('type', '')).startswith('minecraft:crafting_'):
-        continue
-    res = r.get('result', {})
-    rid = res.get('id', '') if isinstance(res, dict) else ''
-    if rid.startswith(NS + ':') and rid.split(':')[1] in have:
-        # every ingredient must be vanilla, a tag, or ours
-        ok = True
-        for s in refs(r.get('key', r.get('ingredients', []))):
-            if s.startswith(NS + ':') and s.split(':')[1] not in have:
-                ok = False
-        if ok:
-            put(f'{OUT}/data/{NS}/recipe/{os.path.basename(p)}', r)
-            nrec += 1
 
 print(f'items {len(kept_items)}, blocks {len(kept_blocks)}, textures {len(copied_textures)}, '
       f'models {len(copied_models)}, recipes {nrec}')
