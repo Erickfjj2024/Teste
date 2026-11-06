@@ -231,8 +231,10 @@ for tier in ('basic', 'creative'):
         if not v.startswith(f'{NS}:block/energy_core_'):
             copy_texture(v)
     elements = list(base['frame'])
-    elements.append({'name': 'core', 'from': [5, 5, 5], 'to': [11, 11, 11],
-                     'faces': {d: {'texture': '#core'} for d in ('down', 'up', 'north', 'south', 'west', 'east')}})
+    # The core is not in the model: Mekanism draws it in code, turning, and so does the port (a renderer).
+    put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': [
+        {'type': 'spin', 'from': [4, 4, 4], 'to': [12, 12, 12], 'sprite': textures['core'],
+         'axis': 'y', 'degrees_per_tick': 3.0}]})
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     n = f'{tier}_energy_cube'
@@ -256,7 +258,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.4', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.5', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

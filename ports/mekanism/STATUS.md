@@ -24,7 +24,7 @@ e **ainda não foi testada**). APK: v8.
 
 1. **Energy Cube com textura errada.** O modelo atual monta a moldura de 28 peças do Mekanism com o núcleo,
    mas as texturas não batem com o original (o original usa um carregador de modelos próprio, com portas e LEDs).
-2. **(mod 0.1.4, sem teste no jogo)** O cubo agora usa o formato do baú do Ender (não tapa as faces dos vizinhos), a luz foi zerada e o núcleo ganhou a cor do nível, como no original. Falta o usuário confirmar. Antes: **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
+2. **(mod 0.1.4/0.1.5, sem teste no jogo; o núcleo agora gira, ver seção 8)** O cubo agora usa o formato do baú do Ender (não tapa as faces dos vizinhos), a luz foi zerada e o núcleo ganhou a cor do nível, como no original. Falta o usuário confirmar. Antes: **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
    debaixo). Causa provável: o bloco usa o formato do forno (cubo inteiro, que tapa as faces dos vizinhos), mas o
    modelo é oco; o jogo então não desenha as faces dos blocos encostados. Correção planejada: trocar o formato do
    bloco por um que não tape os vizinhos (por exemplo o do baú) ou dar um modelo sólido ao cubo. **Não corrigido.**
@@ -109,3 +109,26 @@ lados, tanques de fluido, indução, turbina, reator, Robit, teleportador e mais
 
 Depois de cada teste do usuário: mover o que ele viu funcionar para a seção 1, os defeitos que ele viu para a 2, e
 deixar na 3 só o que ainda ninguém viu. Teste simulado nunca vira "testado no jogo".
+
+## 8. Fidelidade visual: o "motor de texturas" do Mekanism
+
+O usuário apontou (e tem razão) que o visual do Mekanism depende de um motor próprio de renderização. O que o
+original usa, e o que o porte tem hoje:
+
+| Recurso do Mekanism | No porte |
+|---|---|
+| Texturas animadas (`.mcmeta`) | **funciona** (as máquinas ativas animam, confirmado no jogo) |
+| Estados do bloco trocando o modelo (`facing`, `active`) | **funciona** (confirmado) |
+| Modelos JSON comuns (máquinas, minérios, blocos) | feito, copiados do original |
+| Carregadores de modelo próprios (cubo de energia, cabos, tanques, fábricas, modelos `.obj.mek`) | **aproximados à mão**: moldura do cubo sim, portas e LEDs por face não; cabos com núcleo e braços simples, sem os modelos grandes/pequenos do original |
+| Partes desenhadas por código (TESR): núcleo do cubo, nível de fluido nos tanques, rotores, o Digital Miner | **mecanismo existe** (bloco 11: `cube`, `fluid` que sobe, `spin`), **nunca testado no jogo**; o núcleo girando do cubo é o primeiro uso (mod 0.1.5) |
+| Cor por estado (`tintindex`: cor do nível, pigmentos, blocos coloridos) | **não há**: a cor do núcleo do cubo está gravada na textura, uma por nível |
+| Brilho (`light_emission` por elemento, partes que brilham no escuro) | **não há** |
+| Partículas, lasers, feixes, shaders | **não há** |
+| Renderizadores de item (armadura, jetpack, ferramentas modelo 3D) | **não há** |
+| Renderizadores de entidade (Robit) | **não há** (só displays de item) |
+| Telas com o aspecto do original (fundo, botões, abas) | simples por enquanto; o mecanismo de telas declarativas aceita textura de fundo |
+
+Ordem proposta para a fidelidade: (1) confirmar no jogo o renderizador `spin` do núcleo; (2) portas e LEDs do cubo;
+(3) cor e brilho por estado; (4) tanques de fluido; (5) cabos com os modelos do original; (6) telas com o fundo do
+original; (7) rotores, partículas e o resto conforme as máquinas chegarem.
