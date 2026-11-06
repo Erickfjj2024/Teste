@@ -1,0 +1,105 @@
+# Mekanism no Horizon: o que foi testado, o que não foi, e o que está errado
+
+Atualizado depois do teste do usuário com o APK v8 e o `mekanism.hmod` 0.1.2. A regra deste
+arquivo: **só conta como "testado no jogo" o que o usuário viu funcionando no celular.** O que passou só
+em teste simulado (os scripts `horizon-mod test` e os testes unitários) está marcado à parte.
+
+Versão do mod citada: 0.1.2 (a 0.1.3 acrescenta pó para lingote no Smelter e as etiquetas do próprio Mekanism,
+e **ainda não foi testada**). APK: v8.
+
+## 1. Testado no jogo (o usuário viu)
+
+| O quê | Resultado |
+|---|---|
+| Elevador em um arquivo só (blocos + código), APK v4 | funciona, nada quebrou |
+| Abrir a tela de uma máquina (Crusher) com o APK v7 | abre. A tela é mais simples que a original (painel liso com barras, sem a textura de fundo) |
+| Crusher | só processa **lingote de ferro** (vira pó). Pó, minério e ferro bruto não fazem nada, **o que é o certo no Mekanism** |
+| Enrichment Chamber | processa **ferro bruto** e **minério de ferro**, como no original |
+| Energized Smelter | processa **ferro bruto** e **minério de ferro** (receitas de fornalha do jogo) |
+| Cabo de energia (Basic Universal Cable) | passa energia para as máquinas (APK v8) |
+| Texto "Status N" na tela das máquinas | apareceu e mudou (viu o valor 2 = sem receita para o item) |
+
+## 2. Defeitos vistos pelo usuário (abertos)
+
+1. **Energy Cube com textura errada.** O modelo atual monta a moldura de 28 peças do Mekanism com o núcleo,
+   mas as texturas não batem com o original (o original usa um carregador de modelos próprio, com portas e LEDs).
+2. **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
+   debaixo). Causa provável: o bloco usa o formato do forno (cubo inteiro, que tapa as faces dos vizinhos), mas o
+   modelo é oco; o jogo então não desenha as faces dos blocos encostados. Correção planejada: trocar o formato do
+   bloco por um que não tape os vizinhos (por exemplo o do baú) ou dar um modelo sólido ao cubo. **Não corrigido.**
+3. A tela das máquinas é "mais simples que a original": só um painel liso, as barras de energia e de progresso, o
+   texto de status e a versão. Falta o fundo e o aspecto do Mekanism. **Não é defeito de função, é visual.**
+
+## 3. NÃO testado no jogo (o usuário não viu)
+
+Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
+
+- **Minérios no mundo** (ósmio, estanho, chumbo, urânio, fluorita): a geração em chunks novos só passou em testes
+  unitários (posição, altura, tamanho dos veios). Não se sabe se aparecem, onde, nem se a pedra vira minério.
+- Blocos de armazenamento, Steel Casing, blocos brutos: aparência, textura, nome e se dá para minerar.
+- Os 158 itens: texturas, nomes em inglês e a aba "Mekanism" do criativo (não foi relatado).
+- Receitas de fabricação (os blocos e itens que se fazem na mesa): nada testado.
+- Tabelas de saque: se os minérios soltam o minério bruto, se as máquinas soltam a si mesmas com a energia e os itens
+  dentro (`keep-data`).
+- Funil alimentando e esvaziando as máquinas, e o lado de cada face.
+- O bloco acender (propriedade `lit`) quando a máquina trabalha, e a textura "ativa".
+- Cubo básico de energia guardando e entregando energia (o Creative foi usado como fonte, mas o usuário relatou
+  só o cabo e as três máquinas); o limite de 1024 por tick do cabo.
+- As barras de energia e de progresso e as dicas ao passar o dedo: o usuário viu o texto de status, mas não relatou
+  as barras.
+- Pó de ferro no Smelter e o Crusher com "clump" (mod 0.1.3, não testado).
+- Salvar e reabrir o mundo com máquinas, cabos e itens dentro.
+- Jogar em LAN ou servidor dedicado, vários jogadores.
+
+## 4. Os 14 blocos da API: o que o jogo real já exercitou
+
+Só o que o Mekanism usou até agora, e só o que o usuário viu funcionar (cabos e as três máquinas):
+
+| Bloco da API | Exercitado no jogo? |
+|---|---|
+| 1 Entidades de bloco | sim (as máquinas) |
+| 2 Inventários (slots) | sim (entrada e saída das máquinas) |
+| 3 Energia | sim (máquinas e cabo) |
+| 4 Fluidos e químicos | **não** |
+| 5 Componentes / `keep-data` | **não** |
+| 6 Tipos de receita | sim (esmagar e enriquecer; fornalha para o Smelter) |
+| 7 Menus e telas | sim, a tela abre e o status aparece (visual simples) |
+| 8 Mensagens de rede | **não** |
+| 9 Cabos e tubos | sim (o cabo de energia; tubos de fluido não) |
+| 10 Multiblocos | **não** |
+| 11 Renderizadores declarativos | **não** |
+| 12 Entidades | **não** |
+| 13 Itens com lógica | **não** |
+| 14 Chunks e geração de mundo | **não** (a geração de minérios não foi vista) |
+| `world.set-block-property` (o `lit`) | não relatado |
+
+Nenhum dos blocos "não" tem teste no jogo: só testes simulados e a compilação.
+
+## 5. Aproximações e suposições feitas (a corrigir ou conferir)
+
+- **Capacidade de energia das máquinas:** suposição (uso por tick × 2500). O Mekanism da 26.3 ainda está com esses
+  valores por escrever (há um `TODO` no código dele). Valores reais usados: consumo por tick (Crusher 8, Enrichment
+  5, Smelter 5), cubo básico (4 000 000, 4 000 por tick). Cabo básico: 1024 por tick, suposição.
+- **Dureza e resistência dos blocos:** valores aproximados (minérios 3, deepslate 4,5, armazenamento 5, casing 3,5).
+  Os do Mekanism não foram levantados.
+- **Modelos do cubo de energia e do cabo:** feitos à mão com as texturas do Mekanism, porque o original usa um
+  carregador de modelos que o Horizon não tem.
+- **Itens "normais":** todos os 158 itens são itens comuns (um graveto com outro nome e textura). Os que têm
+  comportamento no Mekanism (ferramentas, jetpack, tablet, configurador) não estão no mod.
+- **Minérios:** quantidades por chunk, tamanho e alturas vêm do Mekanism (`OreType`), mas o minério entra **depois**
+  que o chunk é gerado (pode ficar cortado na borda de chunks vizinhos).
+- **Receitas:** vêm do Mekanism. Só as de esmagar, enriquecer, fornalha e as de fabricação de vanilla; as dos
+  outros tipos (infusão, purificação, serrar, combinar, químicas) ficam para as máquinas que as usam.
+
+## 6. O que falta do Mekanism
+
+Quase tudo ainda: o resto das máquinas (Precision Sawmill, Combiner, Metallurgic Infuser, Purification Chamber,
+Osmium Compressor, as fábricas de 3 a 9 linhas...), a parte química (tanques, infusor, oxidante, lavador,
+cristalizador), geradores (solar, bio, calor, vento, gás), ferramentas e armaduras, upgrades, configuração de
+lados, tanques de fluido, indução, turbina, reator, Robit, teleportador e mais. O módulo `generators`, `additions` e
+`tools` do repositório ainda não foi tocado.
+
+## 7. Como atualizar este arquivo
+
+Depois de cada teste do usuário: mover o que ele viu funcionar para a seção 1, os defeitos que ele viu para a 2, e
+deixar na 3 só o que ainda ninguém viu. Teste simulado nunca vira "testado no jogo".
