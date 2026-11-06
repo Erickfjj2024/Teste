@@ -809,7 +809,7 @@ def process_menu(m):
         {'type': 'text', 'x': (176 - title_w) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 92, 'y': 66, 'text': 'Status {5}', 'color': '#808080'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'},
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -903,7 +903,7 @@ def tank_menu(m):
                     'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'}]
+                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -932,7 +932,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.30', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.31', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -951,12 +951,12 @@ def tank_renderers():
     tints = {ty_id: ty['tint'] for ty_id, ty in zip(CHEMICALS, GAUGE_TYPES)}
     for m in FLUID_TANKS:
         put(f'{OUT}/data/{NS}/horizon/renderer/{m}.json', {'elements': [
-            {'type': 'fluid', 'tank': 0, 'from': [2, 2, 2], 'to': [14, 14, 14],
+            {'type': 'fluid', 'tank': 0, 'from': [2.25, 2.25, 2.25], 'to': [13.75, 13.75, 13.75],
              'sprites': {'minecraft:lava': 'minecraft:block/lava_still'}, 'default_sprite': f'{NS}:block/chem_liquid',
              'tints': {k: v for k, v in tints.items() if k != 'minecraft:lava'}}]})
     for m in CHEM_TANKS:
         put(f'{OUT}/data/{NS}/horizon/renderer/{m}.json', {'elements': [
-            {'type': 'fluid', 'tank': 0, 'from': [3, 1, 3], 'to': [13, 13, 13], 'default_sprite': f'{NS}:block/chem_liquid',
+            {'type': 'fluid', 'tank': 0, 'from': [3.2, 1.2, 3.2], 'to': [12.8, 12.8, 12.8], 'default_sprite': f'{NS}:block/chem_liquid',
              'tints': tints}]})
 tank_renderers()
 
