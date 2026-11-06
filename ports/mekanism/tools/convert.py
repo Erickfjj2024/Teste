@@ -237,7 +237,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.2', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.3', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
@@ -268,6 +268,15 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
         continue  # makes something the port doesn't have yet
     put(f'{OUT}/data/{NS}/recipe/{rel}', r)
     nrec += 1
+# furnace and blast furnace recipes of what was kept (dust to ingot): vanilla types, Mekanism's inputs
+for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
+    rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
+    r = read_json(p)
+    if r.get('type') not in ('minecraft:smelting', 'minecraft:blasting'):
+        continue
+    if all(not s.startswith(NS + ':') or s.split(':')[1] in have for s in refs(r.get('ingredient', ''))):
+        put(f'{OUT}/data/{NS}/recipe/{rel}', r)
+        nrec += 1
 # crafting recipes of what was kept (vanilla types only)
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
     r = read_json(p)
@@ -305,6 +314,14 @@ for kind in ('item', 'block'):
         v = filtered_tag(read_json(p))
         if v['values']:
             put(f'{OUT}/data/c/tags/{kind}/{rel}', v)
+            ntags += 1
+# Mekanism's own tags of what was kept (`#mekanism:clumps/iron`, `#mekanism:dirty_dusts/iron`...)
+for kind in ('item', 'block'):
+    for p in sorted(glob.glob(f'{GEN}/data/{NS}/tags/{kind}/**/*.json', recursive=True)):
+        rel = os.path.relpath(p, f'{GEN}/data/{NS}/tags/{kind}')
+        v = filtered_tag(read_json(p))
+        if v['values']:
+            put(f'{OUT}/data/{NS}/tags/{kind}/{rel}', v)
             ntags += 1
 # NeoForge gives the vanilla items their convention tags (`c:ingots/iron`...), which Mekanism's recipes
 # use and Mekanism's own data does not define: make the ones the recipes ask for.
