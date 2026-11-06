@@ -11,7 +11,7 @@ pub const EDIT_MODE: i32 = 5100;
 pub const ROTARY_MODE: i32 = 5200;
 
 /// The fluids an ingredient names (`"#minecraft:water"`, `"#c:brine"`), as the ids the tanks hold.
-fn fluids_of(ingredient: &serde_json::Value) -> Vec<String> {
+pub(crate) fn fluids_of(ingredient: &serde_json::Value) -> Vec<String> {
     match ingredient {
         serde_json::Value::String(s) => {
             let s = s.trim_start_matches('#');
@@ -29,11 +29,11 @@ fn fluids_of(ingredient: &serde_json::Value) -> Vec<String> {
 }
 
 /// The recipes of a machine of `continuous`.
-pub fn load_cont_book(shape: continuous::Shape) -> continuous::Book {
+pub fn load_cont_book(source: &str, shape: continuous::Shape) -> continuous::Book {
     use continuous::{Recipe, Shape};
     let mut book = continuous::Book::default();
     let kind = match shape {
-        Shape::Infuser => "mekanism:chemical_infusing",
+        Shape::Infuser => source,
         Shape::Washer => "mekanism:washing",
         Shape::Separator => "mekanism:separating",
         Shape::Rotary => "mekanism:rotary",
@@ -131,7 +131,7 @@ impl Mekanism {
                 self.conts.insert(def.block, gas);
                 self.conts.insert(ROTARY_FLUID_BOOK, fluid);
             } else {
-                self.conts.insert(def.block, load_cont_book(spec.shape));
+                self.conts.insert(def.block, load_cont_book(if let Source::Files(k) = def.source { k } else { "mekanism:chemical_infusing" }, spec.shape));
             }
         }
     }
@@ -483,7 +483,7 @@ impl Mekanism {
         saved.truncate(skip);
         saved.resize(skip, 0);
         saved.extend(&encoded);
-        if def.kind == Kind::Continuous && e.data.len() > skip + encoded.len() {
+        if matches!(def.kind, Kind::Continuous | Kind::Reaction) && e.data.len() > skip + encoded.len() {
             saved.extend(&e.data[skip + encoded.len()..]);
         }
         Some(BlockEntityUpdate {

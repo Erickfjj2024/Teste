@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket", "mekanism:upgrade_speed", "mekanism:upgrade_chemical"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket", "mekanism:upgrade_speed", "mekanism:upgrade_chemical", "mekanism:dust_sulfur", "minecraft:red_dye", "minecraft:white_wool", "minecraft:red_wool"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -50,6 +50,22 @@ json = '''{"type":"mekanism:chemical_infusing","left_input":{"amount":1,"ingredi
 [[recipe]]
 id = "mekanism:rotary/water_vapor"
 json = '''{"type":"mekanism:rotary","chemical_input":{"amount":1,"ingredient":"mekanism:water_vapor"},"chemical_output":{"amount":1,"id":"mekanism:water_vapor"},"fluid_input":{"amount":1,"ingredient":"#minecraft:water"},"fluid_output":{"amount":1,"id":"minecraft:water"}}'''
+
+[[recipe]]
+id = "mekanism:reaction/coals"
+json = '''{"type":"mekanism:reaction","chemical_input":{"amount":100,"ingredient":"mekanism:oxygen"},"duration":100,"fluid_input":{"amount":100,"ingredient":"#minecraft:water"},"item_input":{"count":1,"ingredient":"minecraft:coal"},"output":{"chemical":{"amount":100,"id":"mekanism:hydrogen"},"item":{"id":"mekanism:dust_sulfur"}}}'''
+
+[[recipe]]
+id = "mekanism:pigment_extracting/red"
+json = '''{"type":"mekanism:pigment_extracting","input":{"count":1,"ingredient":"minecraft:red_dye"},"output":{"amount":192,"id":"mekanism:red"}}'''
+
+[[recipe]]
+id = "mekanism:painting/red_wool"
+json = '''{"type":"mekanism:painting","chemical_input":{"amount":256,"ingredient":"mekanism:red"},"item_input":{"count":1,"ingredient":"minecraft:white_wool"},"output":{"id":"minecraft:red_wool"},"per_tick_usage":false}'''
+
+[[recipe]]
+id = "mekanism:pigment_mixing/dark_red"
+json = '''{"type":"mekanism:pigment_mixing","left_input":{"amount":1,"ingredient":"mekanism:gray"},"right_input":{"amount":2,"ingredient":"mekanism:red"},"output":{"amount":3,"id":"mekanism:dark_red"}}'''
 
 [[recipe]]
 id = "mekanism:washing/gold"
@@ -460,3 +476,54 @@ ticks = 2
 [[step]]
 ticks = 2
 expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", "mekanism:upgrade_speed*1"] }]
+
+[[step]]
+# The pressurized reaction chamber: a coal, a hundred of water and a hundred of oxygen make sulfur and a hundred of hydrogen in 100 ticks.
+blocks = [
+    { x = 360, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 360, y = 64, z = 0, state = "mekanism:pressurized_reaction_chamber[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 360, y = 64, z = 0, slots = ["minecraft:coal*1", "", "", "", ""] }]
+set-tanks = [{ x = 360, y = 64, z = 0, tanks = ["minecraft:water*100", "mekanism:oxygen*100", ""] }]
+ticks = 110
+expect.block-items = [{ x = 360, y = 64, z = 0, slots = ["", "mekanism:dust_sulfur*1", "", "", ""] }]
+expect.block-tanks = [{ x = 360, y = 64, z = 0, tanks = ["", "", "mekanism:hydrogen*100"] }]
+
+[[step]]
+# The pigment machines: the extractor makes red of a dye (100 ticks), the painting machine paints a wool with it (200 ticks),
+# and the mixer makes dark red of a gray and two reds a tick.
+blocks = [
+    { x = 370, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 370, y = 64, z = 0, state = "mekanism:pigment_extractor[facing=north,lit=false]" },
+    { x = 380, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 380, y = 64, z = 0, state = "mekanism:painting_machine[facing=north,lit=false]" },
+    { x = 390, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 390, y = 64, z = 0, state = "mekanism:pigment_mixer[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [
+    { x = 370, y = 64, z = 0, slots = ["minecraft:red_dye*1", "", "", ""] },
+    { x = 380, y = 64, z = 0, slots = ["minecraft:white_wool*1", "", "", "", ""] },
+]
+set-tanks = [
+    { x = 380, y = 64, z = 0, tanks = ["mekanism:red*256"] },
+    { x = 390, y = 64, z = 0, tanks = ["mekanism:gray*10", "mekanism:red*20", ""] },
+]
+ticks = 3
+expect.block-tanks = [{ x = 390, y = 64, z = 0, tanks = ["mekanism:gray*7", "mekanism:red*14", "mekanism:dark_red*9"] }]
+
+[[step]]
+ticks = 210
+expect.block-tanks = [
+    { x = 370, y = 64, z = 0, tanks = ["mekanism:red*192"] },
+    { x = 380, y = 64, z = 0, tanks = [""] },
+]
+expect.block-items = [
+    { x = 370, y = 64, z = 0, slots = ["", "", "", ""] },
+    { x = 380, y = 64, z = 0, slots = ["", "minecraft:red_wool*1", "", "", ""] },
+]

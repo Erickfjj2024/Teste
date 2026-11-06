@@ -38,8 +38,8 @@ Java; **[conhecido]** = já estava no `STATUS.md`.
 | combining | 82 | 106 (o 26.3 tem receitas novas, as de cera do cobre) |
 | injecting | 91 | 109 |
 | compressing / crystallizing / dissolution / oxidizing / purifying / rotary / washing / separating / chemical infusing / conversion | 2 / 10 / 23 / 25 / 28 / 17 / 7 / 2 / 4 / 24 | iguais |
-| **reaction** (Pressurized Reaction Chamber) | 14 | 0 |
-| painting / pigment extracting / pigment mixing | 176 / 226 / 16 | 0 |
+| **reaction** (Pressurized Reaction Chamber) | 14 | 14 (feito, mod 0.1.39) |
+| painting / pigment extracting / pigment mixing | 176 / 226 / 16 | 288 / 275 / 16 (feito, mod 0.1.39; o 26.3 tem receitas novas) |
 | nucleosynthesizing / centrifuging / activating / evaporating / energy conversion | 21 / 2 / 1 / 2 / 2 | 0 |
 | mek_data / bin / clear_configuration (receitas especiais) | 85 / 2 / 1 | 0 |
 

@@ -55,6 +55,7 @@ pub fn base_slots(def: &Def) -> usize {
         (Kind::Process, _) => 3,
         (Kind::Continuous, Layout::Rotary) => 5,
         (Kind::Continuous, _) => 3,
+        (Kind::Reaction, _) => 3,
         (Kind::Generator, _) => match def.generator {
             Some(GenKind::Solar) => 1,
             _ => 2,

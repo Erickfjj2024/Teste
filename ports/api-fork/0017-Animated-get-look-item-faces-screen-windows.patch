@@ -2814,10 +2814,52 @@ index bf2fb39..eed4f5d 100644
          let all = vec![cable(1, Medium::Tank("fluid".into()), 30)];
          let mut nodes = vec![
 diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
-index 02de080..12e459b 100644
+index 02de080..c5f4b38 100644
 --- a/crates/horizon-mods/src/recipe_types.rs
 +++ b/crates/horizon-mods/src/recipe_types.rs
-@@ -77,6 +77,10 @@ impl RecipeData {
+@@ -68,6 +68,41 @@ impl RecipeData {
+             },
+             Value::Array(a) => a.iter().for_each(|v| self.collect(v, out)),
+             Value::Object(o) => {
++                // NeoForge's `neoforge:intersection` (what every child matches) and `neoforge:difference` (the base
++                // without what `subtracted` matches).
++                match o.get("neoforge:ingredient_type").or_else(|| o.get("type")).and_then(Value::as_str) {
++                    Some("neoforge:intersection") => {
++                        let mut sets = o
++                            .get("children")
++                            .and_then(Value::as_array)
++                            .map(|c| {
++                                c.iter()
++                                    .map(|child| {
++                                        let mut found = Vec::new();
++                                        self.collect(child, &mut found);
++                                        found
++                                    })
++                                    .collect::<Vec<_>>()
++                            })
++                            .unwrap_or_default();
++                        if let Some(first) = (!sets.is_empty()).then(|| sets.remove(0)) {
++                            out.extend(first.into_iter().filter(|i| sets.iter().all(|s| s.contains(i))));
++                        }
++                        return;
++                    }
++                    Some("neoforge:difference") => {
++                        let (mut base, mut subtracted) = (Vec::new(), Vec::new());
++                        if let Some(b) = o.get("base") {
++                            self.collect(b, &mut base);
++                        }
++                        if let Some(s) = o.get("subtracted") {
++                            self.collect(s, &mut subtracted);
++                        }
++                        out.extend(base.into_iter().filter(|i| !subtracted.contains(i)));
++                        return;
++                    }
++                    _ => {}
++                }
+                 if let Some(item) = o.get("item").and_then(Value::as_str) {
+                     out.push(qualified(item));
+                 }
+@@ -77,6 +112,10 @@ impl RecipeData {
                  if let Some(items) = o.get("items") {
                      self.collect(items, out);
                  }
@@ -2828,7 +2870,7 @@ index 02de080..12e459b 100644
              }
              _ => {}
          }
-@@ -123,6 +127,14 @@ mod tests {
+@@ -123,6 +162,26 @@ mod tests {
          );
      }
      #[test]
@@ -2837,6 +2879,18 @@ index 02de080..12e459b 100644
 +        assert_eq!(
 +            d.ingredient_items(r##"{"type":"neoforge:or","values":["#c:dusts/redstone","minecraft:stone"]}"##),
 +            ["minecraft:redstone", "mymod:redstone_dust", "minecraft:stone"]
++        );
++    }
++    #[test]
++    fn intersections_and_differences_of_ingredients() {
++        let d = data();
++        assert_eq!(
++            d.ingredient_items(r##"{"neoforge:ingredient_type":"neoforge:intersection","children":["#c:dusts/redstone",["minecraft:redstone","minecraft:stone"]]}"##),
++            ["minecraft:redstone"]
++        );
++        assert_eq!(
++            d.ingredient_items(r##"{"neoforge:ingredient_type":"neoforge:difference","base":"#c:dusts/redstone","subtracted":"minecraft:redstone"}"##),
++            ["mymod:redstone_dust"]
 +        );
 +    }
 +    #[test]

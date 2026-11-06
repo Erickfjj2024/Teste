@@ -346,6 +346,26 @@ do celular**. Lido do código 26.3 (`TileComponentUpgrade`, `UpgradeUtils`, `Gui
   com upgrades; o ritmo de despejo do Electrolytic Separator não acompanha a velocidade; os três upgrades que nenhuma máquina portada
   aceita (âncora, filtro, gerador de pedra) existem mas não têm uso.
 
+## 2k. Pressurized Reaction Chamber e as máquinas de pigmento (mod 0.1.39, APK v40, **não testados no jogo**)
+
+Passou no teste simulado (60 passos: carvão + água + oxigênio viram enxofre e hidrogênio em 100 ticks; o extrator faz pigmento de um corante,
+a pintora pinta uma lã com ele, o misturador faz vermelho-escuro de cinza e vermelho) e em 75 testes unitários; **ninguém viu na tela**.
+Lido do código 26.3 (`TileEntityPressurizedReactionChamber`, `GuiPRC`, `TileEntityPigmentExtractor`, `TileEntityPaintingMachine`,
+`TileEntityPigmentMixer` e as telas):
+- **Pressurized Reaction Chamber:** item + fluido + gás viram item + gás; cada receita traz a duração e a energia extra por tick
+  (`PRCEnergyContainer`: base 2 mais a da receita); três tanques de 10 baldes (fluido, gás que entra, gás que sai); as 14 receitas
+  `mekanism:reaction` (gaseificação do carvão e da madeira, substrato); configuração de lados (Itens, Químicos, Fluidos, Energia) como
+  `AttachedSideConfig.REACTION`; upgrades de velocidade e energia valem; a tela é 5 pixels mais alta que as outras, como a original.
+- **Pigment Extractor:** item (corante, lã, tapete, cama...) vira pigmento, 5 de energia, 100 ticks, tanque de 20 baldes; as 275 receitas.
+- **Painting Machine:** item + pigmento viram o item pintado, 5 de energia, 200 ticks, tanque de 15 baldes; as 288 receitas (lã, tapete, cama, vidro,
+  concreto, terracota, vela, estandarte...).
+- **Pigment Mixer:** dois pigmentos viram um terceiro a cada tick, tanques de 1, 1 e 2 baldes; as 16 receitas.
+- **Fork:** os ingredientes `neoforge:intersection` e `neoforge:difference` (as receitas de pintura e extração os usam) e as tags
+  `c:dyed/<cor>` (geradas aqui com os itens de cada cor, no lugar das do NeoForge).
+- **Diferenças / falta:** as setas de progresso do extrator, da pintora e do misturador mudam de cor com o pigmento no original (degradê) e aqui
+  são sempre as mesmas; a energia do topo do misturador fica ligada (no original o topo é desativado: `addDisabledSides`); os slots de pigmento
+  (lata) e a aba de energia (-26,137) só dão a dica básica; cada máquina nova usa o modelo e as texturas do original.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

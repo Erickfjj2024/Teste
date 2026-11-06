@@ -95,8 +95,10 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
            'block_refined_obsidian', 'block_raw_osmium', 'block_raw_tin', 'block_raw_lead',
            'block_raw_uranium', 'block_bio_fuel']
 PROCESS_MACHINES = ['metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
-                    'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer']
-CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator', 'rotary_condensentrator']
+                    'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer', 'pigment_extractor',
+                    'painting_machine']
+CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator', 'rotary_condensentrator',
+                       'pressurized_reaction_chamber', 'pigment_mixer']
 # MekanismGenerators' namespace and the generators the port has (their assets come from tools/generators-assets)
 # (a mod declares its blocks in its own namespace only, so they are `mekanism:bio_generator`... and their assets live in mekanism's)
 GNS = 'mekanism'
@@ -120,6 +122,7 @@ for m in MACHINES:
 # shape that does not occlude, and the facing and lit states the furnace had it declares itself (the mod turns it to face
 # the player that places it, as the furnace does).
 OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer',
+                 'pigment_extractor', 'painting_machine',
                  *CONTINUOUS_MACHINES, *FLUID_TANKS, *CHEM_TANKS}
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
@@ -358,7 +361,7 @@ for tier in ('basic', 'creative'):
 # what joins a cable, a tube and a pipe: the transmitters of their kind, and the blocks that hold what they carry
 ELECTRIC = [m for m in MACHINES if m not in FLUID_TANKS and m not in CHEM_TANKS]
 CHEMICAL_BLOCKS = [m for m in PROCESS_MACHINES + CONTINUOUS_MACHINES + CHEM_TANKS if m != 'chemical_crystallizer' or True]
-FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', *FLUID_TANKS]
+FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', 'pressurized_reaction_chamber', *FLUID_TANKS]
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_universal_cable')],
     f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in ELECTRIC], *[f'{GNS}:{g}' for g in GENERATORS]]})
@@ -448,9 +451,11 @@ def copy_gui(rel, name):
 MACHINE_USAGE = {'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
                  'metallurgic_infuser': 5, 'purification_chamber': 10, 'chemical_injection_chamber': 15, 'osmium_compressor': 15,
                  'chemical_oxidizer': 15, 'chemical_dissolution_chamber': 16, 'chemical_crystallizer': 15,
-                 'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2}
+                 'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2,
+                 'pressurized_reaction_chamber': 2, 'pigment_extractor': 5, 'painting_machine': 5, 'pigment_mixer': 5}
 MACHINE_NAMES = {'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
-                 'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator',
+                 'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator', 'pressurized_reaction_chamber': 'Pressurized Reaction Chamber', 'pigment_extractor': 'Pigment Extractor',
+                 'painting_machine': 'Painting Machine', 'pigment_mixer': 'Pigment Mixer',
                  **{f'{t}_fluid_tank': f'{t.title()} Fluid Tank' for t in TIERS + ['creative']},
                  **{f'{t}_chemical_tank': f'{t.title()} Chemical Tank' for t in TIERS + ['creative']},
                  'metallurgic_infuser': 'Metallurgic Infuser', 'purification_chamber': 'Purification Chamber',
@@ -538,11 +543,12 @@ TRANSMISSION_INFO = {
 MACHINE_TRANSMISSIONS = {'crusher': [0, 1], 'enrichment_chamber': [0, 1], 'energized_smelter': [0, 1],
                          'precision_sawmill': [0, 1], 'combiner': [0, 1], **{m: [0, 3, 1] for m in PROCESS_MACHINES},
                          'chemical_infuser': [3, 0, 1], 'chemical_washer': [3, 2, 0, 1], 'electrolytic_separator': [2, 3, 0, 1],
-                         'rotary_condensentrator': [3, 2, 0, 1],
+                         'rotary_condensentrator': [3, 2, 0, 1], 'pressurized_reaction_chamber': [0, 3, 2, 1],
+                         'pigment_mixer': [3, 0, 1],
                          **{m: [3, 0] for m in CHEM_TANKS}}
 # the transmissions a machine cannot eject (setCanEject(false)): the infuser's tank
 NO_EJECT = {(m, 3) for m in ('metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
-                             'chemical_crystallizer')} | {('chemical_washer', 2), ('electrolytic_separator', 2)} \
+                             'chemical_crystallizer', 'painting_machine')} | {('chemical_washer', 2), ('electrolytic_separator', 2)} \
     | {(m, 0) for m in CHEM_TANKS}
 TAB_SPRITES = {n: tab_sprite(f'tab_{info[0].lower()}', info[1], info[2]) for n, info in TRANSMISSION_INFO.items()}
 
@@ -598,11 +604,12 @@ def side_config_widgets(transmissions, machine=None):
 # ---- the machines that work a chemical (the infuser, the chambers, the oxidizer, the crystallizer): the chemicals their
 # screens draw, written to the mod's chem_table.rs (a chemical's number is its place in the list, from 1)
 CHEM_RECIPE_TYPES = ['purifying', 'injecting', 'compressing', 'oxidizing', 'dissolution', 'crystallizing',
-                     'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating', 'rotary']
+                     'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating', 'rotary', 'reaction',
+                     'pigment_extracting', 'pigment_mixing', 'painting']
 # the fluids the screens draw (the same table as the chemicals): their colour
 FLUIDS = {'minecraft:water': '#3F76E4', 'minecraft:lava': '#FF6A00', 'mekanism:brine': '#FEEF9C', 'mekanism:lithium': '#EBA400',
           'mekanismgenerators:bioethanol': '#CEEB3D'}
-CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing'}
+CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing', 'painting'}
 
 def chemical_ids():
     ids = []
@@ -619,10 +626,14 @@ def chemical_ids():
             ing = r.get('chemical_input', r.get('input', {})).get('ingredient')
             if isinstance(ing, str):
                 add(ing)
-        if kind == 'chemical_infusing':
+        if kind in ('chemical_infusing', 'pigment_mixing'):
             for side in ('left_input', 'right_input'):
                 if isinstance(r.get(side, {}).get('ingredient'), str):
                     add(r[side]['ingredient'])
+        if kind == 'reaction':
+            add(r['chemical_input']['ingredient'])
+            if 'chemical' in r.get('output', {}):
+                add(r['output']['chemical']['id'])
         if kind == 'rotary':
             for part in ('chemical_input', 'chemical_output', 'fluid_output'):
                 v = r.get(part, {})
@@ -753,6 +764,25 @@ PROCESS_LAYOUTS['rotary_condensentrator'] = {
     'overlays': [], 'power': ('horizontal', 115, 75), 'progress': [],
     'extra_sprites': [('arrow/down', 9, 44), ('arrow/down', 159, 44)],
     'gauges': [('standard', 133, 13, 16, 58, 't0', 10000), ('standard', 25, 13, 16, 58, 't1', 10000)]}
+    # GuiPRC: the fluid and the gas it takes in at the left, the small gas it makes at the right; 5 pixels taller than the others
+PROCESS_LAYOUTS['pressurized_reaction_chamber'] = {
+    'continuous': True, 'timed': True, 'slots': [[54, 40], [116, 40], [141, 22]], 'results': [1],
+    'height': 171, 'inv_shift': 5, 'label_y': 77, 'debug': (60, 66),
+    'frames': [('slot/input', 54, 40), ('slot/output', 116, 40), ('slot/power', 141, 22)], 'overlays': [],
+    'power': ('vertical', 163, 21), 'progress': [('right', 77, 43)],
+    'gauges': [('standard', 5, 15, 16, 58, 't0', 10000), ('standard', 28, 15, 16, 58, 't1', 10000),
+               ('small', 140, 45, 16, 28, 't2', 10000)]}
+# the pigment machines: the extractor is the oxidizer's screen with a 20 bucket tank, the painting machine and the mixer have their own
+PROCESS_LAYOUTS['pigment_extractor'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100,
+                                       'gauges': [('standard', 131, 13, 16, 58, 'out', 20000)]}
+PROCESS_LAYOUTS['painting_machine'] = {
+    'ticks': 200, 'slots': [[45, 35], [116, 35], [6, 56]], 'results': [1], 'title_y': 4, 'label_y': 74, 'debug': (80, 66),
+    'frames': [('slot/input', 45, 35), ('slot/output', 116, 35), ('slot/extra', 6, 56), ('slot/power', 144, 35)],
+    'overlays': [('slot/overlay/minus', 6, 56)], 'power': ('vertical', 164, 15), 'progress': [('large_right', 64, 39)],
+    'gauges': [('standard', 25, 13, 16, 58, 'in', 15000)]}
+PROCESS_LAYOUTS['pigment_mixer'] = {**PROCESS_LAYOUTS['chemical_infuser'], 'title_y': 5, 'label_y': 74,
+                                    'gauges': [('standard', 25, 13, 16, 58, 't0', 1000), ('standard', 133, 13, 16, 58, 't1', 1000),
+                                               ('standard', 79, 4, 16, 58, 't2', 2000)]}
 for _m in ('chemical_injection_chamber', 'osmium_compressor'):
     PROCESS_LAYOUTS[_m] = PROCESS_LAYOUTS['purification_chamber']
 # the compressor's bar is the same, but its tank holds 210 too; the three are one layout
@@ -765,13 +795,14 @@ def process_panel(name, L):
     """The 176 by 166 panel of a machine of `process`: the base, the inventory's frames, the machine's slot frames and
     overlays, its tank frames, the energy bar's frame and the empty progress arrows."""
     from PIL import Image
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    shift = L.get('inv_shift', 0)
+    panel = nine_slice(gui_sprite('base'), 176, L.get('height', 166), 4)
     slot = gui_sprite('slot/normal')
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+            panel.paste(slot, (7 + 18 * col, 83 + shift + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 141))
+        panel.paste(slot, (7 + 18 * col, 141 + shift))
     if 'screen' in L:
         x, y, w, h = L['screen']
         # GuiInnerScreen: a dark well with Mekanism's own edge
@@ -1010,8 +1041,8 @@ def process_menu(m):
         pw, ph, direction = PROGRESS_TYPES[ptype]
         # a machine that works every tick shows its arrows full while it works (data slot 0 is 1 or 0)
         widgets.append({'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/full', f'progress_{ptype}_full'), 'x': qx, 'y': qy,
-                        'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': 1} if continuous else {'data': ctl0 + 3},
-                        'direction': direction, 'tooltip': 'Working' if continuous else 'Progress: {percent}%'})
+                        'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': 1} if (continuous and not L.get('timed')) else {'data': ctl0 + 3},
+                        'direction': direction, 'tooltip': 'Working' if (continuous and not L.get('timed')) else 'Progress: {percent}%'})
     for gk, gx, gy, gw, gh, tank, cap in L['gauges']:
         amount, which = TANK_DATA[tank]
         widgets.append({'type': 'gauge', 'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh, 'value': {'data': amount},
@@ -1053,10 +1084,10 @@ def process_menu(m):
     title_x = tx0 + (tx1 - tx0 - text_width(title)) // 2 if align == 'center' else tx0
     widgets.append({'type': 'text', 'x': title_x, 'y': L.get('title_y', 6), 'text': title, 'color': '#404040'})
     if L.get('inventory', 176) is not None:
-        widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
+        widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.37', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.39', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1065,6 +1096,7 @@ def process_menu(m):
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     return with_upgrades({'slots': len(L['slots']), 'data_slots': (24 if continuous else 20) + 3, 'results': L['results'],
             'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
+                       'height': L.get('height', 166), 'inventory_y': 84 + L.get('inv_shift', 0),
                        'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                     'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}}, m, len(L['slots']), ctl0)
 
@@ -1154,7 +1186,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.37', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.39', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1183,7 +1215,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.37', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.39', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1448,7 +1480,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.37', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.39', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1506,7 +1538,8 @@ def refs(v):
 nrec = 0
 MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining', f'{NS}:metallurgic_infusing',
                  f'{NS}:chemical_conversion', f'{NS}:purifying', f'{NS}:injecting', f'{NS}:compressing', f'{NS}:oxidizing',
-                 f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating', f'{NS}:rotary'}
+                 f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating', f'{NS}:rotary', f'{NS}:reaction',
+                 f'{NS}:pigment_extracting', f'{NS}:pigment_mixing', f'{NS}:painting'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)
@@ -1515,6 +1548,8 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     outs = [r.get(k, {}).get('id', '') for k in ('output', 'main_output', 'secondary_output')]
     if 'amount' in r.get('output', {}):
         outs = []  # it makes a chemical, not an item
+    if r.get('type') == f'{NS}:reaction':
+        outs = [r.get('output', {}).get('item', {}).get('id', '')]
     if any(o.startswith(NS + ':') and o.split(':')[1] not in have for o in outs):
         continue  # makes something the port doesn't have yet
     put(f'{OUT}/data/{NS}/recipe/{rel}', r)
@@ -1614,6 +1649,9 @@ def vanilla_members(cat, mat):
         v = ['minecraft:bookshelf']
     elif cat == 'rods' and mat in ('wooden', 'blaze', 'bone'):
         v = {'wooden': ['minecraft:stick'], 'blaze': ['minecraft:blaze_rod'], 'bone': ['minecraft:bone']}[mat]
+    elif cat == 'dyed' and mat:
+        v = [f'minecraft:{mat}{suffix}' for suffix in ('_wool', '_carpet', '_bed', '_banner', '_candle', '_concrete', '_concrete_powder',
+             '_stained_glass', '_stained_glass_pane', '_glazed_terracotta', '_terracotta', '_shulker_box', '_dye', '_bundle', '_harness')]
     elif cat == 'glass_blocks' and mat == 'cheap':
         v = ['minecraft:glass']
     elif cat == 'buckets' and mat in ('water', 'lava'):

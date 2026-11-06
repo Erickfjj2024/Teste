@@ -143,6 +143,8 @@ pub enum Layout {
     /// The rotary condensentrator: the gas input (0) and output (1) slots, the fluid input (2) and output (3) slots and the
     /// charge slot (4); tanks: fluid, gas.
     Rotary,
+    /// The pressurized reaction chamber: the item in (0), out (1) and the charge slot (2); tanks: fluid, gas in, gas out.
+    Reaction,
 }
 
 impl Layout {
@@ -157,6 +159,7 @@ impl Layout {
             Layout::Washer => &[C, F, I, E],
             Layout::Separator => &[F, C, I, E],
             Layout::Rotary => &[C, F, I, E],
+            Layout::Reaction => &[I, C, F, E],
             _ => &[I, C, E],
         }
     }
@@ -169,7 +172,7 @@ impl Layout {
     pub fn pushes_chemicals(self) -> bool {
         matches!(
             self,
-            Layout::Oxidizer | Layout::Dissolution | Layout::ChemTank | Layout::ChemInfuser | Layout::Washer | Layout::Separator | Layout::Rotary
+            Layout::Oxidizer | Layout::Dissolution | Layout::ChemTank | Layout::ChemInfuser | Layout::Washer | Layout::Separator | Layout::Rotary | Layout::Reaction
         )
     }
 }
@@ -192,7 +195,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         // `setupInputConfig`: a tank that only takes in, and `setupOutputConfig`: one that only gives.
         (Layout::Adv | Layout::Crystallizer, Transmission::Chemicals) => &[Data::None, Data::Input],
         (Layout::Oxidizer, Transmission::Chemicals) => &[Data::None, Data::Output],
-        (Layout::ChemTank | Layout::Washer | Layout::Rotary, Transmission::Chemicals) => {
+        (Layout::ChemTank | Layout::Washer | Layout::Rotary | Layout::Reaction, Transmission::Chemicals) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput]
         }
         (Layout::ChemInfuser, Transmission::Chemicals) => {
@@ -200,7 +203,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         }
         (Layout::Separator, Transmission::Chemicals) => &[Data::None, Data::Output1, Data::Output2, Data::InputOutput],
         // The fluid tanks only take in.
-        (Layout::Washer | Layout::Separator, Transmission::Fluids) => &[Data::None, Data::Input],
+        (Layout::Washer | Layout::Separator | Layout::Reaction, Transmission::Fluids) => &[Data::None, Data::Input],
         (Layout::Rotary, Transmission::Fluids) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
         // Their item slots: a tank's two, the infuser's two inputs and output, the washer's and the separator's.
         (Layout::ChemTank, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
@@ -318,6 +321,13 @@ pub fn default_config(layout: Layout) -> Config {
             sides[Transmission::Fluids as usize][RIGHT] = Data::Output;
             eject[Transmission::Fluids as usize] = true;
         }
+        // The reaction chamber (`AttachedSideConfig.REACTION`): the fluid in everywhere, the gas in everywhere and out on the right, pushing out.
+        Layout::Reaction => {
+            *chem = [Data::Input; 6];
+            chem[RIGHT] = Data::Output;
+            eject[Transmission::Chemicals as usize] = true;
+            sides[Transmission::Fluids as usize] = [Data::Input; 6];
+        }
         // The separator: the left gas out on the left, the right gas out on the right.
         Layout::Separator => {
             *chem = [Data::None; 6];
@@ -433,6 +443,10 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
         (Layout::Washer, Data::Input) => &[0],
         (Layout::Washer, Data::Output) => &[1, 2],
         (Layout::Washer, Data::InputOutput) => &[0, 1, 2],
+        // The reaction chamber's input and output slots, and its charge slot.
+        (Layout::Reaction, Data::Input) => &[0],
+        (Layout::Reaction, Data::Output) => &[1],
+        (Layout::Reaction, Data::InputOutput) => &[0, 1],
         // The rotary's gas and fluid slots in (0, 2) and out (1, 3).
         (Layout::Rotary, Data::Input) => &[0, 2],
         (Layout::Rotary, Data::Output) => &[1, 3],
@@ -507,6 +521,7 @@ pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<
     let pushes = layout.pushes_chemicals() && cfg.ejects(Transmission::Chemicals);
     let count = match layout {
         Layout::ChemInfuser | Layout::Washer | Layout::Separator => 3,
+        Layout::Reaction => 3,
         Layout::Dissolution | Layout::Rotary => 2,
         _ => 1,
     };
@@ -538,6 +553,12 @@ pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<
                 let push = |t: Transmission| cfg.ejects(t);
                 out[0][face] = both(mode && takes(f), !mode && matches!(f, Data::Output | Data::InputOutput) && push(Transmission::Fluids));
                 out[1][face] = both(!mode && takes(c), mode && matches!(c, Data::Output | Data::InputOutput) && push(Transmission::Chemicals));
+            }
+            // The fluid and the gas it takes in, and the gas it makes (given by the output side, with the eject on).
+            Layout::Reaction => {
+                out[0][face] = both(takes(f), false);
+                out[1][face] = both(takes(c) && !matches!(c, Data::Output), false);
+                out[2][face] = both(false, matches!(c, Data::Output | Data::InputOutput) && pushes);
             }
             Layout::Separator => {
                 out[0][face] = both(takes(f), false);
