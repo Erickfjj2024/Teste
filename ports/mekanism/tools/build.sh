@@ -1,5 +1,6 @@
 #!/bin/bash
 # Builds mekanism.hmod: converts Mekanism's data and assets, then packs them with the code.
+# Needs Python 3 with Pillow (it tints the energy cube core).
 # Usage: build.sh <Mekanism checkout> <horizon-android fork> <cargo-horizon-mod>
 set -euo pipefail
 MEK="${1:?path to the Mekanism checkout (branch 26.3)}"

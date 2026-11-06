@@ -18,16 +18,17 @@ e **ainda não foi testada**). APK: v8.
 | Energized Smelter | processa **ferro bruto** e **minério de ferro** (receitas de fornalha do jogo) |
 | Cabo de energia (Basic Universal Cable) | passa energia para as máquinas (APK v8) |
 | Texto "Status N" na tela das máquinas | apareceu e mudou (viu o valor 2 = sem receita para o item) |
+| Máquinas acendendo e animando ao trabalhar (APK v9) | funciona: trocam para a textura ativa animada e emitem luz |
 
 ## 2. Defeitos vistos pelo usuário (abertos)
 
 1. **Energy Cube com textura errada.** O modelo atual monta a moldura de 28 peças do Mekanism com o núcleo,
    mas as texturas não batem com o original (o original usa um carregador de modelos próprio, com portas e LEDs).
-2. **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
+2. **(mod 0.1.4, sem teste no jogo)** O cubo agora usa o formato do baú do Ender (não tapa as faces dos vizinhos), a luz foi zerada e o núcleo ganhou a cor do nível, como no original. Falta o usuário confirmar. Antes: **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
    debaixo). Causa provável: o bloco usa o formato do forno (cubo inteiro, que tapa as faces dos vizinhos), mas o
    modelo é oco; o jogo então não desenha as faces dos blocos encostados. Correção planejada: trocar o formato do
    bloco por um que não tape os vizinhos (por exemplo o do baú) ou dar um modelo sólido ao cubo. **Não corrigido.**
-3. **As máquinas não mudam de textura ao trabalhar, não acendem e não têm a textura animada** (o original troca para
+3. ~~**As máquinas não mudam de textura ao trabalhar, não acendem e não têm a textura animada**~~ **RESOLVIDO e confirmado pelo usuário no APK v9.** (o original troca para
    o modelo "ativo", animado, e emite luz). Funcionalmente elas processam, mas o bloco nunca vira `lit=true`. Hipótese:
    o jogo recusava a troca de propriedade (`native_set_block_property`) porque a sua checagem "este jogo é um servidor"
    não vale para o jogo do servidor interno do celular (a mesma checagem vale para `summon` e outras funções de
@@ -76,7 +77,7 @@ Só o que o Mekanism usou até agora, e só o que o usuário viu funcionar (cabo
 | 12 Entidades | **não** |
 | 13 Itens com lógica | **não** |
 | 14 Chunks e geração de mundo | **não** (a geração de minérios não foi vista) |
-| `world.set-block-property` (o `lit`) | **não funcionou** (as máquinas não acendem); correção no APK v9 sem teste |
+| `world.set-block-property` (o `lit`) | sim, depois da correção do APK v9 (as máquinas acendem e animam) |
 
 Nenhum dos blocos "não" tem teste no jogo: só testes simulados e a compilação.
 

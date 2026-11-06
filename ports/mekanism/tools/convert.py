@@ -206,13 +206,30 @@ add_block('basic_universal_cable', 'minecraft:chorus_plant', {'hardness': 0.5, '
 # energy cubes: Mekanism's own frame (its model file lists the elements; only the loader is
 # its own), around a core, the same on every face
 base = read_json(find('models/block/energy_cube/base.json', ASSET_DIRS))
-copy_texture(f'{NS}:block/energy_core')
+def tinted_core(tier):
+    """Mekanism draws the white core texture tinted with the tier's colour (a tint index): the
+    colour of the tier's corner lights, here baked into a copy of the texture."""
+    from PIL import Image
+    corner = Image.open(find(f'textures/block/models/energy_cube_{tier}_corner.png', ASSET_DIRS)).convert('RGBA')
+    best = max((p for p in corner.getdata() if p[3] > 200), key=lambda p: max(p[:3]) - min(p[:3]) + max(p[:3]) / 4)
+    core = Image.open(find('textures/block/energy_core.png', ASSET_DIRS)).convert('RGBA')
+    px = core.load()
+    for x in range(core.width):
+        for y in range(core.height):
+            r, g, b, a = px[x, y]
+            px[x, y] = (r * best[0] // 255, g * best[1] // 255, b * best[2] // 255, a)
+    path = f'{OUT}/assets/{NS}/textures/block/energy_core_{tier}.png'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    core.save(path)
+    return f'{NS}:block/energy_core_{tier}'
+
 for tier in ('basic', 'creative'):
     textures = dict(base['textures'])
     textures['corner'] = f'{NS}:block/models/energy_cube_{tier}_corner'
-    textures['core'] = f'{NS}:block/energy_core'
+    textures['core'] = tinted_core(tier)
     for v in textures.values():
-        copy_texture(v)
+        if not v.startswith(f'{NS}:block/energy_core_'):
+            copy_texture(v)
     elements = list(base['frame'])
     elements.append({'name': 'core', 'from': [5, 5, 5], 'to': [11, 11, 11],
                      'faces': {d: {'texture': '#core'} for d in ('down', 'up', 'north', 'south', 'west', 'east')}})
@@ -221,7 +238,9 @@ for tier in ('basic', 'creative'):
     n = f'{tier}_energy_cube'
     put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}'}}})
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
-    add_block(n, 'minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True})
+    # An ender chest's shape is not a full cube, so it does not hide the blocks beside the cube's open frame
+    # (a furnace's does); its light is switched off.
+    add_block(n, 'minecraft:ender_chest', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0})
 
 # what joins a cable: the cables, the cubes and the machines
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
@@ -237,7 +256,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.3', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.4', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
