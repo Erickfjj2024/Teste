@@ -233,8 +233,14 @@ for tier in ('basic', 'creative'):
     elements = list(base['frame'])
     # The core is not in the model: Mekanism draws it in code, turning, and so does the port (a renderer).
     put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': [
-        {'type': 'spin', 'from': [4, 4, 4], 'to': [12, 12, 12], 'sprite': textures['core'],
-         'axis': 'y', 'degrees_per_tick': 3.0}]})
+        # RenderEnergyCube: scale 0.4 of a 16-unit cube, bounce sin(3 deg * t) / 7, a turn about Y at 4 deg a
+        # tick and one about (0, 1, 1) from 36 deg at 4 deg a tick, full bright, only with energy.
+        {'type': 'animated', 'from': [0, 0, 0], 'to': [16, 16, 16], 'sprite': textures['core'],
+         'scale': 0.4, 'center': [8, 8, 8],
+         'bounce': {'amplitude': 1 / 7, 'degrees_per_tick': 3.0},
+         'rotations': [{'axis': [0, 1, 0], 'degrees_per_tick': 4.0},
+                       {'axis': [0, 1, 1], 'degrees_per_tick': 4.0, 'offset': 36.0}],
+         'fullbright': True, 'only_with_energy': True}]})
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     n = f'{tier}_energy_cube'
@@ -258,7 +264,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.5', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.6', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

@@ -1,6 +1,6 @@
 # Mekanism no Horizon: o que foi testado, o que não foi, e o que está errado
 
-Atualizado depois do teste do usuário com o APK v8 e o `mekanism.hmod` 0.1.2. A regra deste
+Atualizado depois do teste do usuário com o APK v9 e o `mekanism.hmod` 0.1.5 (o cubo funciona; o núcleo girava só em um eixo). A regra deste
 arquivo: **só conta como "testado no jogo" o que o usuário viu funcionando no celular.** O que passou só
 em teste simulado (os scripts `horizon-mod test` e os testes unitários) está marcado à parte.
 
@@ -19,12 +19,13 @@ e **ainda não foi testada**). APK: v8.
 | Cabo de energia (Basic Universal Cable) | passa energia para as máquinas (APK v8) |
 | Texto "Status N" na tela das máquinas | apareceu e mudou (viu o valor 2 = sem receita para o item) |
 | Máquinas acendendo e animando ao trabalhar (APK v9) | funciona: trocam para a textura ativa animada e emitem luz |
+| Energy Cube: formato (não tapa vizinhos), textura e núcleo visível girando (APK v9, mod 0.1.5) | funciona, **mas o núcleo girava só no eixo Y** |
 
 ## 2. Defeitos vistos pelo usuário (abertos)
 
 1. **Energy Cube com textura errada.** O modelo atual monta a moldura de 28 peças do Mekanism com o núcleo,
    mas as texturas não batem com o original (o original usa um carregador de modelos próprio, com portas e LEDs).
-2. **(mod 0.1.4/0.1.5, sem teste no jogo; o núcleo agora gira, ver seção 8)** O cubo agora usa o formato do baú do Ender (não tapa as faces dos vizinhos), a luz foi zerada e o núcleo ganhou a cor do nível, como no original. Falta o usuário confirmar. Antes: **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
+2. **(mod 0.1.4/0.1.5: **confirmado pelo usuário**, só o giro do núcleo estava diferente)** O cubo agora usa o formato do baú do Ender (não tapa as faces dos vizinhos), a luz foi zerada e o núcleo ganhou a cor do nível, como no original. Falta o usuário confirmar. Antes: **A parte vazada do Energy Cube deixa invisíveis os blocos ao lado, acima e abaixo dele** (inclusive o chão
    debaixo). Causa provável: o bloco usa o formato do forno (cubo inteiro, que tapa as faces dos vizinhos), mas o
    modelo é oco; o jogo então não desenha as faces dos blocos encostados. Correção planejada: trocar o formato do
    bloco por um que não tape os vizinhos (por exemplo o do baú) ou dar um modelo sólido ao cubo. **Não corrigido.**
@@ -121,6 +122,7 @@ original usa, e o que o porte tem hoje:
 | Estados do bloco trocando o modelo (`facing`, `active`) | **funciona** (confirmado) |
 | Modelos JSON comuns (máquinas, minérios, blocos) | feito, copiados do original |
 | Carregadores de modelo próprios (cubo de energia, cabos, tanques, fábricas, modelos `.obj.mek`) | **aproximados à mão**: moldura do cubo sim, portas e LEDs por face não; cabos com núcleo e braços simples, sem os modelos grandes/pequenos do original |
+| Núcleo do Energy Cube animado como o original (mod 0.1.6, APK v10, **não testado**) | elemento novo `animated` do renderizador: escala 0,4, giro em Y a 4°/tick, giro em torno de (0,1,1) a 36°+4°/tick, balanço `sin(3°·t)/7`, brilho total, só aparece com energia |
 | Partes desenhadas por código (TESR): núcleo do cubo, nível de fluido nos tanques, rotores, o Digital Miner | **mecanismo existe** (bloco 11: `cube`, `fluid` que sobe, `spin`), **nunca testado no jogo**; o núcleo girando do cubo é o primeiro uso (mod 0.1.5) |
 | Cor por estado (`tintindex`: cor do nível, pigmentos, blocos coloridos) | **não há**: a cor do núcleo do cubo está gravada na textura, uma por nível |
 | Brilho (`light_emission` por elemento, partes que brilham no escuro) | **não há** |
@@ -129,6 +131,6 @@ original usa, e o que o porte tem hoje:
 | Renderizadores de entidade (Robit) | **não há** (só displays de item) |
 | Telas com o aspecto do original (fundo, botões, abas) | simples por enquanto; o mecanismo de telas declarativas aceita textura de fundo |
 
-Ordem proposta para a fidelidade: (1) confirmar no jogo o renderizador `spin` do núcleo; (2) portas e LEDs do cubo;
+Ordem proposta para a fidelidade: (1) confirmar no jogo o renderizador `animated` do núcleo (v10); (2) portas e LEDs do cubo;
 (3) cor e brilho por estado; (4) tanques de fluido; (5) cabos com os modelos do original; (6) telas com o fundo do
 original; (7) rotores, partículas e o resto conforme as máquinas chegarem.

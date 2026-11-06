@@ -1,0 +1,201 @@
+diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
+index 6b1a3e5..468ec25 100644
+--- a/crates/horizon-client/src/game/block_renderers.rs
++++ b/crates/horizon-client/src/game/block_renderers.rs
+@@ -7,7 +7,7 @@
+ use super::{Game, native_block_entity_draw::{BlockEntityDraw, CubeFace}};
+ use horizon_client::containers::ModBlockEntity;
+ use horizon_mods::{
+-    block_render::{fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees},
++    block_render::{bounce_offset, fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees, turn_degrees},
+     content::{BlockRenderer, RenderElement, parse_color},
+ };
+ use horizon_world::nbt::{JavaString, Tag};
+@@ -119,6 +119,49 @@ impl Game<'_> {
+                     let tint = fluid_tint(tints, &t.substance);
+                     self.native_draw_cube(draw, lo, hi, all(sprite), tint);
+                 }
++                RenderElement::Animated {
++                    from,
++                    to,
++                    sprite,
++                    scale,
++                    center,
++                    bounce,
++                    rotations,
++                    fullbright,
++                    only_with_energy,
++                } => {
++                    if *only_with_energy && long(entity.nbt.get(&key("energy"))) == 0 {
++                        continue;
++                    }
++                    let time = draw.game_time as f32 + draw.partial;
++                    let middle = center.unwrap_or_else(|| [0, 1, 2].map(|i| (from[i] + to[i]) / 2.0));
++                    let at = middle.map(|v| v / 16.0);
++                    let size = scale.unwrap_or(1.0);
++                    draw.push();
++                    draw.translate(at);
++                    draw.scale([size; 3]);
++                    if let Some(b) = bounce {
++                        draw.translate([0.0, bounce_offset(time, b.amplitude, b.degrees_per_tick), 0.0]);
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>().sqrt();
++                        if len > 0.0 {
++                            let axis = r.axis.map(|v| v / len);
++                            draw.rotate_about(axis, turn_degrees(time, r.degrees_per_tick, r.offset), [0.0; 3]);
++                        }
++                    }
++                    let lit = draw.light;
++                    if *fullbright {
++                        // 16 times sky light in the low byte, block light in the next.
++                        draw.light = 0xF0F0;
++                    }
++                    // The box, about the origin the pose now has.
++                    let lo = [0, 1, 2].map(|i| from[i] - middle[i]);
++                    let hi = [0, 1, 2].map(|i| to[i] - middle[i]);
++                    self.native_draw_cube(draw, lo, hi, all(sprite), 0xFFFFFF);
++                    draw.light = lit;
++                    draw.pop();
++                }
+                 RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
+                     let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
+                     let centre = pivot.unwrap_or_else(|| {
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+index 6eafee2..e0b33ae 100644
+--- a/crates/horizon-mods/src/block_render.rs
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -49,6 +49,18 @@ pub fn spin_degrees(game_time: i64, partial: f32, degrees_per_tick: f32) -> f32
+     ((game_time % 360_000) as f32 + partial) * degrees_per_tick % 360.0
+ }
+ 
++/// The angle of a turn at time `time` (ticks and the partial tick): `offset` degrees
++/// plus `degrees_per_tick` a tick, kept within a turn.
++pub fn turn_degrees(time: f32, degrees_per_tick: f32, offset: f32) -> f32 {
++    (offset + time * degrees_per_tick) % 360.0
++}
++
++/// How far a bounce has lifted a part at `time`: `amplitude` times the sine of
++/// `degrees_per_tick` degrees a tick.
++pub fn bounce_offset(time: f32, amplitude: f32, degrees_per_tick: f32) -> f32 {
++    amplitude * (time * degrees_per_tick).to_radians().sin()
++}
++
+ /// A value in sixteenths (0 to 16), for telling clients of a change only when
+ /// what they draw does.
+ pub fn sixteenths(value: u64, max: u64) -> u8 {
+@@ -87,6 +99,15 @@ mod tests {
+         assert_eq!(fluid_tint(&tints, "minecraft:lava"), 0xFFFFFF);
+     }
+     #[test]
++    fn turns_and_bounces() {
++        assert_eq!(turn_degrees(10.0, 4.0, 36.0), 76.0);
++        assert!(turn_degrees(1.0e6, 4.0, 36.0) < 360.0);
++        assert!(bounce_offset(0.0, 0.5, 3.0).abs() < 1e-6);
++        // A quarter of the sine's period at 3 degrees a tick is 30 ticks.
++        assert!((bounce_offset(30.0, 0.5, 3.0) - 0.5).abs() < 1e-5);
++        assert!((bounce_offset(90.0, 0.5, 3.0) + 0.5).abs() < 1e-5);
++    }
++    #[test]
+     fn spin_and_quantising() {
+         assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
+         assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index e2ee6c7..bafbade 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -583,6 +583,28 @@ pub enum RenderElement {
+         #[serde(default)]
+         tints: std::collections::BTreeMap<String, String>,
+     },
++    /// A box that moves and turns as code draws a part of a machine: scaled about
++    /// `center` (texels, the box's own centre by default), moved up and down by a sine
++    /// (`bounce`), and turned by each of `rotations` in order, all from the game's
++    /// time. `fullbright` draws it as bright as can be, and `only_with_energy`
++    /// only while the block holds energy (its `energy` the server sent).
++    Animated {
++        from: [f32; 3],
++        to: [f32; 3],
++        sprite: String,
++        #[serde(default)]
++        scale: Option<f32>,
++        #[serde(default)]
++        center: Option<[f32; 3]>,
++        #[serde(default)]
++        bounce: Option<Bounce>,
++        #[serde(default)]
++        rotations: Vec<Rotation>,
++        #[serde(default)]
++        fullbright: bool,
++        #[serde(default)]
++        only_with_energy: bool,
++    },
+     /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
+     /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
+     Spin {
+@@ -596,6 +618,26 @@ pub enum RenderElement {
+     },
+ }
+ 
++/// A sine of the time that moves a part up and down: `amplitude` blocks (before the
++/// element's scale), at `degrees_per_tick` of the sine's angle.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Bounce {
++    pub amplitude: f32,
++    pub degrees_per_tick: f32,
++}
++
++/// A turn about `axis` (any direction, as `x, y, z`) of `offset` degrees plus
++/// `degrees_per_tick` a tick.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Rotation {
++    pub axis: [f32; 3],
++    pub degrees_per_tick: f32,
++    #[serde(default)]
++    pub offset: f32,
++}
++
+ impl BlockRenderer {
+     fn check(&self, name: &str) -> Result<(), String> {
+         let sprite = |s: &str| {
+@@ -643,6 +685,38 @@ impl BlockRenderer {
+                         colour(c)?;
+                     }
+                 }
++                RenderElement::Animated { from, to, sprite: s, scale, center, bounce, rotations, .. } => {
++                    boxed(from, to)?;
++                    sprite(s)?;
++                    if scale.is_some_and(|v| !(0.01..=4.0).contains(&v)) {
++                        return Err(format!("{name}: scale is 0.01 to 4"));
++                    }
++                    if center.is_some_and(|c| c.iter().any(|v| !v.is_finite())) {
++                        return Err(format!("{name}: center is numbers"));
++                    }
++                    if let Some(b) = bounce
++                        && (!b.amplitude.is_finite()
++                            || b.amplitude.abs() > 4.0
++                            || !b.degrees_per_tick.is_finite()
++                            || b.degrees_per_tick.abs() > 360.0)
++                    {
++                        return Err(format!("{name}: a bounce is an amplitude within 4 and degrees_per_tick within 360"));
++                    }
++                    if rotations.len() > 4 {
++                        return Err(format!("{name}: 4 rotations at most"));
++                    }
++                    for r in rotations {
++                        let len = r.axis.iter().map(|v| v * v).sum::<f32>();
++                        if !len.is_finite()
++                            || len < 1e-6
++                            || !r.degrees_per_tick.is_finite()
++                            || r.degrees_per_tick.abs() > 360.0
++                            || !r.offset.is_finite()
++                        {
++                            return Err(format!("{name}: a rotation has an axis and degrees_per_tick within 360"));
++                        }
++                    }
++                }
+                 RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
+                     boxed(from, to)?;
+                     sprite(s)?;
