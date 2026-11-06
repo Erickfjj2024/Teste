@@ -140,6 +140,21 @@ Faça quando sobrar tempo; são os que mais podem esconder defeitos.
 | J5 | Janela de lados (aba da esquerda): Químicos, Fluidos, Itens, Energia | 4 abas, abre em Químicos; no modo descondensar só o gás sai, no outro só o fluido |
 | J6 | Um Fluid Tank encostado: no modo condensar, a água do rotary passa para o tanque | O tanque recebe a água sem cano |
 
+## K. Geradores (mod 0.1.35, **APK v36**)
+
+Todos soltam energia só pela frente (o solar, pelo fundo): encoste um cabo ou uma máquina nessa face e veja a energia chegar.
+
+| # | O que fazer | Esperado |
+|---|---|---|
+| K1 | Criativo: pegar os 4 geradores na aba do Mekanism e colocá-los | Os modelos aparecem com as texturas do Mekanism (o Bio com o tanque de vidro, o de Calor com a boca, o Solar achatado, o de Gás grande); viram para você |
+| K2 | **Bio-Generator**: bio fuel (`bio_fuel`) no slot da esquerda | O medidor azul-claro-esverdeado à esquerda enche (64 por item) e o texto mostra "BioFuel", "Producing: 25 FE/t"; a barra de energia da direita sobe |
+| K3 | **Heat Generator**: bloco de carvão (ou balde de lava) no slot da esquerda | O medidor largo enche de lava; a aba de calor (embaixo à esquerda) mostra a temperatura subindo até uns 488 K e "Producing" ~40 FE/t; bloco ativo troca de modelo (LED aceso) |
+| K4 | Heat Generator com **lava ao lado** (sem combustível) | Esquenta sozinho devagar e produz um pouco |
+| K5 | **Solar Generator** de dia, céu aberto | Ícone de sol amarelo, "Producing: 1 FE/t" na planície; coberto (um bloco em cima) ou de noite: ícone cinza e 0 |
+| K6 | **Gas-Burning Generator** com hidrogênio (do separador por tubo, ou tanque criativo de químico) | Aceita hidrogênio/eteno (não oxigênio); queima até 10 mB/t, mais rápido cheio; "Burn Rate" na tela |
+| K7 | Slots de armadura na tela dos geradores (suporte à esquerda) | Aceitam armadura como nos outros |
+| K8 | Energia sai pela frente para um **cabo** ou **Energy Cube** encostado | Chega energia; pelos outros lados não |
+
 ## I. Como reportar
 
 Para cada item: o número (A3, D7...), **OK** ou **errado**, e se errado: o que esperava, o que viu e, se der, uma

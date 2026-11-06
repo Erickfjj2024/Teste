@@ -274,6 +274,36 @@ Passou no teste simulado (44 passos: vapor d'água vira água, o botão de modo 
 - **Falta:** os slots de gás (latas de gás não existem no porte, então ficam sem função); a aba de energia (-26,137); o único par que dá
   para alimentar no jogo é água ↔ vapor d'água (os outros fluidos de Mekanism não têm fonte ainda).
 
+## 2h. Geradores: Bio, Heat, Solar e Gas-Burning (mod 0.1.35, APK v36, API 19, **não testados no jogo**)
+
+Passou no teste simulado (46 passos: bio fuel vira bioethanol e queima 1 mB por tick, bloco de carvão vira lava e o gerador de calor
+queima 100 mB por tick, o solar vê o sol ao meio-dia, o de gás queima 10 mB de hidrogênio por tick) e em 63 testes unitários;
+**ninguém viu na tela do celular**. Lido do código 26.3 do `mekanismgenerators` (`TileEntityBioGenerator`, `HeatGenerator`,
+`SolarGenerator`, `GasGenerator`, `GuiXxxGenerator`):
+- **Visual:** o checkout 26.3 só tem o Java do módulo, então modelos, blockstates e texturas vêm do **jar 1.21.1 do MekanismGenerators**
+  enviado pelo usuário (`tools/generators-assets/`, MIT); o modelo composto do Bio-Generator (`neoforge:composite`) foi achatado num só.
+  Os ids são `mekanism:bio_generator` etc. (um mod só declara blocos no próprio namespace; no original são `mekanismgenerators:`).
+- **Bio-Generator:** item de bio fuel (64 mB cada, 576 o bloco) vira bioethanol no tanque de 200 mB; gera 25 por tick gastando 1 mB;
+  capacidade de energia 600. Medidor estreito à esquerda, tela interna com energia, bioethanol e produção.
+- **Heat Generator:** tanque de 1000 mB de lava (balde de lava ou combustível comum: carvão, bloco de carvão, madeira, graveto, vara de
+  blaze... na proporção do tempo de queima de um balde de lava, 20000); queima 100 mB por tick para +100 de calor; a lava ao lado (+7 por
+  face) e o Nether (+10) esquentam sem combustível; capacitor de calor 10, perda 0,5 por kelvin, eficiência de Carnot, perda para o ar com o
+  isolamento de cada face (o fundo sem isolamento); aba de calor com a temperatura. Estabiliza perto de 488 K fazendo ~40 por tick.
+- **Solar Generator:** 2 por tick vezes o brilho do sol e o multiplicador do bioma (temperatura e chuva), cortado para inteiro como o
+  original (na planície, 1 por tick); vê o céu varrendo os blocos acima; ícone de sol na tela.
+- **Gas-Burning Generator:** tanque de 1000 mB que aceita só combustíveis (hidrogênio 2 por mB, eteno 8 por mB, até 10 mB por tick, mais
+  rápido quanto mais cheio); recebe de tubos/tanques/separador; o texto "Burn Rate" da tela.
+- **Faces:** a energia sai só pela frente (pelo fundo no solar); o tanque aceita por todas as faces menos a da frente; o slot de
+  combustível por todas menos a direita, a do slot de energia.
+- **API 19 (`world.get-environment`):** hora do dia, chuva, trovão, temperatura, umidade e precipitação do bioma e se há céu, para o solar;
+  exige o **APK v36**.
+- **Falta / diferenças:** o Advanced Solar e o Wind Generator (blocos grandes que precisam de "bounding blocks", que a API ainda não tem);
+  os slots de energia dos geradores (não há itens de energia, como o tablet); o ícone de sol é desenhado à mão (os sprites
+  `state/sees_sun` e `no_sun` não estão em nenhuma das fontes); receitas: só as com ingredientes que o porte tem (o bio e o de calor;
+  o solar pede painel solar e tablet de energia, o de gás o núcleo eletrolítico); a tabela de queima do Heat Generator é uma lista dos
+  combustíveis comuns (não há consulta de tempo de queima na API); perda de calor por face mostrada arredondada; ambiente do calor
+  fixo em 300 K (o original varia com o bioma); luz do bloco ativo e partículas (fumaça/chama) não existem.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

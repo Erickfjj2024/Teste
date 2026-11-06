@@ -12,6 +12,7 @@ mod cube;
 mod chem_table;
 mod plus;
 mod process;
+mod generators;
 mod machine;
 mod sawmill;
 mod sides;
@@ -24,6 +25,7 @@ use horizon_mod_sdk::server::{
     recipe_types, serde_json, world,
 };
 use config::{Config, Data, Layout, Transmission};
+use generators::GenKind;
 use sides::Mode;
 use machine::{Book, Io, Recipe, Stack, Status, step};
 use std::collections::{HashMap, HashSet};
@@ -50,6 +52,8 @@ enum Kind {
     Continuous,
     /// A storage tank (`tank`), of fluid or of chemical.
     Tank,
+    /// A generator of MekanismGenerators (`generators`).
+    Generator,
 }
 
 /// A storage tank's tier: what it holds and moves a tick.
@@ -76,20 +80,27 @@ struct Def {
     cont: Option<continuous::Spec>,
     /// A `Kind::Tank`'s tier.
     tank: Option<TankDef>,
+    /// A `Kind::Generator`'s kind.
+    generator: Option<GenKind>,
 }
 
 const fn electric(block: &'static str, source: Source, usage: u64) -> Def {
-    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None, cont: None, tank: None }
+    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: None }
 }
 
 /// A machine that works an item and a chemical (`process`): its recipes are of type `source`.
 const fn chemical(block: &'static str, source: &'static str, layout: Layout, spec: process::Spec) -> Def {
-    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec), cont: None, tank: None }
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec), cont: None, tank: None, generator: None }
 }
 
 /// A machine of `continuous`.
 const fn continuous_machine(block: &'static str, source: &'static str, layout: Layout, spec: continuous::Spec) -> Def {
-    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Continuous, layout, proc: None, cont: Some(spec), tank: None }
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Continuous, layout, proc: None, cont: Some(spec), tank: None, generator: None }
+}
+
+/// A generator of MekanismGenerators.
+const fn generator(block: &'static str, kind: GenKind) -> Def {
+    Def { block, source: Source::Files(""), usage: 0, kind: Kind::Generator, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: Some(kind) }
 }
 
 /// A storage tank block of a tier.
@@ -103,6 +114,7 @@ const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, 
         proc: None,
         cont: None,
         tank: Some(TankDef { fluid, capacity, rate, creative }),
+        generator: None,
     }
 }
 
@@ -112,12 +124,12 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use }
 }
 
-const MACHINES: [Def; 26] = [
+const MACHINES: [Def; 30] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
-    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None },
-    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None },
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None, generator: None },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None, generator: None },
     chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, 5, 200, 1000, 0, false)),
     // The purification and injection chambers use their chemical by chance (the config's randomized consumption).
     chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, 10, 200, 210, 0, true)),
@@ -137,6 +149,11 @@ const MACHINES: [Def; 26] = [
     // The rotary condensentrator turns a gas into a fluid or a fluid into a gas, by its mode (10 buckets in each tank).
     continuous_machine("mekanism:rotary_condensentrator", "mekanism:rotary", Layout::Rotary,
         continuous::Spec { shape: continuous::Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] }),
+    // The generators of MekanismGenerators: they make energy from bioethanol, lava and heat, the sun and gases.
+    generator("mekanism:bio_generator", GenKind::Bio),
+    generator("mekanism:heat_generator", GenKind::Heat),
+    generator("mekanism:solar_generator", GenKind::Solar),
+    generator("mekanism:gas_burning_generator", GenKind::Gas),
     // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
     tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
     tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
@@ -191,6 +208,8 @@ struct Mekanism {
     flow: HashMap<(String, i32, i32, i32), (u64, u64)>,
     /// The window's buttons pressed on a cube, until its next tick.
     buttons: HashMap<(String, i32, i32, i32), Vec<i32>>,
+    /// Whether a solar generator saw the sky when last asked, and when.
+    suns: HashMap<(String, i32, i32, i32), (u64, bool)>,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -445,7 +464,7 @@ impl Mekanism {
             Kind::Combiner => self.combs.is_empty(),
             Kind::Process => self.procs.get(def.block).is_none_or(process::Book::is_empty),
             // Their ticks are `run_continuous` and `run_tank`.
-            Kind::Continuous | Kind::Tank => false,
+            Kind::Continuous | Kind::Tank | Kind::Generator => false,
         };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
@@ -456,7 +475,7 @@ impl Mekanism {
                 }
                 Kind::Sawmill => self.saws = load_saw_book(),
                 Kind::Combiner => self.combs = load_comb_book(),
-                Kind::Continuous | Kind::Tank => {}
+                Kind::Continuous | Kind::Tank | Kind::Generator => {}
                 Kind::Process => {
                     if let Some(spec) = &def.proc {
                         self.procs.insert(def.block, load_proc_book(def.source, spec.shape));
@@ -622,7 +641,7 @@ impl Mekanism {
                 }
                 (slots, next.energy, next.progress, status, next != io)
             }
-            Kind::Continuous | Kind::Tank => unreachable!("they have their own ticks"),
+            Kind::Continuous | Kind::Tank | Kind::Generator => unreachable!("they have their own ticks"),
             Kind::Combiner => {
                 let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress };
                 let (next, status) = combiner::step(def.usage, &self.combs, &io);
@@ -864,6 +883,17 @@ impl ServerMod for Mekanism {
                         menu: true,
                     }
                 }
+                // A generator's fuel slot and its charge slot (the solar one has the charge slot alone), on the faces of its facing.
+                Kind::Generator => {
+                    let kind = def.generator.unwrap_or(GenKind::Solar);
+                    ContainerSpec {
+                        slots: if kind == GenKind::Solar { 1 } else { 2 },
+                        faces: generators::item_faces(kind, "north"),
+                        inputs: if kind == GenKind::Solar { Vec::new() } else { vec![0] },
+                        outputs: Vec::new(),
+                        menu: true,
+                    }
+                }
                 // A tank's two slots: a fluid tank's bucket in (at the top) and out (at the bottom), a chemical tank's
                 // drain and fill slots on the faces of its configuration.
                 Kind::Tank => {
@@ -884,7 +914,20 @@ impl ServerMod for Mekanism {
                     menu: true,
                 },
             });
-            if def.kind != Kind::Tank {
+            if def.kind == Kind::Generator {
+                // It gives its energy by the faces the generator tick sets (the front, the bottom for the solar one).
+                let kind = def.generator.unwrap_or(GenKind::Solar);
+                let (cap, tank) = match kind {
+                    GenKind::Bio => (generators::BIO_ENERGY, Some(("fluid", generators::BIO_TANK))),
+                    GenKind::Heat => (generators::HEAT_ENERGY, Some(("fluid", generators::HEAT_TANK))),
+                    GenKind::Gas => (generators::GAS_ENERGY, Some(("chemical", generators::GAS_TANK))),
+                    GenKind::Solar => (generators::SOLAR_ENERGY, None),
+                };
+                k.energy = Some(EnergySpec { capacity: cap, max_receive: 0, max_extract: cap, faces: generators::energy_faces(kind, "north") });
+                if let Some((fluid, capacity)) = tank {
+                    k.tanks.push(TankSpec { kind: fluid.into(), capacity, max_rate: capacity.min(1000), faces: generators::tank_faces("north") });
+                }
+            } else if def.kind != Kind::Tank {
                 // The separator stores more: its use is tiny and a bucket of water is many ticks of it.
                 let stored = def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 };
                 k.energy = Some(energy(stored, stored, FlowSide::Input));
@@ -968,6 +1011,7 @@ impl ServerMod for Mekanism {
             last_block_use: HashMap::new(),
             flow: HashMap::new(),
             buttons: HashMap::new(),
+            suns: HashMap::new(),
         }, r.on_chunks().on_items()))
     }
 
@@ -1049,6 +1093,9 @@ impl ServerMod for Mekanism {
             return None;
         }
         let def = MACHINES.iter().find(|d| d.block == block)?;
+        if def.kind == Kind::Generator {
+            return None;
+        }
         if matches!(def.kind, Kind::Continuous | Kind::Tank) {
             return self.plus_button(def, id, &e);
         }
@@ -1117,6 +1164,7 @@ impl ServerMod for Mekanism {
                 out.extend(match def.kind {
                     Kind::Continuous => self.run_continuous(def, e, tick),
                     Kind::Tank => self.run_tank(def, e),
+                    Kind::Generator => self.run_generator(def, e, tick),
                     _ => self.run(def, e, tick),
                 });
             } else if block.ends_with("_energy_cube") {

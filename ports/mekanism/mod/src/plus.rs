@@ -102,16 +102,16 @@ pub fn load_rotary_books() -> (continuous::Book, continuous::Book) {
 /// Where the rotary condensentrator keeps its second book.
 const ROTARY_FLUID_BOOK: &str = "mekanism:rotary_condensentrator#fluid";
 
-fn held(e: &BlockEntity, i: usize) -> process::Tank {
+pub(crate) fn held(e: &BlockEntity, i: usize) -> process::Tank {
     e.tanks.get(i).map_or_else(process::Tank::default, |t| process::Tank { chemical: t.substance.clone(), amount: t.amount })
 }
 
-fn as_tank(t: &process::Tank) -> Tank {
+pub(crate) fn as_tank(t: &process::Tank) -> Tank {
     Tank { substance: t.chemical.clone(), amount: t.amount }
 }
 
 /// The screen's three numbers about a big tank: its amount (low and high 16 bits) and its chemical, then its capacity.
-fn big_tank(t: &process::Tank, cap: u64) -> [i32; 5] {
+pub(crate) fn big_tank(t: &process::Tank, cap: u64) -> [i32; 5] {
     let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
     let v = t.amount.min(u64::from(u32::MAX));
     let c = cap.min(u64::from(u32::MAX));

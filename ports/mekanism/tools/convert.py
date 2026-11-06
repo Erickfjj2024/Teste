@@ -97,6 +97,11 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
 PROCESS_MACHINES = ['metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
                     'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer']
 CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator', 'rotary_condensentrator']
+# MekanismGenerators' namespace and the generators the port has (their assets come from tools/generators-assets)
+# (a mod declares its blocks in its own namespace only, so they are `mekanism:bio_generator`... and their assets live in mekanism's)
+GNS = 'mekanism'
+GSRC = 'mekanismgenerators'
+GENERATORS = ['heat_generator', 'bio_generator', 'solar_generator', 'gas_burning_generator']
 TIERS = ['basic', 'advanced', 'elite', 'ultimate']
 FLUID_TANKS = [f'{t}_fluid_tank' for t in TIERS + ['creative']]
 CHEM_TANKS = [f'{t}_chemical_tank' for t in TIERS + ['creative']]
@@ -356,11 +361,13 @@ CHEMICAL_BLOCKS = [m for m in PROCESS_MACHINES + CONTINUOUS_MACHINES + CHEM_TANK
 FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', *FLUID_TANKS]
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_universal_cable')],
-    f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in ELECTRIC]]})
+    f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in ELECTRIC], *[f'{GNS}:{g}' for g in GENERATORS]]})
 put(f'{OUT}/data/{NS}/tags/block/chemical_connectable.json', {'values': [
-    *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_pressurized_tube')], *[f'{NS}:{m}' for m in CHEMICAL_BLOCKS]]})
+    *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_pressurized_tube')], *[f'{NS}:{m}' for m in CHEMICAL_BLOCKS],
+    f'{GNS}:gas_burning_generator']})
 put(f'{OUT}/data/{NS}/tags/block/fluid_connectable.json', {'values': [
-    *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_mechanical_pipe')], *[f'{NS}:{m}' for m in FLUID_BLOCKS]]})
+    *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_mechanical_pipe')], *[f'{NS}:{m}' for m in FLUID_BLOCKS],
+    f'{GNS}:heat_generator', f'{GNS}:bio_generator']})
 
 # menus of the machines: slots at Mekanism's places, an energy bar, the progress and the title.
 # The panel is Mekanism's own GUI sprites put together here: the nine-slice base, the slot frames and the arrow.
@@ -588,7 +595,8 @@ def side_config_widgets(transmissions, machine=None):
 CHEM_RECIPE_TYPES = ['purifying', 'injecting', 'compressing', 'oxidizing', 'dissolution', 'crystallizing',
                      'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating', 'rotary']
 # the fluids the screens draw (the same table as the chemicals): their colour
-FLUIDS = {'minecraft:water': '#3F76E4', 'minecraft:lava': '#FF6A00', 'mekanism:brine': '#FEEF9C', 'mekanism:lithium': '#EBA400'}
+FLUIDS = {'minecraft:water': '#3F76E4', 'minecraft:lava': '#FF6A00', 'mekanism:brine': '#FEEF9C', 'mekanism:lithium': '#EBA400',
+          'mekanismgenerators:bioethanol': '#CEEB3D'}
 CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing'}
 
 def chemical_ids():
@@ -857,7 +865,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.34', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.35', 'color': '#808080'})
     widgets += [
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -953,7 +961,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.34', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.35', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -982,7 +990,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.34', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.35', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -1081,8 +1089,211 @@ for cube_name, (cube_title, rate) in CUBES.items():
                                 'texture': window_tex, 'widgets': side_config_widgets([1])}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
+def refs(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from refs(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from refs(x)
+
+# ---------------------------------------------------------------- MekanismGenerators: heat, bio, solar and gas-burning
+# The 26.3 checkout has only the Java of this module, so its models, blockstates and textures come from the 1.21.1 release
+# (tools/generators-assets); the logic is read from the 26.3 code.
+GDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generators-assets/assets/mekanismgenerators')
+GGEN = f'{SRC}/src/datagen/generated/mekanismgenerators'
+gen_done = set()
+
+def gen_rel(rel):
+    """Where a generators asset goes in mekanism's namespace: `block/model/x` -> `block/generators/model_x`."""
+    head, _, tail = rel.partition('/')
+    return f'{head}/generators/{tail.replace("/", "_")}'
+
+def gen_ref(ref):
+    if ':' in ref and ref.split(':', 1)[0] == GSRC:
+        return f'{NS}:{gen_rel(ref.split(":", 1)[1])}'
+    return ref
+
+def gen_texture(ref):
+    ns, rel = ref.split(':', 1)
+    if ns == NS:
+        copy_texture(ref)
+        return
+    src = f'{GDIR}/textures/{rel}.png'
+    if not os.path.exists(src):
+        warnings.append(f'missing generators texture {ref}')
+        return
+    put(f'{OUT}/assets/{NS}/textures/{gen_rel(rel)}.png', src=src)
+    if os.path.exists(src + '.mcmeta'):
+        put(f'{OUT}/assets/{NS}/textures/{gen_rel(rel)}.png.mcmeta', src=src + '.mcmeta')
+
+def gen_model(ref):
+    """A generators model with its textures; a composite (neoforge:composite) is flattened into one model."""
+    if ':' not in ref:
+        return True  # a vanilla model (block/cube_all)
+    ns, rel = ref.split(':', 1)
+    if ns != GSRC:
+        return copy_model(ref)
+    if rel in gen_done:
+        return True
+    gen_done.add(rel)
+    m = read_json(f'{GDIR}/models/{rel}.json')
+    if m.get('loader') == 'neoforge:composite':
+        textures, elements = dict(m.get('textures', {})), []
+        for child in m['children'].values():
+            textures.update(child.get('textures', {}))
+            elements += child.get('elements', [])
+        m = {k: v for k, v in m.items() if k not in ('loader', 'children')}
+        m['textures'], m['elements'] = textures, elements
+        m['render_type'] = 'minecraft:cutout'
+    if 'parent' in m:
+        if not gen_model(m['parent']):
+            return False
+        m['parent'] = gen_ref(m['parent'])
+    for k, v in list(m.get('textures', {}).items()):
+        if isinstance(v, str) and not v.startswith('#'):
+            gen_texture(v)
+            m['textures'][k] = gen_ref(v)
+    put(f'{OUT}/assets/{NS}/models/{gen_rel(rel)}.json', json.dumps(m, indent=2))
+    return True
+
+# the screens: slots, the vertical power bar, then what each generator shows (GuiBioGenerator, GuiHeatGenerator,
+# GuiGasGenerator, GuiSolarGenerator); the data slots are 0 working, 1-4 energy and capacity, 5 what it makes a tick,
+# 6 whether the sun is seen (solar) / the temperature (heat) / the burn rate (gas), 7 and 8 the heat lost, 10-14 the tank
+GEN_TITLES = {'heat_generator': 'Heat Generator', 'bio_generator': 'Bio-Generator', 'solar_generator': 'Solar Generator',
+              'gas_burning_generator': 'Gas-Burning Generator'}
+GEN_LAYOUT = {
+    'heat_generator': {'fuel': True, 'wide': True, 'heat': True, 'overlay': None},
+    'bio_generator': {'fuel': True, 'bar': True, 'screen': (48, 23, 80, 40), 'overlay': None},
+    'solar_generator': {'fuel': False, 'screen': (40, 23, 96, 40), 'sun': True},
+    'gas_burning_generator': {'fuel': True, 'wide': True, 'overlay': 'slot/overlay/minus', 'burn': True}}
+
+def sun_icons():
+    """GuiStateTexture's `state/sees_sun` and `state/no_sun` are not in the sources at hand: a 16 by 16 sun (lit) and the same
+    greyed out are drawn here."""
+    from PIL import Image, ImageDraw
+    out = []
+    for name, colour in (('sees_sun', (255, 214, 0, 255)), ('no_sun', (90, 90, 90, 255))):
+        img = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse((4, 4, 11, 11), fill=colour)
+        for x0, y0, x1, y1 in ((7, 0, 8, 2), (7, 13, 8, 15), (0, 7, 2, 8), (13, 7, 15, 8), (2, 2, 3, 3), (12, 2, 13, 3), (2, 12, 3, 13), (12, 12, 13, 13)):
+            d.rectangle((x0, y0, x1, y1), fill=colour)
+        out.append(save_gui(img, name))
+    return out
+
+def gen_panel(n, L):
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    if L['fuel']:
+        panel.alpha_composite(gui_sprite('slot/input'), (16, 34))
+        if L.get('overlay'):
+            panel.alpha_composite(gui_sprite(L['overlay']), (16, 34))
+    panel.alpha_composite(gui_sprite('slot/power'), (142, 34))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 15))
+    if L.get('wide'):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 66, 50, 2), (55, 18))
+    if L.get('bar'):
+        panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (7, 15))
+    if 'screen' in L:
+        x, y, w, h = L['screen']
+        panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), w, h, 3), (x, y))
+    return save_gui(panel, f'generator_{n}')
+
+GEN_ARMOR = {'x': -20, 'y': 11, 'offhand': 0}
+def gen_armor_holder():
+    holder = nine_slice(gui_sprite('holder_left'), 26, 98, 4)
+    frame = gui_sprite('slot/normal')
+    for k in range(5):
+        holder.alpha_composite(frame, (3, 4 + 18 * k))
+    return save_gui(holder, 'armor_holder_left_top')
+
+def gen_menu(n):
+    L = GEN_LAYOUT[n]
+    title = GEN_TITLES[n]
+    producing = 'Producing: {5} FE/t'
+    widgets = [{'type': 'sprite', 'texture': gen_armor_holder(), 'x': -26, 'y': 6, 'w': 26, 'h': 98},
+               {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 16, 'w': 4, 'h': 52, 'direction': 'up',
+                'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'tooltip': 'Energy: {value} / {max}'}]
+    tank = {'value': {'pair': [10, 11]}, 'max': {'pair': [13, 14]}, 'kind': {'data': 12}, 'types': GAUGE_TYPES}
+    if L.get('wide'):
+        widgets += [dict({'type': 'gauge', 'x': 56, 'y': 19, 'w': 64, 'h': 48, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'}, **tank),
+                    {'type': 'sprite', 'texture': copy_gui('gauge/overlay/wide', 'gauge_overlay_wide'), 'x': 56, 'y': 19, 'w': 64, 'h': 48}]
+    if L.get('bar'):
+        widgets.append(dict({'type': 'gauge', 'x': 8, 'y': 16, 'w': 4, 'h': 52, 'direction': 'up', 'tooltip': '{label}: {value} mB', 'empty': 'Empty'}, **tank))
+    if 'screen' in L:
+        x, y, w, h = L['screen']
+        lines = ['Energy: {1+2} / {3+4} FE' if n == 'solar_generator' else '{1+2} FE']
+        if n == 'bio_generator':
+            lines.append('BioFuel: {10+11}')
+        lines.append(producing)
+        for i, text in enumerate(lines):
+            widgets.append({'type': 'text', 'x': x + 4, 'y': y + 4 + 10 * i, 'text': text, 'color': '#00CD00'})
+    if L.get('sun'):
+        sees, none = sun_icons()
+        widgets += [{'type': 'show', 'when': {'data': {'value': {'data': 6}, 'eq': 1}}, 'widgets': [
+                        {'type': 'sprite', 'texture': sees, 'x': 18, 'y': 35, 'w': 16, 'h': 16}]},
+                    {'type': 'show', 'when': {'data': {'value': {'data': 6}, 'eq': 0}}, 'widgets': [
+                        {'type': 'sprite', 'texture': none, 'x': 18, 'y': 35, 'w': 16, 'h': 16}]}]
+    # GuiEnergyTab at -26, 137
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': producing}]
+    if L.get('heat'):
+        # GuiHeatTab at -26, 109
+        widgets += [{'type': 'sprite', 'texture': copy_gui('tab/heat_info_k', 'tab_heat_info_k'), 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+                    {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26,
+                     'tooltip': 'Temperature: {6} K\nTransferred: {7}/t\nDissipated: {8}/t'}]
+    widgets.append({'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'})
+    widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
+    if L.get('burn'):
+        widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.35', 'color': '#808080'})
+    slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
+    return {'slots': len(slots), 'data_slots': 15, 'results': [], 'armor': GEN_ARMOR,
+            'screen': {'texture': gen_panel(n, L), 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': []}}
+
+for g in GENERATORS:
+    bs = read_json(f'{GDIR}/blockstates/{g}.json')
+    bs = json.loads(json.dumps(bs).replace('active=', 'lit=').replace(f'{GSRC}:block/', f'{NS}:block/generators/'))
+    has_facing = any('facing' in k for k in bs['variants'])
+    if not any('lit=' in k for k in bs['variants']):
+        bs['variants'] = {(f'{k},lit={lit}' if k else f'lit={lit}'): v for k, v in bs['variants'].items() for lit in ('false', 'true')}
+    if not all(gen_model(m.replace(f'{NS}:block/generators/', f'{GSRC}:block/')) for m in models_of_blockstate(bs)):
+        continue
+    kept_blocks.append(g)
+    put(f'{OUT}/assets/{NS}/blockstates/{g}.json', bs)
+    state = {'lit': {'type': 'boolean'}}
+    if has_facing:
+        state['facing'] = {'type': 'enum', 'values': ['north', 'east', 'south', 'west']}
+    put(f'{OUT}/data/{GNS}/horizon/block/{g}.json', {
+        'template': 'minecraft:beacon', 'properties': {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True, 'light': 0},
+        'item': True, 'state_properties': state})
+    put(f'{OUT}/assets/{GNS}/items/{g}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/generators/{g}'}})
+    put(f'{OUT}/data/{GNS}/loot_table/blocks/{g}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
+        {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'condition': 'minecraft:survives_explosion'}]}]})
+    put(f'{OUT}/data/{GNS}/horizon/menu/{g}.json', gen_menu(g))
+# the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
+# the gas-burning one an electrolytic core: none of them is here yet)
+_have_now = set(kept_items) | set(kept_blocks)
+for p in sorted(glob.glob(f'{GGEN}/data/{GNS}/recipe/generator/*.json')):
+    r = read_json(p)
+    if r.get('result', {}).get('id', '').split(':')[-1] not in GENERATORS:
+        continue
+    ingredients = list(refs(r.get('key', r.get('ingredients', []))))
+    if all((not s.startswith(NS + ':') or s.split(':')[1] in _have_now) and not s.startswith(GSRC + ':') for s in ingredients):
+        r['result']['id'] = f'{NS}:' + r['result']['id'].split(':')[-1]
+        put(f'{OUT}/data/{NS}/recipe/generator_{os.path.basename(p)}', r)
+glang = read_json(f'{GGEN}/assets/{GSRC}/lang/en_us.json')
+
 # a creative tab with all of it
-tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)]
+tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)] 
 put(f'{OUT}/data/{NS}/horizon/creative_tab/mekanism.json', {'title': 'Mekanism', 'icon': f'{NS}:steel_casing', 'items': tab_items})
 
 
@@ -1208,6 +1419,8 @@ def vanilla_members(cat, mat):
         v = ['minecraft:bookshelf']
     elif cat == 'rods' and mat in ('wooden', 'blaze', 'bone'):
         v = {'wooden': ['minecraft:stick'], 'blaze': ['minecraft:blaze_rod'], 'bone': ['minecraft:bone']}[mat]
+    elif cat == 'player_workstations' and mat == 'furnaces':
+        v = ['minecraft:furnace']
     elif cat == 'fuels' and mat == 'coal':
         v = ['minecraft:coal', 'minecraft:charcoal']
     return v
@@ -1230,7 +1443,7 @@ for tag in sorted(asked):
         ntags += 1
 
 # mining: pickaxe for ores, storage, casings and machines; ores need a stone or iron tool
-pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube']
+pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube'] + [f'{GNS}:{g}' for g in GENERATORS]
 put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe.json', {'values': pick})
 need_iron = [f'{NS}:{n}' for n in BLOCKS if n.endswith('_ore') or n.startswith('block_') or n == 'steel_casing']
 put(f'{OUT}/data/minecraft/tags/block/needs_iron_tool.json', {'values': need_iron})
@@ -1242,6 +1455,8 @@ for d in ASSET_DIRS:
         lang.update(read_json(p))
 keep = {f'item.{NS}.{n}' for n in kept_items} | {f'block.{NS}.{n}' for n in kept_blocks}
 out = {k: v for k, v in lang.items() if k in keep}
+for g in GENERATORS:
+    out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 # Item and block names the lang file keeps under other keys: block items use block.*
 put(f'{OUT}/assets/{NS}/lang/en_us.json', out)
 

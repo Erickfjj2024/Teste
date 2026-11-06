@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -374,3 +374,38 @@ expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*15", "
 [[step]]
 ticks = 5
 expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*10", "mekanism:water_vapor*40"] }]
+
+[[step]]
+# The generators: a bio-generator turns bio fuel items into bioethanol and burns a mB a tick; the heat generator turns a
+# coal block into lava and burns 100 mB a tick; the solar generator sees the sun (noon, clear, nothing above); the
+# gas-burning generator burns ten mB of hydrogen a tick from a full tank.
+blocks = [
+    { x = 300, y = 64, z = 0, state = "mekanism:bio_generator[facing=north,lit=false]" },
+    { x = 310, y = 64, z = 0, state = "mekanism:heat_generator[facing=north,lit=false]" },
+    { x = 320, y = 64, z = 0, state = "mekanism:solar_generator[lit=false]" },
+    { x = 330, y = 64, z = 0, state = "mekanism:gas_burning_generator[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [
+    { x = 300, y = 64, z = 0, slots = ["mekanism:bio_fuel*2", ""] },
+    { x = 310, y = 64, z = 0, slots = ["minecraft:coal_block*1", ""] },
+]
+set-tanks = [{ x = 330, y = 64, z = 0, tanks = ["mekanism:hydrogen*1000"] }]
+ticks = 2
+expect.block-items = [
+    { x = 300, y = 64, z = 0, slots = ["", ""] },
+    { x = 310, y = 64, z = 0, slots = ["", ""] },
+]
+expect.block-tanks = [
+    { x = 300, y = 64, z = 0, tanks = ["mekanismgenerators:bioethanol*126"] },
+    { x = 310, y = 64, z = 0, tanks = ["minecraft:lava*600"] },
+    { x = 330, y = 64, z = 0, tanks = ["mekanism:hydrogen*980"] },
+]
+expect.blocks = [
+    { x = 300, y = 64, z = 0, state = "mekanism:bio_generator[facing=north,lit=true]" },
+    { x = 310, y = 64, z = 0, state = "mekanism:heat_generator[facing=north,lit=true]" },
+    { x = 320, y = 64, z = 0, state = "mekanism:solar_generator[lit=true]" },
+    { x = 330, y = 64, z = 0, state = "mekanism:gas_burning_generator[facing=north,lit=true]" },
+]
