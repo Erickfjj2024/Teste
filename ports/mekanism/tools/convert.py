@@ -203,13 +203,24 @@ put(f'{OUT}/assets/{NS}/items/basic_universal_cable.json', {'model': {'type': 'm
 add_block('basic_universal_cable', 'minecraft:chorus_plant', {'hardness': 0.5, 'explosion_resistance': 6.0},
           {'connects_to': f'#{NS}:energy_connectable', 'thickness': 6.0})
 
-# energy cubes: one cube, the same on every face
-cube_tex = f'{NS}:block/energy_cube_particle'
-copy_texture(cube_tex)
-put(f'{OUT}/assets/{NS}/models/block/energy_cube_simple.json', {'parent': 'minecraft:block/cube_all', 'textures': {'all': cube_tex}})
-for n in ('basic_energy_cube', 'creative_energy_cube'):
-    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_simple'}}})
-    put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_simple'}})
+# energy cubes: Mekanism's own frame (its model file lists the elements; only the loader is
+# its own), around a core, the same on every face
+base = read_json(find('models/block/energy_cube/base.json', ASSET_DIRS))
+copy_texture(f'{NS}:block/energy_core')
+for tier in ('basic', 'creative'):
+    textures = dict(base['textures'])
+    textures['corner'] = f'{NS}:block/models/energy_cube_{tier}_corner'
+    textures['core'] = f'{NS}:block/energy_core'
+    for v in textures.values():
+        copy_texture(v)
+    elements = list(base['frame'])
+    elements.append({'name': 'core', 'from': [5, 5, 5], 'to': [11, 11, 11],
+                     'faces': {d: {'texture': '#core'} for d in ('down', 'up', 'north', 'south', 'west', 'east')}})
+    put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
+        {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
+    n = f'{tier}_energy_cube'
+    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}'}}})
+    put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
     add_block(n, 'minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True})
 
 # what joins a cable: the cables, the cubes and the machines
