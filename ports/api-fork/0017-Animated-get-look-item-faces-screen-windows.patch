@@ -199,6 +199,62 @@ index 6b1a3e5..333ad92 100644
              if self.mods.shown_displays.insert(at, sig) != Some(sig) {
                  changed.push(at);
              }
+diff --git a/crates/horizon-client/src/game/lan_stations.rs b/crates/horizon-client/src/game/lan_stations.rs
+index a3b2d7f..2dfc4e2 100644
+--- a/crates/horizon-client/src/game/lan_stations.rs
++++ b/crates/horizon-client/src/game/lan_stations.rs
+@@ -394,6 +394,18 @@ impl Game<'_> {
+         })
+     }
+ 
++    /// A line of the server's for one guest, as chat: where a menu button went (temporary, for finding why one stops).
++    pub(super) fn lan_debug(&self, host: &LanHost, conn: u32, text: &str) {
++        let message = horizon_client::text::Text::literal(text.to_owned());
++        host.hub.send_to(
++            conn,
++            &C::SystemChat(play::SystemChat {
++                content: horizon_client::lan::data::component_nbt(&message.component()),
++                overlay: false,
++            }),
++        );
++    }
++
+     /// `ServerGamePacketListenerImpl.handleContainerButtonClick`:
+     /// `clickMenuButton`, then `broadcastChanges` when the menu took it.
+     pub(super) fn lan_station_button(
+@@ -403,6 +415,24 @@ impl Game<'_> {
+         window: i32,
+         id: i32,
+     ) {
++        // Temporary: say which check a button stops at.
++        {
++            let guest = host.hub.guest(conn);
++            let line = match guest.and_then(|g| g.menu.as_ref()) {
++                None => "(server: button, but this guest has no menu open)".to_owned(),
++                Some(m) if m.window != window => {
++                    format!("(server: button for window {window}, the menu open is {})", m.window)
++                }
++                Some(m) => match m.pos {
++                    None => "(server: the menu has no block)".to_owned(),
++                    Some(pos) if self.mod_menu_at(pos).is_none() => {
++                        format!("(server: no mod menu at {} {} {})", pos.0, pos.1, pos.2)
++                    }
++                    Some(_) => "(server: button accepted)".to_owned(),
++                },
++            };
++            self.lan_debug(host, conn, &line);
++        }
+         // A mod container's menu: its mod's buttons (`native_menu_button`),
+         // as handleContainerButtonClick checks them: the open menu, not a
+         // spectator, still valid.
+@@ -417,6 +447,7 @@ impl Game<'_> {
+                 // its own host too (`lan.rs:165`), so this one path covers
+                 // both single player and a LAN guest.
+                 let mut carried = g.carried.clone();
++                self.lan_debug(host, conn, "(server: sending the button to the mod)");
+                 self.mod_menu_button(pos, id, &mut carried);
+                 if host.hub.guest(conn).is_some_and(|g| g.carried != carried) {
+                     let net = host.hub.stack(&carried);
 diff --git a/crates/horizon-client/src/game/machines.rs b/crates/horizon-client/src/game/machines.rs
 index e82b6ca..1c31d7b 100644
 --- a/crates/horizon-client/src/game/machines.rs
@@ -584,7 +640,7 @@ index 325afbf..bd16474 100644
              .remote
              .as_ref()
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..f44181d 100644
+index fcc3158..8743c00 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -310,6 +310,7 @@ mod run {
@@ -595,7 +651,36 @@ index fcc3158..f44181d 100644
              }
              if self.mods.mods.wants_player_items() {
                  snapshot.inventories = self.server_inventories(&players);
-@@ -511,6 +512,30 @@ mod run {
+@@ -396,11 +397,23 @@ mod run {
+                         }
+                     }
+                     ModEvent::MenuButton { who: w, pos, id } => {
+-                        let Some(p) = who(&w) else { continue };
+-                        if let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos)
+-                            && let Some(u) = self.mods.mods.menu_button(&p, id, entity)
+-                        {
+-                            menu_updates.push(u);
++                        // Temporary: say where a button stops on its way to the mod.
++                        let say = |game: &Game<'_>, text: &str| {
++                            if let (Who::Conn(c), Some(h)) = (&w, game.lan.as_ref()) {
++                                game.lan_debug(h, *c, text);
++                            }
++                        };
++                        let Some(p) = who(&w) else {
++                            say(self, "(server: the button's player is not one the mods know)");
++                            continue;
++                        };
++                        let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos) else {
++                            say(self, "(server: the machine is not one the mod can read)");
++                            continue;
++                        };
++                        match self.mods.mods.menu_button(&p, id, entity) {
++                            Some(u) => menu_updates.push(u),
++                            None => say(self, "(server: the mod answered the button with nothing)"),
+                         }
+                     }
+                     ModEvent::Block {
+@@ -511,6 +524,30 @@ mod run {
          }
  
          /// What the window's own player is doing, as capability `player-control` reads it.
@@ -626,7 +711,7 @@ index fcc3158..f44181d 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +682,27 @@ mod run {
+@@ -657,6 +694,27 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -654,7 +739,7 @@ index fcc3158..f44181d 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -1350,7 +1396,13 @@ mod run {
+@@ -1350,7 +1408,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -669,7 +754,15 @@ index fcc3158..f44181d 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1660,6 +1712,20 @@ mod run {
+@@ -1402,6 +1466,7 @@ mod run {
+         /// player acting now.
+         pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
+             if !self.hears_players() {
++                log::warn!("Horizon: a menu button reached a game that does not hear players");
+                 return;
+             }
+             let who = self.lan_acting.map_or(Who::Local, Who::Conn);
+@@ -1660,6 +1725,20 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
