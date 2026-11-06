@@ -713,7 +713,7 @@ index 003737e..688eef8 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..95cc3c8 100644
+index 325afbf..e16b112 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -726,7 +726,16 @@ index 325afbf..95cc3c8 100644
  }
  
  /// The open screen, for the screen hooks (`native_screen_render_post`, the
-@@ -1941,8 +1944,8 @@ impl Game<'_> {
+@@ -866,6 +869,8 @@ pub struct NativeScreenView<'a> {
+ /// the server sent them.
+ pub(super) struct OpenNativeScreen {
+     key: Pos,
++    /// The block the menu was opened on (the container's `key` can stand for it, as a remote menu's does).
++    at: Pos,
+     window: i32,
+     block: String,
+     screen: NativeScreen,
+@@ -1941,8 +1946,8 @@ impl Game<'_> {
          right: bool,
          button: &mut Option<i32>,
      ) {
@@ -737,7 +746,7 @@ index 325afbf..95cc3c8 100644
          }
          let _ = (block, data, at, right, button);
      }
-@@ -2130,10 +2133,7 @@ impl Game<'_> {
+@@ -2130,10 +2135,7 @@ impl Game<'_> {
          face: [i32; 3],
          claimed: &mut bool,
      ) {
@@ -749,7 +758,21 @@ index 325afbf..95cc3c8 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -4132,6 +4132,7 @@ impl Game<'_> {
+@@ -4118,7 +4120,12 @@ impl Game<'_> {
+         let Some(screen) = screen else {
+             return Vec::new();
+         };
+-        (0..size)
++        // The player's armor slots the menu adds at its end are drawn by the game, not listed in the screen.
++        let armor = self
++            .mod_menu_at(pos)
++            .and_then(horizon_client::containers::mod_menu_type)
++            .map_or(0, |m| m.armor);
++        (0..size.saturating_sub(armor))
+             .filter(|&i| screen.slots.get(i).is_none_or(Option::is_none))
+             .collect()
+     }
+@@ -4132,6 +4139,7 @@ impl Game<'_> {
          menu: &str,
      ) {
          self.mod_screen = None;
@@ -757,7 +780,15 @@ index 325afbf..95cc3c8 100644
          let Some(t) = target else {
              return;
          };
-@@ -4166,6 +4167,10 @@ impl Game<'_> {
+@@ -4159,6 +4167,7 @@ impl Game<'_> {
+         if let Some(screen) = screen {
+             self.mod_screen = Some(OpenNativeScreen {
+                 key,
++                at: t,
+                 window,
+                 block,
+                 screen,
+@@ -4166,6 +4175,10 @@ impl Game<'_> {
              });
          }
      }
@@ -768,7 +799,7 @@ index 325afbf..95cc3c8 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4202,22 +4207,31 @@ impl Game<'_> {
+@@ -4202,22 +4215,31 @@ impl Game<'_> {
              .flatten()
              .map(|p| (p[0], p[1]))
      }
@@ -808,14 +839,14 @@ index 325afbf..95cc3c8 100644
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4374,17 @@ impl Game<'_> {
+@@ -4360,6 +4382,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
 +    /// Where the open mod screen's block is.
 +    pub(super) fn native_screen_pos(&self) -> Option<[i32; 3]> {
 +        let s = self.shown_native_screen()?;
-+        Some([s.key.0, s.key.1, s.key.2])
++        Some([s.at.0, s.at.1, s.at.2])
 +    }
 +    /// The cursor moved: an open mod screen's held window follows it.
 +    pub(super) fn native_window_drag(&self) {
@@ -826,7 +857,7 @@ index 325afbf..95cc3c8 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4409,11 @@ impl Game<'_> {
+@@ -4384,6 +4417,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -838,6 +869,14 @@ index 325afbf..95cc3c8 100644
          let window = self
              .remote
              .as_ref()
+@@ -4884,6 +4922,7 @@ mod tests {
+     fn mod_screen_data_is_its_windows_only() {
+         let mut s = super::OpenNativeScreen {
+             key: (0, 0, 0),
++            at: (0, 0, 0),
+             window: 4,
+             block: "gtmod:machine".into(),
+             screen: super::NativeScreen::default(),
 diff --git a/crates/horizon-client/src/game/remote.rs b/crates/horizon-client/src/game/remote.rs
 index 8554dc2..863b3a0 100644
 --- a/crates/horizon-client/src/game/remote.rs
