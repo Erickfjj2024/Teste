@@ -231,6 +231,236 @@ index fcc3158..da2e196 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
+diff --git a/crates/horizon-client/src/mod_content.rs b/crates/horizon-client/src/mod_content.rs
+index 667d135..80755f5 100644
+--- a/crates/horizon-client/src/mod_content.rs
++++ b/crates/horizon-client/src/mod_content.rs
+@@ -74,6 +74,18 @@ enum J {
+     Str(String),
+     Arr(Vec<J>),
+     Obj(Vec<(String, J)>),
++    /// A vanilla row of a big per-state table, kept as the text it was read from: the tables hold tens of
++    /// thousands of rows, a tree of them is ten times their size, and only the rows a mod copies are read
++    /// (`J::parsed`). Written back as they were.
++    Raw(Raw),
++}
++/// A piece of JSON kept as text.
++#[derive(Clone, Debug)]
++struct Raw(Box<serde_json::value::RawValue>);
++impl PartialEq for Raw {
++    fn eq(&self, other: &Raw) -> bool {
++        self.0.get() == other.0.get()
++    }
+ }
+ impl<'de> Deserialize<'de> for J {
+     fn deserialize<D: de::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+@@ -152,10 +164,18 @@ impl Serialize for J {
+                 }
+                 map.end()
+             }
++            J::Raw(r) => r.0.serialize(s),
+         }
+     }
+ }
+ impl J {
++    /// This value as a tree: a kept row is read now, anything else is cloned.
++    fn parsed(&self) -> J {
++        match self {
++            J::Raw(r) => serde_json::from_str(r.0.get()).unwrap_or(J::Null),
++            other => other.clone(),
++        }
++    }
+     fn get(&self, key: &str) -> Option<&J> {
+         match self {
+             J::Obj(o) => o.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+@@ -602,6 +622,47 @@ fn read_json(path: &Path) -> Result<J> {
+     Ok(serde_json::from_slice(&fs::read(path)?).map_err(|e| format!("{}: {e}", path.display()))?)
+ }
+ 
++/// A table with a `states` list at its top, which stays as text row by row (`J::Raw`): the rows of vanilla's
++/// 35,000 states are the bulk of the table, and the build copies them as they are.
++fn read_json_rows(path: &Path) -> Result<J> {
++    struct Lazy(J);
++    impl<'de> Deserialize<'de> for Lazy {
++        fn deserialize<D: de::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
++            struct V;
++            impl<'de> de::Visitor<'de> for V {
++                type Value = Lazy;
++                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
++                    f.write_str("a JSON object")
++                }
++                fn visit_map<A: de::MapAccess<'de>>(
++                    self,
++                    mut a: A,
++                ) -> std::result::Result<Lazy, A::Error> {
++                    let mut out = Vec::new();
++                    while let Some(key) = a.next_key::<String>()? {
++                        let value = if key == "states" {
++                            let rows: Vec<Box<serde_json::value::RawValue>> = a.next_value()?;
++                            J::Arr(rows.into_iter().map(|r| J::Raw(Raw(r))).collect())
++                        } else {
++                            a.next_value::<J>()?
++                        };
++                        out.push((key, value));
++                    }
++                    Ok(Lazy(J::Obj(out)))
++                }
++            }
++            d.deserialize_map(V)
++        }
++    }
++    let bytes = fs::read(path)?;
++    let lazy: Lazy =
++        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
++    Ok(lazy.0)
++}
++
++/// Tables whose `states` rows are kept as text while they are rewritten.
++const ROW_TABLES: [&str; 2] = ["facts.json", "gameplay-facts.json"];
++
+ impl Plan<'_> {
+     /// `entity-types.json` with a row for each mod type: its template's, so its
+     /// size, eyes and category are the template's (`execute anchored eyes`,
+@@ -645,11 +706,11 @@ impl<'a> Plan<'a> {
+             },
+             false => BTreeSet::new(),
+         };
+-        let mut facts = read_json(&base.join("facts.json"))?;
++        let mut facts = read_json_rows(&base.join("facts.json"))?;
+         let names: Vec<String> = match facts.at("states") {
+             Some(J::Arr(states)) => states
+                 .iter()
+-                .map(|s| match s {
++                .map(|s| match s.parsed() {
+                     J::Arr(row) => match row.first() {
+                         Some(J::Str(name)) => Ok(name.clone()),
+                         _ => Err("facts.json: a state without a name"),
+@@ -695,7 +756,8 @@ impl<'a> Plan<'a> {
+                     let mut used = BTreeSet::new();
+                     let mut out = Vec::new();
+                     for id in states.clone() {
+-                        let J::Arr(row) = &rows[id as usize] else {
++                        let row = rows[id as usize].parsed();
++                        let J::Arr(row) = &row else {
+                             unreachable!()
+                         };
+                         let Some(J::Str(value)) = row
+@@ -712,7 +774,7 @@ impl<'a> Plan<'a> {
+                         let boxes = spec.values.get(value).ok_or_else(|| {
+                             format!("{}: no shape for {}={value}", decl.id, spec.property)
+                         })?;
+-                        used.insert(value.as_str());
++                        used.insert(value.clone());
+                         let mut shape = VoxelShape::empty();
+                         for b in boxes {
+                             let part = VoxelShape::from_box(Aabb::new(
+@@ -736,12 +798,13 @@ impl<'a> Plan<'a> {
+                         unreachable!()
+                     };
+                     let shapes = states.clone().map(|id| {
+-                        let props = match &rows[id as usize] {
+-                            J::Arr(row) => row.get(4).and_then(|p| p.get("properties")),
++                        let props = match rows[id as usize].parsed() {
++                            J::Arr(row) => row.get(4).and_then(|p| p.get("properties")).cloned(),
+                             _ => None,
+                         };
+-                        let sides = ["down", "up", "north", "south", "west", "east"]
+-                            .map(|k| matches!(props.and_then(|p| p.get(k)), Some(J::Str(v)) if v == "true"));
++                        let sides = ["down", "up", "north", "south", "west", "east"].map(
++                            |k| matches!(props.as_ref().and_then(|p| p.get(k)), Some(J::Str(v)) if v == "true"),
++                        );
+                         horizon_world::collision::pipe_shape(size.into(), sides)
+                     });
+                     Some(shapes.collect::<std::io::Result<_>>()?)
+@@ -757,11 +820,11 @@ impl<'a> Plan<'a> {
+                 let Some(J::Arr(rows)) = facts.get("states") else {
+                     unreachable!()
+                 };
+-                let properties = |id: u32| -> Option<&J> {
+-                    let J::Arr(row) = rows.get(id as usize)? else {
++                let properties = |id: u32| -> Option<J> {
++                    let J::Arr(row) = rows.get(id as usize)?.parsed() else {
+                         return None;
+                     };
+-                    row.get(4)?.get("properties")
++                    row.get(4)?.get("properties").cloned()
+                 };
+                 for key in decl.state_properties.keys() {
+                     if properties(default).is_some_and(|p| p.get(key).is_some()) {
+@@ -786,7 +849,7 @@ impl<'a> Plan<'a> {
+                     .keys()
+                     .any(|key| !decl.state_properties.contains_key(key));
+                 if on_template {
+-                    let mut wanted = properties(default).cloned().ok_or_else(|| {
++                    let mut wanted = properties(default).ok_or_else(|| {
+                         format!("{}: template default has no state properties", decl.id)
+                     })?;
+                     for (key, value) in &decl.default_state {
+@@ -806,7 +869,7 @@ impl<'a> Plan<'a> {
+                         .clone()
+                         .filter(|id| {
+                             properties(*id).is_some_and(|p| {
+-                                let (J::Obj(a), J::Obj(b)) = (p, &wanted) else {
++                                let (J::Obj(a), J::Obj(b)) = (&p, &wanted) else {
+                                     return false;
+                                 };
+                                 a.len() == b.len() && b.iter().all(|(k, v)| p.get(k) == Some(v))
+@@ -865,19 +928,19 @@ impl<'a> Plan<'a> {
+             .into());
+         }
+         // Block items copy the template block's item.
+-        let gameplay = read_json(&base.join("gameplay-facts.json"))?;
++        let gameplay = read_json_rows(&base.join("gameplay-facts.json"))?;
+         let rows = match gameplay.get("states") {
+             Some(J::Arr(rows)) if rows.len() == names.len() => rows,
+             _ => return Err("gameplay-facts.json does not match facts.json".into()),
+         };
+         let mut sounds = BTreeMap::new();
+         for s in wanted_sounds {
+-            let row = &rows[defaults[&s] as usize];
++            let row = rows[defaults[&s] as usize].parsed();
+             sounds.insert(s, row.get("sound").cloned().unwrap_or(J::Null));
+         }
+         let mut items = Vec::new();
+         for b in &mut blocks {
+-            let row = &rows[b.rename.states.start as usize];
++            let row = rows[b.rename.states.start as usize].parsed();
+             b.item = match row.get("item") {
+                 Some(J::Str(i)) if i != "minecraft:air" => Some(i.clone()),
+                 _ => None,
+@@ -962,7 +1025,7 @@ impl<'a> Plan<'a> {
+             // so its states stay one run in registry order.
+             for (next, (id, combo)) in (b.rename.first..).zip(b.state_combinations()) {
+                 let t = (id - b.rename.states.start) as usize;
+-                let mut row = list[id as usize].clone();
++                let mut row = list[id as usize].parsed();
+                 for r in &renames {
+                     row.rename(r, ids);
+                 }
+@@ -1932,10 +1995,10 @@ impl TagMerge {
+     }
+ }
+ 
+-/// Threads rewriting the tables at once. Each holds a whole table as a tree
+-/// (gameplay-facts.json's is over a gigabyte with ATM10's mods), so more
+-/// would mostly add memory.
+-const TABLE_THREADS: usize = 3;
++/// Threads rewriting the tables at once. Each holds a table while it rewrites it (the per-state ones keep
++/// vanilla's rows as text, the NBT ones as trees), so more would mostly add memory: with two, the build of
++/// vanilla and a mod peaks near 300 MB; it was 1.2 GB when every table was a tree of JSON, and a phone gave up.
++const TABLE_THREADS: usize = 2;
+ 
+ /// Rewrites the base's per-state tables for the mods' states into the
+ /// overlay. They are independent: [`TABLE_THREADS`] threads take them,
+@@ -1959,7 +2022,7 @@ fn tables(base: &Path, plan: &Plan, overlay: &Overlay<'_>) -> Result<()> {
+             plan.entity_types_json(&fs::read(&path)?)
+                 .map_err(|e| format!("{name}: {e}"))?
+         } else if JSON_TABLES.contains(&name) {
+-            let mut doc = read_json(&path)?;
++            let mut doc = if ROW_TABLES.contains(&name) { read_json_rows(&path)? } else { read_json(&path)? };
+             plan.json(name, &mut doc)
+                 .map_err(|e| format!("{name}: {e}"))?;
+             serde_json::to_vec(&doc)?
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
 index 783da48..3b2c62c 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit

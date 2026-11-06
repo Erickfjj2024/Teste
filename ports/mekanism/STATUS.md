@@ -61,13 +61,15 @@ e **ainda não foi testada**). APK: v8.
    pelos dados da entidade do bloco. Isso é o elemento novo `part` do renderizador (API do fork): desenha o modelo de
    um bloco auxiliar (36 blocos de um estado, sem item) quando um byte dos dados do mod bate; o servidor manda ao cliente
    os primeiros 64 bytes dos dados. **Não testado no jogo.**
-9. **Pendente (carregador):** o jogo guarda ~2,4 KB em disco por estado de bloco, em tabelas JSON genéricas na memória
-   (35.727 estados; `gameplay-facts.json` tem 55 MB), e cada estado novo de um mod clona uma linha em cada tabela. Um
-   modpack grande (221 mods) não escalaria assim. Trabalho planejado: medir e compartilhar ou adiar essas linhas.
-
-10. **Configurador (mod 0.1.12, medido no celular):** o mod foi chamado ("heard at 108 63 113") mas `world.get-block`
-    devolveu vazio: o jogo só empresta o mundo ao mod durante ticks e comandos, não durante `item-used`. APK v15: o jogo
-    empresta o mundo também nessa chamada. O mod 0.1.12 tem mensagens de diagnóstico no clique (a tirar depois).
+9. **Carregador de mods (medido no computador, APK v16, ainda não testado no celular).** Medição: montar a raiz de
+   conteúdo (feita quando o conjunto de mods muda; depois fica em cache) tinha **pico de 1,2 GB** com vanilla + Mekanism, e
+   só carregar o resultado usa 140 MB. A causa não era o número de estados do Mekanism (cada 11.700 estados a mais
+   custavam ~120 MB), e sim ler a tabela `gameplay-facts.json` (55 MB de texto) como árvore JSON (~1 GB) e fazer isso
+   em 3 threads. Agora as linhas dos 35.727 estados do jogo ficam como texto e só as linhas dos blocos-modelo viram
+   árvore (`J::Raw` em `mod_content.rs`), com 2 threads. Resultado: pico **322 MB** (era 1.198 MB), 3 s em vez de 7 s, e
+   o mod com 11.700 estados do 0.1.8 monta com 500 MB (antes 1.318 MB, que derrubou o app). A raiz gerada é igual à
+   de antes arquivo por arquivo (só espaços diferem em `facts.json`). Falta: as tabelas NBT (oclusão, colisão,
+   movimento) ainda são árvores e o custo por estado continua ~10 KB.
 
 ## 3. NÃO testado no jogo (o usuário não viu)
 
