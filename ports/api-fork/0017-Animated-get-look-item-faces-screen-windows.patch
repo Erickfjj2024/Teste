@@ -432,7 +432,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..4f47a7e 100644
+index 609127a..1581933 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -4,16 +4,77 @@
@@ -556,7 +556,7 @@ index 609127a..4f47a7e 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -90,20 +133,217 @@ impl Game<'_> {
+@@ -90,20 +133,221 @@ impl Game<'_> {
                      };
                      self.native_sprite(batch, texture, src, dst);
                  }
@@ -593,13 +593,13 @@ index 609127a..4f47a7e 100644
 +                            self.draw_tiled_bottom_up(batch, &t.texture, rect, frac, tint);
 +                        }
 +                    }
-+                }
+                 }
+-                Widget::Button { .. } => {}
 +                Widget::Neighbor { x, y, side } => {
 +                    if let Ok(icon) = self.neighbor_icon(*side) {
 +                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
 +                    }
-                 }
--                Widget::Button { .. } => {}
++                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
 +            }
 +        }
@@ -631,7 +631,7 @@ index 609127a..4f47a7e 100644
 +                r.v0 = sprite.v1 - rows * dv;
 +                batch.rect_uv(x + across, bottom - done - rows, cols, rows, r, tint);
 +                across += cols;
-             }
++            }
 +            done += rows;
 +        }
 +    }
@@ -701,7 +701,7 @@ index 609127a..4f47a7e 100644
 +                    [0.0, 0.0, sw, sh],
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
-+            }
+             }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at);
          }
          true
@@ -749,6 +749,10 @@ index 609127a..4f47a7e 100644
 +        let Some([wx, wy, ww, wh]) = self.open_window_rect() else {
 +            return false;
 +        };
++        // The window's own slots (an upgrade window's) sit inside it and are the ones it is there for.
++        if self.native_window_slot(slot) {
++            return false;
++        }
 +        let (sx, sy) = self.slot_position_for_window(slot);
 +        sx + 16.0 > wx && sx < wx + ww && sy + 16.0 > wy && sy < wy + wh
 +    }
@@ -780,7 +784,7 @@ index 609127a..4f47a7e 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +354,7 @@ impl Game<'_> {
+@@ -114,8 +358,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -855,7 +859,7 @@ index 003737e..9bfe346 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..b5edd05 100644
+index 325afbf..2bc15d1 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -943,13 +947,19 @@ index 325afbf..b5edd05 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4201,23 +4214,40 @@ impl Game<'_> {
+@@ -4201,23 +4214,47 @@ impl Game<'_> {
              .copied()
              .flatten()
              .map(|p| (p[0], p[1]))
 +            .or_else(|| super::menu_screens::window_slot_position(&s.block, slot))
-     }
--    /// The container slots the open mod screen shows (300.. ids).
++    }
++    /// Whether game slot `slot` (300 and up) is one a window of the open mod screen holds.
++    pub(super) fn native_window_slot(&self, slot: usize) -> bool {
++        slot >= 300
++            && self
++                .shown_native_screen()
++                .is_some_and(|s| super::menu_screens::window_slot_position(&s.block, slot - 300).is_some())
++    }
 +    /// Where the open mod screen puts the player's armor or off-hand slot `id` (500 to 504), if it has one.
 +    pub(super) fn native_screen_armor(&self, id: usize) -> Option<(f32, f32)> {
 +        let s = self.shown_native_screen()?;
@@ -958,7 +968,8 @@ index 325afbf..b5edd05 100644
 +            .iter()
 +            .find(|(i, _)| *i == id)
 +            .map(|(_, p)| (p[0], p[1]))
-+    }
+     }
+-    /// The container slots the open mod screen shows (300.. ids).
 +    /// The container slots the open mod screen shows (300.. ids), then the player's armor ones it adds.
      pub(super) fn native_screen_slots(&self) -> Option<Vec<usize>> {
          let s = self.shown_native_screen()?;
@@ -992,7 +1003,7 @@ index 325afbf..b5edd05 100644
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4390,17 @@ impl Game<'_> {
+@@ -4360,6 +4397,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -1010,7 +1021,7 @@ index 325afbf..b5edd05 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4425,11 @@ impl Game<'_> {
+@@ -4384,6 +4432,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -1022,7 +1033,7 @@ index 325afbf..b5edd05 100644
          let window = self
              .remote
              .as_ref()
-@@ -4884,6 +4930,7 @@ mod tests {
+@@ -4884,6 +4937,7 @@ mod tests {
      fn mod_screen_data_is_its_windows_only() {
          let mut s = super::OpenNativeScreen {
              key: (0, 0, 0),
