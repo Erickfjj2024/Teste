@@ -231,6 +231,21 @@ for tier in ('basic', 'creative'):
         if not v.startswith(f'{NS}:block/energy_core_'):
             copy_texture(v)
     elements = list(base['frame'])
+    # Ports and LEDs. The default side configuration of Mekanism's cube (FRONT_OUT_EJECT) is the front an
+    # output (ACTIVE_LIT: lit LEDs, shifted uvs, full light) and the other five sides inputs (ACTIVE_UNLIT),
+    # so every side has its port and its LEDs. The configurator is not in the port: the sides do not change.
+    shift_u, shift_v = base['leds']['lit_uv_shift']
+    def plain(e, lit=False):
+        e = {k: v for k, v in e.items() if k != 'shade_direction_override'}
+        if lit:
+            e['light_emission'] = 15
+            e['faces'] = {d: dict(f, uv=[f['uv'][0] + shift_u, f['uv'][1] + shift_v,
+                                         f['uv'][2] + shift_u, f['uv'][3] + shift_v]) if 'uv' in f else f
+                          for d, f in e['faces'].items()}
+        return e
+    for side in ('bottom', 'top', 'front', 'back', 'right', 'left'):
+        elements += [plain(e, lit=side == 'front') for e in base['leds'][side]]
+        elements += [plain(e) for e in base['ports'][side]]
     # The core is not in the model: Mekanism draws it in code, turning, and so does the port (a renderer).
     put(f'{OUT}/data/{NS}/horizon/renderer/{tier}_energy_cube.json', {'elements': [
         # RenderEnergyCube: scale 0.4 of a 16-unit cube, bounce sin(3 deg * t) / 7, a turn about Y at 4 deg a
@@ -244,7 +259,9 @@ for tier in ('basic', 'creative'):
     put(f'{OUT}/assets/{NS}/models/block/energy_cube_{tier}.json',
         {'parent': 'minecraft:block/block', 'textures': textures, 'elements': elements})
     n = f'{tier}_energy_cube'
-    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {'': {'model': f'{NS}:block/energy_cube_{tier}'}}})
+    put(f'{OUT}/assets/{NS}/blockstates/{n}.json', {'variants': {
+        f'facing={f}': {'model': f'{NS}:block/energy_cube_{tier}', **({'y': y} if y else {})}
+        for f, y in (('north', 0), ('east', 90), ('south', 180), ('west', 270))}})
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/energy_cube_{tier}'}})
     # An ender chest's shape is not a full cube, so it does not hide the blocks beside the cube's open frame
     # (a furnace's does); its light is switched off.
@@ -264,7 +281,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.6', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.7', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
