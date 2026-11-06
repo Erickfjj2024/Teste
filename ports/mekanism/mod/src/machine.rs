@@ -56,16 +56,40 @@ pub struct Io {
     pub progress: u32,
 }
 
+/// What a machine did in a tick, as the number its screen shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Nothing in the input slot.
+    Idle = 0,
+    Running = 1,
+    /// The input has no recipe.
+    NoRecipe = 2,
+    /// Not enough energy for the tick.
+    NoEnergy = 3,
+    /// Not enough input for the recipe, or no room for what it makes.
+    Blocked = 4,
+    /// The machine has no recipes at all (they were not loaded).
+    NoBook = 5,
+}
+
 /// One tick: the machine runs when its input has a recipe, there is room for
 /// what it makes and energy for the tick (`usage`); a finished recipe is made
 /// at once. A machine with no recipe or no room starts over; one short of
-/// energy waits where it was. Returns the new contents and whether it ran.
-pub fn step(usage: u64, book: &Book, io: &Io) -> (Io, bool) {
+/// energy waits where it was. Returns the new contents and what it did.
+pub fn step(usage: u64, book: &Book, io: &Io) -> (Io, Status) {
     let mut next = io.clone();
-    let recipe = io.input.as_ref().and_then(|s| book.get(&s.item).map(|r| (s, r)));
+    if book.is_empty() {
+        next.progress = 0;
+        return (next, Status::NoBook);
+    }
+    let Some(input_stack) = io.input.as_ref() else {
+        next.progress = 0;
+        return (next, Status::Idle);
+    };
+    let recipe = book.get(&input_stack.item).map(|r| (input_stack, r));
     let Some((input, recipe)) = recipe else {
         next.progress = 0;
-        return (next, false);
+        return (next, Status::NoRecipe);
     };
     let room = match &io.output {
         None => recipe.out_count <= STACK,
@@ -75,10 +99,10 @@ pub fn step(usage: u64, book: &Book, io: &Io) -> (Io, bool) {
     };
     if input.count < recipe.count || !room {
         next.progress = 0;
-        return (next, false);
+        return (next, Status::Blocked);
     }
     if io.energy < usage {
-        return (next, false);
+        return (next, Status::NoEnergy);
     }
     next.energy -= usage;
     next.progress += 1;
@@ -101,7 +125,7 @@ pub fn step(usage: u64, book: &Book, io: &Io) -> (Io, bool) {
             },
         });
     }
-    (next, true)
+    (next, Status::Running)
 }
 
 #[cfg(test)]
@@ -131,9 +155,9 @@ mod tests {
         let book = book();
         let (mut io, mut ran) = (io, 0);
         for _ in 0..ticks {
-            let (next, active) = step(8, &book, &io);
+            let (next, status) = step(8, &book, &io);
             io = next;
-            ran += u32::from(active);
+            ran += u32::from(status == Status::Running);
         }
         (io, ran)
     }
@@ -204,6 +228,17 @@ mod tests {
             self
         }
     }
+    #[test]
+    fn the_status_says_why_it_does_not_run() {
+        let b = book();
+        let with = |input: Option<Stack>, energy| Io { input, energy, ..Io::default() };
+        assert_eq!(step(8, &b, &with(None, 100)).1, Status::Idle);
+        assert_eq!(step(8, &b, &with(stack("mekanism:nothing", 1), 100)).1, Status::NoRecipe);
+        assert_eq!(step(8, &b, &with(stack("mekanism:ore_a", 1), 3)).1, Status::NoEnergy);
+        assert_eq!(step(8, &b, &with(stack("mekanism:ore_a", 1), 100)).1, Status::Running);
+        assert_eq!(step(8, &Book::default(), &with(stack("mekanism:ore_a", 1), 100)).1, Status::NoBook);
+    }
+
     #[test]
     fn the_first_recipe_for_an_input_wins() {
         let mut b = book();

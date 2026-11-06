@@ -230,12 +230,14 @@ put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
 # menus of the machines: slots at Mekanism's places, an energy bar, the progress and the title
 for m in MACHINES:
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': 2, 'data_slots': 5, 'results': [1],
+        'slots': 2, 'data_slots': 6, 'results': [1],
         'screen': {'slots': [[56, 17], [116, 35]], 'widgets': [
             {'type': 'bar', 'x': 164, 'y': 16, 'w': 6, 'h': 54, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]},
              'color': '#FFC83C', 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
-             'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'}]}})
+             'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
+            {'type': 'text', 'x': 96, 'y': 6, 'text': 'Status {5}', 'color': '#404040'}]}})
+# Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
 tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)]

@@ -11,7 +11,7 @@ use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack,
     BlockChange, Registration, ServerMod, TransmitterMedium, TransmitterSpec, recipe_types, serde_json, world,
 };
-use machine::{Book, Io, Recipe, Stack, step};
+use machine::{Book, Io, Recipe, Stack, Status, step};
 use std::collections::HashMap;
 
 /// Where a machine's recipes come from.
@@ -47,6 +47,9 @@ const CABLE_RATE: u64 = 1_024;
 
 struct Mekanism {
     books: HashMap<&'static str, Book>,
+    /// The tick each book was last asked for: the game lends its recipes a little
+    /// after the mod starts, so a book that came out empty is asked again.
+    tried: HashMap<&'static str, u64>,
 }
 
 fn kind(block: &str, ticks: bool) -> BlockEntityKind {
@@ -124,18 +127,28 @@ fn item(s: &Option<Stack>) -> Option<ItemStack> {
 
 /// The screen's data slots: progress, then the energy and its capacity as low
 /// and high 16 bits.
-fn menu_data(progress: u32, energy: u64, capacity: u64) -> Vec<i32> {
+fn menu_data(progress: u32, energy: u64, capacity: u64, status: Status) -> Vec<i32> {
     let half = |v: u64, shift: u32| ((v >> shift) & 0xFFFF) as i32;
-    vec![progress as i32, half(energy, 0), half(energy, 16), half(capacity, 0), half(capacity, 16)]
+    vec![
+        progress as i32,
+        half(energy, 0),
+        half(energy, 16),
+        half(capacity, 0),
+        half(capacity, 16),
+        status as i32,
+    ]
 }
 
 impl Mekanism {
     /// A machine's tick: what it holds after, if that differs from before.
-    fn run(&mut self, def: &Def, e: &BlockEntity) -> Option<BlockEntityUpdate> {
-        let book = self
-            .books
-            .entry(def.block)
-            .or_insert_with(|| load_book(def.source));
+    fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
+        let empty = self.books.get(def.block).is_none_or(Book::is_empty);
+        let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
+        if empty && due {
+            self.tried.insert(def.block, tick);
+            self.books.insert(def.block, load_book(def.source));
+        }
+        let book = self.books.entry(def.block).or_default();
         let progress = e
             .data
             .get(..2)
@@ -146,14 +159,15 @@ impl Mekanism {
             energy: e.energy,
             progress,
         };
-        let (next, active) = step(def.usage, book, &io);
+        let (next, status) = step(def.usage, book, &io);
+        let active = status == Status::Running;
         // The block shows when it runs, with its entity kept.
         let lit = e.state.contains("lit=true");
         if active != lit {
             let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
         }
         let capacity = def.usage * STORED_TICKS;
-        let data = menu_data(next.progress, next.energy, capacity);
+        let data = menu_data(next.progress, next.energy, capacity, status);
         if next == io && data == e.menu_data {
             return None;
         }
@@ -202,7 +216,7 @@ impl ServerMod for Mekanism {
             .block_entity_kind(basic)
             .block_entity_kind(creative)
             .block_entity_kind(cable);
-        Ok((Mekanism { books: HashMap::new() }, r.on_chunks()))
+        Ok((Mekanism { books: HashMap::new(), tried: HashMap::new() }, r.on_chunks()))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -227,12 +241,12 @@ impl ServerMod for Mekanism {
         }
     }
 
-    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
+    fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
         let mut out = Vec::new();
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {
-                out.extend(self.run(def, e));
+                out.extend(self.run(def, e, tick));
             } else if block == "mekanism:creative_energy_cube" && e.energy < CREATIVE_CUBE {
                 // Creative: never empty.
                 out.push(BlockEntityUpdate {
