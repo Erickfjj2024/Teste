@@ -146,6 +146,13 @@ da conexão do convidado e, na hora do tick, o jogo traduzia esse número pela l
 item (`acting_server_player`) já achava o jogador pelo id dele. Agora os eventos de botão de menu e de bloco guardam o id do jogador que
 age. (Os eventos de bloco quebrado/colocado tinham o mesmo defeito e nunca chegavam aos mods em partida de um jogador.)
 
+**Janela de configuração, confirmado pelo usuário (APK v24):** os botões das faces **funcionam** (clique, cor, dados voltam à tela). A causa
+era o jogador do botão: o servidor trata o clique do botão fora da troca que faz do convidado o jogador que age, então a identidade que
+o jogo dava era a do dono da partida. Agora o evento guarda o convidado da conexão do pacote (e, com um só jogador, ele é o jogador).
+Visto em seguida: o rótulo "Inventory" do jogo aparecia por cima da janela (o jogo desenha o título e esse rótulo depois da tela);
+APK v25 e mod 0.1.20 (**não testados**): a tela diz `own_labels` e o jogo deixa os dele de fora (os rótulos são `text` da tela, que a
+janela cobre). Mensagens de diagnóstico removidas.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

@@ -199,82 +199,14 @@ index 6b1a3e5..333ad92 100644
              if self.mods.shown_displays.insert(at, sig) != Some(sig) {
                  changed.push(at);
              }
-diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
-index 2b92825..ec9d630 100644
---- a/crates/horizon-client/src/game/lan_actions.rs
-+++ b/crates/horizon-client/src/game/lan_actions.rs
-@@ -1532,6 +1532,18 @@ impl Game<'_> {
- 
-     /// A packet from a guest that the hub does not handle itself.
-     pub(super) fn lan_guest_packet(&mut self, host: &mut LanHost, conn: u32, packet: S) {
-+        // Temporary: lines about where a menu button went, for this guest.
-+        #[cfg(feature = "mods")]
-+        if !self.mods.debug.is_empty() {
-+            let lines = std::mem::take(&mut self.mods.debug);
-+            for (c, text) in lines {
-+                if c == conn || c == 0 {
-+                    self.lan_debug(host, conn, &text);
-+                } else {
-+                    self.mods.debug.push((c, text));
-+                }
-+            }
-+        }
-         let Some(gi) = host.hub.guests.iter().position(|g| g.conn == conn) else {
-             return;
-         };
 diff --git a/crates/horizon-client/src/game/lan_stations.rs b/crates/horizon-client/src/game/lan_stations.rs
-index a3b2d7f..00ae176 100644
+index a3b2d7f..b24ac1f 100644
 --- a/crates/horizon-client/src/game/lan_stations.rs
 +++ b/crates/horizon-client/src/game/lan_stations.rs
-@@ -394,6 +394,18 @@ impl Game<'_> {
-         })
-     }
- 
-+    /// A line of the server's for one guest, as chat: where a menu button went (temporary, for finding why one stops).
-+    pub(super) fn lan_debug(&self, host: &LanHost, conn: u32, text: &str) {
-+        let message = horizon_client::text::Text::literal(text.to_owned());
-+        host.hub.send_to(
-+            conn,
-+            &C::SystemChat(play::SystemChat {
-+                content: horizon_client::lan::data::component_nbt(&message.component()),
-+                overlay: false,
-+            }),
-+        );
-+    }
-+
-     /// `ServerGamePacketListenerImpl.handleContainerButtonClick`:
-     /// `clickMenuButton`, then `broadcastChanges` when the menu took it.
-     pub(super) fn lan_station_button(
-@@ -403,6 +415,24 @@ impl Game<'_> {
-         window: i32,
-         id: i32,
-     ) {
-+        // Temporary: say which check a button stops at.
-+        {
-+            let guest = host.hub.guest(conn);
-+            let line = match guest.and_then(|g| g.menu.as_ref()) {
-+                None => "(server: button, but this guest has no menu open)".to_owned(),
-+                Some(m) if m.window != window => {
-+                    format!("(server: button for window {window}, the menu open is {})", m.window)
-+                }
-+                Some(m) => match m.pos {
-+                    None => "(server: the menu has no block)".to_owned(),
-+                    Some(pos) if self.mod_menu_at(pos).is_none() => {
-+                        format!("(server: no mod menu at {} {} {})", pos.0, pos.1, pos.2)
-+                    }
-+                    Some(_) => "(server: button accepted)".to_owned(),
-+                },
-+            };
-+            self.lan_debug(host, conn, &line);
-+        }
-         // A mod container's menu: its mod's buttons (`native_menu_button`),
-         // as handleContainerButtonClick checks them: the open menu, not a
-         // spectator, still valid.
-@@ -417,7 +447,26 @@ impl Game<'_> {
+@@ -417,7 +417,15 @@ impl Game<'_> {
                  // its own host too (`lan.rs:165`), so this one path covers
                  // both single player and a LAN guest.
                  let mut carried = g.carried.clone();
-+                self.lan_debug(host, conn, "(server: sending the button to the mod)");
 +                #[cfg(feature = "mods")]
 +                {
 +                    self.mods.acting_guest = host.hub.guest(conn).map(|g| g.uuid);
@@ -283,16 +215,6 @@ index a3b2d7f..00ae176 100644
 +                #[cfg(feature = "mods")]
 +                {
 +                    self.mods.acting_guest = None;
-+                }
-+                #[cfg(feature = "mods")]
-+                {
-+                    let line = format!(
-+                        "(server: the button is queued for the mod: {}, mods running {}, remote {})",
-+                        self.mods.events.len(),
-+                        self.mods.server,
-+                        self.remote.is_some()
-+                    );
-+                    self.lan_debug(host, conn, &line);
 +                }
                  if host.hub.guest(conn).is_some_and(|g| g.carried != carried) {
                      let net = host.hub.stack(&carried);
@@ -414,7 +336,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..9b1d9c4 100644
+index 609127a..681f9e1 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -7,13 +7,33 @@ use super::{Game, native_hooks::NativeScreen};
@@ -453,7 +375,12 @@ index 609127a..9b1d9c4 100644
  /// The screen of menu type `id`, if it has one.
  pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
      MENU_SCREENS.get()?.get(id)
-@@ -37,29 +57,10 @@ impl Game<'_> {
+@@ -33,33 +53,14 @@ impl Game<'_> {
+                 .collect(),
+             inventory_y: def.inventory_y as f32,
+             inventory_x: def.inventory_x as f32,
+-            own_labels: false,
++            own_labels: def.own_labels,
          })
      }
  
@@ -591,16 +518,13 @@ index 609127a..9b1d9c4 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..f0affe8 100644
+index 003737e..2696fe8 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
-@@ -63,6 +63,13 @@ pub(super) struct ModsState {
+@@ -63,6 +63,10 @@ pub(super) struct ModsState {
      /// What players did this tick, for server mods at its end.
      #[cfg(feature = "mods")]
      pub(super) events: Vec<ModEvent>,
-+    /// Temporary: lines for a guest's chat about where a menu button went, sent with its next packet.
-+    #[cfg(feature = "mods")]
-+    pub(super) debug: Vec<(u32, String)>,
 +    /// The guest whose packet the server is handling, by id, for the events that packet makes (a menu button): the
 +    /// packet is handled outside the swap that makes a guest the acting player.
 +    #[cfg(feature = "mods")]
@@ -608,7 +532,7 @@ index 003737e..f0affe8 100644
      /// A running server mod has capability `world`: its calls get the
      /// levels' chunks to read.
      #[cfg(feature = "mods")]
-@@ -613,6 +620,7 @@ impl Game<'_> {
+@@ -613,6 +617,7 @@ impl Game<'_> {
              font_widths: self.mods.font_widths.clone(),
              players,
              motions: Vec::new(),
@@ -616,7 +540,7 @@ index 003737e..f0affe8 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +862,9 @@ impl Game<'_> {
+@@ -854,7 +859,9 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -628,7 +552,7 @@ index 003737e..f0affe8 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..bd16474 100644
+index 325afbf..eac8147 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -1941,8 +1941,8 @@ impl Game<'_> {
@@ -673,7 +597,7 @@ index 325afbf..bd16474 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4384,6 +4386,21 @@ impl Game<'_> {
+@@ -4384,6 +4386,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -682,21 +606,11 @@ index 325afbf..bd16474 100644
 +            self.audio.play_button_click();
 +            return true;
 +        }
-+        let said = self
-+            .remote
-+            .as_ref()
-+            .and_then(|r| r.menu.as_ref())
-+            .map(|(w, _)| format!("(menu button {button} sent to window {w})"))
-+            .unwrap_or_else(|| format!("(menu button {button} not sent: no menu window)"));
-+        self.chat_line(
-+            horizon_client::text::Text::literal(said),
-+            horizon_client::chat::ChatSource::Client,
-+        );
          let window = self
              .remote
              .as_ref()
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..9015c79 100644
+index fcc3158..ec045e4 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -310,6 +310,7 @@ mod run {
@@ -722,36 +636,7 @@ index fcc3158..9015c79 100644
                  };
                  match event {
                      ModEvent::Chat(w, text) => {
-@@ -396,11 +403,23 @@ mod run {
-                         }
-                     }
-                     ModEvent::MenuButton { who: w, pos, id } => {
--                        let Some(p) = who(&w) else { continue };
--                        if let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos)
--                            && let Some(u) = self.mods.mods.menu_button(&p, id, entity)
--                        {
--                            menu_updates.push(u);
-+                        // Temporary: say where a button stops on its way to the mod.
-+                        let conn = if let Who::Conn(c) = &w { *c } else { 0 };
-+                        let Some(p) = who(&w) else {
-+                            self.mods.debug.push((conn, "(server: the button's player is not one the mods know)".into()));
-+                            continue;
-+                        };
-+                        let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos) else {
-+                            self.mods.debug.push((conn, "(server: the machine is not one the mod can read)".into()));
-+                            continue;
-+                        };
-+                        self.mods.debug.push((conn, "(server: the mod is being asked about the button)".into()));
-+                        match self.mods.mods.menu_button(&p, id, entity) {
-+                            Some(u) => {
-+                                self.mods.debug.push((conn, "(server: the mod answered the button)".into()));
-+                                menu_updates.push(u);
-+                            }
-+                            None => self.mods.debug.push((conn, "(server: the mod answered the button with nothing)".into())),
-                         }
-                     }
-                     ModEvent::Block {
-@@ -511,6 +530,30 @@ mod run {
+@@ -511,6 +518,30 @@ mod run {
          }
  
          /// What the window's own player is doing, as capability `player-control` reads it.
@@ -782,7 +667,7 @@ index fcc3158..9015c79 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +700,27 @@ mod run {
+@@ -657,6 +688,27 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -810,7 +695,7 @@ index fcc3158..9015c79 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -1350,7 +1414,13 @@ mod run {
+@@ -1350,7 +1402,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -825,7 +710,7 @@ index fcc3158..9015c79 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1472,15 @@ mod run {
+@@ -1402,9 +1460,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -842,7 +727,7 @@ index fcc3158..9015c79 100644
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1494,7 @@ mod run {
+@@ -1418,7 +1482,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -851,7 +736,7 @@ index fcc3158..9015c79 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1736,20 @@ mod run {
+@@ -1660,6 +1724,20 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
@@ -1231,10 +1116,19 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..49ab253 100644
+index e2ee6c7..affba44 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
-@@ -338,6 +338,48 @@ pub struct MenuScreen {
+@@ -332,12 +332,57 @@ pub struct MenuScreen {
+     /// over the whole panel instead of the plain grey one.
+     #[serde(default)]
+     pub texture: Option<String>,
++    /// The screen draws its title and its "Inventory" label itself (as `text` widgets): the game leaves its own out.
++    #[serde(default)]
++    pub own_labels: bool,
+     /// Where each container slot is (its item's top left); `null` hides the
+     /// slot, and so do slots past the list.
+     pub slots: Vec<Option<[i32; 2]>>,
      /// Drawn in this order, over the panel and under the items.
      #[serde(default)]
      pub widgets: Vec<Widget>,
@@ -1283,7 +1177,7 @@ index e2ee6c7..49ab253 100644
  }
  
  /// A number a widget reads: a constant, a data slot of the menu, or two data
-@@ -349,6 +391,9 @@ pub enum Value {
+@@ -349,6 +394,9 @@ pub enum Value {
      Const(i64),
      Data(u16),
      Pair([u16; 2]),
@@ -1293,7 +1187,7 @@ index e2ee6c7..49ab253 100644
  }
  
  /// The way a bar or a progress arrow fills.
-@@ -408,16 +453,38 @@ pub enum Widget {
+@@ -408,16 +456,38 @@ pub enum Widget {
          #[serde(default)]
          color: Option<String>,
      },
@@ -1333,7 +1227,7 @@ index e2ee6c7..49ab253 100644
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +528,155 @@ impl MenuScreen {
+@@ -461,81 +531,155 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -1555,7 +1449,7 @@ index e2ee6c7..49ab253 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +724,42 @@ pub enum RenderElement {
+@@ -583,6 +727,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -1598,7 +1492,7 @@ index e2ee6c7..49ab253 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +773,50 @@ pub enum RenderElement {
+@@ -596,6 +776,50 @@ pub enum RenderElement {
      },
  }
  
@@ -1649,7 +1543,7 @@ index e2ee6c7..49ab253 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +864,48 @@ impl BlockRenderer {
+@@ -643,6 +867,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -1698,7 +1592,7 @@ index e2ee6c7..49ab253 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1208,6 +1471,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1474,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {

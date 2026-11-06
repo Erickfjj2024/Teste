@@ -634,8 +634,7 @@ impl ServerMod for Mekanism {
     }
 
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
-    fn menu_button(&mut self, player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
-        let _ = players::tell(&player.id, &format!("(config button {id} reached the mod)"));
+    fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
         let def = MACHINES.iter().find(|d| d.block == block)?;
         let layout = def.layout();
