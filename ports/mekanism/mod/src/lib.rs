@@ -4,7 +4,9 @@
 //!
 //! What runs so far: the crusher, the enrichment chamber and the energized
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
+mod combiner;
 mod machine;
+mod sawmill;
 mod sides;
 mod worldgen;
 
@@ -26,18 +28,30 @@ enum Source {
     Cooking(&'static str),
 }
 
+/// What a machine does: one input and one output (the electric machines), a main and a secondary output
+/// (the precision sawmill) or two inputs (the combiner).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Electric,
+    Sawmill,
+    Combiner,
+}
+
 /// An electric machine: its block, where its recipes come from and its energy
 /// use a tick (`MekanismConfig.usage`).
 struct Def {
     block: &'static str,
     source: Source,
     usage: u64,
+    kind: Kind,
 }
 
-const MACHINES: [Def; 3] = [
-    Def { block: "mekanism:crusher", source: Source::Files("mekanism:crushing"), usage: 8 },
-    Def { block: "mekanism:enrichment_chamber", source: Source::Files("mekanism:enriching"), usage: 5 },
-    Def { block: "mekanism:energized_smelter", source: Source::Cooking("smelting"), usage: 5 },
+const MACHINES: [Def; 5] = [
+    Def { block: "mekanism:crusher", source: Source::Files("mekanism:crushing"), usage: 8, kind: Kind::Electric },
+    Def { block: "mekanism:enrichment_chamber", source: Source::Files("mekanism:enriching"), usage: 5, kind: Kind::Electric },
+    Def { block: "mekanism:energized_smelter", source: Source::Cooking("smelting"), usage: 5, kind: Kind::Electric },
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner },
 ];
 
 /// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
@@ -53,6 +67,8 @@ struct Mekanism {
     /// The tick each book was last asked for: the game lends its recipes a little
     /// after the mod starts, so a book that came out empty is asked again.
     tried: HashMap<&'static str, u64>,
+    saws: sawmill::Book,
+    combs: combiner::Book,
     /// Clicks of the configurator waiting for their cube's next tick (a use can't change a block entity).
     pending: Vec<Click>,
 }
@@ -131,6 +147,49 @@ fn load_book(source: Source) -> Book {
     book
 }
 
+/// The count of an item entry (`{"count": 2, "id": ...}`), 1 when it has none.
+fn count_of(v: &serde_json::Value) -> u32 {
+    v["count"].as_u64().unwrap_or(1) as u32
+}
+
+fn load_saw_book() -> sawmill::Book {
+    let mut book = sawmill::Book::default();
+    for r in recipe_types::recipes_of_type("mekanism:sawing") {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
+        let Some(main) = json["main_output"]["id"].as_str() else { continue };
+        let inputs = recipe_types::ingredient_items(&json["input"]["ingredient"].to_string());
+        let secondary = json["secondary_output"]["id"].as_str().map(|id| {
+            (id.to_owned(), count_of(&json["secondary_output"]), json["secondary_chance"].as_f64().unwrap_or(1.0))
+        });
+        book.add(
+            inputs,
+            sawmill::Recipe { count: count_of(&json["input"]), main: (main.to_owned(), count_of(&json["main_output"])), secondary },
+        );
+    }
+    book
+}
+
+fn load_comb_book() -> combiner::Book {
+    let mut book = combiner::Book::default();
+    for r in recipe_types::recipes_of_type("mekanism:combining") {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
+        let Some(output) = json["output"]["id"].as_str() else { continue };
+        let mains = recipe_types::ingredient_items(&json["main_input"]["ingredient"].to_string());
+        let extras = recipe_types::ingredient_items(&json["extra_input"]["ingredient"].to_string());
+        book.add(
+            &mains,
+            &extras,
+            combiner::Recipe {
+                main_count: count_of(&json["main_input"]),
+                extra_count: count_of(&json["extra_input"]),
+                output: output.to_owned(),
+                out_count: count_of(&json["output"]),
+            },
+        );
+    }
+    book
+}
+
 fn stack(s: &Option<ItemStack>) -> Option<Stack> {
     s.as_ref().map(|s| Stack {
         item: s.item.clone(),
@@ -160,27 +219,80 @@ fn menu_data(progress: u32, energy: u64, capacity: u64, status: Status) -> Vec<i
     ]
 }
 
+/// A roll of dice for a tick of a machine at a position, 0 up to 1: the same everywhere for the same tick and place, which
+/// is what a test needs and all the sawmill's secondary output asks of it.
+fn roll(tick: u64, pos: &BlockPos) -> f64 {
+    let mut h = tick.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (pos.x as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+        ^ (pos.y as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
+        ^ (pos.z as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    h ^= h >> 30;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 27;
+    (h % 1_000_000) as f64 / 1_000_000.0
+}
+
 impl Mekanism {
-    /// A machine's tick: what it holds after, if that differs from before.
-    fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
-        let empty = self.books.get(def.block).is_none_or(Book::is_empty);
+    /// Loads the recipes of a machine when it has none (the game lends them a little after the mod starts, so a
+    /// book that came out empty is asked again every second).
+    fn refresh(&mut self, def: &Def, tick: u64) {
+        let empty = match def.kind {
+            Kind::Electric => self.books.get(def.block).is_none_or(Book::is_empty),
+            Kind::Sawmill => self.saws.is_empty(),
+            Kind::Combiner => self.combs.is_empty(),
+        };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
             self.tried.insert(def.block, tick);
-            self.books.insert(def.block, load_book(def.source));
+            match def.kind {
+                Kind::Electric => {
+                    self.books.insert(def.block, load_book(def.source));
+                }
+                Kind::Sawmill => self.saws = load_saw_book(),
+                Kind::Combiner => self.combs = load_comb_book(),
+            }
         }
-        let book = self.books.entry(def.block).or_default();
+    }
+
+    /// A machine's tick: what it holds after, if that differs from before.
+    fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
+        self.refresh(def, tick);
         let progress = e
             .data
             .get(..2)
             .map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
-        let io = Io {
-            input: stack(e.items.first().unwrap_or(&None)),
-            output: stack(e.items.get(1).unwrap_or(&None)),
-            energy: e.energy,
-            progress,
+        let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
+        // The slots after, the energy and progress after, what it did, and whether anything changed.
+        let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = match def.kind {
+            Kind::Electric => {
+                let book = self.books.entry(def.block).or_default();
+                let io = Io { input: slot(0), output: slot(1), energy: e.energy, progress };
+                let (next, status) = step(def.usage, book, &io);
+                (vec![item(&next.input), item(&next.output)], next.energy, next.progress, status, next != io)
+            }
+            Kind::Sawmill => {
+                let io = sawmill::Io { input: slot(0), main: slot(1), secondary: slot(2), energy: e.energy, progress };
+                let (next, status) = sawmill::step(def.usage, &self.saws, &io, roll(tick, &e.pos));
+                (
+                    vec![item(&next.input), item(&next.main), item(&next.secondary)],
+                    next.energy,
+                    next.progress,
+                    status,
+                    next != io,
+                )
+            }
+            Kind::Combiner => {
+                let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress };
+                let (next, status) = combiner::step(def.usage, &self.combs, &io);
+                (
+                    vec![item(&next.main), item(&next.extra), item(&next.output)],
+                    next.energy,
+                    next.progress,
+                    status,
+                    next != io,
+                )
+            }
         };
-        let (next, status) = step(def.usage, book, &io);
         let active = status == Status::Running;
         // The block shows when it runs, with its entity kept.
         let lit = e.state.contains("lit=true");
@@ -188,16 +300,16 @@ impl Mekanism {
             let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
         }
         let capacity = def.usage * STORED_TICKS;
-        let data = menu_data(next.progress, next.energy, capacity, status);
-        if next == io && data == e.menu_data {
+        let data = menu_data(next_progress, energy, capacity, status);
+        if !changed && data == e.menu_data {
             return None;
         }
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: (next.progress as u16).to_le_bytes().to_vec(),
-            items: Some(vec![item(&next.input), item(&next.output)]),
-            energy: Some(next.energy),
+            data: (next_progress as u16).to_le_bytes().to_vec(),
+            items: Some(items),
+            energy: Some(energy),
             energy_faces: None,
             tanks: None,
             tank_faces: None,
@@ -277,13 +389,32 @@ impl ServerMod for Mekanism {
         let mut r = Registration::new();
         for def in &MACHINES {
             let mut k = kind(def.block, true);
-            k.container = Some(ContainerSpec {
-                slots: 2,
+            k.container = Some(match def.kind {
                 // Hoppers feed the input from above and the sides, and empty the output below.
-                faces: vec![vec![1], vec![0], vec![0], vec![0], vec![0], vec![0]],
-                inputs: vec![0],
-                outputs: vec![1],
-                menu: true,
+                Kind::Electric => ContainerSpec {
+                    slots: 2,
+                    faces: vec![vec![1], vec![0], vec![0], vec![0], vec![0], vec![0]],
+                    inputs: vec![0],
+                    outputs: vec![1],
+                    menu: true,
+                },
+                // The input, the main and the secondary output: both outputs are emptied below.
+                Kind::Sawmill => ContainerSpec {
+                    slots: 3,
+                    faces: vec![vec![1, 2], vec![0], vec![0], vec![0], vec![0], vec![0]],
+                    inputs: vec![0],
+                    outputs: vec![1, 2],
+                    menu: true,
+                },
+                // The main input from above, the extra one from the sides, the output below (the original's
+                // sides are configurable; the port's are fixed).
+                Kind::Combiner => ContainerSpec {
+                    slots: 3,
+                    faces: vec![vec![2], vec![0], vec![1], vec![1], vec![1], vec![1]],
+                    inputs: vec![0, 1],
+                    outputs: vec![2],
+                    menu: true,
+                },
             });
             k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
             r = r.block_entity_kind(k);
@@ -302,7 +433,13 @@ impl ServerMod for Mekanism {
             .block_entity_kind(basic)
             .block_entity_kind(creative)
             .block_entity_kind(cable);
-        Ok((Mekanism { books: HashMap::new(), tried: HashMap::new(), pending: Vec::new() }, r.on_chunks().on_items()))
+        Ok((Mekanism {
+            books: HashMap::new(),
+            tried: HashMap::new(),
+            saws: sawmill::Book::default(),
+            combs: combiner::Book::default(),
+            pending: Vec::new(),
+        }, r.on_chunks().on_items()))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Ticks a recipe takes (`TileEntityProgressMachine.BASE_TICKS_REQUIRED`).
 pub const TICKS: u32 = 200;
 /// Items in a stack, for an output slot that is not empty.
-const STACK: u32 = 64;
+pub(crate) const STACK: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stack {

@@ -94,7 +94,7 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
            'block_charcoal', 'block_fluorite', 'block_salt', 'block_refined_glowstone',
            'block_refined_obsidian', 'block_raw_osmium', 'block_raw_tin', 'block_raw_lead',
            'block_raw_uranium', 'block_bio_fuel']
-MACHINES = ['crusher', 'enrichment_chamber', 'energized_smelter']
+MACHINES = ['crusher', 'enrichment_chamber', 'energized_smelter', 'precision_sawmill', 'combiner']
 BLOCKS = {}  # name -> (template, properties, kind)
 for o in ORES:
     BLOCKS[f'{o}_ore'] = ('minecraft:iron_ore', {'hardness': 3.0, 'explosion_resistance': 3.0, 'requires_tool': True}, 'ore')
@@ -327,11 +327,24 @@ NARROW = {' ': 4, '!': 2, '"': 5, "'": 3, '(': 5, ')': 5, '*': 5, ',': 2, '.': 2
 def text_width(text):
     return sum(NARROW.get(c, 6) for c in text) - 1
 
-def machine_panel(name, input_xy, output_xy, energy_xy):
-    """The 176 by 166 panel as Mekanism's machine screen draws it (GuiElectricMachine): the base, the inventory's slot
-    frames, the machine's slots (a frame is drawn at the slot's x and y less one), the up arrow of the charge slot, the empty
-    progress bar and the frame of the energy bar."""
-    from PIL import Image
+# Where each machine draws its slots, arrow and bars, as its GuiXxx and TileEntityXxx say (positions of the slots are
+# where the tile puts them; their frames are drawn one pixel up and left).
+LAYOUTS = {
+    # GuiElectricMachine, TileEntityElectricMachine
+    'electric': {'slots': [[64, 17], [116, 35]], 'frames': [('slot/input', 64, 17), ('slot/output', 116, 35), ('slot/power', 64, 53)],
+                 'up_arrow': (68, 38), 'progress': (86, 38), 'bar_y': 16, 'results': [1]},
+    # GuiPrecisionSawmill: one wide frame for the two outputs
+    'precision_sawmill': {'slots': [[56, 17], [116, 35], [132, 35]], 'frames': [('slot/input', 56, 17), ('slot/power', 56, 53)],
+                          'wide': (111, 30, 42, 26), 'up_arrow': (60, 38), 'progress': (78, 38), 'bar_y': 15, 'results': [1, 2]},
+    # GuiCombiner: the main input, the extra one under it, the charge slot at the left
+    'combiner': {'slots': [[64, 17], [64, 53], [116, 35]], 'frames': [('slot/input', 64, 17), ('slot/extra', 64, 53), ('slot/output', 116, 35), ('slot/power', 39, 35)],
+                 'up_arrow': (68, 38), 'progress': (86, 38), 'bar_y': 15, 'results': [2]},
+}
+
+def machine_panel(name, layout):
+    """The 176 by 166 panel as Mekanism's machine screen draws it: the base, the inventory's slot frames, the machine's
+    frames (one pixel up and left of each slot), the up arrow of the charge slot, the empty progress bar and the frame of
+    the energy bar."""
     panel = nine_slice(gui_sprite('base'), 176, 166, 4)
     slot = gui_sprite('slot/normal')
     for row in range(3):
@@ -339,12 +352,15 @@ def machine_panel(name, input_xy, output_xy, energy_xy):
             panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
     for col in range(9):
         panel.paste(slot, (7 + 18 * col, 141))
-    for sprite, (x, y) in (('slot/input', input_xy), ('slot/output', output_xy), ('slot/power', energy_xy)):
+    if 'wide' in layout:
+        x, y, w, h = layout['wide']
+        panel.alpha_composite(nine_slice(gui_sprite('slot/output'), w, h, 1), (x, y))
+    for sprite, x, y in layout['frames']:
         panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
-    panel.alpha_composite(gui_sprite('arrow/up'), (68, 38))
-    panel.alpha_composite(gui_sprite('progress/bar/empty'), (86, 38))
-    # GuiBar: a frame two pixels wider and higher than its contents, which are 4 by 52 at 165, 17
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 16))
+    panel.alpha_composite(gui_sprite('arrow/up'), layout['up_arrow'])
+    panel.alpha_composite(gui_sprite('progress/bar/empty'), layout['progress'])
+    # GuiBar: a frame two pixels wider and higher than its contents, which are 4 by 52
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, layout['bar_y']))
     path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
     os.makedirs(os.path.dirname(path), exist_ok=True)
     panel.save(path)
@@ -356,28 +372,29 @@ def copy_gui(rel, name):
     gui_sprite(rel).save(path)
     return f'{NS}:gui/{name}'
 
-MACHINE_NAMES = {'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter'}
+MACHINE_NAMES = {'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter',
+                 'precision_sawmill': 'Precision Sawmill', 'combiner': 'Combiner'}
 progress_full = copy_gui('progress/bar/full', 'progress_bar_full')
 power_fill = copy_gui('bar/vertical_power', 'bar_vertical_power')
 for m in MACHINES:
-    # TileEntityElectricMachine: the input at 64, 17, the output at 116, 35 and the charge slot at 64, 53
-    input_xy, output_xy, energy_xy = [64, 17], [116, 35], [64, 53]
+    layout = LAYOUTS.get(m, LAYOUTS['electric'])
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
+    px, py = layout['progress']
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': 2, 'data_slots': 6, 'results': [1],
-        'screen': {'texture': machine_panel(m, input_xy, output_xy, energy_xy), 'slots': [input_xy, output_xy],
+        'slots': len(layout['slots']), 'data_slots': 6, 'results': layout['results'],
+        'screen': {'texture': machine_panel(m, layout), 'slots': layout['slots'],
                    'widgets': [
-            # GuiVerticalPowerBar at 164, 16: the contents are 4 by 52 inside the frame
-            {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 17, 'w': 4, 'h': 52, 'value': {'pair': [1, 2]},
-             'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
-            # GuiProgress, ProgressType.BAR at 86, 38
-            {'type': 'sprite', 'texture': progress_full, 'x': 86, 'y': 38, 'w': 25, 'h': 9, 'value': {'data': 0},
+            # the vertical power bar: its contents are 4 by 52 inside the frame
+            {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': layout['bar_y'] + 1, 'w': 4, 'h': 52,
+             'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+            # GuiProgress, ProgressType.BAR
+            {'type': 'sprite', 'texture': progress_full, 'x': px, 'y': py, 'w': 25, 'h': 9, 'value': {'data': 0},
              'max': {'const': 200}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             # the title, centred at the top, and the inventory's, at 8, 72 (vanilla's own places)
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.15', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.16', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
@@ -397,14 +414,14 @@ def refs(v):
         for x in v:
             yield from refs(x)
 nrec = 0
-MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching'}
+MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)
     if r.get('type') not in MACHINE_TYPES:
         continue
-    outid = r.get('output', {}).get('id', '')
-    if outid.startswith(NS + ':') and outid.split(':')[1] not in have:
+    outs = [r.get(k, {}).get('id', '') for k in ('output', 'main_output', 'secondary_output')]
+    if any(o.startswith(NS + ':') and o.split(':')[1] not in have for o in outs):
         continue  # makes something the port doesn't have yet
     put(f'{OUT}/data/{NS}/recipe/{rel}', r)
     nrec += 1
@@ -488,6 +505,19 @@ def vanilla_members(cat, mat):
         v = [VANILLA_GEMS[mat]]
     elif cat == 'dusts':
         v = {'redstone': ['minecraft:redstone'], 'glowstone': ['minecraft:glowstone_dust']}.get(mat, [])
+    elif cat == 'dyes' and mat in ('white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray',
+                                    'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'):
+        v = [f'minecraft:{mat}_dye']
+    elif cat == 'cobblestones' and mat in ('normal', 'deepslate'):
+        v = {'normal': ['minecraft:cobblestone'], 'deepslate': ['minecraft:cobbled_deepslate']}[mat]
+    elif cat == 'crops' and mat == 'wheat':
+        v = ['minecraft:wheat']
+    elif cat == 'pumpkins' and mat == 'normal':
+        v = ['minecraft:pumpkin']
+    elif cat == 'fences' and mat == 'wooden':
+        v = ['#minecraft:wooden_fences']
+    elif cat == 'bookshelves' and not mat:
+        v = ['minecraft:bookshelf']
     elif cat == 'rods' and mat in ('wooden', 'blaze', 'bone'):
         v = {'wooden': ['minecraft:stick'], 'blaze': ['minecraft:blaze_rod'], 'bone': ['minecraft:bone']}[mat]
     elif cat == 'fuels' and mat == 'coal':
@@ -503,9 +533,9 @@ for p in glob.glob(f'{OUT}/data/**/recipe/**/*.json', recursive=True):
     asked.update(tag_refs(read_json(p)))
 for tag in sorted(asked):
     path = f'{OUT}/data/c/tags/item/{tag}.json'
-    if os.path.exists(path) or '/' not in tag:
+    if os.path.exists(path):
         continue
-    cat, mat = tag.split('/', 1)
+    cat, mat = tag.split('/', 1) if '/' in tag else (tag, '')
     members = vanilla_members(cat, mat)
     if members:
         put(path, {'values': members})

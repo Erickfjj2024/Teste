@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -10,6 +10,14 @@ json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft
 [[recipe]]
 id = "mekanism:enriching/iron"
 json = '''{"type":"mekanism:enriching","input":{"count":1,"ingredient":"mekanism:dust_iron"},"output":{"count":1,"id":"mekanism:enriched_iron"}}'''
+
+[[recipe]]
+id = "mekanism:sawing/oak"
+json = '''{"type":"mekanism:sawing","input":{"count":1,"ingredient":"minecraft:oak_log"},"main_output":{"count":6,"id":"minecraft:oak_planks"},"secondary_chance":1.0,"secondary_output":{"id":"mekanism:sawdust"}}'''
+
+[[recipe]]
+id = "mekanism:combining/gravel"
+json = '''{"type":"mekanism:combining","main_input":{"count":1,"ingredient":"minecraft:flint"},"extra_input":{"count":1,"ingredient":"minecraft:cobblestone"},"output":{"id":"minecraft:gravel"}}'''
 
 [[cooking]]
 inputs = ["minecraft:iron_ore"]
@@ -64,3 +72,25 @@ ticks = 205
 expect.told = ["Alex: Energy: east side is now output"]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]
+
+[[step]]
+# The precision sawmill makes planks and (here always) sawdust from a log, in front of its cube; the combiner makes
+# gravel from flint and cobblestone. The player stands south of the cubes looking south, so their fronts look
+# north at the machines.
+as = "Alex"
+player = { x = 15.0, y = 64.0, z = 5.0, yaw = 0.0 }
+blocks = [
+    { x = 10, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 10, y = 64, z = -1, state = "mekanism:precision_sawmill[facing=north,lit=false]" },
+    { x = 20, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 20, y = 64, z = -1, state = "mekanism:combiner[facing=north,lit=false]" },
+]
+set-items = [
+    { x = 10, y = 64, z = -1, slots = ["minecraft:oak_log*1", "", ""] },
+    { x = 20, y = 64, z = -1, slots = ["minecraft:flint*1", "minecraft:cobblestone*1", ""] },
+]
+ticks = 230
+expect.block-items = [
+    { x = 10, y = 64, z = -1, slots = ["", "minecraft:oak_planks*6", "mekanism:sawdust*1"] },
+    { x = 20, y = 64, z = -1, slots = ["", "", "minecraft:gravel*1"] },
+]

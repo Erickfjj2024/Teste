@@ -79,6 +79,20 @@ e **ainda não foi testada**). APK: v8.
     abertura (o selo do cache passou a `2`; ele não mudava com o carregador, então um APK novo podia reaproveitar a
     raiz de outro). **Confirmado pelo usuário no celular: as portas voltaram no APK v17.** A causa exata não foi isolada (o `\u003d` do `facts.json` ou a raiz em cache de outro APK); as duas foram eliminadas.
 
+## 2b. Fatia 2: Precision Sawmill e Combiner (mod 0.1.16, **não testados no jogo**)
+
+Só passaram no teste simulado (`horizon-mod test`: serrote faz tábuas e serragem, combinador faz cascalho) e nos testes unitários.
+- **Precision Sawmill:** 1 entrada, 200 ticks, 5 de energia por tick, saída principal e secundária **com chance** (a chance do
+  Mekanism: toras 25 %, etc.); para rodar precisa de espaço nas duas saídas. A "sorte" é determinística por tick e posição.
+  Receitas `mekanism:sawing` do Mekanism (38 arquivos, com portas, camas, barcos...).
+- **Combiner:** 2 entradas (principal e extra) para uma saída, 200 ticks, 5 de energia por tick; receitas `mekanism:combining`
+  (8). A ordem das entradas importa, como no original.
+- Telas no layout lido do código do original (`GuiPrecisionSawmill`, `GuiCombiner`): quadro largo das duas saídas no serrote,
+  slot de energia e slot extra (moldura laranja) no combinador. O slot de carga é só moldura.
+- Tags de convenção criadas para as receitas (tintas, pedregulhos, trigo, abóbora, cercas, estantes).
+- **Aproximações:** funil: serrote recebe por cima e pelos lados e esvazia por baixo; combinador recebe a entrada principal por
+  cima, a extra pelos lados e esvazia por baixo (no original os lados são configuráveis). Sem fábricas, sem upgrades.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
