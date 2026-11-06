@@ -85,6 +85,12 @@ impl Book {
     pub fn is_empty(&self) -> bool {
         self.by_pair.is_empty()
     }
+    /// The chemicals some recipe uses, in order (what the input tank takes in from outside).
+    pub fn accepted(&self) -> Vec<String> {
+        let mut list: Vec<String> = self.chemicals.iter().filter(|c| !c.is_empty()).cloned().collect();
+        list.sort();
+        list
+    }
     pub fn recipe(&self, item: &str, chemical: &str) -> Option<&Recipe> {
         self.by_pair.get(&(item.to_owned(), chemical.to_owned()))
     }

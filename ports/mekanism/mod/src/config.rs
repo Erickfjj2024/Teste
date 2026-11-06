@@ -131,15 +131,29 @@ pub enum Layout {
     Dissolution,
     /// The chemical crystallizer: the chemical item slot (0) and the output (1); its tank only takes in.
     Crystallizer,
+    /// A chemical tank: the drain slot (0) and the fill slot (1); its tank takes in and gives out.
+    ChemTank,
+    /// The chemical infuser: two chemical item slots in (0, 1) and one out (2); tanks: left, right, centre.
+    ChemInfuser,
+    /// The chemical washer: the fluid slot (0), the slurry output slot (1) and the fluid output slot (2); tanks: fluid,
+    /// slurry in, slurry out.
+    Washer,
+    /// The electrolytic separator: the fluid slot (0) and the two gas slots (1, 2); tanks: fluid, left gas, right gas.
+    Separator,
 }
 
 impl Layout {
     /// The transmissions a machine of this layout configures, in the order of its tabs (`getTransmissions`): the first is
     /// the one the window opens on.
     pub fn transmissions(self) -> &'static [Transmission] {
+        use Transmission::{Chemicals as C, Energy as E, Fluids as F, Items as I};
         match self {
-            Layout::Electric | Layout::Sawmill | Layout::Combiner => &[Transmission::Items, Transmission::Energy],
-            _ => &[Transmission::Items, Transmission::Chemicals, Transmission::Energy],
+            Layout::Electric | Layout::Sawmill | Layout::Combiner => &[I, E],
+            Layout::ChemTank => &[C, I],
+            Layout::ChemInfuser => &[C, I, E],
+            Layout::Washer => &[C, F, I, E],
+            Layout::Separator => &[F, C, I, E],
+            _ => &[I, C, E],
         }
     }
     /// Whether it has a third item slot the extra data type reaches (the chemical item slot of the infuser's family).
@@ -149,7 +163,10 @@ impl Layout {
     /// Whether the chemical tanks push into the blocks beside them by themselves where a side gives (what `eject` says):
     /// the other machines are emptied by pipes, which the port has not.
     pub fn pushes_chemicals(self) -> bool {
-        matches!(self, Layout::Oxidizer | Layout::Dissolution)
+        matches!(
+            self,
+            Layout::Oxidizer | Layout::Dissolution | Layout::ChemTank | Layout::ChemInfuser | Layout::Washer | Layout::Separator
+        )
     }
 }
 
@@ -171,6 +188,23 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         // `setupInputConfig`: a tank that only takes in, and `setupOutputConfig`: one that only gives.
         (Layout::Adv | Layout::Crystallizer, Transmission::Chemicals) => &[Data::None, Data::Input],
         (Layout::Oxidizer, Transmission::Chemicals) => &[Data::None, Data::Output],
+        (Layout::ChemTank | Layout::Washer, Transmission::Chemicals) => {
+            &[Data::None, Data::Input, Data::Output, Data::InputOutput]
+        }
+        (Layout::ChemInfuser, Transmission::Chemicals) => {
+            &[Data::None, Data::Input1, Data::Input2, Data::Output, Data::InputOutput]
+        }
+        (Layout::Separator, Transmission::Chemicals) => &[Data::None, Data::Output1, Data::Output2, Data::InputOutput],
+        // The fluid tanks only take in.
+        (Layout::Washer | Layout::Separator, Transmission::Fluids) => &[Data::None, Data::Input],
+        // Their item slots: a tank's two, the infuser's two inputs and output, the washer's and the separator's.
+        (Layout::ChemTank, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
+        (Layout::ChemInfuser, Transmission::Items) => {
+            &[Data::None, Data::Input1, Data::Input2, Data::Output, Data::InputOutput, Data::Energy]
+        }
+        (Layout::Separator, Transmission::Items) => {
+            &[Data::None, Data::Input, Data::Output1, Data::Output2, Data::InputOutput, Data::Energy]
+        }
         // No other machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
         (_, Transmission::Fluids | Transmission::Chemicals | Transmission::Heat) => &[],
         (_, Transmission::Energy) => &[Data::None, Data::Input],
@@ -209,6 +243,26 @@ pub fn default_config(layout: Layout) -> Config {
     if layout == Layout::Combiner || layout.extra_slot() {
         items[BOTTOM] = Data::Extra;
     }
+    match layout {
+        // `TWO_INPUT_ITEM`: the left and right slots take, the front gives, the back is the charge slot.
+        Layout::ChemInfuser => {
+            items = [Data::None; 6];
+            items[LEFT] = Data::Input1;
+            items[RIGHT] = Data::Input2;
+            items[FRONT] = Data::Output;
+            items[BACK] = Data::Energy;
+        }
+        // `TWO_OUTPUT_ITEM`: the front takes, the left and right give, the back is the charge slot.
+        Layout::Separator => {
+            items = [Data::None; 6];
+            items[FRONT] = Data::Input;
+            items[LEFT] = Data::Output1;
+            items[RIGHT] = Data::Output2;
+            items[BACK] = Data::Energy;
+        }
+        Layout::ChemTank => items = [Data::None; 6],
+        _ => {}
+    }
     let mut sides = [[Data::None; 6]; 5];
     sides[Transmission::Items as usize] = items;
     sides[Transmission::Energy as usize] = [Data::Input; 6];
@@ -232,6 +286,34 @@ pub fn default_config(layout: Layout) -> Config {
         Layout::Oxidizer => {
             *chem = [Data::None; 6];
             chem[RIGHT] = Data::Output;
+            eject[Transmission::Chemicals as usize] = true;
+        }
+        // The infuser: left and right take the two chemicals, the front gives the third, and it pushes it out.
+        Layout::ChemInfuser => {
+            *chem = [Data::None; 6];
+            chem[LEFT] = Data::Input1;
+            chem[RIGHT] = Data::Input2;
+            chem[FRONT] = Data::Output;
+            eject[Transmission::Chemicals as usize] = true;
+        }
+        // The washer: `OUT_EJECT`, and its fluid tank takes in everywhere.
+        Layout::Washer => {
+            *chem = [Data::Input; 6];
+            chem[RIGHT] = Data::Output;
+            eject[Transmission::Chemicals as usize] = true;
+            sides[Transmission::Fluids as usize] = [Data::Input; 6];
+        }
+        // The separator: the left gas out on the left, the right gas out on the right.
+        Layout::Separator => {
+            *chem = [Data::None; 6];
+            chem[LEFT] = Data::Output1;
+            chem[RIGHT] = Data::Output2;
+            eject[Transmission::Chemicals as usize] = true;
+            sides[Transmission::Fluids as usize] = [Data::Input; 6];
+        }
+        // A tank gives and takes on every side.
+        Layout::ChemTank => {
+            *chem = [Data::InputOutput; 6];
             eject[Transmission::Chemicals as usize] = true;
         }
         Layout::Electric | Layout::Sawmill | Layout::Combiner => {}
@@ -303,7 +385,7 @@ impl Config {
 /// The slots of a machine a data type reaches.
 pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
     match (layout, data) {
-        (_, Data::None | Data::Energy | Data::Input1 | Data::Input2 | Data::Output1 | Data::Output2) => &[],
+        (_, Data::None | Data::Energy) => &[],
         (Layout::Electric, Data::Input) => &[0],
         (Layout::Electric, Data::Output) => &[1],
         (Layout::Electric, Data::InputOutput) => &[0, 1],
@@ -322,7 +404,25 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
         (Layout::Oxidizer | Layout::Crystallizer, Data::Input) => &[0],
         (Layout::Oxidizer | Layout::Crystallizer, Data::Output) => &[1],
         (Layout::Oxidizer | Layout::Crystallizer, Data::InputOutput) => &[0, 1],
-        (_, Data::Input | Data::Output | Data::InputOutput | Data::Extra) => &[],
+        // A tank's drain and fill slots.
+        (Layout::ChemTank, Data::Input) => &[0],
+        (Layout::ChemTank, Data::Output) => &[1],
+        (Layout::ChemTank, Data::InputOutput) => &[0, 1],
+        // The infuser's two chemical item slots in and the one out.
+        (Layout::ChemInfuser, Data::Input1) => &[0],
+        (Layout::ChemInfuser, Data::Input2) => &[1],
+        (Layout::ChemInfuser, Data::Output) => &[2],
+        (Layout::ChemInfuser, Data::InputOutput) => &[0, 1, 2],
+        // The washer's fluid slot, then its two output slots.
+        (Layout::Washer, Data::Input) => &[0],
+        (Layout::Washer, Data::Output) => &[1, 2],
+        (Layout::Washer, Data::InputOutput) => &[0, 1, 2],
+        // The separator's fluid slot and its two gas slots.
+        (Layout::Separator, Data::Input) => &[0],
+        (Layout::Separator, Data::Output1) => &[1],
+        (Layout::Separator, Data::Output2) => &[2],
+        (Layout::Separator, Data::InputOutput) => &[0, 1, 2],
+        _ => &[],
     }
 }
 
@@ -377,28 +477,50 @@ pub fn item_faces(layout: Layout, facing: &str, items: &[Data; 6]) -> Vec<Vec<u3
     faces
 }
 
-/// What each face of the world does with the machine's tanks, in the order of its tanks (the one the chemical goes into
-/// first, then the one it comes out in): none, in, out or both (`FlowSide` numbers 0 to 3). A machine with one tank gives
-/// and takes by that tank; one with two takes by the first and gives by the second. A tank gives by itself only where the
-/// machine pushes (`pushes_chemicals`) and its eject is on.
+/// What each face of the world does with the machine's tanks, in the order of its tanks: none, in, out or both (`FlowSide`
+/// numbers 0 to 3). The tanks of a machine of `process` are the one its chemical goes into, then the one it comes out in;
+/// of the infuser, left, right, centre; of the washer, the fluid, the slurry and the clean slurry; of the separator, the
+/// fluid and the two gases. A tank gives by itself only where the machine pushes (`pushes_chemicals`) and its eject is on.
 pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config) -> Vec<[u8; 6]> {
-    let sides = cfg.side(Transmission::Chemicals);
+    let chem = cfg.side(Transmission::Chemicals);
+    let fluid = cfg.side(Transmission::Fluids);
     let pushes = layout.pushes_chemicals() && cfg.ejects(Transmission::Chemicals);
-    let two = layout == Layout::Dissolution;
-    let mut first = [0u8; 6];
-    let mut second = [0u8; 6];
-    for (side, data) in sides.iter().enumerate() {
+    let count = match layout {
+        Layout::ChemInfuser | Layout::Washer | Layout::Separator => 3,
+        Layout::Dissolution => 2,
+        _ => 1,
+    };
+    let mut out = vec![[0u8; 6]; count];
+    for side in 0..6 {
         let face = face_of(facing, side);
-        let takes = matches!(data, Data::Input | Data::InputOutput);
-        let gives = matches!(data, Data::Output | Data::InputOutput) && pushes;
-        if two {
-            first[face] = u8::from(takes);
-            second[face] = if gives { 2 } else { 0 };
-        } else {
-            first[face] = u8::from(takes) + if gives { 2 } else { 0 };
+        let (c, f) = (chem[side], fluid[side]);
+        let takes = |d: Data| matches!(d, Data::Input | Data::InputOutput);
+        let gives = |d: Data| matches!(d, Data::Output | Data::InputOutput) && pushes;
+        let both = |take: bool, give: bool| u8::from(take) + if give { 2 } else { 0 };
+        match layout {
+            Layout::Dissolution => {
+                out[0][face] = both(takes(c), false);
+                out[1][face] = both(false, gives(c));
+            }
+            Layout::ChemInfuser => {
+                out[0][face] = both(matches!(c, Data::Input1 | Data::InputOutput), false);
+                out[1][face] = both(matches!(c, Data::Input2 | Data::InputOutput), false);
+                out[2][face] = both(false, matches!(c, Data::Output | Data::InputOutput) && pushes);
+            }
+            Layout::Washer => {
+                out[0][face] = both(takes(f), false);
+                out[1][face] = both(takes(c), false);
+                out[2][face] = both(false, gives(c));
+            }
+            Layout::Separator => {
+                out[0][face] = both(takes(f), false);
+                out[1][face] = both(false, matches!(c, Data::Output1 | Data::InputOutput) && pushes);
+                out[2][face] = both(false, matches!(c, Data::Output2 | Data::InputOutput) && pushes);
+            }
+            _ => out[0][face] = both(takes(c), gives(c)),
         }
     }
-    if two { vec![first, second] } else { vec![first] }
+    out
 }
 
 /// Whether energy comes in through each face (down, up, north, south, west, east).

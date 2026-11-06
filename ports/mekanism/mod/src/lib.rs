@@ -6,13 +6,16 @@
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
 mod chem;
+mod continuous;
 mod config;
 mod cube;
 mod chem_table;
+mod plus;
 mod process;
 mod machine;
 mod sawmill;
 mod sides;
+mod tank;
 mod worldgen;
 
 use horizon_mod_sdk::server::{
@@ -43,6 +46,19 @@ enum Kind {
     Combiner,
     /// A machine of `process`: an item and a chemical, in and out (the infuser, the chambers, the oxidizer...).
     Process,
+    /// A machine of `continuous`: chemicals and fluids in its tanks, a little every tick.
+    Continuous,
+    /// A storage tank (`tank`), of fluid or of chemical.
+    Tank,
+}
+
+/// A storage tank's tier: what it holds and moves a tick.
+#[derive(Clone, Copy)]
+struct TankDef {
+    fluid: bool,
+    capacity: u64,
+    rate: u64,
+    creative: bool,
 }
 
 /// An electric machine: its block, where its recipes come from and its energy
@@ -56,15 +72,38 @@ struct Def {
     layout: Layout,
     /// What a `Kind::Process` machine does.
     proc: Option<process::Spec>,
+    /// What a `Kind::Continuous` machine does.
+    cont: Option<continuous::Spec>,
+    /// A `Kind::Tank`'s tier.
+    tank: Option<TankDef>,
 }
 
 const fn electric(block: &'static str, source: Source, usage: u64) -> Def {
-    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None }
+    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None, cont: None, tank: None }
 }
 
 /// A machine that works an item and a chemical (`process`): its recipes are of type `source`.
 const fn chemical(block: &'static str, source: &'static str, layout: Layout, spec: process::Spec) -> Def {
-    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec) }
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec), cont: None, tank: None }
+}
+
+/// A machine of `continuous`.
+const fn continuous_machine(block: &'static str, source: &'static str, layout: Layout, spec: continuous::Spec) -> Def {
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Continuous, layout, proc: None, cont: Some(spec), tank: None }
+}
+
+/// A storage tank block of a tier.
+const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, creative: bool) -> Def {
+    Def {
+        block,
+        source: Source::Files(""),
+        usage: 0,
+        kind: Kind::Tank,
+        layout: if fluid { Layout::Electric } else { Layout::ChemTank },
+        proc: None,
+        cont: None,
+        tank: Some(TankDef { fluid, capacity, rate, creative }),
+    }
 }
 
 use process::Shape;
@@ -73,12 +112,12 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use }
 }
 
-const MACHINES: [Def; 12] = [
+const MACHINES: [Def; 25] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
-    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None },
-    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None },
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None },
     chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, 5, 200, 1000, 0, false)),
     // The purification and injection chambers use their chemical by chance (the config's randomized consumption).
     chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, 10, 200, 210, 0, true)),
@@ -87,6 +126,25 @@ const MACHINES: [Def; 12] = [
     chemical("mekanism:chemical_oxidizer", "mekanism:oxidizing", Layout::Oxidizer, spec(Shape::ItemToChem, 15, 100, 0, 10_000, false)),
     chemical("mekanism:chemical_dissolution_chamber", "mekanism:dissolution", Layout::Dissolution, spec(Shape::ItemChemToChem, 16, 100, 10_000, 10_000, true)),
     chemical("mekanism:chemical_crystallizer", "mekanism:crystallizing", Layout::Crystallizer, spec(Shape::ChemToItem, 15, 200, 10_000, 0, false)),
+    // The chemical infuser, the washer and the electrolytic separator work their tanks every tick.
+    continuous_machine("mekanism:chemical_infuser", "mekanism:chemical_infusing", Layout::ChemInfuser,
+        continuous::Spec { shape: continuous::Shape::Infuser, usage: 15, caps: [10_000; 3] }),
+    continuous_machine("mekanism:chemical_washer", "mekanism:washing", Layout::Washer,
+        continuous::Spec { shape: continuous::Shape::Washer, usage: 5, caps: [10_000; 3] }),
+    // Its energy is twice the hydrogen's energy density (2), so 4 a tick.
+    continuous_machine("mekanism:electrolytic_separator", "mekanism:separating", Layout::Separator,
+        continuous::Spec { shape: continuous::Shape::Separator, usage: 4, caps: [24_000, 2_400, 2_400] }),
+    // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
+    tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
+    tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
+    tank_block("mekanism:elite_fluid_tank", true, 128_000, 16_000, false),
+    tank_block("mekanism:ultimate_fluid_tank", true, 256_000, 64_000, false),
+    tank_block("mekanism:creative_fluid_tank", true, 1_000_000_000_000, 1_000_000_000, true),
+    tank_block("mekanism:basic_chemical_tank", false, 64_000, 1_000, false),
+    tank_block("mekanism:advanced_chemical_tank", false, 256_000, 16_000, false),
+    tank_block("mekanism:elite_chemical_tank", false, 1_024_000, 128_000, false),
+    tank_block("mekanism:ultimate_chemical_tank", false, 8_192_000, 512_000, false),
+    tank_block("mekanism:creative_chemical_tank", false, 1_000_000_000_000, 1_000_000_000, true),
 ];
 
 /// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
@@ -95,7 +153,10 @@ const STORED_TICKS: u64 = 2500;
 const BASIC_CUBE: u64 = 4_000_000;
 const BASIC_CUBE_RATE: u64 = 4_000;
 const CREATIVE_CUBE: u64 = 1_000_000_000_000;
-const CABLE_RATE: u64 = 1_024;
+/// What a cable, a tube and a pipe of each tier carry a tick.
+const CABLE_RATES: [u64; 4] = [8_000, 128_000, 1_024_000, 8_192_000];
+const TUBE_RATES: [u64; 4] = [750, 2_000, 64_000, 256_000];
+const PIPE_RATES: [u64; 4] = [250, 1_000, 8_000, 32_000];
 
 struct Mekanism {
     books: HashMap<&'static str, Book>,
@@ -106,6 +167,8 @@ struct Mekanism {
     combs: combiner::Book,
     /// The recipes of the machines of `process`, by block.
     procs: HashMap<&'static str, process::Book>,
+    /// The recipes of the machines of `continuous`, by block.
+    conts: HashMap<&'static str, continuous::Book>,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
     /// What each player's configurator is set to configure (Mekanism keeps it in the item).
@@ -119,6 +182,8 @@ struct Mekanism {
     /// sends a use in the air after the use on a block for the same click, which must not change the tool's mode.
     now: u64,
     last_block_use: HashMap<String, u64>,
+    /// The machines whose input tank was told what it takes in (once their recipes are known).
+    filtered: HashSet<(String, i32, i32, i32)>,
     /// Each cube's energy last tick and the rate it takes in, for its screen.
     flow: HashMap<(String, i32, i32, i32), (u64, u64)>,
     /// The window's buttons pressed on a cube, until its next tick.
@@ -376,6 +441,8 @@ impl Mekanism {
             Kind::Sawmill => self.saws.is_empty(),
             Kind::Combiner => self.combs.is_empty(),
             Kind::Process => self.procs.get(def.block).is_none_or(process::Book::is_empty),
+            // Their ticks are `run_continuous` and `run_tank`.
+            Kind::Continuous | Kind::Tank => false,
         };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
@@ -386,6 +453,7 @@ impl Mekanism {
                 }
                 Kind::Sawmill => self.saws = load_saw_book(),
                 Kind::Combiner => self.combs = load_comb_book(),
+                Kind::Continuous | Kind::Tank => {}
                 Kind::Process => {
                     if let Some(spec) = &def.proc {
                         self.procs.insert(def.block, load_proc_book(def.source, spec.shape));
@@ -551,6 +619,7 @@ impl Mekanism {
                 }
                 (slots, next.energy, next.progress, status, next != io)
             }
+            Kind::Continuous | Kind::Tank => unreachable!("they have their own ticks"),
             Kind::Combiner => {
                 let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress };
                 let (next, status) = combiner::step(def.usage, &self.combs, &io);
@@ -568,6 +637,15 @@ impl Mekanism {
         let lit = e.state.contains("lit=true");
         if active != lit {
             let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
+        }
+        // The tank the chemical goes into takes in only what a recipe of the machine uses.
+        if let Some(spec) = def.proc
+            && spec.cap_in > 0
+            && !self.filtered.contains(&key)
+            && let Some(book) = self.procs.get(def.block).filter(|b| !b.is_empty())
+        {
+            let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 0, &book.accepted());
+            self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let capacity = def.usage * STORED_TICKS;
@@ -768,6 +846,31 @@ impl ServerMod for Mekanism {
                         menu: true,
                     }
                 }
+                // The chemical infuser, the washer and the separator: three slots, on the default configuration's faces.
+                Kind::Continuous => {
+                    let (inputs, outputs) = match def.layout {
+                        Layout::ChemInfuser => (vec![0, 1], vec![2]),
+                        _ => (vec![0], vec![1, 2]),
+                    };
+                    ContainerSpec {
+                        slots: 3,
+                        faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
+                        inputs,
+                        outputs,
+                        menu: true,
+                    }
+                }
+                // A tank's two slots: a fluid tank's bucket in (at the top) and out (at the bottom), a chemical tank's
+                // drain and fill slots on the faces of its configuration.
+                Kind::Tank => {
+                    let fluid = def.tank.is_some_and(|t| t.fluid);
+                    let faces = if fluid {
+                        vec![vec![1], vec![0], Vec::new(), Vec::new(), Vec::new(), Vec::new()]
+                    } else {
+                        config::item_faces(def.layout, "north", config::default_config(def.layout).items())
+                    };
+                    ContainerSpec { slots: 2, faces, inputs: vec![0], outputs: vec![1], menu: true }
+                }
                 // The main input, the extra one and the output, on the faces of the default configuration.
                 Kind::Combiner => ContainerSpec {
                     slots: 3,
@@ -777,7 +880,33 @@ impl ServerMod for Mekanism {
                     menu: true,
                 },
             });
-            k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
+            if def.kind != Kind::Tank {
+                // The separator stores more: its use is tiny and a bucket of water is many ticks of it.
+                let stored = def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 };
+                k.energy = Some(energy(stored, stored, FlowSide::Input));
+            }
+            if let Some(t) = def.tank {
+                let flow = if t.fluid { vec![FlowSide::Both; 6] } else { vec![FlowSide::Both; 6] };
+                k.tanks.push(TankSpec {
+                    kind: if t.fluid { "fluid" } else { "chemical" }.into(),
+                    capacity: t.capacity,
+                    max_rate: t.rate,
+                    faces: flow,
+                });
+            }
+            if let Some(spec) = def.cont {
+                // Chemicals go through chemical tanks and fluids through fluid ones; the faces are the configuration's.
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout));
+                for (i, cap) in spec.caps.iter().enumerate() {
+                    let fluid = i == 0 && spec.shape != continuous::Shape::Infuser;
+                    k.tanks.push(TankSpec {
+                        kind: if fluid { "fluid" } else { "chemical" }.into(),
+                        capacity: *cap,
+                        max_rate: (*cap).min(1000),
+                        faces: flow.get(i).map_or_else(|| vec![FlowSide::None; 6], |f| f.iter().map(|x| flow_side(*x)).collect()),
+                    });
+                }
+            }
             if let Some(spec) = def.proc {
                 // The tanks: the one the chemical goes into, then the one it comes out in. Every chemical is the same
                 // family, so a tank takes from a neighbour that holds one; the faces are the default configuration's.
@@ -805,22 +934,28 @@ impl ServerMod for Mekanism {
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
-        let mut cable = kind("mekanism:basic_universal_cable", false);
-        cable.keep_data = false;
-        cable.transmitter = Some(TransmitterSpec {
-            medium: TransmitterMedium::Energy,
-            throughput: CABLE_RATE,
-        });
-        r = r
-            .block_entity_kind(basic)
-            .block_entity_kind(creative)
-            .block_entity_kind(cable);
+        r = r.block_entity_kind(basic).block_entity_kind(creative);
+        // Cables, tubes and pipes of the four tiers (`CableTier`, `TubeTier`, `PipeTier`): what each carries a tick.
+        for (i, tier) in ["basic", "advanced", "elite", "ultimate"].iter().enumerate() {
+            for (name, medium, rates) in [
+                ("universal_cable", TransmitterMedium::Energy, CABLE_RATES),
+                ("pressurized_tube", TransmitterMedium::Tank("chemical".into()), TUBE_RATES),
+                ("mechanical_pipe", TransmitterMedium::Tank("fluid".into()), PIPE_RATES),
+            ] {
+                let mut k = kind(&format!("mekanism:{tier}_{name}"), false);
+                k.keep_data = false;
+                k.transmitter = Some(TransmitterSpec { medium, throughput: rates[i] });
+                r = r.block_entity_kind(k);
+            }
+        }
         Ok((Mekanism {
             books: HashMap::new(),
             tried: HashMap::new(),
             saws: sawmill::Book::default(),
             combs: combiner::Book::default(),
             procs: HashMap::new(),
+            conts: HashMap::new(),
+            filtered: HashSet::new(),
             pending: Vec::new(),
             tool: HashMap::new(),
             applied: HashSet::new(),
@@ -910,6 +1045,9 @@ impl ServerMod for Mekanism {
             return None;
         }
         let def = MACHINES.iter().find(|d| d.block == block)?;
+        if matches!(def.kind, Kind::Continuous | Kind::Tank) {
+            return self.plus_button(def, id, &e);
+        }
         let layout = def.layout;
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
@@ -972,7 +1110,11 @@ impl ServerMod for Mekanism {
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {
-                out.extend(self.run(def, e, tick));
+                out.extend(match def.kind {
+                    Kind::Continuous => self.run_continuous(def, e, tick),
+                    Kind::Tank => self.run_tank(def, e),
+                    _ => self.run(def, e, tick),
+                });
             } else if block.ends_with("_energy_cube") {
                 out.extend(self.cube(e, block == "mekanism:creative_energy_cube"));
             }

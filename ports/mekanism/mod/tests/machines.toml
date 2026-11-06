@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -38,6 +38,18 @@ json = '''{"type":"mekanism:compressing","chemical_input":{"amount":1,"ingredien
 [[recipe]]
 id = "mekanism:crystallizing/gold"
 json = '''{"type":"mekanism:crystallizing","input":{"amount":200,"ingredient":"mekanism:clean_gold"},"output":{"id":"mekanism:crystal_gold"}}'''
+
+[[recipe]]
+id = "mekanism:separating/water"
+json = '''{"type":"mekanism:separating","input":{"amount":2,"ingredient":"#minecraft:water"},"output":{"left":{"amount":2,"id":"mekanism:hydrogen"},"right":{"amount":1,"id":"mekanism:oxygen"}}}'''
+
+[[recipe]]
+id = "mekanism:chemical_infusing/hydrogen_chloride"
+json = '''{"type":"mekanism:chemical_infusing","left_input":{"amount":1,"ingredient":"mekanism:hydrogen"},"output":{"amount":1,"id":"mekanism:hydrogen_chloride"},"right_input":{"amount":1,"ingredient":"mekanism:chlorine"}}'''
+
+[[recipe]]
+id = "mekanism:washing/gold"
+json = '''{"type":"mekanism:washing","chemical_input":{"amount":1,"ingredient":"mekanism:dirty_gold"},"fluid_input":{"amount":5,"ingredient":"#minecraft:water"},"output":{"amount":1,"id":"mekanism:clean_gold"}}'''
 
 [[cooking]]
 inputs = ["minecraft:iron_ore"]
@@ -275,3 +287,62 @@ ticks = 230
 ticks = 5
 expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1"] }]
 expect.block-tanks = [{ x = 140, y = 64, z = -1, tanks = ["mekanism:clean_gold*250"] }]
+
+[[step]]
+# A fluid tank beside an electrolytic separator: a bucket of water put in the tank's input slot fills it (the empty bucket
+# comes out in the output slot), the tank gives its water to the separator beside it and the separator splits it into
+# hydrogen and oxygen.
+blocks = [
+    { x = 200, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 200, y = 64, z = 0, state = "mekanism:electrolytic_separator[facing=north,lit=false]" },
+    { x = 201, y = 64, z = 0, state = "mekanism:basic_fluid_tank[lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 201, y = 64, z = 0, slots = ["minecraft:water_bucket*1", ""] }]
+ticks = 2
+expect.block-items = [{ x = 201, y = 64, z = 0, slots = ["", "minecraft:bucket*1"] }]
+
+[[step]]
+ticks = 40
+expect.block-tanks = [
+    { x = 201, y = 64, z = 0, tanks = [""] },
+    { x = 200, y = 64, z = 0, tanks = ["minecraft:water*918", "mekanism:hydrogen*82", "mekanism:oxygen*41"] },
+]
+
+[[step]]
+# The chemical infuser makes hydrogen chloride of a hydrogen and a chlorine a tick, from its left and right tanks.
+blocks = [
+    { x = 220, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 220, y = 64, z = 0, state = "mekanism:chemical_infuser[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 220, y = 64, z = 0, tanks = ["mekanism:hydrogen*50", "mekanism:chlorine*30", ""] }]
+ticks = 10
+expect.block-tanks = [{ x = 220, y = 64, z = 0, tanks = ["mekanism:hydrogen*40", "mekanism:chlorine*20", "mekanism:hydrogen_chloride*10"] }]
+
+[[step]]
+# The chemical washer makes a clean slurry of a dirty one and five of water for each.
+blocks = [
+    { x = 240, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 240, y = 64, z = 0, state = "mekanism:chemical_washer[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 240, y = 64, z = 0, tanks = ["minecraft:water*100", "mekanism:dirty_gold*10", ""] }]
+ticks = 4
+expect.block-tanks = [{ x = 240, y = 64, z = 0, tanks = ["minecraft:water*80", "mekanism:dirty_gold*6", "mekanism:clean_gold*4"] }]
+
+[[step]]
+# A chemical tank takes the washer's slurry... a creative one never empties: what is put in it refills it.
+blocks = [{ x = 260, y = 64, z = 0, state = "mekanism:creative_chemical_tank[facing=north,lit=false]" }]
+ticks = 2
+
+[[step]]
+set-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*5"] }]
+ticks = 3
+expect.block-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*1000000000000"] }]

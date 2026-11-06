@@ -212,6 +212,29 @@ Osmium Compressor**), item→químico (**Chemical Oxidizer**), item+químico→q
   convertem (não há tanques portáteis); a barra de recipe viewer; o Energy Tab; o **Chemical Infuser, o Washer e o Electrolytic Separator**
   (vários tanques e fluidos: próxima fatia); as receitas cujos itens de entrada usam tags que o mod ainda não define são descartadas.
 
+## 2f. Tanques, tubos, canos e as máquinas de vários tanques (mod 0.1.29, APK v33, **não testado no jogo**)
+
+Passou no teste simulado (40 passos: balde de água no tanque → separador → hidrogênio e oxigênio, infusor de químicos, lavadora,
+tanque criativo) e em 57 testes unitários do mod; **ninguém viu na tela do celular**. O que existe, lido do código do Mekanism:
+- **Filtro de tanque (API 18, `world.set-tank-filter`):** o tanque de entrada de uma máquina aceita de fora só os químicos que as receitas
+  dela usam (antes um oxidador mandou carbono para o compressor de ósmio, que não o usa: o original não deixa).
+- **Fluid Tank** (básico, avançado, elite, supremo e criativo: 32/64/128/256 baldes): slots de balde (146, 19) e (146, 51), medidor largo,
+  a aba de **modo de edição** (encher e esvaziar / só encher / só esvaziar, que fecha as faces do tanque como o modo diz); balde de água ou
+  de lava entra no tanque e sai vazio, balde vazio é enchido do tanque; o líquido aparece dentro do bloco (renderer `fluid`).
+- **Chemical Tank** (64, 256, 1024, 8192 baldes e criativo): barra horizontal de 116 px, tela interna com o nome do químico e a quantidade,
+  modo de despejo (parado / despejando / excesso acima de 85%), configuração de lados (químico e itens); **o criativo nunca esvazia**: o
+  que entrar nele o enche de novo (é como se enche com um químico de teste, pois não há latas de gás).
+- **Pressurized Tube** (químicos), **Mechanical Pipe** (fluidos) e **Universal Cable** nos quatro níveis: 750/2000/64000/256000,
+  250/1000/8000/32000 mB e 8000/128000/1024000/8192000 por tick; cada um junta o que guarda aquilo que carrega (`*_connectable`).
+- **Chemical Infuser** (dois químicos fazem um terceiro, nos dois lados), **Chemical Washer** (fluido + lama suja, com slots de balde no
+  suporte da esquerda) e **Electrolytic Separator** (água em hidrogênio e oxigênio, botões de despejo de cada gás): operam todo tick,
+  com os medidores, as setas ligadas quando trabalham e a janela de lados com **todas** as abas deles (Químicos, Fluidos, Itens, Energia,
+  na ordem do original, e a janela abre na primeira).
+- **Os slots de armadura** também estão nas telas dos tanques (suporte à esquerda).
+- **Falta:** o medidor de líquido usa o ícone genérico tingido (o original usa a textura do fluido); as telas dos itens químicos (latas,
+  conta-gotas) e a bomba/outras fontes de água; modo de ejeção dos itens dos tanques; o `GuiCrystallizerScreen`; gás no despejo
+  do separador respeita só o modo básico (não o "excesso" para a máquina parar).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
