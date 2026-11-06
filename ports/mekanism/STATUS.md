@@ -257,6 +257,23 @@ tanque criativo) e em 57 testes unitários do mod; **ninguém viu na tela do cel
   conta-gotas) e a bomba/outras fontes de água; modo de ejeção dos itens dos tanques; o `GuiCrystallizerScreen`; gás no despejo
   do separador respeita só o modo básico (não o "excesso" para a máquina parar).
 
+## 2g. Rotary Condensentrator (mod 0.1.34, usa o APK v35, **não testado no jogo**)
+
+Passou no teste simulado (44 passos: vapor d'água vira água, o botão de modo inverte e a água volta a vapor) e em 58 testes unitários;
+**ninguém viu na tela do celular**. Lido do código do Mekanism (`TileEntityRotaryCondensentrator`, `GuiRotaryCondensentrator`,
+`AttachedSideConfig.ROTARY`):
+- Dois tanques de 10 baldes (fluido e gás) e **modo** (condensa: gás vira fluido; descondensa: fluido vira gás), receitas `mekanism:rotary`
+  lidas nos dois sentidos (as etiquetas `#c:hidrogênio` etc. viram os fluidos `mekanism:*`); 2 de energia por tick.
+- Só o tanque que entra aceita de fora e só o que sai entrega, conforme o modo (`mode`/`!mode` do original); cada um empurra para os
+  vizinhos só com a ejeção ligada. Configuração padrão do original: gás entra em todo lado e sai pela esquerda, fluido entra em todo lado e
+  sai pela direita, ambos com ejeção; abas Químicos, Fluidos, Itens, Energia.
+- Tela: slots de gás (5, 25 e 5, 56), de fluido (155, 25 e 155, 56) e de carga (155, 5); medidores em 25,13 (gás) e 133,13 (fluido); seta
+  para a direita (condensa) ou para a esquerda (descondensa) em 64,39; **botão de alternar** (4, 4) com o nome do modo escrito embaixo; título
+  em y=4 e sem "Inventory", como o original.
+- Slots de fluido: balde cheio esvazia no tanque quando o modo é descondensar; balde vazio é enchido quando é condensar (só água e lava).
+- **Falta:** os slots de gás (latas de gás não existem no porte, então ficam sem função); a aba de energia (-26,137); o único par que dá
+  para alimentar no jogo é água ↔ vapor d'água (os outros fluidos de Mekanism não têm fonte ainda).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

@@ -129,6 +129,17 @@ Faça quando sobrar tempo; são os que mais podem esconder defeitos.
 - Receitas que pedem uma etiqueta (tag) que o mod ainda não define foram descartadas, então algumas receitas existentes
   no original não aparecem.
 
+## J. Rotary Condensentrator (mod 0.1.34)
+
+| # | O que fazer | Esperado |
+|---|---|---|
+| J1 | Colocar o Rotary Condensentrator, energia numa face; abrir a tela | Slots de gás à esquerda, de fluido à direita, o de carga em cima à direita; medidores de gás (esquerda) e fluido (direita); botão quadrado no canto de cima à esquerda e o texto "Condensentrating" embaixo dele; título no alto, **sem** "Inventory" |
+| J2 | Clicar no botão do canto | O botão vira ("flipped"), o texto passa a "Decondensentrating" e a seta do meio inverte de lado |
+| J3 | No modo **Decondensentrating**, balde de água no slot de fluido da direita (155, 25) | O balde esvazia no tanque (balde vazio sai no slot de baixo) e a água vira **vapor d'água** no medidor da esquerda, com a seta acesa |
+| J4 | Voltar ao modo **Condensentrating** | O vapor volta a virar água (gasta energia, 2 por tick) e o balde vazio no slot de fluido é enchido com a água do tanque |
+| J5 | Janela de lados (aba da esquerda): Químicos, Fluidos, Itens, Energia | 4 abas, abre em Químicos; no modo descondensar só o gás sai, no outro só o fluido |
+| J6 | Um Fluid Tank encostado: no modo condensar, a água do rotary passa para o tanque | O tanque recebe a água sem cano |
+
 ## I. Como reportar
 
 Para cada item: o número (A3, D7...), **OK** ou **errado**, e se errado: o que esperava, o que viu e, se der, uma

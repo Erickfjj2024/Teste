@@ -7,6 +7,8 @@ use crate::tank::{DumpMode, EditMode};
 pub const DUMP_LEFT: i32 = 5000;
 pub const DUMP_RIGHT: i32 = 5001;
 pub const EDIT_MODE: i32 = 5100;
+/// The rotary condensentrator's mode button (`GuiInteraction.NEXT_MODE`).
+pub const ROTARY_MODE: i32 = 5200;
 
 /// The fluids an ingredient names (`"#minecraft:water"`, `"#c:brine"`), as the ids the tanks hold.
 fn fluids_of(ingredient: &serde_json::Value) -> Vec<String> {
@@ -14,9 +16,11 @@ fn fluids_of(ingredient: &serde_json::Value) -> Vec<String> {
         serde_json::Value::String(s) => {
             let s = s.trim_start_matches('#');
             vec![match s {
-                "c:brine" => "mekanism:brine".to_owned(),
-                "c:lithium" => "mekanism:lithium".to_owned(),
-                other => other.to_owned(),
+                // The common tags of Mekanism's fluids (`c:brine`, `c:hydrogen`, ...) hold its own fluid of that name.
+                other => match other.strip_prefix("c:") {
+                    Some(name) => format!("mekanism:{name}"),
+                    None => other.to_owned(),
+                },
             }]
         }
         serde_json::Value::Array(l) => l.iter().flat_map(fluids_of).collect(),
@@ -32,6 +36,7 @@ pub fn load_cont_book(shape: continuous::Shape) -> continuous::Book {
         Shape::Infuser => "mekanism:chemical_infusing",
         Shape::Washer => "mekanism:washing",
         Shape::Separator => "mekanism:separating",
+        Shape::Rotary => "mekanism:rotary",
     };
     for r in recipe_types::recipes_of_type(kind) {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
@@ -57,6 +62,8 @@ pub fn load_cont_book(shape: continuous::Shape) -> continuous::Book {
                     false,
                 );
             }
+            // A rotary recipe goes both ways: gas to fluid in the first book, fluid to gas in the second (`load_rotary_books`).
+            Shape::Rotary => {}
             Shape::Separator => {
                 let f = &json["input"];
                 let (l, rt) = (&json["output"]["left"], &json["output"]["right"]);
@@ -72,6 +79,28 @@ pub fn load_cont_book(shape: continuous::Shape) -> continuous::Book {
     }
     book
 }
+
+/// The recipes of the rotary condensentrator: the gas that becomes a fluid (mode false) and the fluid that becomes a gas
+/// (mode true).
+pub fn load_rotary_books() -> (continuous::Book, continuous::Book) {
+    use continuous::Recipe;
+    let (mut condense, mut decondense) = (continuous::Book::default(), continuous::Book::default());
+    for r in recipe_types::recipes_of_type("mekanism:rotary") {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
+        let amount = |v: &serde_json::Value| v["amount"].as_u64().unwrap_or(1);
+        let (ci, co, fi, fo) = (&json["chemical_input"], &json["chemical_output"], &json["fluid_input"], &json["fluid_output"]);
+        if let Some(out) = fo["id"].as_str().filter(|_| ci.is_object()) {
+            condense.add(&chemicals_of(&ci["ingredient"]), &[], Recipe { a: amount(ci), b: 0, outs: vec![(out.to_owned(), amount(fo))] }, false);
+        }
+        if let Some(out) = co["id"].as_str().filter(|_| fi.is_object()) {
+            decondense.add(&fluids_of(&fi["ingredient"]), &[], Recipe { a: amount(fi), b: 0, outs: vec![(out.to_owned(), amount(co))] }, false);
+        }
+    }
+    (condense, decondense)
+}
+
+/// Where the rotary condensentrator keeps its second book.
+const ROTARY_FLUID_BOOK: &str = "mekanism:rotary_condensentrator#fluid";
 
 fn held(e: &BlockEntity, i: usize) -> process::Tank {
     e.tanks.get(i).map_or_else(process::Tank::default, |t| process::Tank { chemical: t.substance.clone(), amount: t.amount })
@@ -97,7 +126,13 @@ impl Mekanism {
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
             self.tried.insert(def.block, tick);
-            self.conts.insert(def.block, load_cont_book(spec.shape));
+            if spec.shape == continuous::Shape::Rotary {
+                let (gas, fluid) = load_rotary_books();
+                self.conts.insert(def.block, gas);
+                self.conts.insert(ROTARY_FLUID_BOOK, fluid);
+            } else {
+                self.conts.insert(def.block, load_cont_book(spec.shape));
+            }
         }
     }
 
@@ -105,6 +140,9 @@ impl Mekanism {
     pub(crate) fn run_continuous(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         let spec = def.cont?;
         self.refresh_cont(def, tick);
+        if spec.shape == continuous::Shape::Rotary {
+            return self.run_rotary(def, e);
+        }
         let layout = def.layout;
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
@@ -147,7 +185,7 @@ impl Mekanism {
             }
         }
         let book = self.conts.entry(def.block).or_default();
-        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy };
+        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode: false };
         let (next, status) = continuous::step(&spec, book, &io);
         let mut tanks = next.tanks.clone();
         if def.layout == Layout::Separator {
@@ -200,7 +238,99 @@ impl Mekanism {
             energy: Some(next.energy),
             energy_faces,
             tanks: tanks_changed.then(|| tanks.iter().map(as_tank).collect()),
-            tank_faces: dirty.then(|| self.tank_sides(layout, &facing, &cfg)),
+            tank_faces: dirty.then(|| self.tank_sides(layout, &facing, &cfg, false)),
+            menu_data: Some(data),
+            transmitter_faces: None,
+        })
+    }
+
+    /// A tick of the rotary condensentrator (`TileEntityRotaryCondensentrator`): the mode says which of its two tanks takes in
+    /// and which gives; the fluid slots handle buckets (the gas slots wait for the chemical items the port has not yet).
+    fn run_rotary(&mut self, def: &Def, e: &BlockEntity) -> Option<BlockEntityUpdate> {
+        let spec = def.cont?;
+        let layout = def.layout;
+        let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
+        let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
+        let stored = Config::decode(e.data.get(2..).unwrap_or(&[]), layout);
+        let mut cfg = stored.unwrap_or_else(|| config::default_config(layout));
+        if stored.is_none() {
+            let front = cube::facing_name(front_for(e));
+            if front != facing {
+                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "facing", front);
+                facing = front.to_owned();
+            }
+        }
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        let mut dirty = stored.is_none() || !self.applied.contains(&key);
+        if let Some(click) = self.take_click(e) {
+            dirty |= self.configure(&mut cfg, &facing, layout, &click);
+        }
+        let mut mode = e.data.get(37) == Some(&1);
+        if let Some(ids) = self.buttons.remove(&key) {
+            for id in ids {
+                if id == ROTARY_MODE {
+                    mode = !mode;
+                    dirty = true;
+                }
+            }
+        }
+        let mut tanks = [held(e, 0), held(e, 1), process::Tank::default()];
+        let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
+        let mut items: Vec<Option<Stack>> = (0..e.items.len()).map(slot).collect();
+        let mut items_changed = false;
+        if e.items.len() >= 4 {
+            let (mut i2, mut o3) = (items[2].clone(), items[3].clone());
+            if tank::buckets(&mut i2, &mut o3, &mut tanks[0], spec.caps[0], if mode { EditMode::Fill } else { EditMode::Empty }) {
+                items[2] = i2;
+                items[3] = o3;
+                items_changed = true;
+            }
+        }
+        let book_key = if mode { ROTARY_FLUID_BOOK } else { def.block };
+        let book = self.conts.entry(book_key).or_default();
+        let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode };
+        let (next, status) = continuous::step(&spec, book, &io);
+        let tanks = next.tanks.clone();
+        let active = status == Status::Running;
+        let lit = e.state.contains("lit=true");
+        if active != lit {
+            let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
+        }
+        // The tanks that take from outside take only what the recipes of their mode use: the fluid tank the fluids, the gas
+        // tank the gases (both books are asked, so the filter holds in either mode).
+        if !self.filtered.contains(&key)
+            && let (Some(gas), Some(fluid)) = (self.conts.get(def.block), self.conts.get(ROTARY_FLUID_BOOK))
+            && !gas.is_empty()
+            && !fluid.is_empty()
+        {
+            let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 0, &fluid.accepted(0));
+            let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 1, &gas.accepted(0));
+            self.filtered.insert(key.clone());
+        }
+        let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
+        let capacity = def.usage * STORED_TICKS;
+        let mut data = menu_data(u32::from(active), next.energy, capacity, status, &cfg);
+        for t in &tanks {
+            data.extend(chem::screen(t));
+        }
+        data.push(i32::from(mode));
+        let mut saved = machine_data(progress, &cfg);
+        saved.extend([0, 0]);
+        saved[37] = u8::from(mode);
+        let tanks_changed = tanks[..2] != io.tanks[..2] || e.tanks.len() != 2;
+        if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data {
+            return None;
+        }
+        self.applied.insert(key);
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: saved,
+            items: items_changed.then(|| items.iter().map(item).collect()),
+            energy: Some(next.energy),
+            energy_faces,
+            tanks: tanks_changed.then(|| tanks[..2].iter().map(as_tank).collect()),
+            tank_faces: dirty.then(|| self.tank_sides(layout, &facing, &cfg, mode)),
             menu_data: Some(data),
             transmitter_faces: None,
         })
@@ -284,7 +414,7 @@ impl Mekanism {
             };
             vec![side; 6]
         } else {
-            config::tank_flow(layout, &facing, &cfg)[0].iter().map(|f| flow_side(*f)).collect()
+            config::tank_flow(layout, &facing, &cfg, false)[0].iter().map(|f| flow_side(*f)).collect()
         };
         if !self.filtered.contains(&key) {
             // A fluid tank takes in fluids only, a chemical tank chemicals only (the kinds keep them apart).
@@ -313,7 +443,7 @@ impl Mekanism {
     /// side configuration window is applied now (as for the other machines).
     pub(crate) fn plus_button(&mut self, def: &Def, id: i32, e: &BlockEntity) -> Option<BlockEntityUpdate> {
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
-        if matches!(id, DUMP_LEFT | DUMP_RIGHT | 5100 | 5101) {
+        if matches!(id, DUMP_LEFT | DUMP_RIGHT | ROTARY_MODE | 5100 | 5101) {
             self.buttons.entry(key).or_default().push(id);
             return None;
         }
@@ -357,7 +487,7 @@ impl Mekanism {
             energy: None,
             energy_faces: Some(faces),
             tanks: None,
-            tank_faces: Some(self.tank_sides(layout, &facing, &cfg)),
+            tank_faces: Some(self.tank_sides(layout, &facing, &cfg, layout == Layout::Rotary && e.data.get(37) == Some(&1))),
             menu_data: Some(data),
             transmitter_faces: None,
         })

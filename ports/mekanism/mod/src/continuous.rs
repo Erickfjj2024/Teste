@@ -13,6 +13,8 @@ pub enum Shape {
     Washer,
     /// Tanks: the fluid, the left gas (out), the right gas (out).
     Separator,
+    /// The rotary condensentrator: tanks fluid, gas. One of them takes in and the other gives, by its mode.
+    Rotary,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +75,8 @@ impl Book {
 pub struct Io {
     pub tanks: [Tank; 3],
     pub energy: u64,
+    /// The rotary condensentrator's mode: false condensentrates (gas to fluid), true decondensentrates (fluid to gas).
+    pub mode: bool,
 }
 
 fn room(tank: &Tank, cap: u64, id: &str, amount: u64) -> bool {
@@ -92,8 +96,11 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
         return (next, Status::NoBook);
     }
     let [t0, t1, _] = &io.tanks;
+    // The tank the recipe reads (and, for the rotary, the one it writes).
+    let in_tank = if spec.shape == Shape::Rotary && !io.mode { 1 } else { 0 };
     let (first, second) = match spec.shape {
         Shape::Separator => (t0, None),
+        Shape::Rotary => (&io.tanks[in_tank], None),
         _ => (t0, Some(t1)),
     };
     if first.amount == 0 || second.is_some_and(|t| t.amount == 0) {
@@ -106,6 +113,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
     // Where the outputs go: the centre tank, or the two gases.
     let out_tanks: Vec<usize> = match spec.shape {
         Shape::Separator => vec![1, 2],
+        Shape::Rotary => vec![1 - in_tank],
         _ => vec![2],
     };
     let fits = recipe.outs.iter().zip(&out_tanks).all(|((id, n), t)| room(&io.tanks[*t], spec.caps[*t], id, *n));
@@ -116,7 +124,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
         return (next, Status::NoEnergy);
     }
     next.energy -= spec.usage;
-    next.tanks[0].amount -= recipe.a;
+    next.tanks[in_tank].amount -= recipe.a;
     if second.is_some() {
         next.tanks[1].amount -= recipe.b;
     }
@@ -138,6 +146,7 @@ mod tests {
     const INFUSER: Spec = Spec { shape: Shape::Infuser, usage: 15, caps: [10_000; 3] };
     const WASHER: Spec = Spec { shape: Shape::Washer, usage: 5, caps: [10_000; 3] };
     const SEPARATOR: Spec = Spec { shape: Shape::Separator, usage: 4, caps: [24_000, 2_400, 2_400] };
+    const ROTARY: Spec = Spec { shape: Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] };
 
     fn t(c: &str, n: u64) -> Tank {
         Tank { chemical: c.into(), amount: n }
@@ -155,49 +164,72 @@ mod tests {
 
     #[test]
     fn two_chemicals_make_a_third_on_either_side() {
-        let io = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), Tank::default()], energy: 100 };
+        let io = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), Tank::default()], energy: 100, ..Io::default() };
         let (n, st) = step(&INFUSER, &book(), &io);
         assert_eq!(st, Status::Running);
         assert_eq!(n.tanks, [t("mekanism:hydrogen", 4), t("mekanism:chlorine", 2), t("mekanism:hydrogen_chloride", 1)]);
         assert_eq!(n.energy, 85);
         // The same with the inputs the other way round.
-        let swapped = Io { tanks: [t("mekanism:chlorine", 3), t("mekanism:hydrogen", 5), Tank::default()], energy: 100 };
+        let swapped = Io { tanks: [t("mekanism:chlorine", 3), t("mekanism:hydrogen", 5), Tank::default()], energy: 100, ..Io::default() };
         let (n, st) = step(&INFUSER, &book(), &swapped);
         assert_eq!((st, n.tanks[2].amount), (Status::Running, 1));
         // An empty tank clears its chemical.
-        let one = Io { tanks: [t("mekanism:hydrogen", 1), t("mekanism:chlorine", 1), Tank::default()], energy: 100 };
+        let one = Io { tanks: [t("mekanism:hydrogen", 1), t("mekanism:chlorine", 1), Tank::default()], energy: 100, ..Io::default() };
         assert_eq!(step(&INFUSER, &book(), &one).0.tanks[0], Tank::default());
     }
 
     #[test]
     fn a_washer_uses_five_of_fluid_for_one_of_slurry() {
-        let io = Io { tanks: [t("minecraft:water", 12), t("mekanism:dirty_gold", 2), Tank::default()], energy: 100 };
+        let io = Io { tanks: [t("minecraft:water", 12), t("mekanism:dirty_gold", 2), Tank::default()], energy: 100, ..Io::default() };
         let (n, st) = step(&WASHER, &book(), &io);
         assert_eq!(st, Status::Running);
         assert_eq!(n.tanks, [t("minecraft:water", 7), t("mekanism:dirty_gold", 1), t("mekanism:clean_gold", 1)]);
-        let dry = Io { tanks: [t("minecraft:water", 4), t("mekanism:dirty_gold", 2), Tank::default()], energy: 100 };
+        let dry = Io { tanks: [t("minecraft:water", 4), t("mekanism:dirty_gold", 2), Tank::default()], energy: 100, ..Io::default() };
         assert_eq!(step(&WASHER, &book(), &dry).1, Status::Blocked);
     }
 
     #[test]
     fn a_separator_splits_water_into_two_gases() {
-        let io = Io { tanks: [t("minecraft:water", 10), Tank::default(), Tank::default()], energy: 100 };
+        let io = Io { tanks: [t("minecraft:water", 10), Tank::default(), Tank::default()], energy: 100, ..Io::default() };
         let (n, st) = step(&SEPARATOR, &book(), &io);
         assert_eq!(st, Status::Running);
         assert_eq!(n.tanks, [t("minecraft:water", 8), t("mekanism:hydrogen", 2), t("mekanism:oxygen", 1)]);
         // A full gas tank stops it.
-        let full = Io { tanks: [t("minecraft:water", 10), t("mekanism:hydrogen", 2_399), Tank::default()], energy: 100 };
+        let full = Io { tanks: [t("minecraft:water", 10), t("mekanism:hydrogen", 2_399), Tank::default()], energy: 100, ..Io::default() };
         assert_eq!(step(&SEPARATOR, &book(), &full).1, Status::Blocked);
     }
 
     #[test]
+    fn a_rotary_condensentrator_turns_gas_to_fluid_and_back_by_its_mode() {
+        let mut gas_book = Book::default();
+        gas_book.add(&s("mekanism:water_vapor"), &[], Recipe { a: 1, b: 0, outs: vec![("minecraft:water".into(), 1)] }, false);
+        let mut fluid_book = Book::default();
+        fluid_book.add(&s("minecraft:water"), &[], Recipe { a: 1, b: 0, outs: vec![("mekanism:water_vapor".into(), 1)] }, false);
+        // Mode false: the gas tank (1) gives to the fluid tank (0).
+        let io = Io { tanks: [Tank::default(), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false };
+        let (n, st) = step(&ROTARY, &gas_book, &io);
+        assert_eq!(st, Status::Running);
+        assert_eq!((n.tanks[0].clone(), n.tanks[1].clone(), n.energy), (t("minecraft:water", 1), t("mekanism:water_vapor", 4), 8));
+        // Mode true: the fluid tank gives to the gas tank.
+        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: true };
+        let (n, st) = step(&ROTARY, &fluid_book, &io);
+        assert_eq!((st, n.tanks[0].amount, n.tanks[1].clone()), (Status::Running, 4, t("mekanism:water_vapor", 1)));
+        // Nothing to take in the tank this mode reads: idle.
+        let io = Io { tanks: [t("minecraft:water", 5), Tank::default(), Tank::default()], energy: 10, mode: false };
+        assert_eq!(step(&ROTARY, &gas_book, &io).1, Status::Idle);
+        // The output tank full stops it.
+        let io = Io { tanks: [t("minecraft:water", 10_000), t("mekanism:water_vapor", 5), Tank::default()], energy: 10, mode: false };
+        assert_eq!(step(&ROTARY, &gas_book, &io).1, Status::Blocked);
+    }
+
+    #[test]
     fn it_needs_a_recipe_energy_and_room() {
-        let io = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:oxygen", 3), Tank::default()], energy: 100 };
+        let io = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:oxygen", 3), Tank::default()], energy: 100, ..Io::default() };
         assert_eq!(step(&INFUSER, &book(), &io).1, Status::NoRecipe);
         assert_eq!(step(&INFUSER, &book(), &Io::default()).1, Status::Idle);
-        let dry = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), Tank::default()], energy: 14 };
+        let dry = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), Tank::default()], energy: 14, ..Io::default() };
         assert_eq!(step(&INFUSER, &book(), &dry).1, Status::NoEnergy);
-        let other = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), t("mekanism:oxygen", 1)], energy: 100 };
+        let other = Io { tanks: [t("mekanism:hydrogen", 5), t("mekanism:chlorine", 3), t("mekanism:oxygen", 1)], energy: 100, ..Io::default() };
         assert_eq!(step(&INFUSER, &book(), &other).1, Status::Blocked);
         assert_eq!(step(&INFUSER, &Book::default(), &io).1, Status::NoBook);
         assert_eq!(book().accepted(0), ["mekanism:chlorine", "mekanism:hydrogen", "minecraft:water"]);

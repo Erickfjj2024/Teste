@@ -96,7 +96,7 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
            'block_raw_uranium', 'block_bio_fuel']
 PROCESS_MACHINES = ['metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
                     'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer']
-CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator']
+CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator', 'rotary_condensentrator']
 TIERS = ['basic', 'advanced', 'elite', 'ultimate']
 FLUID_TANKS = [f'{t}_fluid_tank' for t in TIERS + ['creative']]
 CHEM_TANKS = [f'{t}_chemical_tank' for t in TIERS + ['creative']]
@@ -353,7 +353,7 @@ for tier in ('basic', 'creative'):
 # what joins a cable, a tube and a pipe: the transmitters of their kind, and the blocks that hold what they carry
 ELECTRIC = [m for m in MACHINES if m not in FLUID_TANKS and m not in CHEM_TANKS]
 CHEMICAL_BLOCKS = [m for m in PROCESS_MACHINES + CONTINUOUS_MACHINES + CHEM_TANKS if m != 'chemical_crystallizer' or True]
-FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', *FLUID_TANKS]
+FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', *FLUID_TANKS]
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_universal_cable')],
     f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in ELECTRIC]]})
@@ -438,7 +438,7 @@ def copy_gui(rel, name):
     return f'{NS}:gui/{name}'
 
 MACHINE_NAMES = {'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
-                 'electrolytic_separator': 'Electrolytic Separator',
+                 'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator',
                  **{f'{t}_fluid_tank': f'{t.title()} Fluid Tank' for t in TIERS + ['creative']},
                  **{f'{t}_chemical_tank': f'{t.title()} Chemical Tank' for t in TIERS + ['creative']},
                  'metallurgic_infuser': 'Metallurgic Infuser', 'purification_chamber': 'Purification Chamber',
@@ -526,6 +526,7 @@ TRANSMISSION_INFO = {
 MACHINE_TRANSMISSIONS = {'crusher': [0, 1], 'enrichment_chamber': [0, 1], 'energized_smelter': [0, 1],
                          'precision_sawmill': [0, 1], 'combiner': [0, 1], **{m: [0, 3, 1] for m in PROCESS_MACHINES},
                          'chemical_infuser': [3, 0, 1], 'chemical_washer': [3, 2, 0, 1], 'electrolytic_separator': [2, 3, 0, 1],
+                         'rotary_condensentrator': [3, 2, 0, 1],
                          **{m: [3, 0] for m in CHEM_TANKS}}
 # the transmissions a machine cannot eject (setCanEject(false)): the infuser's tank
 NO_EJECT = {(m, 3) for m in ('metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
@@ -585,7 +586,7 @@ def side_config_widgets(transmissions, machine=None):
 # ---- the machines that work a chemical (the infuser, the chambers, the oxidizer, the crystallizer): the chemicals their
 # screens draw, written to the mod's chem_table.rs (a chemical's number is its place in the list, from 1)
 CHEM_RECIPE_TYPES = ['purifying', 'injecting', 'compressing', 'oxidizing', 'dissolution', 'crystallizing',
-                     'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating']
+                     'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating', 'rotary']
 # the fluids the screens draw (the same table as the chemicals): their colour
 FLUIDS = {'minecraft:water': '#3F76E4', 'minecraft:lava': '#FF6A00', 'mekanism:brine': '#FEEF9C', 'mekanism:lithium': '#EBA400'}
 CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing'}
@@ -609,6 +610,12 @@ def chemical_ids():
             for side in ('left_input', 'right_input'):
                 if isinstance(r.get(side, {}).get('ingredient'), str):
                     add(r[side]['ingredient'])
+        if kind == 'rotary':
+            for part in ('chemical_input', 'chemical_output', 'fluid_output'):
+                v = r.get(part, {})
+                i = v.get('ingredient', v.get('id'))
+                if isinstance(i, str):
+                    add(i)
         if kind == 'washing' and isinstance(r.get('chemical_input', {}).get('ingredient'), str):
             add(r['chemical_input']['ingredient'])
         out = r.get('output')
@@ -654,7 +661,7 @@ with open(f'{OUT}/src/chem_table.rs', 'w') as f:
         f.write(f'    "{cid}",\n')
     f.write('];\n')
 
-PROGRESS_TYPES = {'bar': (25, 9, 'right'), 'right': (32, 8, 'right'), 'large_right': (48, 8, 'right'),
+PROGRESS_TYPES = {'large_left': (48, 8, 'left'), 'bar': (25, 9, 'right'), 'right': (32, 8, 'right'), 'large_right': (48, 8, 'right'),
                   'small_right': (28, 8, 'right'), 'small_left': (28, 8, 'left'), 'bidirectional': (16, 6, 'right')}
 # what each screen has, as the machine's Gui class puts it: slots (the mod's order), the frames and overlays drawn under
 # them, the energy bar, the progress arrows, the tank gauges (kind, x, y, w, h, tank, capacity: a standard gauge is 16 by 58,
@@ -724,6 +731,15 @@ PROCESS_LAYOUTS = {
                    ('small', 100, 18, 16, 28, 't2', 2400)],
         'modes': [(7, 72, 5000, 22, 'left'), (159, 72, 5001, 23, 'right')]},
 }
+    # GuiRotaryCondensentrator: gas on the left, fluid on the right, an arrow each way by the mode, a toggle button
+PROCESS_LAYOUTS['rotary_condensentrator'] = {
+    'continuous': True, 'rotary': True, 'slots': [[5, 25], [5, 56], [155, 25], [155, 56], [155, 5]], 'results': [1, 3],
+    'title': (0, 176, 'center'), 'title_y': 4, 'inventory': None, 'debug': (115, 66),
+    'frames': [('slot/input', 5, 25), ('slot/output', 5, 56), ('slot/input', 155, 25), ('slot/output', 155, 56),
+               ('slot/power', 155, 5)],
+    'overlays': [], 'power': ('horizontal', 115, 75), 'progress': [],
+    'extra_sprites': [('arrow/down', 9, 44), ('arrow/down', 159, 44)],
+    'gauges': [('standard', 133, 13, 16, 58, 't0', 10000), ('standard', 25, 13, 16, 58, 't1', 10000)]}
 for _m in ('chemical_injection_chamber', 'osmium_compressor'):
     PROCESS_LAYOUTS[_m] = PROCESS_LAYOUTS['purification_chamber']
 # the compressor's bar is the same, but its tank holds 210 too; the three are one layout
@@ -805,6 +821,20 @@ def process_menu(m):
         if gk in GAUGE_SIZES:
             widgets.append({'type': 'sprite', 'texture': copy_gui(f'gauge/overlay/{gk}', f'gauge_overlay_{gk}'),
                             'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh})
+    if L.get('rotary'):
+        # the arrow of the mode (data slot 22 is the mode: 0 condensentrates, 1 decondensentrates), full while it works
+        for k, ptype in enumerate(['large_right', 'large_left']):
+            pw, ph, direction = PROGRESS_TYPES[ptype]
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 22}, 'eq': k}}, 'widgets': [
+                {'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/empty', f'progress_{ptype}_empty'), 'x': 64, 'y': 39, 'w': pw, 'h': ph},
+                {'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/full', f'progress_{ptype}_full'), 'x': 64, 'y': 39,
+                 'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': 1}, 'direction': direction, 'tooltip': 'Working'}]})
+        # ToggleButton at 4, 4 (18 by 18), flipped when decondensentrating; its mode written below it
+        for k, (sprite, label) in enumerate([('button/toggle', 'Condensentrating'), ('button/toggle_flipped', 'Decondensentrating')]):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 22}, 'eq': k}}, 'widgets': [
+                {'type': 'sprite', 'texture': copy_gui(sprite, sprite.replace('/', '_')), 'x': 4, 'y': 4, 'w': 18, 'h': 18},
+                {'type': 'text', 'x': 4, 'y': 74, 'text': label, 'color': '#404040'}]})
+        widgets.append({'type': 'button', 'x': 4, 'y': 4, 'w': 18, 'h': 18, 'id': 5200, 'tooltip': 'Toggle operation'})
     if 'dump' in L:
         dx, dy = L['dump']
         widgets.append({'type': 'sprite', 'texture': copy_gui('button/dump', 'button_dump'), 'x': dx, 'y': dy, 'w': 21, 'h': 10})
@@ -822,12 +852,12 @@ def process_menu(m):
     # centred (or left) between two x, and the label only on some
     tx0, tx1, align = L.get('title', (0, 176, 'center'))
     title_x = tx0 + (tx1 - tx0 - text_width(title)) // 2 if align == 'center' else tx0
-    widgets.append({'type': 'text', 'x': title_x, 'y': 6, 'text': title, 'color': '#404040'})
+    widgets.append({'type': 'text', 'x': title_x, 'y': L.get('title_y', 6), 'text': title, 'color': '#404040'})
     if L.get('inventory', 176) is not None:
         widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.33', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.34', 'color': '#808080'})
     widgets += [
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -923,7 +953,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.33', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.34', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -952,7 +982,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.33', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.34', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -1070,7 +1100,7 @@ def refs(v):
 nrec = 0
 MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining', f'{NS}:metallurgic_infusing',
                  f'{NS}:chemical_conversion', f'{NS}:purifying', f'{NS}:injecting', f'{NS}:compressing', f'{NS}:oxidizing',
-                 f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating'}
+                 f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating', f'{NS}:rotary'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)

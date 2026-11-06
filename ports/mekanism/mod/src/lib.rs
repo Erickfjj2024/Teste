@@ -112,7 +112,7 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use }
 }
 
-const MACHINES: [Def; 25] = [
+const MACHINES: [Def; 26] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -134,6 +134,9 @@ const MACHINES: [Def; 25] = [
     // Its energy is twice the hydrogen's energy density (2), so 4 a tick.
     continuous_machine("mekanism:electrolytic_separator", "mekanism:separating", Layout::Separator,
         continuous::Spec { shape: continuous::Shape::Separator, usage: 4, caps: [24_000, 2_400, 2_400] }),
+    // The rotary condensentrator turns a gas into a fluid or a fluid into a gas, by its mode (10 buckets in each tank).
+    continuous_machine("mekanism:rotary_condensentrator", "mekanism:rotary", Layout::Rotary,
+        continuous::Spec { shape: continuous::Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] }),
     // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
     tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
     tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
@@ -503,8 +506,8 @@ impl Mekanism {
     }
 
     /// What each face does with a machine's tanks, as its chemical sides say (one list of faces for each tank).
-    fn tank_sides(&self, layout: Layout, facing: &str, cfg: &Config) -> Vec<Vec<FlowSide>> {
-        config::tank_flow(layout, facing, cfg)
+    fn tank_sides(&self, layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<Vec<FlowSide>> {
+        config::tank_flow(layout, facing, cfg, mode)
             .iter()
             .map(|flow| flow.iter().map(|f| flow_side(*f)).collect())
             .collect()
@@ -672,7 +675,7 @@ impl Mekanism {
                 }
                 v
             });
-        let tank_faces = (spec.is_some() && dirty).then(|| self.tank_sides(layout, &facing, &cfg));
+        let tank_faces = (spec.is_some() && dirty).then(|| self.tank_sides(layout, &facing, &cfg, false));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
@@ -850,10 +853,11 @@ impl ServerMod for Mekanism {
                 Kind::Continuous => {
                     let (inputs, outputs) = match def.layout {
                         Layout::ChemInfuser => (vec![0, 1], vec![2]),
+                        Layout::Rotary => (vec![0, 2], vec![1, 3]),
                         _ => (vec![0], vec![1, 2]),
                     };
                     ContainerSpec {
-                        slots: 3,
+                        slots: if def.layout == Layout::Rotary { 5 } else { 3 },
                         faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
                         inputs,
                         outputs,
@@ -896,8 +900,8 @@ impl ServerMod for Mekanism {
             }
             if let Some(spec) = def.cont {
                 // Chemicals go through chemical tanks and fluids through fluid ones; the faces are the configuration's.
-                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout));
-                for (i, cap) in spec.caps.iter().enumerate() {
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
+                for (i, cap) in spec.caps.iter().enumerate().filter(|(_, c)| **c > 0) {
                     let fluid = i == 0 && spec.shape != continuous::Shape::Infuser;
                     k.tanks.push(TankSpec {
                         kind: if fluid { "fluid" } else { "chemical" }.into(),
@@ -910,7 +914,7 @@ impl ServerMod for Mekanism {
             if let Some(spec) = def.proc {
                 // The tanks: the one the chemical goes into, then the one it comes out in. Every chemical is the same
                 // family, so a tank takes from a neighbour that holds one; the faces are the default configuration's.
-                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout));
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
                 let mut tank = |capacity: u64, i: usize| TankSpec {
                     kind: "chemical".into(),
                     capacity,
@@ -1089,7 +1093,7 @@ impl ServerMod for Mekanism {
         data.resize(6, 0);
         data.extend(cfg.screen_words());
         data.extend(tail);
-        let tank_faces = def.proc.map(|_| self.tank_sides(layout, &facing, &cfg));
+        let tank_faces = def.proc.map(|_| self.tank_sides(layout, &facing, &cfg, false));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,

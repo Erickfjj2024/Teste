@@ -48,6 +48,10 @@ id = "mekanism:chemical_infusing/hydrogen_chloride"
 json = '''{"type":"mekanism:chemical_infusing","left_input":{"amount":1,"ingredient":"mekanism:hydrogen"},"output":{"amount":1,"id":"mekanism:hydrogen_chloride"},"right_input":{"amount":1,"ingredient":"mekanism:chlorine"}}'''
 
 [[recipe]]
+id = "mekanism:rotary/water_vapor"
+json = '''{"type":"mekanism:rotary","chemical_input":{"amount":1,"ingredient":"mekanism:water_vapor"},"chemical_output":{"amount":1,"id":"mekanism:water_vapor"},"fluid_input":{"amount":1,"ingredient":"#minecraft:water"},"fluid_output":{"amount":1,"id":"minecraft:water"}}'''
+
+[[recipe]]
 id = "mekanism:washing/gold"
 json = '''{"type":"mekanism:washing","chemical_input":{"amount":1,"ingredient":"mekanism:dirty_gold"},"fluid_input":{"amount":5,"ingredient":"#minecraft:water"},"output":{"amount":1,"id":"mekanism:clean_gold"}}'''
 
@@ -346,3 +350,27 @@ ticks = 2
 set-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*5"] }]
 ticks = 3
 expect.block-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*1000000000000"] }]
+
+[[step]]
+# The rotary condensentrator turns the water vapor of its gas tank into water (a mode that condensentrates), and after the
+# mode button (5200) turns water back into vapor.
+blocks = [
+    { x = 280, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 280, y = 64, z = 0, state = "mekanism:rotary_condensentrator[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 280, y = 64, z = 0, tanks = ["", "mekanism:water_vapor*50"] }]
+ticks = 10
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*10", "mekanism:water_vapor*40"] }]
+
+[[step]]
+press = { x = 280, y = 64, z = 0, id = 5200 }
+ticks = 5
+# (the button is pressed after the ticks: they condensentrate five more)
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*15", "mekanism:water_vapor*35"] }]
+
+[[step]]
+ticks = 5
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*10", "mekanism:water_vapor*40"] }]
