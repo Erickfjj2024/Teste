@@ -61,7 +61,7 @@ e **ainda não foi testada**). APK: v8.
    pelos dados da entidade do bloco. Isso é o elemento novo `part` do renderizador (API do fork): desenha o modelo de
    um bloco auxiliar (36 blocos de um estado, sem item) quando um byte dos dados do mod bate; o servidor manda ao cliente
    os primeiros 64 bytes dos dados. **Não testado no jogo.**
-9. **Carregador de mods (medido no computador, APK v16, ainda não testado no celular).** Medição: montar a raiz de
+9. **Carregador de mods (medido no computador; confirmado no celular com o APK v17: mais rápido e estável).** Medição: montar a raiz de
    conteúdo (feita quando o conjunto de mods muda; depois fica em cache) tinha **pico de 1,2 GB** com vanilla + Mekanism, e
    só carregar o resultado usa 140 MB. A causa não era o número de estados do Mekanism (cada 11.700 estados a mais
    custavam ~120 MB), e sim ler a tabela `gameplay-facts.json` (55 MB de texto) como árvore JSON (~1 GB) e fazer isso
@@ -77,7 +77,7 @@ e **ainda não foi testada**). APK: v8.
     (catálogo de modelos, itens e colisões carregam igual). APK v17: a saída do carregador novo é **idêntica byte a byte**
     à do antigo (as linhas originais são reescritas uma por vez), 327 MB de pico, e a raiz em cache é refeita na primeira
     abertura (o selo do cache passou a `2`; ele não mudava com o carregador, então um APK novo podia reaproveitar a
-    raiz de outro). **Não testado no celular.**
+    raiz de outro). **Confirmado pelo usuário no celular: as portas voltaram no APK v17.** A causa exata não foi isolada (o `\u003d` do `facts.json` ou a raiz em cache de outro APK); as duas foram eliminadas.
 
 ## 3. NÃO testado no jogo (o usuário não viu)
 
