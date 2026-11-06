@@ -118,13 +118,19 @@ pub enum Layout {
     Sawmill,
     /// The main input (0), the extra input (1) and the output (2).
     Combiner,
+    /// The metallurgic infuser: the input (0), the output (1) and the infusion item slot (2), which the extra data type
+    /// reaches; its infusion tank is configured as the chemical transmission.
+    Infuser,
 }
 
 impl Layout {
     /// The transmissions a machine of this layout configures, in the order of its tabs (`getTransmissions`): the first is
     /// the one the window opens on.
     pub fn transmissions(self) -> &'static [Transmission] {
-        &[Transmission::Items, Transmission::Energy]
+        match self {
+            Layout::Infuser => &[Transmission::Items, Transmission::Chemicals, Transmission::Energy],
+            _ => &[Transmission::Items, Transmission::Energy],
+        }
     }
 }
 
@@ -139,10 +145,12 @@ pub const BOTTOM: usize = 5;
 /// The data types a transmission supports, in the order a click goes through them (their ordinals').
 pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
     match (layout, t) {
-        // No machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
+        // The infusion tank: `setupIOConfig`, so none, input, output and both.
+        (Layout::Infuser, Transmission::Chemicals) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
+        // No other machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
         (_, Transmission::Fluids | Transmission::Chemicals | Transmission::Heat) => &[],
         (_, Transmission::Energy) => &[Data::None, Data::Input],
-        (Layout::Combiner, Transmission::Items) => {
+        (Layout::Combiner | Layout::Infuser, Transmission::Items) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy, Data::Extra]
         }
         (_, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy],
@@ -174,12 +182,16 @@ pub fn default_config(layout: Layout) -> Config {
     let mut items = [Data::Input; 6];
     items[RIGHT] = Data::Output;
     items[BACK] = Data::Energy;
-    if layout == Layout::Combiner {
+    if matches!(layout, Layout::Combiner | Layout::Infuser) {
         items[BOTTOM] = Data::Extra;
     }
     let mut sides = [[Data::None; 6]; 5];
     sides[Transmission::Items as usize] = items;
     sides[Transmission::Energy as usize] = [Data::Input; 6];
+    // The infusion tank takes in on every side (`LightConfigInfo.INPUT_ONLY`).
+    if layout == Layout::Infuser {
+        sides[Transmission::Chemicals as usize] = [Data::Input; 6];
+    }
     Config { sides, eject: [false; 5] }
 }
 
@@ -258,6 +270,10 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
         (Layout::Combiner, Data::Output) => &[2],
         (Layout::Combiner, Data::InputOutput) => &[0, 2],
         (Layout::Combiner, Data::Extra) => &[1],
+        (Layout::Infuser, Data::Input) => &[0],
+        (Layout::Infuser, Data::Output) => &[1],
+        (Layout::Infuser, Data::InputOutput) => &[0, 1],
+        (Layout::Infuser, Data::Extra) => &[2],
         (_, Data::Extra) => &[],
     }
 }
@@ -313,6 +329,20 @@ pub fn item_faces(layout: Layout, facing: &str, items: &[Data; 6]) -> Vec<Vec<u3
     faces
 }
 
+/// What each face of the world does with the infusion tank: none, in, out or both (`FlowSide` numbers 0 to 3).
+pub fn tank_flow(facing: &str, chemicals: &[Data; 6]) -> [u8; 6] {
+    let mut out = [0u8; 6];
+    for (side, data) in chemicals.iter().enumerate() {
+        out[face_of(facing, side)] = match data {
+            Data::Input => 1,
+            Data::Output => 2,
+            Data::InputOutput => 3,
+            _ => 0,
+        };
+    }
+    out
+}
+
 /// Whether energy comes in through each face (down, up, north, south, west, east).
 pub fn energy_in(facing: &str, energy: &[Data; 6]) -> [bool; 6] {
     let mut out = [false; 6];
@@ -364,6 +394,26 @@ pub fn click_of(id: i32) -> Option<Click> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_infuser_has_items_chemicals_and_energy() {
+        assert_eq!(
+            Layout::Infuser.transmissions(),
+            &[Transmission::Items, Transmission::Chemicals, Transmission::Energy]
+        );
+        let c = default_config(Layout::Infuser);
+        assert_eq!(c.items()[BOTTOM], Data::Extra);
+        assert_eq!(c.items()[RIGHT], Data::Output);
+        assert_eq!(*c.side(Transmission::Chemicals), [Data::Input; 6]);
+        assert_eq!(slots_of(Layout::Infuser, Data::Extra), &[2]);
+        assert_eq!(cycle(Layout::Infuser, Transmission::Chemicals, Data::InputOutput, false), Data::None);
+        // The tank takes in everywhere, by the faces of the world.
+        assert_eq!(tank_flow("north", c.side(Transmission::Chemicals)), [1; 6]);
+        let mut out = [Data::None; 6];
+        out[RIGHT] = Data::Output;
+        // Facing north, the right side is the west face (index 4).
+        assert_eq!(tank_flow("north", &out)[4], 2);
+    }
 
     #[test]
     fn the_defaults_are_the_originals() {

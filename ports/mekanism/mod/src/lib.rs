@@ -5,15 +5,17 @@
 //! What runs so far: the crusher, the enrichment chamber and the energized
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
+mod chem;
 mod config;
 mod cube;
+mod infuser;
 mod machine;
 mod sawmill;
 mod sides;
 mod worldgen;
 
 use horizon_mod_sdk::server::{
-    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack,
+    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack, Tank, TankSpec,
     BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, players,
     recipe_types, serde_json, world,
 };
@@ -38,6 +40,8 @@ enum Kind {
     Electric,
     Sawmill,
     Combiner,
+    /// An item and an infusion type from its tank make another item (the metallurgic infuser).
+    Infuser,
 }
 
 /// An electric machine: its block, where its recipes come from and its energy
@@ -56,16 +60,18 @@ impl Def {
             Kind::Electric => Layout::Electric,
             Kind::Sawmill => Layout::Sawmill,
             Kind::Combiner => Layout::Combiner,
+            Kind::Infuser => Layout::Infuser,
         }
     }
 }
 
-const MACHINES: [Def; 5] = [
+const MACHINES: [Def; 6] = [
     Def { block: "mekanism:crusher", source: Source::Files("mekanism:crushing"), usage: 8, kind: Kind::Electric },
     Def { block: "mekanism:enrichment_chamber", source: Source::Files("mekanism:enriching"), usage: 5, kind: Kind::Electric },
     Def { block: "mekanism:energized_smelter", source: Source::Cooking("smelting"), usage: 5, kind: Kind::Electric },
     Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill },
     Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner },
+    Def { block: "mekanism:metallurgic_infuser", source: Source::Files("mekanism:metallurgic_infusing"), usage: 5, kind: Kind::Infuser },
 ];
 
 /// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
@@ -83,6 +89,7 @@ struct Mekanism {
     tried: HashMap<&'static str, u64>,
     saws: sawmill::Book,
     combs: combiner::Book,
+    infs: infuser::Book,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
     /// What each player's configurator is set to configure (Mekanism keeps it in the item).
@@ -220,6 +227,48 @@ fn load_comb_book() -> combiner::Book {
     book
 }
 
+/// The infusion types an ingredient names (`"#mekanism:redstone"`, a tag, or `"mekanism:redstone"`, a chemical; a list of
+/// them). Every infusion type tag of the mod holds the one infusion type of its name, so a tag stands for it.
+fn chemicals_of(ingredient: &serde_json::Value) -> Vec<String> {
+    match ingredient {
+        serde_json::Value::String(s) => vec![s.trim_start_matches('#').to_owned()],
+        serde_json::Value::Array(list) => list.iter().flat_map(chemicals_of).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn load_inf_book() -> infuser::Book {
+    let mut book = infuser::Book::default();
+    for r in recipe_types::recipes_of_type("mekanism:metallurgic_infusing") {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
+        let Some(output) = json["output"]["id"].as_str() else { continue };
+        if json["per_tick_usage"].as_bool().unwrap_or(false) {
+            // Used a little each tick while it runs; no recipe of the mod does, so it is not made.
+            continue;
+        }
+        let items = recipe_types::ingredient_items(&json["item_input"]["ingredient"].to_string());
+        let chemicals = chemicals_of(&json["chemical_input"]["ingredient"]);
+        book.add(
+            &items,
+            &chemicals,
+            infuser::Recipe {
+                item_count: count_of(&json["item_input"]),
+                amount: json["chemical_input"]["amount"].as_u64().unwrap_or(1),
+                output: output.to_owned(),
+                out_count: count_of(&json["output"]),
+            },
+        );
+    }
+    // The infusion slot's conversions: an item to an infusion type (the other chemicals they make are not the tank's).
+    for r in recipe_types::recipes_of_type("mekanism:chemical_conversion") {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
+        let (Some(chemical), Some(amount)) = (json["output"]["id"].as_str(), json["output"]["amount"].as_u64()) else { continue };
+        let items = recipe_types::ingredient_items(&json["input"]["ingredient"].to_string());
+        book.add_conversion(&items, chemical, amount);
+    }
+    book
+}
+
 fn stack(s: &Option<ItemStack>) -> Option<Stack> {
     s.as_ref().map(|s| Stack {
         item: s.item.clone(),
@@ -286,6 +335,7 @@ impl Mekanism {
             Kind::Electric => self.books.get(def.block).is_none_or(Book::is_empty),
             Kind::Sawmill => self.saws.is_empty(),
             Kind::Combiner => self.combs.is_empty(),
+            Kind::Infuser => self.infs.is_empty(),
         };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
@@ -296,6 +346,7 @@ impl Mekanism {
                 }
                 Kind::Sawmill => self.saws = load_saw_book(),
                 Kind::Combiner => self.combs = load_comb_book(),
+                Kind::Infuser => self.infs = load_inf_book(),
             }
         }
     }
@@ -339,6 +390,12 @@ impl Mekanism {
             .collect()
     }
 
+    /// What each face does with an infuser's tank, as its chemical sides say.
+    fn tank_sides(&self, facing: &str, cfg: &Config) -> Vec<Vec<FlowSide>> {
+        let flow = config::tank_flow(facing, cfg.side(Transmission::Chemicals));
+        vec![flow.iter().map(|f| flow_side(*f)).collect()]
+    }
+
     /// The tool click waiting for the entity at this place, if any.
     fn take_click(&mut self, e: &BlockEntity) -> Option<Click> {
         let i = self
@@ -367,6 +424,9 @@ impl Mekanism {
         }
         let dice = if def.kind == Kind::Sawmill { self.roll(tick, &e.pos) } else { 0.0 };
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
+        // The infuser's tank before and after.
+        let mut tank_now = infuser::Tank::default();
+        let mut tank_next = infuser::Tank::default();
         // The slots after, the energy and progress after, what it did, and whether anything changed.
         let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = match def.kind {
             Kind::Electric => {
@@ -380,6 +440,29 @@ impl Mekanism {
                 let (next, status) = sawmill::step(def.usage, &self.saws, &io, dice);
                 (
                     vec![item(&next.input), item(&next.main), item(&next.secondary)],
+                    next.energy,
+                    next.progress,
+                    status,
+                    next != io,
+                )
+            }
+            Kind::Infuser => {
+                tank_now = e.tanks.first().map_or_else(infuser::Tank::default, |t| infuser::Tank {
+                    chemical: t.substance.clone(),
+                    amount: t.amount,
+                });
+                let io = infuser::Io {
+                    input: slot(0),
+                    output: slot(1),
+                    infusion: slot(2),
+                    tank: tank_now.clone(),
+                    energy: e.energy,
+                    progress,
+                };
+                let (next, status) = infuser::step(def.usage, &self.infs, &io);
+                tank_next = next.tank.clone();
+                (
+                    vec![item(&next.input), item(&next.output), item(&next.infusion)],
                     next.energy,
                     next.progress,
                     status,
@@ -406,10 +489,18 @@ impl Mekanism {
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let capacity = def.usage * STORED_TICKS;
-        let data = menu_data(next_progress, energy, capacity, status, &cfg);
+        let mut data = menu_data(next_progress, energy, capacity, status, &cfg);
+        let has_tank = def.kind == Kind::Infuser;
+        if has_tank {
+            data.extend(chem::screen(&tank_next));
+        }
         if !changed && !dirty && data == e.menu_data {
             return None;
         }
+        let tanks = (has_tank && (tank_next != tank_now || e.tanks.is_empty())).then(|| {
+            vec![Tank { substance: tank_next.chemical.clone(), amount: tank_next.amount }]
+        });
+        let tank_faces = (has_tank && dirty).then(|| self.tank_sides(&facing, &cfg));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
@@ -417,8 +508,8 @@ impl Mekanism {
             items: Some(items),
             energy: Some(energy),
             energy_faces,
-            tanks: None,
-            tank_faces: None,
+            tanks,
+            tank_faces,
             menu_data: Some(data),
             transmitter_faces: None,
         })
@@ -568,6 +659,14 @@ impl ServerMod for Mekanism {
                     outputs: vec![1, 2],
                     menu: true,
                 },
+                // The input, the output and the infusion slot; hoppers put into the input and the infusion slot.
+                Kind::Infuser => ContainerSpec {
+                    slots: 3,
+                    faces: config::item_faces(Layout::Infuser, "north", config::default_config(Layout::Infuser).items()),
+                    inputs: vec![0, 2],
+                    outputs: vec![1],
+                    menu: true,
+                },
                 // The main input, the extra one and the output, on the faces of the default configuration.
                 Kind::Combiner => ContainerSpec {
                     slots: 3,
@@ -578,6 +677,15 @@ impl ServerMod for Mekanism {
                 },
             });
             k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
+            if def.kind == Kind::Infuser {
+                // The infusion tank takes in on every side to start with (`LightConfigInfo.INPUT_ONLY`).
+                k.tanks = vec![TankSpec {
+                    kind: "infusion".into(),
+                    capacity: infuser::MAX_INFUSE,
+                    max_rate: infuser::MAX_INFUSE,
+                    faces: vec![FlowSide::Input; 6],
+                }];
+            }
             r = r.block_entity_kind(k);
         }
         // The discharge and charge slots of its screen; no face reaches them (the cube's item sides are still to do).
@@ -603,6 +711,7 @@ impl ServerMod for Mekanism {
             tried: HashMap::new(),
             saws: sawmill::Book::default(),
             combs: combiner::Book::default(),
+            infs: infuser::Book::default(),
             pending: Vec::new(),
             tool: HashMap::new(),
             applied: HashSet::new(),
@@ -695,6 +804,24 @@ impl ServerMod for Mekanism {
         let layout = def.layout();
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
+        if id == chem::DUMP && def.kind == Kind::Infuser {
+            // GuiDumpButton: the tank is emptied (`dump`).
+            let mut data = e.menu_data.clone();
+            data.truncate(16);
+            data.extend(chem::screen(&infuser::Tank::default()));
+            return Some(BlockEntityUpdate {
+                dimension: e.dimension.clone(),
+                pos: e.pos,
+                data: e.data.clone(),
+                items: None,
+                energy: None,
+                energy_faces: None,
+                tanks: Some(vec![Tank { substance: String::new(), amount: 0 }]),
+                tank_faces: None,
+                menu_data: Some(data),
+                transmitter_faces: None,
+            });
+        }
         match config::click_of(id)? {
             config::Click::Side { t, side, back } => {
                 let now = cfg.side(t)[side];
@@ -709,9 +836,12 @@ impl ServerMod for Mekanism {
         let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
         let faces = self.apply_config(&e, layout, &facing, &cfg);
         // The screen's first six numbers stay; the configuration's four follow them.
+        let tail: Vec<i32> = e.menu_data.get(16..).map(<[i32]>::to_vec).unwrap_or_default();
         let mut data = e.menu_data.clone();
         data.resize(6, 0);
         data.extend(cfg.screen_words());
+        data.extend(tail);
+        let tank_faces = (def.kind == Kind::Infuser).then(|| self.tank_sides(&facing, &cfg));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
@@ -720,7 +850,7 @@ impl ServerMod for Mekanism {
             energy: None,
             energy_faces: Some(faces),
             tanks: None,
-            tank_faces: None,
+            tank_faces,
             menu_data: Some(data),
             transmitter_faces: None,
         })

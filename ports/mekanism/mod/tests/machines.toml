@@ -1,7 +1,7 @@
 # The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
 # and the game's cooking recipes, with energy from a creative cube, and show when they work.
 
-items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel"]
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -18,6 +18,14 @@ json = '''{"type":"mekanism:sawing","input":{"count":1,"ingredient":"minecraft:o
 [[recipe]]
 id = "mekanism:combining/gravel"
 json = '''{"type":"mekanism:combining","main_input":{"count":1,"ingredient":"minecraft:flint"},"extra_input":{"count":1,"ingredient":"minecraft:cobblestone"},"output":{"id":"minecraft:gravel"}}'''
+
+[[recipe]]
+id = "mekanism:metallurgic_infusing/alloy/infused"
+json = '''{"type":"mekanism:metallurgic_infusing","chemical_input":{"amount":10,"ingredient":"#mekanism:redstone"},"experience":0.2,"item_input":{"count":1,"ingredient":"minecraft:copper_ingot"},"output":{"id":"mekanism:alloy_infused"},"per_tick_usage":false}'''
+
+[[recipe]]
+id = "mekanism:chemical_conversion/redstone/from_dust"
+json = '''{"type":"mekanism:chemical_conversion","group":"mekanism:redstone","input":{"count":1,"ingredient":"minecraft:redstone"},"output":{"amount":10,"id":"mekanism:redstone"}}'''
 
 [[cooking]]
 inputs = ["minecraft:iron_ore"]
@@ -178,3 +186,30 @@ expect.block-items = [{ x = 60, y = 64, z = 0, slots = ["minecraft:redstone*2", 
 as = "Alex"
 press = { x = 60, y = 64, z = 0, id = 1110 }
 ticks = 2
+
+[[step]]
+# The metallurgic infuser: the redstone in its infusion slot turns into infusion type in its tank, ten for each dust
+# (the recipes of chemical_conversion), one dust a tick, up to a bucket. Its recipes come a little after the start.
+blocks = [
+    { x = 80, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 80, y = 64, z = -1, state = "mekanism:metallurgic_infuser[facing=north,lit=false]" },
+]
+set-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "minecraft:redstone*3"] }]
+ticks = 25
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", ""] }]
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"] }]
+
+[[step]]
+# 200 ticks after a copper ingot is put in, it and ten of the infusion type have made an infused alloy (the recipe of
+# metallurgic_infusing), and the tank keeps what is left.
+set-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*2", "", ""] }]
+ticks = 205
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", ""] }]
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*20"] }]
+
+[[step]]
+# The dump button (4000) empties the tank.
+as = "Alex"
+press = { x = 80, y = 64, z = -1, id = 4000 }
+ticks = 1
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = [""] }]

@@ -173,6 +173,22 @@ Visto em seguida: o rótulo "Inventory" do jogo aparecia por cima da janela (o j
 APK v25 e mod 0.1.20 (**não testados**): a tela diz `own_labels` e o jogo deixa os dele de fora (os rótulos são `text` da tela, que a
 janela cobre). Mensagens de diagnóstico removidas.
 
+## 2d. Metallurgic Infuser e o primeiro tanque de químico (mod 0.1.26, APK v30, **não testado no jogo**)
+
+Passou no teste simulado (23 passos: o ferro/cobre + redstone, a conversão na ranhura de infusão e o botão de despejo) e nos testes
+unitários; **ninguém viu na tela do celular**. O que existe, lido do código do Mekanism:
+- **Bloco** `metallurgic_infuser` (modelo e texturas do original, `facing`, mesma carga/recipientes das outras máquinas, 5 de energia por tick).
+- **Receitas** `mekanism:metallurgic_infusing` (10: ligas, musgo, terra, esporos...) e `mekanism:chemical_conversion`: um item na
+  **ranhura de infusão** (17, 35) vira tipo de infusão no **tanque** (1000 mB no máximo, um item por tick, só do tipo que alguma receita usa
+  e sem misturar), o item de entrada (51, 43) e a quantidade pedida fazem o resultado (109, 43) em 200 ticks. As receitas por tick
+  (`per_tick_usage`) não existem em nenhum dado do mod e são ignoradas.
+- **Tela** `GuiMetallurgicInfuser`: barra de energia, **barra do tanque** em 7, 15 (colorida pelo tipo: bio, fungi, ouro, obsidiana refinada,
+  redstone, diamante, estanho e carbono, com a dica "Nome: n mB"), seta `RIGHT` em 72, 47 e o botão de **despejo** em 16, 59 (esvazia o tanque).
+- **Configuração:** aba de **Químicos** (a primeira vez que a janela tem mais de duas): nenhum/entrada/saída/entrada e saída por lado,
+  padrão entrada em todos os lados, sem ejeção; os lados do tanque seguem a configuração (`tank_faces`); itens como o combinador (extra embaixo).
+- **Falta:** a barra de químico desenha o ícone parado (o original anima), o **Energy Tab** (-26, 137) das máquinas, o fixar/anexar de
+  químicos por tubos (não há tubos), a barra de **guia de receitas** e os efeitos de som/partícula.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

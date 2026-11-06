@@ -400,7 +400,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..1087303 100644
+index 609127a..b9a6a75 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -6,14 +6,58 @@
@@ -504,7 +504,7 @@ index 609127a..1087303 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +121,138 @@ impl Game<'_> {
+@@ -95,15 +121,132 @@ impl Game<'_> {
                      let text = fill_text(text, data);
                      self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
                  }
@@ -516,15 +516,9 @@ index 609127a..1087303 100644
 +                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
 +                Widget::Neighbor { x, y, side } => {
-+                    // TEMPORARY diagnosis: a letter says why no icon shows (P no block position, B nothing there,
-+                    // I an item the game does not know, + drawn).
-+                    let at = [ox + *x as f32, oy + *y as f32];
-+                    let code = match self.neighbor_icon(*side) {
-+                        Err(c) => c,
-+                        Ok(icon) if self.native_item(batch, &icon, at, 16.0) => '+',
-+                        Ok(_) => 'I',
-+                    };
-+                    self.native_text(batch, &code.to_string(), [at[0] + 12.0, at[1] + 8.0], 0xFFFF_2020, false);
++                    if let Ok(icon) = self.neighbor_icon(*side) {
++                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
++                    }
 +                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
              }
@@ -647,7 +641,7 @@ index 609127a..1087303 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +263,7 @@ impl Game<'_> {
+@@ -114,8 +257,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -2653,7 +2647,7 @@ index bb9b346..27f08f7 100644
      }
  }
 diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
-index feecac5..07ad996 100644
+index feecac5..9f4f400 100644
 --- a/crates/horizon-mods/src/testing.rs
 +++ b/crates/horizon-mods/src/testing.rs
 @@ -30,6 +30,8 @@ pub struct TestGame {
@@ -2681,7 +2675,39 @@ index feecac5..07ad996 100644
              mobs: self.mobs.clone(),
              mobs_dimension: "minecraft:overworld".into(),
              inventories: self.inventories.clone(),
-@@ -762,7 +766,7 @@ pub struct RecipeSet {
+@@ -558,6 +562,31 @@ impl TestGame {
+         if let (Some(e), Some(entry)) = (u.energy, self.block_energy.get_mut(&pos)) {
+             entry.0 = e;
+         }
++        // The tanks and their faces, as a tick's update sets them.
++        let block = self.world.get(&pos).map(|s| s.split('[').next().unwrap_or("").to_owned()).unwrap_or_default();
++        let specs = self
++            .mods
++            .block_entity_kinds()
++            .iter()
++            .find(|k| k.block == block)
++            .map(|k| k.tanks.clone())
++            .unwrap_or_default();
++        if let Some(held) = self.block_tanks.get_mut(&pos) {
++            if let Some(tanks) = &u.tanks {
++                for (i, tank) in tanks.iter().enumerate().take(held.len()) {
++                    let cap = specs.get(i).map_or(0, |s| s.capacity);
++                    let amount = if tank.substance.is_empty() { 0 } else { tank.amount.min(cap) };
++                    held[i].0 = if amount == 0 { String::new() } else { format!("{}*{amount}", tank.substance) };
++                }
++            }
++            if let Some(faces) = &u.tank_faces {
++                for (slot, f) in held.iter_mut().zip(faces) {
++                    for (to, from) in slot.1.iter_mut().zip(f) {
++                        *to = *from;
++                    }
++                }
++            }
++        }
+         true
+     }
+     /// `n` frames, 1/60 s apart.
+@@ -762,7 +791,7 @@ pub struct RecipeSet {
  }
  
  /// Fields of the player to change; the others keep their values. A server
@@ -2690,7 +2716,7 @@ index feecac5..07ad996 100644
  /// no `game-mode`.
  #[derive(Debug, Default, Deserialize)]
  #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-@@ -1338,7 +1342,22 @@ impl Step {
+@@ -1338,7 +1367,22 @@ impl Step {
          };
          if let Some(set) = &self.player {
              match actor {
