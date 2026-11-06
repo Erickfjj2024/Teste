@@ -675,13 +675,15 @@ PROCESS_LAYOUTS = {
         'gauges': [('bar', 68, 36, 6, 12, 'in', 210)]},
     # GuiChemicalOxidizer
     'chemical_oxidizer': {
-        'ticks': 100, 'slots': [[26, 36], [152, 55]], 'results': [1],
+        'ticks': 100, 'slots': [[26, 36], [152, 55]], 'results': [1], 'inventory': 115,
         'frames': [('slot/input', 26, 36), ('slot/extra', 152, 55), ('slot/power', 152, 14)],
         'overlays': [('slot/overlay/plus', 152, 55)], 'power': ('horizontal', 115, 75), 'progress': [('large_right', 64, 40)],
         'gauges': [('standard', 131, 13, 16, 58, 'out', 10000)]},
     # GuiChemicalDissolutionChamber
     'chemical_dissolution_chamber': {
         'ticks': 100, 'slots': [[28, 36], [152, 55], [8, 65]], 'results': [1],
+        # the title between the input gauge and the edge, and no "Inventory" label (GuiChemicalDissolutionChamber)
+        'title': (25, 176, 'center'), 'inventory': None, 'debug': (66, 66),
         'frames': [('slot/input', 28, 36), ('slot/extra', 152, 55), ('slot/extra', 8, 65), ('slot/power', 152, 14)],
         'overlays': [('slot/overlay/minus', 8, 65), ('slot/overlay/plus', 152, 55)],
         'power': ('horizontal', 115, 75), 'progress': [('large_right', 64, 40)],
@@ -689,12 +691,14 @@ PROCESS_LAYOUTS = {
     # GuiChemicalCrystallizer
     'chemical_crystallizer': {
         'ticks': 200, 'slots': [[8, 65], [129, 57]], 'results': [1],
+        'title': (25, 152, 'center'), 'inventory': None, 'debug': (40, 73),
         'frames': [('slot/extra', 8, 65), ('slot/output', 129, 57), ('slot/power', 152, 5)],
         'overlays': [('slot/overlay/plus', 8, 65)], 'power': ('vertical', 157, 23), 'progress': [('large_right', 53, 61)],
         'gauges': [('standard', 7, 4, 16, 58, 'in', 10000)], 'screen': (31, 13, 115, 42)},
     # GuiChemicalInfuser: two chemical item slots in and one out, three gauges, two arrows driven by whether it works
     'chemical_infuser': {
         'continuous': True, 'slots': [[6, 56], [154, 56], [80, 65]], 'results': [2],
+        'title': (1, 79, 'left'), 'inventory': 79, 'debug': (100, 66),
         'frames': [('slot/input', 6, 56), ('slot/input', 154, 56), ('slot/output', 80, 65), ('slot/power', 154, 14)],
         'overlays': [('slot/overlay/minus', 6, 56), ('slot/overlay/minus', 154, 56), ('slot/overlay/plus', 80, 65)],
         'power': ('horizontal', 115, 75), 'progress': [('small_right', 47, 39), ('small_left', 101, 39)],
@@ -703,6 +707,7 @@ PROCESS_LAYOUTS = {
     # GuiChemicalWasher: the fluid slots in a holder at the left
     'chemical_washer': {
         'continuous': True, 'slots': [[-21, 71], [152, 56], [-21, 102]], 'results': [1, 2],
+        'inventory': None, 'debug': (66, 66),
         'frames': [('slot/input', -21, 71), ('slot/extra', 152, 56), ('slot/output', -21, 102), ('slot/power', 152, 14)],
         'overlays': [('slot/overlay/minus', 152, 56)], 'holder': (-26, 66, 57),
         'power': ('horizontal', 115, 75), 'progress': [('large_right', 64, 39)],
@@ -712,6 +717,7 @@ PROCESS_LAYOUTS = {
     # GuiElectrolyticSeparator: a fluid gauge, two small gas gauges and the dump buttons of both
     'electrolytic_separator': {
         'continuous': True, 'slots': [[26, 35], [59, 52], [101, 52]], 'results': [1, 2],
+        'title': (23, 176, 'center'), 'inventory': None, 'debug': (46, 60),
         'frames': [('slot/input', 26, 35), ('slot/output', 59, 52), ('slot/output', 101, 52), ('slot/power', 143, 35)],
         'overlays': [], 'power': ('vertical', 164, 15), 'progress': [('bidirectional', 80, 30)],
         'gauges': [('standard', 5, 10, 16, 58, 't0', 24000), ('small', 58, 18, 16, 28, 't1', 2400),
@@ -765,7 +771,8 @@ def side_holder(left, h):
     return nine_slice(gui_sprite('holder_left' if left else 'holder_right'), 26, h, 4)
 
 power_h_fill = copy_gui('bar/horizontal_power', 'bar_horizontal_power')
-MODE_TEXT = ['Idle', 'Dumping', 'Dumping excess']
+# the original scrolls a name longer than its 69 pixel box; here the longest is written shorter
+MODE_TEXT = ['Idle', 'Dumping', 'Dump excess']
 
 def process_menu(m):
     L = PROCESS_LAYOUTS[m]
@@ -811,12 +818,17 @@ def process_menu(m):
                 {'type': 'sprite', 'texture': copy_gui(icon, f'mode_{name}'), 'x': mx, 'y': my, 'w': 10, 'h': 10},
                 {'type': 'text', 'x': tx, 'y': my + 1, 'text': MODE_TEXT[k], 'color': '#404040'}]})
         widgets.append({'type': 'button', 'x': mx, 'y': my, 'w': 10, 'h': 10, 'id': bid, 'tooltip': 'Chemical dumping mode'})
-    title_w = text_width(title)
+    # the title and the "Inventory" label as the machine's Gui class draws them (GuiMekanism.renderTitleTextWithOffset):
+    # centred (or left) between two x, and the label only on some
+    tx0, tx1, align = L.get('title', (0, 176, 'center'))
+    title_x = tx0 + (tx1 - tx0 - text_width(title)) // 2 if align == 'center' else tx0
+    widgets.append({'type': 'text', 'x': title_x, 'y': 6, 'text': title, 'color': '#404040'})
+    if L.get('inventory', 176) is not None:
+        widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
+    # a development line: the machine's status number and the mod's version
+    dx, dy = L.get('debug', (92, 66))
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.33', 'color': '#808080'})
     widgets += [
-        {'type': 'text', 'x': (176 - title_w) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 92, 'y': 66, 'text': 'Status {5}', 'color': '#808080'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'},
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -897,7 +909,7 @@ def tank_menu(m):
                 {'type': 'text', 'x': 45, 'y': 40, 'text': 'Chemical: ' + ty['label'], 'color': '#00CD00'},
                 {'type': 'text', 'x': 45, 'y': 51, 'text': ('Infinite' if m.startswith('creative') else '{0+1} / ' + cap), 'color': '#00CD00'}]})
         # GuiGasMode at 159, 72
-        for k, (name, label) in enumerate([('idle', 'Idle'), ('dump', 'Dumping'), ('dump_excess', 'Dumping excess')]):
+        for k, (name, label) in enumerate([('idle', 'Idle'), ('dump', 'Dumping'), ('dump_excess', 'Dump excess')]):
             widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': k}}, 'widgets': [
                 {'type': 'sprite', 'texture': copy_gui(f'chemical_mode/{name}', f'mode_{name}'), 'x': 159, 'y': 72, 'w': 10, 'h': 10},
                 {'type': 'text', 'x': 159 - 3 - text_width(label), 'y': 73, 'text': label, 'color': '#404040'}]})
@@ -910,7 +922,8 @@ def tank_menu(m):
                     'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-                {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'}]
+                # a development line with the mod's version (clear of the dump mode's text)
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.33', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -939,7 +952,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.32', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.33', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
