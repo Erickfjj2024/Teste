@@ -94,7 +94,9 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
            'block_charcoal', 'block_fluorite', 'block_salt', 'block_refined_glowstone',
            'block_refined_obsidian', 'block_raw_osmium', 'block_raw_tin', 'block_raw_lead',
            'block_raw_uranium', 'block_bio_fuel']
-MACHINES = ['crusher', 'enrichment_chamber', 'energized_smelter', 'precision_sawmill', 'combiner', 'metallurgic_infuser']
+PROCESS_MACHINES = ['metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
+                    'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer']
+MACHINES = ['crusher', 'enrichment_chamber', 'energized_smelter', 'precision_sawmill', 'combiner'] + PROCESS_MACHINES
 BLOCKS = {}  # name -> (template, properties, kind)
 for o in ORES:
     BLOCKS[f'{o}_ore'] = ('minecraft:iron_ore', {'hardness': 3.0, 'explosion_resistance': 3.0, 'requires_tool': True}, 'ore')
@@ -107,7 +109,7 @@ for m in MACHINES:
 # The infuser's model has gaps, so it is not a furnace (which hides the faces of the blocks beside it): a beacon is a full
 # shape that does not occlude, and the facing and lit states the furnace had it declares itself (the mod turns it to face
 # the player that places it, as the furnace does).
-OPEN_MACHINES = {'metallurgic_infuser'}
+OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer'}
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
@@ -358,12 +360,6 @@ LAYOUTS = {
     # GuiPrecisionSawmill: one wide frame for the two outputs
     'precision_sawmill': {'slots': [[56, 17], [116, 35], [132, 35]], 'frames': [('slot/input', 56, 17), ('slot/power', 56, 53)],
                           'wide': (111, 30, 42, 26), 'up_arrow': (60, 38), 'progress': (78, 38), 'bar_y': 15, 'results': [1, 2]},
-    # GuiMetallurgicInfuser: the infusion slot (17, 35), the input (51, 43), the output (109, 43), the charge slot (143, 35),
-    # a RIGHT progress at 72, 47 (32 by 8), the infusion bar at 7, 15 and the dump button at 16, 59
-    'metallurgic_infuser': {'slots': [[51, 43], [109, 43], [17, 35]],
-                            'frames': [('slot/input', 51, 43), ('slot/output', 109, 43), ('slot/extra', 17, 35), ('slot/power', 143, 35)],
-                            'progress': (72, 47), 'progress_sprite': 'progress/right/empty', 'bar_y': 15,
-                            'results': [1], 'chem_bar': (7, 15), 'dump': (16, 59)},
     # GuiCombiner: the main input, the extra one under it, the charge slot at the left
     'combiner': {'slots': [[64, 17], [64, 53], [116, 35]], 'frames': [('slot/input', 64, 17), ('slot/extra', 64, 53), ('slot/output', 116, 35), ('slot/power', 39, 35)],
                  'up_arrow': (68, 38), 'progress': (86, 38), 'bar_y': 15, 'results': [2]},
@@ -404,7 +400,10 @@ def copy_gui(rel, name):
     gui_sprite(rel).save(path)
     return f'{NS}:gui/{name}'
 
-MACHINE_NAMES = {'metallurgic_infuser': 'Metallurgic Infuser', 'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter',
+MACHINE_NAMES = {'metallurgic_infuser': 'Metallurgic Infuser', 'purification_chamber': 'Purification Chamber',
+                 'chemical_injection_chamber': 'Chemical Injection Chamber', 'osmium_compressor': 'Osmium Compressor',
+                 'chemical_oxidizer': 'Chemical Oxidizer', 'chemical_dissolution_chamber': 'Chemical Dissolution Chamber',
+                 'chemical_crystallizer': 'Chemical Crystallizer', 'crusher': 'Crusher', 'enrichment_chamber': 'Enrichment Chamber', 'energized_smelter': 'Energized Smelter',
                  'precision_sawmill': 'Precision Sawmill', 'combiner': 'Combiner'}
 progress_full = copy_gui('progress/bar/full', 'progress_bar_full')
 power_fill = copy_gui('bar/vertical_power', 'bar_vertical_power')
@@ -484,9 +483,10 @@ TRANSMISSION_INFO = {
     4: ('Heat', 'transmission/heat', 0xFFA160, False)}
 # the transmissions a machine configures, in the order of its tabs (Layout::transmissions in the mod)
 MACHINE_TRANSMISSIONS = {'crusher': [0, 1], 'enrichment_chamber': [0, 1], 'energized_smelter': [0, 1],
-                         'precision_sawmill': [0, 1], 'combiner': [0, 1], 'metallurgic_infuser': [0, 3, 1]}
+                         'precision_sawmill': [0, 1], 'combiner': [0, 1], **{m: [0, 3, 1] for m in PROCESS_MACHINES}}
 # the transmissions a machine cannot eject (setCanEject(false)): the infuser's tank
-NO_EJECT = {('metallurgic_infuser', 3)}
+NO_EJECT = {(m, 3) for m in ('metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
+                             'chemical_crystallizer')}
 TAB_SPRITES = {n: tab_sprite(f'tab_{info[0].lower()}', info[1], info[2]) for n, info in TRANSMISSION_INFO.items()}
 
 def side_config_widgets(transmissions, machine=None):
@@ -539,64 +539,207 @@ def side_config_widgets(transmissions, machine=None):
     widgets.append({'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'})
     return widgets
 
-# the infusion types the infuser draws (the same list as the mod's chem.rs): name, the icon strip and the tint (their json's)
-INFUSE_TYPES = [('bio', 'Bio', 'bio', 0xFFFFFF), ('fungi', 'Fungi', 'fungi', 0xFFFFFF), ('gold', 'Gold', 'base', 0xF2CD67),
-                ('refined_obsidian', 'Refined Obsidian', 'base', 0x7C00ED), ('redstone', 'Redstone', 'base', 0xB30505),
-                ('diamond', 'Diamond', 'base', 0x6CEDD8), ('tin', 'Tin', 'base', 0xCCCCD9), ('carbon', 'Carbon', 'base', 0x2C2C2C)]
+# ---- the machines that work a chemical (the infuser, the chambers, the oxidizer, the crystallizer): the chemicals their
+# screens draw, written to the mod's chem_table.rs (a chemical's number is its place in the list, from 1)
+CHEM_RECIPE_TYPES = ['purifying', 'injecting', 'compressing', 'oxidizing', 'dissolution', 'crystallizing',
+                     'metallurgic_infusing', 'chemical_conversion']
+CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing'}
 
-def infuse_fill(name, icon, tint):
-    """The infusion type's icon (the first 16 by 16 of its animated strip), tinted, tiled over the 4 by 52 of the bar."""
+def chemical_ids():
+    ids = []
+    def add(i):
+        i = i.lstrip('#')
+        if i not in ids:
+            ids.append(i)
+    for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
+        r = read_json(p)
+        kind = r.get('type', '').split(':')[-1]
+        if kind not in CHEM_RECIPE_TYPES:
+            continue
+        if kind in CHEM_ITEM_INPUT_TYPES:
+            ing = r.get('chemical_input', r.get('input', {})).get('ingredient')
+            if isinstance(ing, str):
+                add(ing)
+        out = r.get('output')
+        if isinstance(out, dict) and 'amount' in out:
+            add(out['id'])
+    return ids
+
+CHEMICALS = chemical_ids()
+
+def chemical_meta(cid):
+    name = cid.split(':')[1]
+    p = find(f'data/{NS}/mekanism/chemical/{name}.json', DATA_DIRS + ASSET_DIRS)
+    d = read_json(p) if p else {}
+    tint = d.get('tint', '#ffffffff')
+    icon = d.get('icon', f'{NS}:mek_liquid/liquid').split(':')[1]
+    return '#' + tint[-6:].upper(), icon
+
+def chemical_icon_sprite(icon):
+    """The first 16 by 16 of a chemical's icon strip, which the screen tiles and tints."""
     from PIL import Image
-    strip = Image.open(find(f'textures/mek_chemical/infuse_type/{icon}.png', ASSET_DIRS)).convert('RGBA').crop((0, 0, 16, 16))
-    tile = tinted(strip, tint)
-    img = Image.new('RGBA', (4, 52))
-    for y in range(0, 52, 16):
-        img.paste(tile.crop((0, 0, 4, 16)), (0, y))
-    return save_gui(img, f'infuse_{name}')
+    img = Image.open(find(f'textures/{icon}.png', ASSET_DIRS)).convert('RGBA').crop((0, 0, 16, 16))
+    return save_gui(img, 'chem_' + icon.replace('/', '_'))
 
-def infuser_widgets():
-    """The infusion bar (data slot 16 the amount, 17 the type) and the dump button."""
-    x, y = LAYOUTS['metallurgic_infuser']['chem_bar']
-    widgets = []
-    for i, (name, label, icon, tint) in enumerate(INFUSE_TYPES, start=1):
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 17}, 'eq': i}}, 'widgets': [
-            {'type': 'sprite', 'texture': infuse_fill(name, icon, tint), 'x': x + 1, 'y': y + 1, 'w': 4, 'h': 52,
-             'value': {'data': 16}, 'max': {'const': 1000}, 'direction': 'up', 'tooltip': f'{label}: {{value}} mB'}]})
-    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 17}, 'eq': 0}}, 'widgets': [
-        {'type': 'button', 'x': x + 1, 'y': y + 1, 'w': 4, 'h': 52, 'tooltip': 'Empty'}]})
-    dx, dy = LAYOUTS['metallurgic_infuser']['dump']
-    widgets.append({'type': 'sprite', 'texture': copy_gui('button/dump', 'button_dump'), 'x': dx, 'y': dy, 'w': 21, 'h': 10})
-    widgets.append({'type': 'button', 'x': dx, 'y': dy, 'w': 21, 'h': 10, 'id': 4000, 'tooltip': 'Dump'})
-    return widgets
+def gauge_types():
+    out = []
+    for cid in CHEMICALS:
+        tint, icon = chemical_meta(cid)
+        out.append({'texture': chemical_icon_sprite(icon), 'tint': tint, 'label': cid.split(':')[1].replace('_', ' ').title()})
+    return out
+
+GAUGE_TYPES = gauge_types()
+with open(f'{OUT}/src/chem_table.rs', 'w') as f:
+    f.write('// Written by tools/convert.py: the chemicals the machines\' screens draw, in the order of their numbers (from 1).\n')
+    f.write(f'pub const CHEMICALS: [&str; {len(CHEMICALS)}] = [\n')
+    for cid in CHEMICALS:
+        f.write(f'    "{cid}",\n')
+    f.write('];\n')
+
+PROGRESS_TYPES = {'bar': (25, 9), 'right': (32, 8), 'large_right': (48, 8)}
+# what each screen has, as the machine's Gui class puts it: slots (the mod's order), the frames and overlays drawn under
+# them, the energy bar, the progress arrow, the tank gauges ('in' takes the chemical, 'out' gives it; a standard gauge is
+# 16 by 58, a bar its own size), the dump button
+PROCESS_LAYOUTS = {
+    # GuiMetallurgicInfuser
+    'metallurgic_infuser': {
+        'ticks': 200, 'slots': [[51, 43], [109, 43], [17, 35]], 'results': [1],
+        'frames': [('slot/input', 51, 43), ('slot/output', 109, 43), ('slot/extra', 17, 35), ('slot/power', 143, 35)],
+        'overlays': [], 'power': ('vertical', 164, 15), 'progress': ('right', 72, 47),
+        'gauges': [('bar', 7, 15, 4, 52, 'in')], 'dump': (16, 59)},
+    # GuiAdvancedElectricMachine: the purification and injection chambers and the osmium compressor
+    'purification_chamber': {
+        'ticks': 200, 'slots': [[64, 17], [116, 35], [64, 53]], 'results': [1],
+        'frames': [('slot/input', 64, 17), ('slot/output', 116, 35), ('slot/extra', 64, 53), ('slot/power', 39, 35)],
+        'overlays': [], 'power': ('vertical', 164, 16), 'progress': ('bar', 86, 38),
+        'gauges': [('bar', 68, 36, 6, 12, 'in')]},
+    # GuiChemicalOxidizer
+    'chemical_oxidizer': {
+        'ticks': 100, 'slots': [[26, 36], [152, 55]], 'results': [1],
+        'frames': [('slot/input', 26, 36), ('slot/extra', 152, 55), ('slot/power', 152, 14)],
+        'overlays': [('slot/overlay/plus', 152, 55)], 'power': ('horizontal', 115, 75), 'progress': ('large_right', 64, 40),
+        'gauges': [('standard', 131, 13, 16, 58, 'out')]},
+    # GuiChemicalDissolutionChamber
+    'chemical_dissolution_chamber': {
+        'ticks': 100, 'slots': [[28, 36], [152, 55], [8, 65]], 'results': [1],
+        'frames': [('slot/input', 28, 36), ('slot/extra', 152, 55), ('slot/extra', 8, 65), ('slot/power', 152, 14)],
+        'overlays': [('slot/overlay/minus', 8, 65), ('slot/overlay/plus', 152, 55)],
+        'power': ('horizontal', 115, 75), 'progress': ('large_right', 64, 40),
+        'gauges': [('standard', 7, 4, 16, 58, 'in'), ('standard', 131, 13, 16, 58, 'out')]},
+    # GuiChemicalCrystallizer
+    'chemical_crystallizer': {
+        'ticks': 200, 'slots': [[8, 65], [129, 57]], 'results': [1],
+        'frames': [('slot/extra', 8, 65), ('slot/output', 129, 57), ('slot/power', 152, 5)],
+        'overlays': [('slot/overlay/plus', 8, 65)], 'power': ('vertical', 157, 23), 'progress': ('large_right', 53, 61),
+        'gauges': [('standard', 7, 4, 16, 58, 'in')], 'screen': (31, 13, 115, 42)},
+}
+for _m in ('chemical_injection_chamber', 'osmium_compressor'):
+    PROCESS_LAYOUTS[_m] = PROCESS_LAYOUTS['purification_chamber']
+
+# the data slots about the tanks: how much and which chemical, for the tank the chemical goes into and for the one it
+# comes out in (after the 16 the energy, the progress and the configuration use)
+TANK_DATA = {'in': (16, 17), 'out': (18, 19)}
+
+def process_panel(name, L):
+    """The 176 by 166 panel of a machine of `process`: the base, the inventory's frames, the machine's slot frames and
+    overlays, its tank frames, the energy bar's frame and the empty progress arrow."""
+    from PIL import Image
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    if 'screen' in L:
+        x, y, w, h = L['screen']
+        # GuiInnerScreen: a dark well with Mekanism's own edge
+        panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), w, h, 3), (x, y))
+    for sprite, x, y in L['frames']:
+        panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
+    for sprite, x, y in L['overlays']:
+        panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
+    kind, px, py = L['power']
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6 if kind == 'vertical' else 54, 54 if kind == 'vertical' else 6, 1), (px, py))
+    ptype, qx, qy = L['progress']
+    panel.alpha_composite(gui_sprite(f'progress/{ptype}/empty'), (qx, qy))
+    for gk, gx, gy, gw, gh, _tank in L['gauges']:
+        if gk == 'bar':
+            panel.alpha_composite(nine_slice(gui_sprite('bar/base'), gw + 2, gh + 2, 1), (gx, gy))
+        else:
+            panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), gw + 2, gh + 2, 2), (gx, gy))
+    return save_gui(panel, name)
+
+power_h_fill = copy_gui('bar/horizontal_power', 'bar_horizontal_power')
+
+def process_menu(m):
+    L = PROCESS_LAYOUTS[m]
+    title = MACHINE_NAMES[m]
+    kind, px, py = L['power']
+    if kind == 'vertical':
+        power = {'type': 'sprite', 'texture': power_fill, 'x': px + 1, 'y': py + 1, 'w': 4, 'h': 52, 'direction': 'up',
+                 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'tooltip': 'Energy: {value} / {max}'}
+    else:
+        power = {'type': 'sprite', 'texture': power_h_fill, 'x': px + 1, 'y': py + 1, 'w': 52, 'h': 4, 'direction': 'right',
+                 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'tooltip': 'Energy: {value} / {max}'}
+    ptype, qx, qy = L['progress']
+    pw, ph = PROGRESS_TYPES[ptype]
+    widgets = [power,
+               {'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/full', f'progress_{ptype}_full'), 'x': qx, 'y': qy,
+                'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': L['ticks']}, 'direction': 'right',
+                'tooltip': 'Progress: {percent}%'}]
+    caps = {'metallurgic_infuser': 1000, 'purification_chamber': 210, 'chemical_injection_chamber': 210, 'osmium_compressor': 210,
+            'chemical_oxidizer': 10000, 'chemical_dissolution_chamber': 10000, 'chemical_crystallizer': 10000}
+    for gk, gx, gy, gw, gh, tank in L['gauges']:
+        amount, which = TANK_DATA[tank]
+        widgets.append({'type': 'gauge', 'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh, 'value': {'data': amount},
+                        'max': {'const': caps[m]}, 'kind': {'data': which}, 'types': GAUGE_TYPES,
+                        'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+        if gk == 'standard':
+            widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'),
+                            'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh})
+    if 'dump' in L:
+        dx, dy = L['dump']
+        widgets.append({'type': 'sprite', 'texture': copy_gui('button/dump', 'button_dump'), 'x': dx, 'y': dy, 'w': 21, 'h': 10})
+        widgets.append({'type': 'button', 'x': dx, 'y': dy, 'w': 21, 'h': 10, 'id': 4000, 'tooltip': 'Dump'})
+    widgets += [
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 92, 'y': 66, 'text': 'Status {5}', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.28', 'color': '#808080'},
+        # GuiSideConfigurationTab at -26, 6: opens the side configuration window
+        {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
+    return {'slots': len(L['slots']), 'data_slots': 20, 'results': L['results'],
+            'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
+                       'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
+                                    'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}}
 
 for m in MACHINES:
+    if m in PROCESS_LAYOUTS:
+        put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', process_menu(m))
+        continue
     layout = LAYOUTS.get(m, LAYOUTS['electric'])
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     px, py = layout['progress']
-    # GuiProgress: the arrow of most machines is BAR (25 by 9); the infuser's is RIGHT (32 by 8)
-    if m == 'metallurgic_infuser':
-        prog_tex, prog_w, prog_h = copy_gui('progress/right/full', 'progress_right_full'), 32, 8
-    else:
-        prog_tex, prog_w, prog_h = progress_full, 25, 9
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': len(layout['slots']), 'data_slots': 18 if m == 'metallurgic_infuser' else 16, 'results': layout['results'],
+        'slots': len(layout['slots']), 'data_slots': 16, 'results': layout['results'],
         'screen': {'texture': machine_panel(m, layout), 'own_labels': True, 'slots': layout['slots'],
                    'widgets': [
             # the vertical power bar: its contents are 4 by 52 inside the frame
             {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': layout['bar_y'] + 1, 'w': 4, 'h': 52,
              'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
             # GuiProgress, ProgressType.BAR
-            {'type': 'sprite', 'texture': prog_tex, 'x': px, 'y': py, 'w': prog_w, 'h': prog_h, 'value': {'data': 0},
+            {'type': 'sprite', 'texture': progress_full, 'x': px, 'y': py, 'w': 25, 'h': 9, 'value': {'data': 0},
              'max': {'const': 200}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             # the title, centred at the top, and the inventory's, at 8, 72 (vanilla's own places)
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.27', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.28', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
-            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
-                   + (infuser_widgets() if m == 'metallurgic_infuser' else []),
+            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                 'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}})
 
@@ -659,7 +802,7 @@ for cube_name, (cube_title, rate) in CUBES.items():
             {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
             {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.27', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.28', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},
@@ -689,14 +832,15 @@ def refs(v):
             yield from refs(x)
 nrec = 0
 MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining', f'{NS}:metallurgic_infusing',
-                 f'{NS}:chemical_conversion'}
+                 f'{NS}:chemical_conversion', f'{NS}:purifying', f'{NS}:injecting', f'{NS}:compressing', f'{NS}:oxidizing',
+                 f'{NS}:dissolution', f'{NS}:crystallizing'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)
     if r.get('type') not in MACHINE_TYPES:
         continue
     outs = [r.get(k, {}).get('id', '') for k in ('output', 'main_output', 'secondary_output')]
-    if r['type'] == f'{NS}:chemical_conversion':
+    if 'amount' in r.get('output', {}):
         outs = []  # it makes a chemical, not an item
     if any(o.startswith(NS + ':') and o.split(':')[1] not in have for o in outs):
         continue  # makes something the port doesn't have yet

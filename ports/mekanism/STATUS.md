@@ -189,6 +189,29 @@ unitários; **ninguém viu na tela do celular**. O que existe, lido do código d
 - **Falta:** a barra de químico desenha o ícone parado (o original anima), o **Energy Tab** (-26, 137) das máquinas, o fixar/anexar de
   químicos por tubos (não há tubos), a barra de **guia de receitas** e os efeitos de som/partícula.
 
+## 2e. Cadeia de químicos: 6 máquinas novas num motor só (mod 0.1.28, APK v31, **não testada no jogo**)
+
+Passou no teste simulado (31 passos: oxidador, compressor de ósmio, cristalizador, além do infusor) e em 48 testes unitários do mod;
+**ninguém viu na tela do celular**. Todas as máquinas que trabalham um item e um químico (infusão, gás, lama) passam agora por um
+motor (`process.rs`) com quatro formas: item+químico→item (**Metallurgic Infuser, Purification Chamber, Chemical Injection Chamber,
+Osmium Compressor**), item→químico (**Chemical Oxidizer**), item+químico→químico (**Chemical Dissolution Chamber**) e químico→item
+(**Chemical Crystallizer**). Do código do Mekanism:
+- **Tanques:** 1000 mB (infusor), 210 (câmaras e compressor), 10000 (oxidador, dissolução, cristalizador); um item no slot de enchimento
+  vira químico (`mekanism:chemical_conversion`, um por tick) se alguma receita da máquina usa aquele químico.
+- **Receitas por tick** (`per_tick_usage`: purificação, injeção, compressor, dissolução): gastam o químico aos poucos durante os 200 (100)
+  ticks, esperando sem perder o progresso quando o tanque falta; as câmaras e a dissolução gastam **por sorte** (`StatUtils.inversePoisson`,
+  média 1 por tick, a configuração `randomizedConsumption` ligada) e o compressor 1 por tick. As outras gastam tudo no fim.
+- **Tempos e energia:** 200 ticks (infusor, câmaras, compressor, cristalizador), 100 (oxidador, dissolução); 5, 10, 15, 15, 15, 16, 15 por tick.
+- **Telas:** os layouts do `Gui*` de cada uma (slots, barras de energia vertical/horizontal, setas de progresso `BAR`/`RIGHT`/`LARGE_RIGHT`,
+  medidores `STANDARD` 16x58 e barras de químico), com o novo elemento **`gauge`** do motor de telas: o tanque é preenchido de baixo para
+  cima com o ícone do químico ladrilhado e **tingido** com a cor dele (as 34 do `mekanism/chemical/*.json`) e a dica "Nome: n mB".
+- **Configuração:** cada máquina tem a aba de **Químicos** com os tipos e o padrão do seu `AttachedSideConfig` (entrada em todos os lados;
+  saída à direita no compressor, na dissolução e no oxidador; ejeção ligada nos dois últimos).
+- **Blocos abertos:** o infusor, o oxidador, a dissolução e o cristalizador têm modelos com vãos; usam um bloco que não oculta os vizinhos.
+- **Falta:** a tela do cristalizador não mostra o resultado esperado (`GuiCrystallizerScreen`); os slots de item químico (gás/lama) só
+  convertem (não há tanques portáteis); a barra de recipe viewer; o Energy Tab; o **Chemical Infuser, o Washer e o Electrolytic Separator**
+  (vários tanques e fluidos: próxima fatia); as receitas cujos itens de entrada usam tags que o mod ainda não define são descartadas.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

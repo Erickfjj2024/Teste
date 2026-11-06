@@ -400,7 +400,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..b9a6a75 100644
+index 609127a..3a3b78e 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -6,14 +6,58 @@
@@ -504,7 +504,7 @@ index 609127a..b9a6a75 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +121,132 @@ impl Game<'_> {
+@@ -95,15 +121,171 @@ impl Game<'_> {
                      let text = fill_text(text, data);
                      self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
                  }
@@ -515,14 +515,53 @@ index 609127a..b9a6a75 100644
 +                    self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
 +                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
++                Widget::Gauge { x, y, w, h, value, max, kind, types, .. } => {
++                    let k = read(kind, data).max(0) as usize;
++                    let frac = fraction(read(value, data), read(max, data));
++                    if let Some(t) = k.checked_sub(1).and_then(|i| types.get(i)).filter(|_| frac > 0.0) {
++                        let tint = parse_color(&t.tint).unwrap_or(u32::MAX);
++                        self.draw_tiled_bottom_up(batch, &t.texture, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], frac, tint);
++                    }
++                }
 +                Widget::Neighbor { x, y, side } => {
 +                    if let Ok(icon) = self.neighbor_icon(*side) {
 +                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
 +                    }
 +                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
++            }
++        }
++    }
++
++    /// Fills the bottom `frac` of rectangle `rect` with `texture` tiled from its bottom left corner and tinted (a tank's
++    /// contents, as `GuiUtils.drawTiledSprite` with `TilingDirection.UP_RIGHT` draws them).
++    fn draw_tiled_bottom_up(&self, batch: &mut HudBatch, texture: &str, rect: [f32; 4], frac: f32, tint: u32) {
++        let Some(sprite) = self.gui.atlas.sprites.get(texture).copied() else {
++            return;
++        };
++        let [x, y, w, h] = rect;
++        let (tw, th) = (sprite.w as f32, sprite.h as f32);
++        if tw < 1.0 || th < 1.0 {
++            return;
++        }
++        let filled = (h * frac).round().clamp(1.0, h);
++        let (du, dv) = ((sprite.u1 - sprite.u0) / tw, (sprite.v1 - sprite.v0) / th);
++        let bottom = y + h;
++        let mut done = 0.0;
++        while done < filled {
++            let rows = (filled - done).min(th);
++            let mut across = 0.0;
++            while across < w {
++                let cols = (w - across).min(tw);
++                let mut r = sprite;
++                // The tile's bottom `rows` and left `cols`, so a partial row at the top shows the bottom of the sprite.
++                r.u1 = r.u0 + cols * du;
++                r.v0 = sprite.v1 - rows * dv;
++                batch.rect_uv(x + across, bottom - done - rows, cols, rows, r, tint);
++                across += cols;
              }
-         }
++            done += rows;
++        }
 +    }
 +
 +    /// Draws block `block`'s declared screen at `origin`; false when it has none.
@@ -564,7 +603,7 @@ index 609127a..b9a6a75 100644
 +                );
 +            }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at);
-+        }
+         }
          true
      }
  
@@ -641,7 +680,7 @@ index 609127a..b9a6a75 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +257,7 @@ impl Game<'_> {
+@@ -114,8 +296,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -1611,7 +1650,7 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..11f47ad 100644
+index e2ee6c7..6f07621 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
 @@ -295,12 +295,42 @@ pub struct MenuType {
@@ -1725,7 +1764,24 @@ index e2ee6c7..11f47ad 100644
  }
  
  /// The way a bar or a progress arrow fills.
-@@ -408,16 +486,41 @@ pub enum Widget {
+@@ -362,6 +440,16 @@ pub enum Direction {
+     Right,
+ }
+ 
++/// What a gauge can hold: the sprite tiled in it (`mymod:gui/...`), its colour and its name.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GaugeType {
++    pub texture: String,
++    /// `#RRGGBB` or `#AARRGGBB`.
++    pub tint: String,
++    pub label: String,
++}
++
+ #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+ #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+ pub enum Widget {
+@@ -408,16 +496,58 @@ pub enum Widget {
          #[serde(default)]
          color: Option<String>,
      },
@@ -1744,8 +1800,8 @@ index e2ee6c7..11f47ad 100644
 +        #[serde(default)]
 +        local: Option<LocalAction>,
 +        #[serde(default)]
-         tooltip: Option<String>,
-     },
++        tooltip: Option<String>,
++    },
 +    /// A rectangle filled with `colors[value]` (`#RRGGBB`), the last when `value` is past the list; its tooltip fills
 +    /// `{label}` with `labels[value]`.
 +    Swatch {
@@ -1760,6 +1816,23 @@ index e2ee6c7..11f47ad 100644
 +        #[serde(default)]
 +        tooltip: Option<String>,
 +    },
++    /// A tank: a rectangle filled from the bottom up to `value` of `max` with the chemical (or fluid) that `kind` says, a
++    /// number from 1 into `types` (0 is an empty tank): the type's sprite tiled over it and tinted with its colour. Its
++    /// tooltip fills `{label}` (the type's), `{value}` and `{max}`; `empty` is shown instead while `kind` is 0.
++    Gauge {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        value: Value,
++        max: Value,
++        kind: Value,
++        types: Vec<GaugeType>,
++        #[serde(default)]
+         tooltip: Option<String>,
++        #[serde(default)]
++        empty: Option<String>,
+     },
 +    /// Widgets shown while a condition holds.
 +    Show { when: When, widgets: Vec<Widget> },
 +    /// The icon of the block that stands beside the machine on one of its `side`s (0 front, 1 left, 2 right, 3 back, 4 top,
@@ -1768,7 +1841,7 @@ index e2ee6c7..11f47ad 100644
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +564,161 @@ impl MenuScreen {
+@@ -461,81 +591,177 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -1969,6 +2042,22 @@ index e2ee6c7..11f47ad 100644
 +                colour(c)?;
 +            }
 +        }
++        Widget::Gauge { x, y, w, h, value, max, kind, types, .. } => {
++            rect(*x, *y, *w, *h)?;
++            data(value)?;
++            data(max)?;
++            data(kind)?;
++            if types.is_empty() || types.len() > 128 {
++                return Err(format!("{name}: a gauge has 1 to 128 types"));
++            }
++            for t in types {
++                sprite(&t.texture)?;
++                colour(&t.tint)?;
++                if t.label.len() > 64 {
++                    return Err(format!("{name}: a gauge type's label is 64 bytes at most"));
++                }
++            }
++        }
 +        Widget::Neighbor { x, y, side } => {
 +            rect(*x, *y, 16, 16)?;
 +            if *side > 5 {
@@ -1996,7 +2085,7 @@ index e2ee6c7..11f47ad 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +766,42 @@ pub enum RenderElement {
+@@ -583,6 +809,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -2039,7 +2128,7 @@ index e2ee6c7..11f47ad 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +815,50 @@ pub enum RenderElement {
+@@ -596,6 +858,50 @@ pub enum RenderElement {
      },
  }
  
@@ -2090,7 +2179,7 @@ index e2ee6c7..11f47ad 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +906,48 @@ impl BlockRenderer {
+@@ -643,6 +949,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -2139,7 +2228,7 @@ index e2ee6c7..11f47ad 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1023,6 +1328,15 @@ impl Content {
+@@ -1023,6 +1371,15 @@ impl Content {
                      return Err(format!("{name}: result {r} is listed twice"));
                  }
              }
@@ -2155,7 +2244,7 @@ index e2ee6c7..11f47ad 100644
              if let Some(screen) = &file.screen {
                  screen.check(&name, file.slots, file.data_slots)?;
              }
-@@ -1208,6 +1522,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1565,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
@@ -2262,7 +2351,7 @@ index d3024e4..190ddf2 100644
          &mut self,
          player: String,
 diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
-index bb9b346..27f08f7 100644
+index bb9b346..b94e7ad 100644
 --- a/crates/horizon-mods/src/screen.rs
 +++ b/crates/horizon-mods/src/screen.rs
 @@ -1,7 +1,8 @@
@@ -2452,7 +2541,7 @@ index bb9b346..27f08f7 100644
  /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
  pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
      let percent = (fraction(value, max) * 100.0).round() as i64;
-@@ -85,27 +216,42 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -85,27 +216,50 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
      out
  }
  
@@ -2481,6 +2570,14 @@ index bb9b346..27f08f7 100644
 +            // `{0}`, `{1}`... are the screen's data slots, as in a text.
 +            Some(tooltip_lines(&fill_text(t, data), 0, 0))
 +        }
++        Widget::Gauge { x, y, w, h, value, max, kind, types, tooltip, empty } if inside(at, *x, *y, *w, *h) => {
++            let k = read(kind, data).max(0) as usize;
++            if k == 0 {
++                return empty.as_ref().map(|e| tooltip_lines(e, 0, 0));
++            }
++            let label = types.get(k - 1).map_or("", |t| t.label.as_str());
++            tooltip.as_ref().map(|t| tooltip_lines(&t.replace("{label}", label), read(value, data), read(max, data)))
++        }
 +        Widget::Swatch { x, y, w, h, value, labels, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
 +            let v = read(value, data).max(0) as usize;
 +            let label = labels.get(v).or(labels.last()).map_or("", String::as_str);
@@ -2505,7 +2602,7 @@ index bb9b346..27f08f7 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -141,18 +287,132 @@ mod tests {
+@@ -141,18 +295,143 @@ mod tests {
              ["Energy: 25 / 100", "25%"]
          );
      }
@@ -2571,6 +2668,17 @@ index bb9b346..27f08f7 100644
 +        let s = screen(r#"{"width":176,"height":166,"slots":[],"widgets":[{"type":"button","x":0,"y":0,"w":10,"h":10,"id":1,"tooltip":"Rate: {0} FE\nMax {1}"}]}"#);
 +        let lines = hovered(&s, &[42, 7], &Locals::default(), [3.0, 3.0]);
 +        assert_eq!(lines, Some(vec!["Rate: 42 FE".to_owned(), "Max 7".to_owned()]));
++    }
++
++    #[test]
++    fn a_gauge_names_its_chemical_in_the_tooltip() {
++        let s = screen(
++            r##"{"width":176,"height":166,"slots":[],"widgets":[{"type":"gauge","x":0,"y":0,"w":16,"h":58,"value":{"data":0},"max":{"const":1000},"kind":{"data":1},"types":[{"texture":"m:a","tint":"#B30505","label":"Redstone"},{"texture":"m:b","tint":"#6CEDD8","label":"Diamond"}],"tooltip":"{label}: {value} mB","empty":"Empty"}]}"##,
++        );
++        let at = [3.0, 3.0];
++        assert_eq!(hovered(&s, &[250, 2], &Locals::default(), at), Some(vec!["Diamond: 250 mB".to_owned()]));
++        assert_eq!(hovered(&s, &[0, 0], &Locals::default(), at), Some(vec!["Empty".to_owned()]));
++        assert_eq!(hovered(&s, &[250, 2], &Locals::default(), [30.0, 3.0]), None);
 +    }
 +
 +    #[test]

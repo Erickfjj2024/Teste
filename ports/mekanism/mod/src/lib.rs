@@ -8,7 +8,8 @@ mod combiner;
 mod chem;
 mod config;
 mod cube;
-mod infuser;
+mod chem_table;
+mod process;
 mod machine;
 mod sawmill;
 mod sides;
@@ -40,8 +41,8 @@ enum Kind {
     Electric,
     Sawmill,
     Combiner,
-    /// An item and an infusion type from its tank make another item (the metallurgic infuser).
-    Infuser,
+    /// A machine of `process`: an item and a chemical, in and out (the infuser, the chambers, the oxidizer...).
+    Process,
 }
 
 /// An electric machine: its block, where its recipes come from and its energy
@@ -51,27 +52,41 @@ struct Def {
     source: Source,
     usage: u64,
     kind: Kind,
-}
-
-impl Def {
     /// How its slots are laid out, which says what the data types of its sides reach.
-    fn layout(&self) -> Layout {
-        match self.kind {
-            Kind::Electric => Layout::Electric,
-            Kind::Sawmill => Layout::Sawmill,
-            Kind::Combiner => Layout::Combiner,
-            Kind::Infuser => Layout::Infuser,
-        }
-    }
+    layout: Layout,
+    /// What a `Kind::Process` machine does.
+    proc: Option<process::Spec>,
 }
 
-const MACHINES: [Def; 6] = [
-    Def { block: "mekanism:crusher", source: Source::Files("mekanism:crushing"), usage: 8, kind: Kind::Electric },
-    Def { block: "mekanism:enrichment_chamber", source: Source::Files("mekanism:enriching"), usage: 5, kind: Kind::Electric },
-    Def { block: "mekanism:energized_smelter", source: Source::Cooking("smelting"), usage: 5, kind: Kind::Electric },
-    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill },
-    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner },
-    Def { block: "mekanism:metallurgic_infuser", source: Source::Files("mekanism:metallurgic_infusing"), usage: 5, kind: Kind::Infuser },
+const fn electric(block: &'static str, source: Source, usage: u64) -> Def {
+    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None }
+}
+
+/// A machine that works an item and a chemical (`process`): its recipes are of type `source`.
+const fn chemical(block: &'static str, source: &'static str, layout: Layout, spec: process::Spec) -> Def {
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec) }
+}
+
+use process::Shape;
+
+const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, random_use: bool) -> process::Spec {
+    process::Spec { shape, usage, ticks, cap_in, cap_out, random_use }
+}
+
+const MACHINES: [Def; 12] = [
+    electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
+    electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
+    electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None },
+    chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, 5, 200, 1000, 0, false)),
+    // The purification and injection chambers use their chemical by chance (the config's randomized consumption).
+    chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, 10, 200, 210, 0, true)),
+    chemical("mekanism:chemical_injection_chamber", "mekanism:injecting", Layout::Adv, spec(Shape::ItemChemToItem, 15, 200, 210, 0, true)),
+    chemical("mekanism:osmium_compressor", "mekanism:compressing", Layout::Compressor, spec(Shape::ItemChemToItem, 15, 200, 210, 0, false)),
+    chemical("mekanism:chemical_oxidizer", "mekanism:oxidizing", Layout::Oxidizer, spec(Shape::ItemToChem, 15, 100, 0, 10_000, false)),
+    chemical("mekanism:chemical_dissolution_chamber", "mekanism:dissolution", Layout::Dissolution, spec(Shape::ItemChemToChem, 16, 100, 10_000, 10_000, true)),
+    chemical("mekanism:chemical_crystallizer", "mekanism:crystallizing", Layout::Crystallizer, spec(Shape::ChemToItem, 15, 200, 10_000, 0, false)),
 ];
 
 /// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
@@ -89,7 +104,8 @@ struct Mekanism {
     tried: HashMap<&'static str, u64>,
     saws: sawmill::Book,
     combs: combiner::Book,
-    infs: infuser::Book,
+    /// The recipes of the machines of `process`, by block.
+    procs: HashMap<&'static str, process::Book>,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
     /// What each player's configurator is set to configure (Mekanism keeps it in the item).
@@ -125,6 +141,11 @@ const CONFIGURATOR: &str = "mekanism:configurator";
 /// The eye above the feet, standing and sneaking.
 const EYE: f64 = 1.62;
 const EYE_SNEAKING: f64 = 1.27;
+
+/// How many tanks a machine of `process` has: the one its chemical goes into, and the one it comes out in.
+fn tank_count(spec: Option<process::Spec>) -> usize {
+    spec.map_or(0, |s| usize::from(s.cap_in > 0) + usize::from(s.cap_out > 0))
+}
 
 fn kind(block: &str, ticks: bool) -> BlockEntityKind {
     BlockEntityKind {
@@ -237,29 +258,48 @@ fn chemicals_of(ingredient: &serde_json::Value) -> Vec<String> {
     }
 }
 
-fn load_inf_book() -> infuser::Book {
-    let mut book = infuser::Book::default();
-    for r in recipe_types::recipes_of_type("mekanism:metallurgic_infusing") {
+/// The recipes of a machine of `process` and the conversions its filling slot does (the chemical items of
+/// `mekanism:chemical_conversion`, whose chemicals the tank takes only where some recipe uses them).
+fn load_proc_book(source: Source, shape: process::Shape) -> process::Book {
+    use process::{Out, Recipe, Shape};
+    let mut book = process::Book::default();
+    let Source::Files(kind) = source else { return book };
+    for r in recipe_types::recipes_of_type(kind) {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
-        let Some(output) = json["output"]["id"].as_str() else { continue };
-        if json["per_tick_usage"].as_bool().unwrap_or(false) {
-            // Used a little each tick while it runs; no recipe of the mod does, so it is not made.
+        // What it takes: an item, a chemical, or both (oxidizing and crystallizing name theirs `input`).
+        let (item_in, chem_in) = match shape {
+            Shape::ItemToChem => (&json["input"], &serde_json::Value::Null),
+            Shape::ChemToItem => (&serde_json::Value::Null, &json["input"]),
+            _ => (&json["item_input"], &json["chemical_input"]),
+        };
+        let items = if item_in.is_null() {
+            Vec::new()
+        } else {
+            recipe_types::ingredient_items(&item_in["ingredient"].to_string())
+        };
+        let chemicals = if chem_in.is_null() { Vec::new() } else { chemicals_of(&chem_in["ingredient"]) };
+        if (!item_in.is_null() && items.is_empty()) || (!chem_in.is_null() && chemicals.is_empty()) {
             continue;
         }
-        let items = recipe_types::ingredient_items(&json["item_input"]["ingredient"].to_string());
-        let chemicals = chemicals_of(&json["chemical_input"]["ingredient"]);
+        let Some(id) = json["output"]["id"].as_str() else { continue };
+        let out = match shape {
+            Shape::ItemChemToItem | Shape::ChemToItem => Out::Item { id: id.to_owned(), count: count_of(&json["output"]) },
+            Shape::ItemToChem | Shape::ItemChemToChem => {
+                Out::Chem { id: id.to_owned(), amount: json["output"]["amount"].as_u64().unwrap_or(1) }
+            }
+        };
         book.add(
             &items,
             &chemicals,
-            infuser::Recipe {
-                item_count: count_of(&json["item_input"]),
-                amount: json["chemical_input"]["amount"].as_u64().unwrap_or(1),
-                output: output.to_owned(),
-                out_count: count_of(&json["output"]),
+            Recipe {
+                item_count: if item_in.is_null() { 0 } else { count_of(item_in) },
+                amount: chem_in["amount"].as_u64().unwrap_or(0),
+                per_tick: json["per_tick_usage"].as_bool().unwrap_or(false),
+                out,
             },
         );
     }
-    // The infusion slot's conversions: an item to an infusion type (the other chemicals they make are not the tank's).
+    // The filling slot's conversions: an item to a chemical.
     for r in recipe_types::recipes_of_type("mekanism:chemical_conversion") {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
         let (Some(chemical), Some(amount)) = (json["output"]["id"].as_str(), json["output"]["amount"].as_u64()) else { continue };
@@ -335,7 +375,7 @@ impl Mekanism {
             Kind::Electric => self.books.get(def.block).is_none_or(Book::is_empty),
             Kind::Sawmill => self.saws.is_empty(),
             Kind::Combiner => self.combs.is_empty(),
-            Kind::Infuser => self.infs.is_empty(),
+            Kind::Process => self.procs.get(def.block).is_none_or(process::Book::is_empty),
         };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
@@ -346,7 +386,11 @@ impl Mekanism {
                 }
                 Kind::Sawmill => self.saws = load_saw_book(),
                 Kind::Combiner => self.combs = load_comb_book(),
-                Kind::Infuser => self.infs = load_inf_book(),
+                Kind::Process => {
+                    if let Some(spec) = &def.proc {
+                        self.procs.insert(def.block, load_proc_book(def.source, spec.shape));
+                    }
+                }
             }
         }
     }
@@ -390,10 +434,12 @@ impl Mekanism {
             .collect()
     }
 
-    /// What each face does with an infuser's tank, as its chemical sides say.
-    fn tank_sides(&self, facing: &str, cfg: &Config) -> Vec<Vec<FlowSide>> {
-        let flow = config::tank_flow(facing, cfg.side(Transmission::Chemicals));
-        vec![flow.iter().map(|f| flow_side(*f)).collect()]
+    /// What each face does with a machine's tanks, as its chemical sides say (one list of faces for each tank).
+    fn tank_sides(&self, layout: Layout, facing: &str, cfg: &Config) -> Vec<Vec<FlowSide>> {
+        config::tank_flow(layout, facing, cfg)
+            .iter()
+            .map(|flow| flow.iter().map(|f| flow_side(*f)).collect())
+            .collect()
     }
 
     /// The tool click waiting for the entity at this place, if any.
@@ -408,7 +454,7 @@ impl Mekanism {
     /// A machine's tick: what it holds after, if that differs from before.
     fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         self.refresh(def, tick);
-        let layout = def.layout();
+        let layout = def.layout;
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress = e
             .data
@@ -417,7 +463,9 @@ impl Mekanism {
         // Its side configuration: what its data holds after the progress, or a new machine's.
         let stored = Config::decode(e.data.get(2..).unwrap_or(&[]), layout);
         let mut cfg = stored.unwrap_or_else(|| config::default_config(layout));
-        if stored.is_none() && def.kind == Kind::Infuser {
+        if stored.is_none()
+            && matches!(def.layout, Layout::Infuser | Layout::Oxidizer | Layout::Dissolution | Layout::Crystallizer)
+        {
             // Its block is not a furnace, which turns to face the player: a new one looks at the nearest player.
             let front = cube::facing_name(front_for(e));
             if front != facing {
@@ -430,11 +478,11 @@ impl Mekanism {
         if let Some(click) = self.take_click(e) {
             dirty |= self.configure(&mut cfg, &facing, layout, &click);
         }
-        let dice = if def.kind == Kind::Sawmill { self.roll(tick, &e.pos) } else { 0.0 };
+        let dice = if def.kind == Kind::Sawmill || def.proc.is_some_and(|s| s.random_use) { self.roll(tick, &e.pos) } else { 0.0 };
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
         // The infuser's tank before and after.
-        let mut tank_now = infuser::Tank::default();
-        let mut tank_next = infuser::Tank::default();
+        let mut tank_now = [process::Tank::default(), process::Tank::default()];
+        let mut tank_next = [process::Tank::default(), process::Tank::default()];
         // The slots after, the energy and progress after, what it did, and whether anything changed.
         let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = match def.kind {
             Kind::Electric => {
@@ -454,28 +502,54 @@ impl Mekanism {
                     next != io,
                 )
             }
-            Kind::Infuser => {
-                tank_now = e.tanks.first().map_or_else(infuser::Tank::default, |t| infuser::Tank {
-                    chemical: t.substance.clone(),
-                    amount: t.amount,
-                });
-                let io = infuser::Io {
-                    input: slot(0),
-                    output: slot(1),
-                    infusion: slot(2),
-                    tank: tank_now.clone(),
+            Kind::Process => {
+                let spec = def.proc.expect("a process machine has its spec");
+                // Its tanks, in the order its kind lists them: the one the chemical goes into, then the one it comes out in.
+                let held = |i: usize| {
+                    e.tanks.get(i).map_or_else(process::Tank::default, |t| process::Tank {
+                        chemical: t.substance.clone(),
+                        amount: t.amount,
+                    })
+                };
+                if spec.cap_in > 0 {
+                    tank_now[0] = held(0);
+                }
+                if spec.cap_out > 0 {
+                    tank_now[1] = held(usize::from(spec.cap_in > 0));
+                }
+                // Which slot is which: the input (0), the output item (1) or a chemical item slot that is not the
+                // machine's to fill or empty, and the slot a chemical item is turned into the tank from (2; a
+                // crystallizer's first; the oxidizer has none).
+                let takes_item = spec.shape != Shape::ChemToItem;
+                let makes_item = matches!(spec.shape, Shape::ItemChemToItem | Shape::ChemToItem);
+                let conv_at = match def.layout {
+                    Layout::Oxidizer => None,
+                    Layout::Crystallizer => Some(0),
+                    _ => Some(2),
+                };
+                let io = process::Io {
+                    input: if takes_item { slot(0) } else { None },
+                    output: if makes_item { slot(1) } else { None },
+                    conv: conv_at.and_then(slot),
+                    tank_in: tank_now[0].clone(),
+                    tank_out: tank_now[1].clone(),
                     energy: e.energy,
                     progress,
                 };
-                let (next, status) = infuser::step(def.usage, &self.infs, &io);
-                tank_next = next.tank.clone();
-                (
-                    vec![item(&next.input), item(&next.output), item(&next.infusion)],
-                    next.energy,
-                    next.progress,
-                    status,
-                    next != io,
-                )
+                let book = self.procs.entry(def.block).or_default();
+                let (next, status) = process::step(&spec, book, &io, dice);
+                tank_next = [next.tank_in.clone(), next.tank_out.clone()];
+                let mut slots: Vec<Option<ItemStack>> = (0..e.items.len()).map(|i| item(&slot(i))).collect();
+                if takes_item {
+                    slots[0] = item(&next.input);
+                }
+                if makes_item {
+                    slots[1] = item(&next.output);
+                }
+                if let Some(at) = conv_at {
+                    slots[at] = item(&next.conv);
+                }
+                (slots, next.energy, next.progress, status, next != io)
             }
             Kind::Combiner => {
                 let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress };
@@ -498,17 +572,29 @@ impl Mekanism {
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let capacity = def.usage * STORED_TICKS;
         let mut data = menu_data(next_progress, energy, capacity, status, &cfg);
-        let has_tank = def.kind == Kind::Infuser;
-        if has_tank {
-            data.extend(chem::screen(&tank_next));
+        let spec = def.proc;
+        if let Some(spec) = spec {
+            // The screen's numbers about the tanks: for each, how much and which chemical (an absent tank reads 0, 0).
+            data.extend(chem::screen(&tank_next[0]));
+            data.extend(chem::screen(&tank_next[1]));
+            let _ = spec;
         }
         if !changed && !dirty && data == e.menu_data {
             return None;
         }
-        let tanks = (has_tank && (tank_next != tank_now || e.tanks.is_empty())).then(|| {
-            vec![Tank { substance: tank_next.chemical.clone(), amount: tank_next.amount }]
-        });
-        let tank_faces = (has_tank && dirty).then(|| self.tank_sides(&facing, &cfg));
+        let tanks = spec
+            .filter(|_| tank_next != tank_now || e.tanks.len() != tank_count(spec))
+            .map(|s| {
+                let mut v = Vec::new();
+                if s.cap_in > 0 {
+                    v.push(Tank { substance: tank_next[0].chemical.clone(), amount: tank_next[0].amount });
+                }
+                if s.cap_out > 0 {
+                    v.push(Tank { substance: tank_next[1].chemical.clone(), amount: tank_next[1].amount });
+                }
+                v
+            });
+        let tank_faces = (spec.is_some() && dirty).then(|| self.tank_sides(layout, &facing, &cfg));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
@@ -667,14 +753,21 @@ impl ServerMod for Mekanism {
                     outputs: vec![1, 2],
                     menu: true,
                 },
-                // The input, the output and the infusion slot; hoppers put into the input and the infusion slot.
-                Kind::Infuser => ContainerSpec {
-                    slots: 3,
-                    faces: config::item_faces(Layout::Infuser, "north", config::default_config(Layout::Infuser).items()),
-                    inputs: vec![0, 2],
-                    outputs: vec![1],
-                    menu: true,
-                },
+                // The slots of a machine of `process`; hoppers put into the input and the filling slot, and take from the output.
+                Kind::Process => {
+                    let (slots, inputs, outputs) = match def.layout {
+                        Layout::Oxidizer => (2, vec![0], vec![]),
+                        Layout::Crystallizer => (2, vec![0], vec![1]),
+                        _ => (3, vec![0, 2], vec![1]),
+                    };
+                    ContainerSpec {
+                        slots,
+                        faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
+                        inputs,
+                        outputs,
+                        menu: true,
+                    }
+                }
                 // The main input, the extra one and the output, on the faces of the default configuration.
                 Kind::Combiner => ContainerSpec {
                     slots: 3,
@@ -685,14 +778,22 @@ impl ServerMod for Mekanism {
                 },
             });
             k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
-            if def.kind == Kind::Infuser {
-                // The infusion tank takes in on every side to start with (`LightConfigInfo.INPUT_ONLY`).
-                k.tanks = vec![TankSpec {
-                    kind: "infusion".into(),
-                    capacity: infuser::MAX_INFUSE,
-                    max_rate: infuser::MAX_INFUSE,
-                    faces: vec![FlowSide::Input; 6],
-                }];
+            if let Some(spec) = def.proc {
+                // The tanks: the one the chemical goes into, then the one it comes out in. Every chemical is the same
+                // family, so a tank takes from a neighbour that holds one; the faces are the default configuration's.
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout));
+                let mut tank = |capacity: u64, i: usize| TankSpec {
+                    kind: "chemical".into(),
+                    capacity,
+                    max_rate: capacity.min(1000),
+                    faces: flow.get(i).map_or_else(|| vec![FlowSide::None; 6], |f| f.iter().map(|x| flow_side(*x)).collect()),
+                };
+                if spec.cap_in > 0 {
+                    k.tanks.push(tank(spec.cap_in, 0));
+                }
+                if spec.cap_out > 0 {
+                    k.tanks.push(tank(spec.cap_out, usize::from(spec.cap_in > 0)));
+                }
             }
             r = r.block_entity_kind(k);
         }
@@ -719,7 +820,7 @@ impl ServerMod for Mekanism {
             tried: HashMap::new(),
             saws: sawmill::Book::default(),
             combs: combiner::Book::default(),
-            infs: infuser::Book::default(),
+            procs: HashMap::new(),
             pending: Vec::new(),
             tool: HashMap::new(),
             applied: HashSet::new(),
@@ -809,14 +910,15 @@ impl ServerMod for Mekanism {
             return None;
         }
         let def = MACHINES.iter().find(|d| d.block == block)?;
-        let layout = def.layout();
+        let layout = def.layout;
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
-        if id == chem::DUMP && def.kind == Kind::Infuser {
+        if id == chem::DUMP && def.block == "mekanism:metallurgic_infuser" {
             // GuiDumpButton: the tank is emptied (`dump`).
             let mut data = e.menu_data.clone();
             data.truncate(16);
-            data.extend(chem::screen(&infuser::Tank::default()));
+            data.extend(chem::screen(&process::Tank::default()));
+            data.extend(chem::screen(&process::Tank::default()));
             return Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
@@ -849,7 +951,7 @@ impl ServerMod for Mekanism {
         data.resize(6, 0);
         data.extend(cfg.screen_words());
         data.extend(tail);
-        let tank_faces = (def.kind == Kind::Infuser).then(|| self.tank_sides(&facing, &cfg));
+        let tank_faces = def.proc.map(|_| self.tank_sides(layout, &facing, &cfg));
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
