@@ -164,3 +164,17 @@ as = "Alex"
 ticks = 10
 use-item = { stack = "mekanism:configurator*1" }
 expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+# The energy cube's screen: a basic cube far from the rest, a redstone dust in its discharge slot turns into 10000 energy
+# (the recipe of energy_conversion) one a tick, the stack shrinking by one each.
+blocks = [{ x = 60, y = 64, z = 0, state = "mekanism:basic_energy_cube" }]
+set-items = [{ x = 60, y = 64, z = 0, slots = ["minecraft:redstone*3", ""] }]
+ticks = 1
+expect.block-items = [{ x = 60, y = 64, z = 0, slots = ["minecraft:redstone*2", ""] }]
+
+[[step]]
+# A press on the window's button for the cube's left side (1000 + 1 * 100 + 1 * 10): the cube applies it on its next tick.
+as = "Alex"
+press = { x = 60, y = 64, z = 0, id = 1110 }
+ticks = 2

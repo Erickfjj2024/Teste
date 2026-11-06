@@ -487,7 +487,9 @@ def side_config_widgets(transmissions):
                     {'type': 'text', 'x': 41, 'y': 28, 'text': text, 'color': '#3CFE9A'}]})
         else:
             group.append({'type': 'text', 'x': 41, 'y': 28, 'text': "Can't Eject", 'color': '#3CFE9A'})
-        widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': ty}}, 'widgets': group})
+        # a screen with one transmission has no tabs: its group is the one shown when the variable is unset (0)
+        shown = ty if len(transmissions) > 1 else 0
+        widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': shown}}, 'widgets': group})
     # the tabs of the other transmissions, outside the window: the first four at its left, the rest at its right
     for i, ty in enumerate(transmissions):
         x = -26 if i < 4 else WIN_W
@@ -520,12 +522,68 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.22', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.23', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                 'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m])}]}})
+
+# ---- the energy cube's screen (GuiEnergyCube): the discharge slot (17, 35) with its minus, the charge slot (143, 35) with its
+# plus, the wide energy gauge at 55, 18, the config tab and the energy tab at the left
+def energy_cube_panel(name):
+    from PIL import Image
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    for x, overlay in ((17, 'slot/overlay/minus'), (143, 'slot/overlay/plus')):
+        panel.alpha_composite(slot, (x - 1, 34))
+        panel.alpha_composite(gui_sprite(overlay), (x - 1, 34))
+    # GuiEnergyGauge, WIDE: a 66 by 50 frame around 64 by 48
+    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 66, 50, 2), (55, 18))
+    path = f'{OUT}/assets/{NS}/textures/gui/{name}.png'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    panel.save(path)
+    return f'{NS}:gui/{name}'
+
+def energy_gauge_fill():
+    """The energy sprite (its first frame, 16 by 16) tiled over the gauge's 64 by 48 contents."""
+    from PIL import Image
+    src = Image.open(find('textures/mek_liquid/energy.png', ASSET_DIRS)).convert('RGBA').crop((0, 0, 16, 16))
+    img = Image.new('RGBA', (64, 48))
+    for x in range(0, 64, 16):
+        for y in range(0, 48, 16):
+            img.paste(src, (x, y))
+    return save_gui(img, 'energy_gauge_fill')
+
+gauge_fill = energy_gauge_fill()
+gauge_overlay = copy_gui('gauge/overlay/wide', 'gauge_overlay_wide')
+tab_energy_info = copy_gui('tab/energy_info', 'tab_energy_info')
+CUBES = {'basic_energy_cube': ('Basic Energy Cube', 4000), 'creative_energy_cube': ('Creative Energy Cube', 1000000000)}
+for cube_name, (cube_title, rate) in CUBES.items():
+    put(f'{OUT}/data/{NS}/horizon/menu/{cube_name}.json', {
+        'slots': 2, 'data_slots': 16, 'results': [],
+        'screen': {'texture': energy_cube_panel(cube_name), 'own_labels': True, 'slots': [[17, 35], [143, 35]],
+                   'widgets': [
+            {'type': 'sprite', 'texture': gauge_fill, 'x': 56, 'y': 19, 'w': 64, 'h': 48, 'value': {'pair': [1, 2]},
+             'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+            {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
+            {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
+            {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.23', 'color': '#808080'},
+            # GuiSideConfigurationTab at -26, 6
+            {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},
+            # GuiEnergyTab at -26, 137: the input rate and the most it puts out
+            {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
+             'tooltip': f'Input Rate: {{0}} FE\nMax Output: {rate} FE\nUnit: Forge Energy'}],
+                   'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
+                                'texture': window_tex, 'widgets': side_config_widgets([1])}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

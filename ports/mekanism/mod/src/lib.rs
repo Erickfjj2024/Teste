@@ -6,6 +6,7 @@
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
 mod config;
+mod cube;
 mod machine;
 mod sawmill;
 mod sides;
@@ -95,6 +96,10 @@ struct Mekanism {
     /// sends a use in the air after the use on a block for the same click, which must not change the tool's mode.
     now: u64,
     last_block_use: HashMap<String, u64>,
+    /// Each cube's energy last tick and the rate it takes in, for its screen.
+    flow: HashMap<(String, i32, i32, i32), (u64, u64)>,
+    /// The window's buttons pressed on a cube, until its next tick.
+    buttons: HashMap<(String, i32, i32, i32), Vec<i32>>,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -432,19 +437,16 @@ impl Mekanism {
     /// modes (the bytes of its data, which the clients draw its ports from), and the game's energy flow follows them.
     fn cube(&mut self, e: &BlockEntity, creative: bool) -> Option<BlockEntityUpdate> {
         let stored = sides::decode(&e.data);
-        let mut changed = stored.is_none();
+        let mut changed = stored.is_none() || e.data.len() < 7;
         // A new cube's front looks at the nearest player, as one placed in front of them does.
-        let mut modes = stored.unwrap_or_else(|| sides::default_modes(front_for(e)));
+        let front_new = front_for(e);
+        let mut modes = stored.unwrap_or_else(|| sides::default_modes(front_new));
+        let front = if stored.is_some() { cube::front_of(&e.data, &modes) } else { front_new };
         if let Some(click) = self.take_click(e) {
             // The cube configures energy only: a configurator set to items has nothing to do here.
             if self.tool.get(&click.player).copied().unwrap_or(Transmission::Items) == Transmission::Energy {
                 let now = modes[click.face];
-                let d = |m: Mode| match m {
-                    Mode::None => Data::None,
-                    Mode::Input => Data::Input,
-                    Mode::Output => Data::Output,
-                    Mode::Both => Data::InputOutput,
-                };
+                let d = cube::data_of;
                 if click.sneak {
                     modes[click.face] = now.step(false);
                     changed = true;
@@ -461,24 +463,62 @@ impl Mekanism {
                 }
             }
         }
+        changed |= self.take_button(e, &mut modes, front);
+        let capacity = if creative { CREATIVE_CUBE } else { BASIC_CUBE };
+        let mut energy = e.energy;
+        // The discharge slot turns what it holds into energy when it fits (`fillContainerOrConvert`).
+        let mut items: Option<Vec<Option<ItemStack>>> = None;
+        if let Some(Some(slot)) = e.items.get(cube::DISCHARGE)
+            && let Some(gain) = cube::conversion(&slot.item)
+            && energy + gain <= capacity
+            && slot.count > 0
+        {
+            energy += gain;
+            let mut next = e.items.clone();
+            next[cube::DISCHARGE] = (slot.count > 1).then(|| ItemStack { count: slot.count - 1, ..slot.clone() });
+            items = Some(next);
+        }
         let flow = sides::flow_faces(&modes);
         let faces: Vec<FlowSide> = flow.iter().map(|f| flow_side(*f)).collect();
-        let refill = creative && e.energy < CREATIVE_CUBE;
-        if !changed && !refill && e.energy_faces == faces {
+        let refill = creative && energy < CREATIVE_CUBE;
+        if refill {
+            energy = CREATIVE_CUBE;
+        }
+        // The rate it takes energy in, smoothed over a few ticks, for the energy tab.
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        let (prev, rate) = self.flow.get(&key).copied().unwrap_or((energy, 0));
+        let gain = e.energy.saturating_sub(prev);
+        let rate = (rate * 3 + gain) / 4;
+        self.flow.insert(key, (e.energy, rate));
+        let data = cube::screen(rate, energy, capacity, &modes, front);
+        if !changed && items.is_none() && !refill && e.energy_faces == faces && data == e.menu_data {
             return None;
         }
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: sides::encode(&modes),
-            items: None,
-            energy: refill.then_some(CREATIVE_CUBE),
+            data: cube::encode(&modes, front),
+            items,
+            energy: (energy != e.energy).then_some(energy),
             energy_faces: Some(faces),
             tanks: None,
             tank_faces: None,
-            menu_data: None,
+            menu_data: Some(data),
             transmitter_faces: None,
         })
+    }
+
+    /// The window's buttons pressed on cube `e` since its last tick, applied to its `modes`; true when they changed.
+    fn take_button(&mut self, e: &BlockEntity, modes: &mut [Mode; 6], front: usize) -> bool {
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        let Some(ids) = self.buttons.remove(&key) else { return false };
+        let mut changed = false;
+        for id in ids {
+            if let Some(click) = config::click_of(id) {
+                changed |= cube::press(modes, front, click);
+            }
+        }
+        changed
     }
 }
 
@@ -540,9 +580,13 @@ impl ServerMod for Mekanism {
             k.energy = Some(energy(def.usage * STORED_TICKS, def.usage * STORED_TICKS, FlowSide::Input));
             r = r.block_entity_kind(k);
         }
+        // The discharge and charge slots of its screen; no face reaches them (the cube's item sides are still to do).
+        let slots = || ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true };
         let mut basic = kind("mekanism:basic_energy_cube", true);
+        basic.container = Some(slots());
         basic.energy = Some(energy(BASIC_CUBE, BASIC_CUBE_RATE, FlowSide::Both));
         let mut creative = kind("mekanism:creative_energy_cube", true);
+        creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
         let mut cable = kind("mekanism:basic_universal_cable", false);
         cable.keep_data = false;
@@ -565,6 +609,8 @@ impl ServerMod for Mekanism {
             rng: 0,
             now: 0,
             last_block_use: HashMap::new(),
+            flow: HashMap::new(),
+            buttons: HashMap::new(),
         }, r.on_chunks().on_items()))
     }
 
@@ -640,6 +686,11 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block.ends_with("_energy_cube") {
+            // The cube applies it on its next tick.
+            self.buttons.entry((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).or_default().push(id);
+            return None;
+        }
         let def = MACHINES.iter().find(|d| d.block == block)?;
         let layout = def.layout();
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();

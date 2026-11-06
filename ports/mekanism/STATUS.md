@@ -128,7 +128,15 @@ máquina) e a janela **arrasta** pela borda de cima (18 px); os itens sob a jane
 
 **Ainda não tem** (do original): aba de **Transporter Config**, as abas de redstone, segurança, upgrades e energia; o **fixar** da
 janela; configuração de **fluidos e químicos** na prática (não há tanques no porte); os modos **Vazio, Girar e Chave inglesa** do
-Configurador; o **Energy Cube não tem tela** (a configuração dele é só pelo Configurador).
+Configurador.
+
+**Tela do Energy Cube (mod 0.1.23, APK v27, **não testada no jogo**):** `GuiEnergyCube` lida do código: medidor largo de energia em 55, 18
+(64x48, energia ladrilhada), slot de **descarga** em 17, 35 (com o menos) e de **carga** em 143, 35 (com o mais), aba de configuração e aba
+de energia ("Input Rate", "Max Output", "Unit: Forge Energy") à esquerda. A janela de lados do cubo tem a aba de **Energia**, relativa à
+frente do cubo (guardada no byte 7 dos dados; cubos antigos usam a face que sai). O slot de descarga converte **redstone (10000) e bloco de
+redstone (90000)** em energia, um por tick, como as receitas `energy_conversion`. Vale para o básico e o criativo.
+**Falta:** o slot de **carga** não faz nada (o port não tem itens que guardem energia); a aba de **Itens** do cubo; os slots de
+armadura do `GuiSideHolder`; as abas de redstone/segurança; funil nas faces do cubo; o medidor mostra números crus (sem kFE).
 
 **Defeito visto no teste da 2c (mod 0.1.18 corrige, não testado):** ao clicar agachado numa máquina, o Configurador mudava a face e
 também o modo dele. O cliente manda um uso no bloco e logo depois um uso no ar para o mesmo clique; o segundo, agachado, era lido como
