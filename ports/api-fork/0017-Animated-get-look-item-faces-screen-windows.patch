@@ -11,8 +11,44 @@ index 47e9d18..c013d2a 100644
              Output::Chunk { chunk, forced, .. } => {
                  format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
              }
+diff --git a/crates/horizon-client-render/src/containers.rs b/crates/horizon-client-render/src/containers.rs
+index 7bc73dd..0f549e8 100644
+--- a/crates/horizon-client-render/src/containers.rs
++++ b/crates/horizon-client-render/src/containers.rs
+@@ -18,25 +18,28 @@ pub struct ModMenuType {
+     pub slots: usize,
+     pub data_slots: usize,
+     pub results: Vec<usize>,
++    /// Armor and off-hand slots of the player added after the container's own: 0, 4 (the armor) or 5 (and the off-hand).
++    pub armor: usize,
+ }
+ 
+ static MOD_MENU_TYPES: std::sync::OnceLock<Vec<ModMenuType>> = std::sync::OnceLock::new();
+ 
+ /// registers the content mods' menu types, `(id, slots, data slots,
+-/// results)`, a list set once per process (false when it already was).
++/// results, armor)`, a list set once per process (false when it already was).
+ pub fn register_mod_menu_types(
+-    menus: impl IntoIterator<Item = (String, usize, usize, Vec<usize>)>,
++    menus: impl IntoIterator<Item = (String, usize, usize, Vec<usize>, usize)>,
+ ) -> bool {
+     if MOD_MENU_TYPES.get().is_some() {
+         return false;
+     }
+     let menus = menus
+         .into_iter()
+-        .map(|(id, slots, data_slots, results)| ModMenuType {
++        .map(|(id, slots, data_slots, results, armor)| ModMenuType {
+             id: Box::leak(id.into_boxed_str()),
+             slots,
+             data_slots,
+             results,
++            armor,
+         });
+     MOD_MENU_TYPES.set(menus.collect()).is_ok()
+ }
 diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
-index 0e48436..a5cba5a 100644
+index 0e48436..1c1456c 100644
 --- a/crates/horizon-client/src/game.rs
 +++ b/crates/horizon-client/src/game.rs
 @@ -5747,6 +5747,16 @@ impl Game<'_> {
@@ -52,7 +88,15 @@ index 0e48436..a5cba5a 100644
      /// InventoryMenu / CraftingMenu slot layouts.
      fn slot_position(&self, i: usize) -> (f32, f32) {
          if self.creative_inventory_open()
-@@ -16845,6 +16861,9 @@ impl Game<'_> {
+@@ -8547,6 +8563,7 @@ impl Game<'_> {
+                 inventory_x + ((i - 9) % 9) as f32 * 18.0,
+                 84.0 + shift + ((i - 9) / 9) as f32 * 18.0,
+             ),
++            500..505 if let Some(p) = self.native_screen_armor(i) => p,
+             500..504 => (8.0, 8.0 + (i - 500) as f32 * 18.0),
+             // InventoryMenu: the shield slot.
+             504 => (77.0, 62.0),
+@@ -16845,6 +16862,9 @@ impl Game<'_> {
                          if self.dialog_open() {
                              self.dialog_drag();
                          }
@@ -62,7 +106,7 @@ index 0e48436..a5cba5a 100644
                          if self.screen == Screen::BlockEditor {
                              self.block_editor_drag();
                          }
-@@ -17131,6 +17150,9 @@ impl Game<'_> {
+@@ -17131,6 +17151,9 @@ impl Game<'_> {
                      if pressed && (self.sort_mouse_press(button) || self.hdr_mouse_press(button)) {
                          return Ok(());
                      }
@@ -356,14 +400,16 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..5f980a3 100644
+index 609127a..1087303 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
-@@ -7,13 +7,44 @@ use super::{Game, native_hooks::NativeScreen};
+@@ -6,14 +6,58 @@
+ use super::{Game, native_hooks::NativeScreen};
  use horizon_client::hud::HudBatch;
  use horizon_mods::{
-     content::{MenuScreen, Widget, parse_color},
+-    content::{MenuScreen, Widget, parse_color},
 -    screen::{button_at, fill_text, filled, fraction, hovered, read},
++    content::{ArmorSlots, MenuScreen, Widget, parse_color},
 +    screen::{DRAG_HEIGHT, Locals, Press, fill_text, neighbor_step, window_origin, filled, fraction, hovered, open_window, press, read, showing},
 +};
 +use std::{
@@ -403,15 +449,29 @@ index 609127a..5f980a3 100644
 +    LOCALS.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
 +}
 +
++/// The armor slots of the mods' menu types by id (`armor` in the menu file), set once with the screens.
++pub(super) static MENU_ARMOR: OnceLock<HashMap<String, ArmorSlots>> = OnceLock::new();
++
++/// Game slot ids and places of the armor and off-hand slots menu type `id` adds.
++fn armor_of(id: &str) -> Vec<(usize, [f32; 2])> {
++    let Some(a) = MENU_ARMOR.get().and_then(|m| m.get(id)) else {
++        return Vec::new();
++    };
++    (0..a.count())
++        .filter_map(|n| a.at(n).map(|p| (if n < 4 { 500 + n } else { 504 }, p.map(|v| v as f32))))
++        .collect()
++}
++
  /// The screen of menu type `id`, if it has one.
  pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
      MENU_SCREENS.get()?.get(id)
-@@ -33,33 +64,14 @@ impl Game<'_> {
+@@ -33,33 +77,15 @@ impl Game<'_> {
                  .collect(),
              inventory_y: def.inventory_y as f32,
              inventory_x: def.inventory_x as f32,
 -            own_labels: false,
 +            own_labels: def.own_labels,
++            armor: armor_of(block),
          })
      }
  
@@ -444,7 +504,7 @@ index 609127a..5f980a3 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +107,132 @@ impl Game<'_> {
+@@ -95,15 +121,138 @@ impl Game<'_> {
                      let text = fill_text(text, data);
                      self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
                  }
@@ -456,13 +516,19 @@ index 609127a..5f980a3 100644
 +                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
 +                Widget::Neighbor { x, y, side } => {
-+                    if let Some(icon) = self.neighbor_icon(*side) {
-+                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
-+                    }
++                    // TEMPORARY diagnosis: a letter says why no icon shows (P no block position, B nothing there,
++                    // I an item the game does not know, + drawn).
++                    let at = [ox + *x as f32, oy + *y as f32];
++                    let code = match self.neighbor_icon(*side) {
++                        Err(c) => c,
++                        Ok(icon) if self.native_item(batch, &icon, at, 16.0) => '+',
++                        Ok(_) => 'I',
++                    };
++                    self.native_text(batch, &code.to_string(), [at[0] + 12.0, at[1] + 8.0], 0xFFFF_2020, false);
 +                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
-+            }
-+        }
+             }
+         }
 +    }
 +
 +    /// Draws block `block`'s declared screen at `origin`; false when it has none.
@@ -502,9 +568,9 @@ index 609127a..5f980a3 100644
 +                    [0.0, 0.0, sw, sh],
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
-             }
++            }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at);
-         }
++        }
          true
      }
  
@@ -522,12 +588,12 @@ index 609127a..5f980a3 100644
 +
 +    /// The item of the block beside the machine whose screen is open, on its relative `side`; None for air or a
 +    /// block without an item.
-+    fn neighbor_icon(&self, side: u8) -> Option<String> {
-+        let [x, y, z] = self.native_screen_pos()?;
++    fn neighbor_icon(&self, side: u8) -> Result<String, char> {
++        let [x, y, z] = self.native_screen_pos().ok_or('P')?;
 +        let facing = self.native_block_property([x, y, z], "facing").unwrap_or_default();
 +        let [dx, dy, dz] = neighbor_step(&facing, side);
 +        let id = self.native_block([x + dx, y + dy, z + dz]);
-+        (id != "minecraft:air" && !id.is_empty()).then_some(id)
++        if id == "minecraft:air" || id.is_empty() { Err('B') } else { Ok(id) }
 +    }
 +
 +    /// The cursor moved with a window held: it follows (kept on the screen's near area).
@@ -581,7 +647,7 @@ index 609127a..5f980a3 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +243,7 @@ impl Game<'_> {
+@@ -114,8 +263,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -592,7 +658,7 @@ index 609127a..5f980a3 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..2696fe8 100644
+index 003737e..688eef8 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
 @@ -63,6 +63,10 @@ pub(super) struct ModsState {
@@ -606,7 +672,28 @@ index 003737e..2696fe8 100644
      /// A running server mod has capability `world`: its calls get the
      /// levels' chunks to read.
      #[cfg(feature = "mods")]
-@@ -613,6 +617,7 @@ impl Game<'_> {
+@@ -394,6 +398,11 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+         .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
+         .collect();
+     let _ = super::menu_screens::MENU_SCREENS.set(screens);
++    let armor = menus
++        .iter()
++        .filter_map(|m| Some((m.id.clone(), m.armor.clone()?)))
++        .collect();
++    let _ = super::menu_screens::MENU_ARMOR.set(armor);
+     let renderers = horizon_client::mod_content::block_renderers(mods)
+         .into_iter()
+         .map(|r| (r.id.clone(), r.clone()))
+@@ -401,7 +410,7 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+     let _ = super::block_renderers::BLOCK_RENDERERS.set(renderers);
+     let set = containers::register_mod_menu_types(menus.iter().map(|m| {
+         let results = m.results.iter().map(|&r| usize::from(r)).collect();
+-        (m.id.clone(), m.slots.into(), m.data_slots.into(), results)
++        (m.id.clone(), m.slots.into(), m.data_slots.into(), results, m.armor.as_ref().map_or(0, horizon_mods::content::ArmorSlots::count))
+     }));
+     if !set
+         && containers::mod_menu_types()
+@@ -613,6 +622,7 @@ impl Game<'_> {
              font_widths: self.mods.font_widths.clone(),
              players,
              motions: Vec::new(),
@@ -614,7 +701,7 @@ index 003737e..2696fe8 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +859,9 @@ impl Game<'_> {
+@@ -854,7 +864,9 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -626,10 +713,20 @@ index 003737e..2696fe8 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..f6a8e61 100644
+index 325afbf..95cc3c8 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
-@@ -1941,8 +1941,8 @@ impl Game<'_> {
+@@ -814,6 +814,9 @@ pub struct NativeScreen {
+     /// The mod draws the title and the "Inventory" label itself
+     /// (`native_screen_draw`); Horizon leaves them out.
+     pub own_labels: bool,
++    /// The player's armor and off-hand slots the menu adds, as game slot ids (500 to 503 the armor, 504 the off-hand)
++    /// with their places.
++    pub armor: Vec<(usize, [f32; 2])>,
+ }
+ 
+ /// The open screen, for the screen hooks (`native_screen_render_post`, the
+@@ -1941,8 +1944,8 @@ impl Game<'_> {
          right: bool,
          button: &mut Option<i32>,
      ) {
@@ -640,7 +737,7 @@ index 325afbf..f6a8e61 100644
          }
          let _ = (block, data, at, right, button);
      }
-@@ -2130,10 +2130,7 @@ impl Game<'_> {
+@@ -2130,10 +2133,7 @@ impl Game<'_> {
          face: [i32; 3],
          claimed: &mut bool,
      ) {
@@ -652,7 +749,7 @@ index 325afbf..f6a8e61 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -4132,6 +4129,7 @@ impl Game<'_> {
+@@ -4132,6 +4132,7 @@ impl Game<'_> {
          menu: &str,
      ) {
          self.mod_screen = None;
@@ -660,7 +757,7 @@ index 325afbf..f6a8e61 100644
          let Some(t) = target else {
              return;
          };
-@@ -4166,6 +4164,10 @@ impl Game<'_> {
+@@ -4166,6 +4167,10 @@ impl Game<'_> {
              });
          }
      }
@@ -671,7 +768,47 @@ index 325afbf..f6a8e61 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4360,6 +4362,17 @@ impl Game<'_> {
+@@ -4202,22 +4207,31 @@ impl Game<'_> {
+             .flatten()
+             .map(|p| (p[0], p[1]))
+     }
+-    /// The container slots the open mod screen shows (300.. ids).
++    /// Where the open mod screen puts the player's armor or off-hand slot `id` (500 to 504), if it has one.
++    pub(super) fn native_screen_armor(&self, id: usize) -> Option<(f32, f32)> {
++        let s = self.shown_native_screen()?;
++        s.screen
++            .armor
++            .iter()
++            .find(|(i, _)| *i == id)
++            .map(|(_, p)| (p[0], p[1]))
++    }
++    /// The container slots the open mod screen shows (300.. ids), then the player's armor ones it adds.
+     pub(super) fn native_screen_slots(&self) -> Option<Vec<usize>> {
+         let s = self.shown_native_screen()?;
+         let shown = s.screen.slots.iter().enumerate();
+-        Some(
+-            shown
+-                .filter(|(_, p)| p.is_some())
+-                .map(|(i, _)| 300 + i)
+-                .collect(),
+-        )
++        let mut v: Vec<usize> = shown
++            .filter(|(_, p)| p.is_some())
++            .map(|(i, _)| 300 + i)
++            .collect();
++        v.extend(s.screen.armor.iter().map(|(i, _)| *i));
++        Some(v)
+     }
+     /// How many of those slots `native_screen_slots` lists, without building
+     /// it (`Game::slot_count` asks every frame).
+     pub(super) fn native_screen_slot_count(&self) -> Option<usize> {
+         let s = self.shown_native_screen()?;
+-        Some(s.screen.slots.iter().filter(|p| p.is_some()).count())
++        Some(s.screen.slots.iter().filter(|p| p.is_some()).count() + s.screen.armor.len())
+     }
+     /// The first row of the player's inventory on the open mod screen.
+     pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
+@@ -4360,6 +4374,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -689,7 +826,7 @@ index 325afbf..f6a8e61 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4397,11 @@ impl Game<'_> {
+@@ -4384,6 +4409,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -701,6 +838,27 @@ index 325afbf..f6a8e61 100644
          let window = self
              .remote
              .as_ref()
+diff --git a/crates/horizon-client/src/game/remote.rs b/crates/horizon-client/src/game/remote.rs
+index 8554dc2..863b3a0 100644
+--- a/crates/horizon-client/src/game/remote.rs
++++ b/crates/horizon-client/src/game/remote.rs
+@@ -2755,7 +2755,15 @@ impl Game<'_> {
+             // A workstation: its inputs, its result, then the inventory.
+             m => {
+                 if let Some(t) = horizon_client::containers::mod_menu_type(m) {
+-                    return slots(t.slots);
++                    // Its container, then the player's armor and off-hand it adds, then the inventory.
++                    let (n, e) = (t.slots, t.armor);
++                    return match s {
++                        _ if s < n => Some(300 + s),
++                        _ if s < n + e => Some(if s - n < 4 { 500 + s - n } else { 504 }),
++                        _ if s < n + e + 27 => Some(9 + s - n - e),
++                        _ if s < n + e + 36 => Some(s - n - e - 27),
++                        _ => None,
++                    };
+                 }
+                 let kind = Self::remote_station_kind(m)?;
+                 let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
 index fcc3158..ec045e4 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
@@ -849,6 +1007,218 @@ index fcc3158..ec045e4 100644
                  Output::Chunk {
                      name,
                      id,
+diff --git a/crates/horizon-client/src/lan/containers.rs b/crates/horizon-client/src/lan/containers.rs
+index f3f8ca0..cdb1592 100644
+--- a/crates/horizon-client/src/lan/containers.rs
++++ b/crates/horizon-client/src/lan/containers.rs
+@@ -265,6 +265,7 @@ impl Hub {
+             sent_data: Vec::new(),
+             hidden: Vec::new(),
+             results: mod_type.map_or_else(Vec::new, |t| t.results.clone()),
++            equip: mod_type.map_or(0, |t| t.armor),
+             data_slots: mod_type.map(|t| t.data_slots),
+         });
+         self.send_menu_content(i, items);
+@@ -325,6 +326,7 @@ impl Hub {
+             sent_data: Vec::new(),
+             hidden: Vec::new(),
+             results: Vec::new(),
++            equip: 0,
+             data_slots: None,
+         });
+         self.send_menu_content(i, items);
+@@ -567,6 +569,7 @@ impl Hub {
+             .as_ref()
+             .filter(|_| in_menu)
+             .map_or_else(Vec::new, |m| m.results.clone());
++        let equip = self.guests[i].menu.as_ref().filter(|_| in_menu).map_or(0, |m| m.equip);
+         let guest = &mut self.guests[i];
+         let mut items = source.and_then(|s| s.read(world, guest));
+         if in_menu && items.is_none() {
+@@ -578,6 +581,7 @@ impl Hub {
+             shulker,
+             hidden: &hidden,
+             results: &results,
++            equip,
+         };
+         let (drops, changed) = menu::click(
+             &mut view,
+diff --git a/crates/horizon-client/src/lan/menu.rs b/crates/horizon-client/src/lan/menu.rs
+index a696e8a..dc6c8a7 100644
+--- a/crates/horizon-client/src/lan/menu.rs
++++ b/crates/horizon-client/src/lan/menu.rs
+@@ -42,6 +42,8 @@ pub struct Menu {
+     pub hidden: Vec<usize>,
+     /// A mod menu type's take-only slots (`FurnaceResultSlot.mayPlace`).
+     pub results: Vec<usize>,
++    /// The armor and off-hand slots at the end of `size` (a mod menu's `armor`): 0, 4 or 5.
++    pub equip: usize,
+     /// A mod menu type's data slot count (`addDataSlots`); None for vanilla's.
+     pub data_slots: Option<usize>,
+ }
+@@ -128,6 +130,9 @@ impl Slots {
+                 return slots[n].clone();
+             }
+             n -= slots.len();
++            if matches!(self, Slots::Block(_)) && n < equip_of(world, k) {
++                return worn_slot(guest, n).cloned().flatten();
++            }
+         }
+         None
+     }
+@@ -142,6 +147,10 @@ impl Slots {
+         let mut items = Vec::new();
+         for k in self.halves() {
+             items.extend_from_slice(shown(world, k)?);
++            // A mod menu's armor and off-hand slots are the guest's own.
++            for n in 0..equip_of(world, k) {
++                items.push(worn_slot(guest, n).cloned().flatten());
++            }
+         }
+         Some(items)
+     }
+@@ -158,15 +167,48 @@ impl Slots {
+         let mut rest = items.into_iter();
+         for k in self.halves() {
+             let n = shown(world, k).map_or(0, <[_]>::len);
++            let equip = equip_of(world, k);
+             if let Some(e) = world.block_entities.get_mut(&k) {
+                 for slot in e.slots_mut().iter_mut().take(n) {
+                     *slot = rest.next().flatten();
+                 }
+             }
++            for worn in 0..equip {
++                if let (Some(slot), Some(item)) = (worn_slot_mut(guest, worn), rest.next()) {
++                    *slot = item;
++                }
++            }
+         }
+     }
+ }
+ 
++/// How many armor and off-hand slots the menu of the mod block at `k` adds to its container (`armor` in its menu type:
++/// 0, or 4 armor slots and the off-hand's).
++pub fn equip_of(world: &World, k: (i32, i32, i32)) -> usize {
++    let Some(e) = world.block_entities.get(&k) else {
++        return 0;
++    };
++    if !matches!(e, BlockEntity::Mod(_)) {
++        return 0;
++    }
++    let state = world.block(k.0, k.1, k.2).0;
++    world
++        .block_entities
++        .mod_container(state)
++        .and_then(|c| c.menu.as_deref())
++        .and_then(crate::containers::mod_menu_type)
++        .map_or(0, |m| m.armor)
++}
++
++/// The guest's worn slot `n`: 0 head to 3 feet, then the off-hand.
++fn worn_slot(guest: &Guest, n: usize) -> Option<&Option<ItemStack>> {
++    if n < 4 { guest.armor.get(n) } else if n == 4 { Some(&guest.offhand) } else { None }
++}
++
++fn worn_slot_mut(guest: &mut Guest, n: usize) -> Option<&mut Option<ItemStack>> {
++    if n < 4 { guest.armor.get_mut(n) } else if n == 4 { Some(&mut guest.offhand) } else { None }
++}
++
+ /// The slots of the block entity at `k` its menu shows: a mod container's
+ /// count, though items past it stay saved.
+ fn shown(world: &World, k: (i32, i32, i32)) -> Option<&[Option<ItemStack>]> {
+@@ -194,6 +236,8 @@ pub struct View<'a> {
+     pub hidden: &'a [usize],
+     /// Container slots nothing is put into (see [`Menu::results`]).
+     pub results: &'a [usize],
++    /// How many of the container's last slots are the guest's own armor and off-hand (a mod menu's `armor` slots).
++    pub equip: usize,
+ }
+ 
+ impl View<'_> {
+@@ -232,7 +276,17 @@ impl View<'_> {
+     fn enabled(&self, i: usize) -> bool {
+         (self.container.is_some() || i >= 5) && !self.hidden.contains(&i)
+     }
++    /// The wearing slot the container slot `i` is, if it is one of the guest's armor slots (0 head to 3 feet, 4 the off-hand).
++    fn worn(&self, i: usize) -> Option<usize> {
++        let c = self.container.as_ref()?;
++        let first = c.len().checked_sub(self.equip)?;
++        (self.equip > 0 && i >= first && i < c.len()).then(|| i - first)
++    }
+     fn may_place(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> bool {
++        if let Some(k) = self.worn(i) {
++            // ArmorSlot.mayPlace: the right piece for the slot; the off-hand takes anything.
++            return if k < 4 { rules.armor_index(&stack.item) == Some(k) } else { true };
++        }
+         if self.container.is_none() && (5..=8).contains(&i) {
+             return rules.armor_index(&stack.item) == Some(i - 5);
+         }
+@@ -249,6 +303,9 @@ impl View<'_> {
+         self.container.is_some() && self.results.contains(&i)
+     }
+     fn slot_max(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> u32 {
++        if self.worn(i).is_some_and(|k| k < 4) {
++            return 1;
++        }
+         if self.container.is_none() && (5..=8).contains(&i) {
+             return 1;
+         }
+@@ -838,6 +895,7 @@ mod tests {
+             shulker: false,
+             hidden: &[],
+             results: &[],
++            equip: 0,
+         };
+         view.guest.carried = Some(ItemStack::new("minecraft:bundle", 1));
+         // Left click with the bundle: the stone goes in.
+@@ -912,6 +970,7 @@ mod tests {
+                 shulker: false,
+                 hidden: &[],
+                 results: &[],
++                equip: 0,
+             };
+             click(&mut view, &mut drag, 5 + 27, 0, input::QUICK_MOVE, &rules);
+             assert_eq!(view.get(0).map(|s| s.item), Some("minecraft:dirt".into()));
+@@ -950,6 +1009,7 @@ mod tests {
+             shulker: false,
+             hidden: &hidden,
+             results: &[],
++            equip: 0,
+         };
+         // The hotbar's first slot (menu slot 3 + 27) lands in the one slot shown.
+         click(&mut view, &mut drag, 3 + 27, 0, input::QUICK_MOVE, &rules);
+@@ -980,6 +1040,7 @@ mod tests {
+             shulker: false,
+             hidden: &[],
+             results: &results,
++            equip: 0,
+         };
+         // The hotbar's first slot (menu slot 2 + 27) goes to slot 0, not onto the result.
+         click(&mut view, &mut drag, 2 + 27, 0, input::QUICK_MOVE, &rules);
+@@ -1026,6 +1087,7 @@ mod tests {
+             shulker: false,
+             hidden: &[],
+             results: &results,
++            equip: 0,
+         };
+         // A hotbar key and F over the result: the stone goes nowhere.
+         click(&mut view, &mut drag, 1, 0, input::SWAP, &rules);
+@@ -1075,6 +1137,7 @@ mod tests {
+             shulker: false,
+             hidden: &[],
+             results: &[],
++            equip: 0,
+         };
+         click(&mut view, &mut drag, 0, 40, input::SWAP, &rules);
+         assert_eq!(
+@@ -1121,6 +1184,7 @@ mod tests {
+                 shulker,
+                 hidden: &[],
+                 results: &[],
++                equip: 0,
+             };
+             // Carried onto an empty slot, shift-clicked from the hotbar
+             // (menu slot 27 + 27) and swapped in with the number key 1.
 diff --git a/crates/horizon-client/src/mod_content.rs b/crates/horizon-client/src/mod_content.rs
 index 667d135..e7f098f 100644
 --- a/crates/horizon-client/src/mod_content.rs
@@ -1208,10 +1578,53 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..73192a2 100644
+index e2ee6c7..11f47ad 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
-@@ -332,12 +332,57 @@ pub struct MenuScreen {
+@@ -295,12 +295,42 @@ pub struct MenuType {
+     /// slots a player takes from but never puts into, each below `slots`.
+     #[serde(default)]
+     pub results: Vec<u16>,
++    /// The player's armor and off-hand slots shown beside the screen (Mekanism's `armorSideBar`): slots of the
++    /// menu after its own, which hold the armor of whoever has it open.
++    #[serde(default)]
++    pub armor: Option<ArmorSlots>,
+     /// How the screen of a block of the same id is laid out and drawn, from
+     /// the menu's data slots, without a line of code (API block 7).
+     #[serde(default)]
+     pub screen: Option<MenuScreen>,
+ }
+ 
++/// Where the player's armor slots are on a menu's screen: four slots going down from `x`, `y` (the helmet first, then the
++/// chestplate, the leggings and the boots, 18 apart), and the off-hand's `offhand` pixels under the last when given.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ArmorSlots {
++    pub x: i32,
++    pub y: i32,
++    #[serde(default)]
++    pub offhand: Option<i32>,
++}
++
++impl ArmorSlots {
++    /// How many menu slots they are: the four, and the off-hand's.
++    pub fn count(&self) -> usize {
++        4 + usize::from(self.offhand.is_some())
++    }
++    /// Where slot `n` (0 the helmet .. 3 the boots, 4 the off-hand) is.
++    pub fn at(&self, n: usize) -> Option<[i32; 2]> {
++        match n {
++            0..4 => Some([self.x, self.y + 18 * n as i32]),
++            4 => self.offhand.map(|o| [self.x, self.y + 72 + o]),
++            _ => None,
++        }
++    }
++}
++
+ fn default_width() -> i32 {
+     176
+ }
+@@ -332,12 +362,57 @@ pub struct MenuScreen {
      /// over the whole panel instead of the plain grey one.
      #[serde(default)]
      pub texture: Option<String>,
@@ -1269,7 +1682,7 @@ index e2ee6c7..73192a2 100644
  }
  
  /// A number a widget reads: a constant, a data slot of the menu, or two data
-@@ -349,6 +394,9 @@ pub enum Value {
+@@ -349,6 +424,9 @@ pub enum Value {
      Const(i64),
      Data(u16),
      Pair([u16; 2]),
@@ -1279,7 +1692,7 @@ index e2ee6c7..73192a2 100644
  }
  
  /// The way a bar or a progress arrow fills.
-@@ -408,16 +456,41 @@ pub enum Widget {
+@@ -408,16 +486,41 @@ pub enum Widget {
          #[serde(default)]
          color: Option<String>,
      },
@@ -1322,7 +1735,7 @@ index e2ee6c7..73192a2 100644
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +534,161 @@ impl MenuScreen {
+@@ -461,81 +564,161 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -1550,7 +1963,7 @@ index e2ee6c7..73192a2 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +736,42 @@ pub enum RenderElement {
+@@ -583,6 +766,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -1593,7 +2006,7 @@ index e2ee6c7..73192a2 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +785,50 @@ pub enum RenderElement {
+@@ -596,6 +815,50 @@ pub enum RenderElement {
      },
  }
  
@@ -1644,7 +2057,7 @@ index e2ee6c7..73192a2 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +876,48 @@ impl BlockRenderer {
+@@ -643,6 +906,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -1693,7 +2106,23 @@ index e2ee6c7..73192a2 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1208,6 +1483,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1023,6 +1328,15 @@ impl Content {
+                     return Err(format!("{name}: result {r} is listed twice"));
+                 }
+             }
++            if let Some(a) = &file.armor {
++                let far = |v: i32| !(-1024..=1024).contains(&v);
++                if far(a.x) || far(a.y) || a.offhand.is_some_and(far) {
++                    return Err(format!("{name}: the armor slots are within 1024 pixels"));
++                }
++                if usize::from(file.slots) + a.count() > usize::from(MAX_MENU_SLOTS) {
++                    return Err(format!("{name}: the armor slots do not fit the {MAX_MENU_SLOTS} slots"));
++                }
++            }
+             if let Some(screen) = &file.screen {
+                 screen.check(&name, file.slots, file.data_slots)?;
+             }
+@@ -1208,6 +1522,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {

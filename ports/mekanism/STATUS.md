@@ -135,8 +135,14 @@ Configurador.
 de energia ("Input Rate", "Max Output", "Unit: Forge Energy") à esquerda. A janela de lados do cubo tem a aba de **Energia**, relativa à
 frente do cubo (guardada no byte 7 dos dados; cubos antigos usam a face que sai). O slot de descarga converte **redstone (10000) e bloco de
 redstone (90000)** em energia, um por tick, como as receitas `energy_conversion`. Vale para o básico e o criativo.
-**Falta:** o slot de **carga** não faz nada (o port não tem itens que guardem energia); a aba de **Itens** do cubo; os slots de
-armadura do `GuiSideHolder`; as abas de redstone/segurança; funil nas faces do cubo; o medidor mostra números crus (sem kFE).
+**Slots de armadura (mod 0.1.24, APK v28, **não testados**):** o `armorSideBar(180, 41, 0)` do original: o suporte `GuiSideHolder` à direita
+(176, 36) com capacete, peitoral, calça, botas e a mão secundária em 180, 41 e 18 abaixo. São slots do **próprio jogador** (não do
+bloco): o menu ganhou o campo `armor` (`{x, y, offhand}`), o servidor os acrescenta depois dos slots do contêiner (`Slots::read/write`,
+`View::worn`: só a peça certa em cada um, uma por slot, a mão secundária aceita qualquer coisa) e o cliente os liga aos ids de slot
+500 a 504, com os ícones de slot vazio. **Falta nesse trecho:** o arrastar (distribuir) e o shift-click mandam para esses slots como
+qualquer outro, sem a regra de prioridade do `MekanismContainer.quickMoveStack`.
+
+**Falta:** o slot de **carga** não faz nada (o port não tem itens que guardem energia); a aba de **Itens** do cubo; as abas de redstone/segurança; funil nas faces do cubo; o medidor mostra números crus (sem kFE).
 
 **Defeito visto no teste da 2c (mod 0.1.18 corrige, não testado):** ao clicar agachado numa máquina, o Configurador mudava a face e
 também o modo dele. O cliente manda um uso no bloco e logo depois um uso no ar para o mesmo clique; o segundo, agachado, era lido como

@@ -522,7 +522,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.23', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.24', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
@@ -563,18 +563,32 @@ def energy_gauge_fill():
 gauge_fill = energy_gauge_fill()
 gauge_overlay = copy_gui('gauge/overlay/wide', 'gauge_overlay_wide')
 tab_energy_info = copy_gui('tab/energy_info', 'tab_energy_info')
+def armor_holder():
+    """GuiSideHolder at 176, 36 (26 by 98, the right one, untinted: the colour map's TAB_ARMOR_SLOTS is white) with the five
+    slot frames of the armor side bar: 180, 41 and 18 down for the four pieces, the off-hand under them."""
+    holder = nine_slice(gui_sprite('holder_right'), 26, 98, 4)
+    frame = gui_sprite('slot/normal')
+    for k in range(5):
+        holder.alpha_composite(frame, (3, 4 + 18 * k))
+    return save_gui(holder, 'armor_holder')
+
+armor_holder_tex = armor_holder()
 CUBES = {'basic_energy_cube': ('Basic Energy Cube', 4000), 'creative_energy_cube': ('Creative Energy Cube', 1000000000)}
 for cube_name, (cube_title, rate) in CUBES.items():
     put(f'{OUT}/data/{NS}/horizon/menu/{cube_name}.json', {
         'slots': 2, 'data_slots': 16, 'results': [],
+        # ContainerBuilder.armorSideBar(180, 41, 0): the four armor slots and the off-hand's, the player's own
+        'armor': {'x': 180, 'y': 41, 'offhand': 0},
         'screen': {'texture': energy_cube_panel(cube_name), 'own_labels': True, 'slots': [[17, 35], [143, 35]],
                    'widgets': [
+            # GuiSideHolder at 176, 36: the armor side bar, behind the slots
+            {'type': 'sprite', 'texture': armor_holder_tex, 'x': 176, 'y': 36, 'w': 26, 'h': 98},
             {'type': 'sprite', 'texture': gauge_fill, 'x': 56, 'y': 19, 'w': 64, 'h': 48, 'value': {'pair': [1, 2]},
              'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
             {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
             {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.23', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.24', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},
