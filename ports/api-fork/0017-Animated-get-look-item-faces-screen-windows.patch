@@ -356,7 +356,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..14866e9 100644
+index 609127a..5f980a3 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -7,13 +7,44 @@ use super::{Game, native_hooks::NativeScreen};
@@ -569,7 +569,7 @@ index 609127a..14866e9 100644
 +        let result = press(screen, data, &mut now, at, alt);
 +        *l = Some(now);
 +        let result = result?;
-+        if let (Press::Local, Some((true, offset)), false) = (&result, grab.unwrap_or((false, [0.0; 2])), alt)
++        if let (Press::Local, (true, offset), false) = (&result, grab.unwrap_or((false, [0.0; 2])), alt)
 +            && let Ok(mut d) = DRAG.lock()
 +        {
 +            *d = Some((at, offset));
@@ -1800,7 +1800,7 @@ index d3024e4..190ddf2 100644
          &mut self,
          player: String,
 diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
-index bb9b346..2fe6b4e 100644
+index bb9b346..27f08f7 100644
 --- a/crates/horizon-mods/src/screen.rs
 +++ b/crates/horizon-mods/src/screen.rs
 @@ -1,7 +1,8 @@
@@ -1990,7 +1990,7 @@ index bb9b346..2fe6b4e 100644
  /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
  pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
      let percent = (fraction(value, max) * 100.0).round() as i64;
-@@ -85,27 +216,41 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -85,27 +216,42 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
      out
  }
  
@@ -2014,14 +2014,16 @@ index bb9b346..2fe6b4e 100644
              Some(tooltip_lines(t, v, m))
          }
 -        Widget::Button { x, y, w, h, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
+-            Some(tooltip_lines(t, 0, 0))
 +        Widget::Button { x, y, w, h, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
-             Some(tooltip_lines(t, 0, 0))
-         }
++            // `{0}`, `{1}`... are the screen's data slots, as in a text.
++            Some(tooltip_lines(&fill_text(t, data), 0, 0))
++        }
 +        Widget::Swatch { x, y, w, h, value, labels, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
 +            let v = read(value, data).max(0) as usize;
 +            let label = labels.get(v).or(labels.last()).map_or("", String::as_str);
 +            Some(tooltip_lines(&t.replace("{label}", label), v as i64, 0))
-+        }
+         }
          _ => None,
      })
  }
@@ -2041,7 +2043,7 @@ index bb9b346..2fe6b4e 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -141,18 +286,125 @@ mod tests {
+@@ -141,18 +287,132 @@ mod tests {
              ["Energy: 25 / 100", "25%"]
          );
      }
@@ -2100,6 +2102,13 @@ index bb9b346..2fe6b4e 100644
 +        press(&s, &[], &mut l, [5.0, 5.0], false);
 +        press(&s, &[], &mut l, [10.0 + 85.0, 30.0 + 8.0], false);
 +        assert_eq!(l.window, None);
++    }
++
++    #[test]
++    fn a_button_tooltip_reads_the_data_slots() {
++        let s = screen(r#"{"width":176,"height":166,"slots":[],"widgets":[{"type":"button","x":0,"y":0,"w":10,"h":10,"id":1,"tooltip":"Rate: {0} FE\nMax {1}"}]}"#);
++        let lines = hovered(&s, &[42, 7], &Locals::default(), [3.0, 3.0]);
++        assert_eq!(lines, Some(vec!["Rate: 42 FE".to_owned(), "Max 7".to_owned()]));
 +    }
 +
 +    #[test]
