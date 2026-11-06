@@ -1,0 +1,15 @@
+[package]
+name = "mekanism"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Mekanism for Horizon: a Rust port of Mekanism (MIT)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+horizon-mod-sdk = { path = "@SDK@" }
+
+[workspace]

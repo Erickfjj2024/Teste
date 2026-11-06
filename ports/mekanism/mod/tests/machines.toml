@@ -1,0 +1,50 @@
+# The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
+# and the game's cooking recipes, with energy from a creative cube, and show when they work.
+
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone"]
+
+[[recipe]]
+id = "mekanism:crushing/iron"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[recipe]]
+id = "mekanism:enriching/iron"
+json = '''{"type":"mekanism:enriching","input":{"count":1,"ingredient":"mekanism:dust_iron"},"output":{"count":1,"id":"mekanism:enriched_iron"}}'''
+
+[[cooking]]
+inputs = ["minecraft:iron_ore"]
+output = "minecraft:iron_ingot"
+
+[[step]]
+join = "Alex"
+blocks = [
+    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube[facing=north,lit=false]" },
+    { x = 0, y = 65, z = 0, state = "mekanism:crusher[facing=north,lit=false]" },
+    { x = 3, y = 64, z = 0, state = "mekanism:energized_smelter[facing=north,lit=false]" },
+]
+set-items = [
+    { x = 0, y = 65, z = 0, slots = ["minecraft:iron_ingot*2", ""] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] },
+]
+ticks = 1
+# One tick in: the cube fills itself and feeds the crusher on top of it.
+expect.block-items = [{ x = 0, y = 65, z = 0, slots = ["minecraft:iron_ingot*2", ""] }]
+
+[[step]]
+ticks = 220
+# 200 ticks later, the first ingot is a dust; the smelter, with no cable to the cube yet, never started.
+expect.block-items = [
+    { x = 0, y = 65, z = 0, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1"] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] },
+]
+expect.blocks = [{ x = 0, y = 65, z = 0, state = "mekanism:crusher[facing=north,lit=true]" }]
+
+[[step]]
+# Two cables from the cube reach the smelter: it runs and makes an ingot.
+blocks = [
+    { x = 1, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
+    { x = 2, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
+]
+ticks = 205
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1"] }]
+
