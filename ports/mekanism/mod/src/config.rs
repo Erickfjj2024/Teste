@@ -8,7 +8,11 @@
 pub enum Data {
     None = 0,
     Input = 1,
+    Input1 = 2,
+    Input2 = 3,
     Output = 4,
+    Output1 = 5,
+    Output2 = 6,
     InputOutput = 7,
     Energy = 8,
     Extra = 9,
@@ -20,18 +24,24 @@ impl Data {
         match self {
             Data::None => "None",
             Data::Input => "Input",
+            Data::Input1 => "Input (1)",
+            Data::Input2 => "Input (2)",
             Data::Output => "Output",
+            Data::Output1 => "Output (1)",
+            Data::Output2 => "Output (2)",
             Data::InputOutput => "Input/Output",
             Data::Energy => "Energy",
             Data::Extra => "Extra",
         }
     }
-    /// The name of its colour (`EnumColor`): input dark red, output blue, input/output purple, energy green...
+    /// The name of its colour (`EnumColor`).
     pub fn color_name(self) -> &'static str {
         match self {
             Data::None => "Light Gray",
-            Data::Input => "Dark Red",
-            Data::Output => "Blue",
+            Data::Input | Data::Input1 => "Dark Red",
+            Data::Input2 => "Orange",
+            Data::Output | Data::Output1 => "Blue",
+            Data::Output2 => "Cyan",
             Data::InputOutput => "Purple",
             Data::Energy => "Green",
             Data::Extra => "Yellow",
@@ -40,7 +50,11 @@ impl Data {
     pub fn from_byte(b: u8) -> Data {
         match b {
             1 => Data::Input,
+            2 => Data::Input1,
+            3 => Data::Input2,
             4 => Data::Output,
+            5 => Data::Output1,
+            6 => Data::Output2,
             7 => Data::InputOutput,
             8 => Data::Energy,
             9 => Data::Extra,
@@ -49,26 +63,49 @@ impl Data {
     }
 }
 
-/// The transmissions a machine configures.
+/// The transmissions a machine can configure (Mekanism's `TransmissionType`; the numbers are this port's and fix where
+/// each one's words are in the screen's data: 6 + 2 * number).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transmission {
     Items = 0,
     Energy = 1,
+    Fluids = 2,
+    Chemicals = 3,
+    Heat = 4,
 }
+
+/// Every transmission, in number order.
+pub const TRANSMISSIONS: [Transmission; 5] = [
+    Transmission::Items,
+    Transmission::Energy,
+    Transmission::Fluids,
+    Transmission::Chemicals,
+    Transmission::Heat,
+];
 
 impl Transmission {
     pub fn label(self) -> &'static str {
         match self {
             Transmission::Items => "Items",
             Transmission::Energy => "Energy",
+            Transmission::Fluids => "Fluids",
+            Transmission::Chemicals => "Chemicals",
+            Transmission::Heat => "Heat",
         }
     }
-    /// The next transmission a configurator is set to (`ConfiguratorMode`'s order).
-    pub fn next(self) -> Transmission {
+    /// The mode a configurator goes to next when sneaking in the air: the original's order (`ConfiguratorMode`), items,
+    /// fluids, chemicals, energy, heat.
+    pub fn next_tool(self) -> Transmission {
         match self {
-            Transmission::Items => Transmission::Energy,
-            Transmission::Energy => Transmission::Items,
+            Transmission::Items => Transmission::Fluids,
+            Transmission::Fluids => Transmission::Chemicals,
+            Transmission::Chemicals => Transmission::Energy,
+            Transmission::Energy => Transmission::Heat,
+            Transmission::Heat => Transmission::Items,
         }
+    }
+    pub fn from_number(n: i32) -> Option<Transmission> {
+        TRANSMISSIONS.get(usize::try_from(n).ok()?).copied()
     }
 }
 
@@ -83,6 +120,14 @@ pub enum Layout {
     Combiner,
 }
 
+impl Layout {
+    /// The transmissions a machine of this layout configures, in the order of its tabs (`getTransmissions`): the first is
+    /// the one the window opens on.
+    pub fn transmissions(self) -> &'static [Transmission] {
+        &[Transmission::Items, Transmission::Energy]
+    }
+}
+
 /// The sides in the order a configuration keeps them (`RelativeSide.VALUES`).
 pub const FRONT: usize = 0;
 pub const LEFT: usize = 1;
@@ -94,6 +139,8 @@ pub const BOTTOM: usize = 5;
 /// The data types a transmission supports, in the order a click goes through them (their ordinals').
 pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
     match (layout, t) {
+        // No machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
+        (_, Transmission::Fluids | Transmission::Chemicals | Transmission::Heat) => &[],
         (_, Transmission::Energy) => &[Data::None, Data::Input],
         (Layout::Combiner, Transmission::Items) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy, Data::Extra]
@@ -105,18 +152,20 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
 /// The next data type after `current` (or the one before): the next supported one in order, around.
 pub fn cycle(layout: Layout, t: Transmission, current: Data, back: bool) -> Data {
     let list = supported(layout, t);
+    if list.is_empty() {
+        return current;
+    }
     let at = list.iter().position(|d| *d == current).unwrap_or(0);
     let n = list.len();
     list[(at + if back { n - 1 } else { 1 }) % n]
 }
 
-/// A machine's whole configuration.
+/// A machine's whole configuration: the data type of each side for each transmission, and whether each ejects
+/// (`ConfigInfo.isEjecting`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub items: [Data; 6],
-    pub energy: [Data; 6],
-    /// Whether it pushes its output items out (`ConfigInfo.isEjecting`).
-    pub eject_items: bool,
+    pub sides: [[Data; 6]; 5],
+    pub eject: [bool; 5],
 }
 
 /// What a new machine starts with: items in on the sides, out on the right, its charge slot at the back (a combiner's extra
@@ -128,60 +177,77 @@ pub fn default_config(layout: Layout) -> Config {
     if layout == Layout::Combiner {
         items[BOTTOM] = Data::Extra;
     }
-    Config { items, energy: [Data::Input; 6], eject_items: false }
+    let mut sides = [[Data::None; 6]; 5];
+    sides[Transmission::Items as usize] = items;
+    sides[Transmission::Energy as usize] = [Data::Input; 6];
+    Config { sides, eject: [false; 5] }
 }
 
 impl Config {
-    pub fn side_mut(&mut self, t: Transmission) -> &mut [Data; 6] {
-        match t {
-            Transmission::Items => &mut self.items,
-            Transmission::Energy => &mut self.energy,
-        }
-    }
     pub fn side(&self, t: Transmission) -> &[Data; 6] {
-        match t {
-            Transmission::Items => &self.items,
-            Transmission::Energy => &self.energy,
-        }
+        &self.sides[t as usize]
+    }
+    pub fn side_mut(&mut self, t: Transmission) -> &mut [Data; 6] {
+        &mut self.sides[t as usize]
+    }
+    pub fn items(&self) -> &[Data; 6] {
+        self.side(Transmission::Items)
+    }
+    pub fn energy(&self) -> &[Data; 6] {
+        self.side(Transmission::Energy)
+    }
+    pub fn ejects(&self, t: Transmission) -> bool {
+        self.eject[t as usize]
     }
 
-    /// The bytes it is kept in: six item sides, six energy sides and the eject flag.
+    /// The bytes it is kept in: six sides for each of the five transmissions, then five eject flags.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out: Vec<u8> = self.items.iter().chain(&self.energy).map(|d| *d as u8).collect();
-        out.push(u8::from(self.eject_items));
+        let mut out: Vec<u8> = self.sides.iter().flatten().map(|d| *d as u8).collect();
+        out.extend(self.eject.iter().map(|e| u8::from(*e)));
         out
     }
 
+    /// A configuration read back: the current format, or the first one (items and energy sides and the items' eject flag,
+    /// 13 bytes), which machines placed with it keep.
     pub fn decode(bytes: &[u8], layout: Layout) -> Option<Config> {
-        if bytes.len() < 13 {
-            return None;
-        }
         let mut c = default_config(layout);
-        for i in 0..6 {
-            c.items[i] = Data::from_byte(bytes[i]);
-            c.energy[i] = Data::from_byte(bytes[6 + i]);
+        if bytes.len() >= 35 {
+            for (i, d) in c.sides.iter_mut().flatten().enumerate() {
+                *d = Data::from_byte(bytes[i]);
+            }
+            for (i, e) in c.eject.iter_mut().enumerate() {
+                *e = bytes[30 + i] == 1;
+            }
+            return Some(c);
         }
-        c.eject_items = bytes[12] == 1;
-        Some(c)
+        if bytes.len() >= 13 {
+            for i in 0..6 {
+                c.sides[Transmission::Items as usize][i] = Data::from_byte(bytes[i]);
+                c.sides[Transmission::Energy as usize][i] = Data::from_byte(bytes[6 + i]);
+            }
+            c.eject[Transmission::Items as usize] = bytes[12] == 1;
+            return Some(c);
+        }
+        None
     }
 
-    /// The numbers the screen reads, four nibbles to a data slot: items' front to back, items' top and bottom with the
-    /// eject flag, energy's front to back, energy's top and bottom.
-    pub fn screen_words(&self) -> [i32; 4] {
+    /// The numbers the screen reads, four nibbles to a data slot, two data slots for each transmission (its sides from the
+    /// front to the back, then its top and bottom with its eject flag in the third nibble).
+    pub fn screen_words(&self) -> [i32; 10] {
         let pack = |d: &[Data]| d.iter().enumerate().fold(0i32, |a, (i, d)| a | ((*d as i32) << (4 * i)));
-        [
-            pack(&self.items[..4]),
-            pack(&self.items[4..]) | (i32::from(self.eject_items) << 8),
-            pack(&self.energy[..4]),
-            pack(&self.energy[4..]),
-        ]
+        let mut out = [0i32; 10];
+        for (t, sides) in self.sides.iter().enumerate() {
+            out[2 * t] = pack(&sides[..4]);
+            out[2 * t + 1] = pack(&sides[4..]) | (i32::from(self.eject[t]) << 8);
+        }
+        out
     }
 }
 
 /// The slots of a machine a data type reaches.
 pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
     match (layout, data) {
-        (_, Data::None | Data::Energy) => &[],
+        (_, Data::None | Data::Energy | Data::Input1 | Data::Input2 | Data::Output1 | Data::Output2) => &[],
         (Layout::Electric, Data::Input) => &[0],
         (Layout::Electric, Data::Output) => &[1],
         (Layout::Electric, Data::InputOutput) => &[0, 1],
@@ -271,29 +337,25 @@ pub fn clear_target(layout: Layout, t: Transmission, sides: &[Data; 6], back: bo
 pub enum Click {
     /// A side of a transmission, next or (`back`) previous.
     Side { t: Transmission, side: usize, back: bool },
-    Eject,
+    /// The eject toggle of a transmission.
+    Eject(Transmission),
     /// Every side of a transmission (`back` for the right click).
     Clear { t: Transmission, back: bool },
 }
 
-/// The ids the screen's buttons send: 1000 + transmission * 100 + side * 10 + back, 2000 for the eject toggle and
-/// 3000 + transmission * 10 + back for the clear button.
+/// The ids the screen's buttons send: 1000 + transmission * 100 + side * 10 + back, 2000 + transmission for the eject toggle
+/// and 3000 + transmission * 10 + back for the clear button.
 pub fn click_of(id: i32) -> Option<Click> {
-    let t = |n: i32| match n {
-        0 => Some(Transmission::Items),
-        1 => Some(Transmission::Energy),
-        _ => None,
-    };
     match id {
-        1000..=1199 => {
+        1000..=1499 => {
             let n = id - 1000;
             let side = ((n % 100) / 10) as usize;
-            (side < 6 && n % 10 < 2).then_some(Click::Side { t: t(n / 100)?, side, back: n % 10 == 1 })
+            (side < 6 && n % 10 < 2).then_some(Click::Side { t: Transmission::from_number(n / 100)?, side, back: n % 10 == 1 })
         }
-        2000 => Some(Click::Eject),
-        3000..=3019 => {
+        2000..=2004 => Some(Click::Eject(Transmission::from_number(id - 2000)?)),
+        3000..=3049 => {
             let n = id - 3000;
-            Some(Click::Clear { t: t(n / 10)?, back: n % 10 == 1 })
+            Some(Click::Clear { t: Transmission::from_number(n / 10)?, back: n % 10 == 1 })
         }
         _ => None,
     }
@@ -306,15 +368,17 @@ mod tests {
     #[test]
     fn the_defaults_are_the_originals() {
         let c = default_config(Layout::Electric);
-        assert_eq!(c.items[RIGHT], Data::Output);
-        assert_eq!(c.items[BACK], Data::Energy);
-        assert_eq!(c.items[FRONT], Data::Input);
-        assert_eq!(c.items[TOP], Data::Input);
-        assert!(c.energy.iter().all(|d| *d == Data::Input));
-        assert!(!c.eject_items);
+        assert_eq!(c.items()[RIGHT], Data::Output);
+        assert_eq!(c.items()[BACK], Data::Energy);
+        assert_eq!(c.items()[FRONT], Data::Input);
+        assert_eq!(c.items()[TOP], Data::Input);
+        assert!(c.energy().iter().all(|d| *d == Data::Input));
+        assert!(!c.ejects(Transmission::Items));
+        // The transmissions no machine has yet start with nothing.
+        assert!(c.side(Transmission::Fluids).iter().all(|d| *d == Data::None));
         // A combiner has its extra input at the bottom.
-        assert_eq!(default_config(Layout::Combiner).items[BOTTOM], Data::Extra);
-        assert_eq!(default_config(Layout::Electric).items[BOTTOM], Data::Input);
+        assert_eq!(default_config(Layout::Combiner).items()[BOTTOM], Data::Extra);
+        assert_eq!(default_config(Layout::Electric).items()[BOTTOM], Data::Input);
     }
 
     #[test]
@@ -359,14 +423,14 @@ mod tests {
     fn data_types_reach_slots_and_faces() {
         // A crusher facing north: the right (west) outputs, the back (south) is the charge slot, the rest take.
         let c = default_config(Layout::Electric);
-        let faces = item_faces(Layout::Electric, "north", &c.items);
+        let faces = item_faces(Layout::Electric, "north", c.items());
         assert_eq!(faces[WEST], vec![1]);
         assert_eq!(faces[SOUTH], Vec::<u32>::new());
         assert_eq!(faces[UP], vec![0]);
         assert_eq!(faces[NORTH], vec![0]);
         // A sawmill's output reaches both output slots; a combiner's extra side reaches the extra slot.
         assert_eq!(slots_of(Layout::Sawmill, Data::Output), &[1, 2]);
-        let comb = item_faces(Layout::Combiner, "north", &default_config(Layout::Combiner).items);
+        let comb = item_faces(Layout::Combiner, "north", default_config(Layout::Combiner).items());
         assert_eq!(comb[DOWN], vec![1]);
         assert_eq!(comb[WEST], vec![2]);
     }
@@ -374,9 +438,9 @@ mod tests {
     #[test]
     fn energy_comes_in_where_a_side_takes_it() {
         let mut c = default_config(Layout::Electric);
-        assert_eq!(energy_in("north", &c.energy), [true; 6]);
-        c.energy[RIGHT] = Data::None;
-        let got = energy_in("north", &c.energy);
+        assert_eq!(energy_in("north", c.energy()), [true; 6]);
+        c.side_mut(Transmission::Energy)[RIGHT] = Data::None;
+        let got = energy_in("north", c.energy());
         assert!(!got[WEST]);
         assert!(got[EAST]);
     }
@@ -384,9 +448,11 @@ mod tests {
     #[test]
     fn it_is_kept_as_bytes_and_shown_as_nibbles() {
         let mut c = default_config(Layout::Sawmill);
-        c.eject_items = true;
-        c.energy[TOP] = Data::None;
+        c.eject[Transmission::Items as usize] = true;
+        c.side_mut(Transmission::Energy)[TOP] = Data::None;
+        c.side_mut(Transmission::Fluids)[FRONT] = Data::Output2;
         assert_eq!(Config::decode(&c.encode(), Layout::Sawmill), Some(c));
+        assert_eq!(c.encode().len(), 35);
         assert_eq!(Config::decode(&[1, 2], Layout::Sawmill), None);
         let w = c.screen_words();
         // The items' front (1: input), left (1), right (4: output) and back (8: energy), a nibble each.
@@ -395,15 +461,28 @@ mod tests {
         assert_eq!(w[1], 0x1_1 | (1 << 8));
         assert_eq!(w[2], 0x1_1_1_1);
         assert_eq!(w[3], 0x1 << 4);
+        // The fluids' words follow the energy's: the front is output (2).
+        assert_eq!(w[4], 6);
+    }
+
+    #[test]
+    fn a_configuration_of_the_first_format_is_still_read() {
+        // 0.1.17 to 0.1.19 kept 13 bytes: items' sides, energy's sides, the items' eject flag.
+        let old = [1, 1, 4, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let c = Config::decode(&old, Layout::Electric).unwrap();
+        assert_eq!(c.items()[RIGHT], Data::Output);
+        assert_eq!(c.items()[BACK], Data::Energy);
+        assert!(c.ejects(Transmission::Items));
+        assert!(c.side(Transmission::Heat).iter().all(|d| *d == Data::None));
     }
 
     #[test]
     fn the_clear_button_uniforms_then_cycles() {
         let c = default_config(Layout::Electric);
         // Mixed sides clear to none.
-        assert_eq!(clear_target(Layout::Electric, Transmission::Items, &c.items, false), Data::None);
+        assert_eq!(clear_target(Layout::Electric, Transmission::Items, c.items(), false), Data::None);
         // All the same: the next type.
-        assert_eq!(clear_target(Layout::Electric, Transmission::Energy, &c.energy, false), Data::None);
+        assert_eq!(clear_target(Layout::Electric, Transmission::Energy, c.energy(), false), Data::None);
         assert_eq!(clear_target(Layout::Electric, Transmission::Items, &[Data::None; 6], false), Data::Input);
     }
 
@@ -412,7 +491,9 @@ mod tests {
         assert_eq!(click_of(1000), Some(Click::Side { t: Transmission::Items, side: 0, back: false }));
         assert_eq!(click_of(1151), Some(Click::Side { t: Transmission::Energy, side: 5, back: true }));
         assert_eq!(click_of(1170), None);
-        assert_eq!(click_of(2000), Some(Click::Eject));
+        assert_eq!(click_of(2000), Some(Click::Eject(Transmission::Items)));
+        assert_eq!(click_of(2002), Some(Click::Eject(Transmission::Fluids)));
+        assert_eq!(click_of(2005), None);
         assert_eq!(click_of(3011), Some(Click::Clear { t: Transmission::Energy, back: true }));
         assert_eq!(click_of(5), None);
     }

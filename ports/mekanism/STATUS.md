@@ -119,10 +119,16 @@ testes unitários; **ninguém viu na tela do celular**. O que existe, lido do c�
 - **Motor de telas do jogo (fork):** telas ganharam **janelas** sobre o painel, grupos condicionais (`show`), amostras de cor por valor
   (`swatch`), botões com ação local (abrir/fechar janela, variável da tela) e um segundo id para o clique direito, e valores `nibble`.
 
-**Ainda não tem** (do original): aba de **Transporter Config** (não há transportadores), as abas de redstone, segurança, upgrades e
-energia; **arrastar** a janela e o fixar; o **ícone do bloco vizinho** em cada botão de lado; configuração de **fluidos e químicos**
-(não há tanques no porte); os modos **Vazio, Girar e Chave inglesa** do Configurador; o **Energy Cube não tem tela** (a configuração dele
-é só pelo Configurador). Os itens guardados nas máquinas aparecem por cima da janela (no original ficam por baixo).
+**Modelo genérico (mod 0.1.21/0.1.22, **não testado no jogo**):** a configuração guarda 5 transmissões (itens, energia, fluidos, químicos,
+calor) com 10 tipos de dado cada, 35 bytes (a de 13 bytes antiga ainda é lida); a janela gera uma aba por transmissão que a máquina
+suporta (hoje só Itens e Energia) e o Configurador troca o modo na ordem do original (itens, fluidos, químicos, energia, calor).
+As abas de fluido/gás/calor só aparecem quando existir uma máquina com esses tanques; a ligação aos tanques vem com a primeira.
+**Janela (APK v26, **não testada**):** o **ícone do bloco vizinho** aparece em cada botão de lado (`neighbor`, na orientação da
+máquina) e a janela **arrasta** pela borda de cima (18 px); os itens sob a janela já não aparecem nem recebem clique.
+
+**Ainda não tem** (do original): aba de **Transporter Config**, as abas de redstone, segurança, upgrades e energia; o **fixar** da
+janela; configuração de **fluidos e químicos** na prática (não há tanques no porte); os modos **Vazio, Girar e Chave inglesa** do
+Configurador; o **Energy Cube não tem tela** (a configuração dele é só pelo Configurador).
 
 **Defeito visto no teste da 2c (mod 0.1.18 corrige, não testado):** ao clicar agachado numa máquina, o Configurador mudava a face e
 também o modo dele. O cliente manda um uso no bloco e logo depois um uso no ar para o mesmo clique; o segundo, agachado, era lido como

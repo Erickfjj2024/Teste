@@ -299,6 +299,10 @@ impl Mekanism {
     /// (`ItemConfigurator.useOn`). Whether the configuration changed.
     fn configure(&mut self, cfg: &mut Config, facing: &str, layout: Layout, click: &Click) -> bool {
         let t = self.tool.get(&click.player).copied().unwrap_or(Transmission::Items);
+        // A configurator set to a transmission the machine does not have has nothing to do there.
+        if !layout.transmissions().contains(&t) {
+            return false;
+        }
         let side = config::side_of(facing, click.face);
         let now = cfg.side(t)[side];
         if !click.sneak {
@@ -320,11 +324,11 @@ impl Mekanism {
     /// Gives the game what a machine's configuration says: the slots each face reaches, whether it ejects, and (as the
     /// return) where energy comes in.
     fn apply_config(&mut self, e: &BlockEntity, layout: Layout, facing: &str, cfg: &Config) -> Vec<FlowSide> {
-        let faces = config::item_faces(layout, facing, &cfg.items);
+        let faces = config::item_faces(layout, facing, cfg.items());
         let _ = world::set_item_faces(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &faces);
-        let _ = world::set_item_eject(&e.dimension, e.pos.x, e.pos.y, e.pos.z, cfg.eject_items);
+        let _ = world::set_item_eject(&e.dimension, e.pos.x, e.pos.y, e.pos.z, cfg.ejects(Transmission::Items));
         self.applied.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z));
-        config::energy_in(facing, &cfg.energy)
+        config::energy_in(facing, cfg.energy())
             .iter()
             .map(|on| if *on { FlowSide::Input } else { FlowSide::None })
             .collect()
@@ -510,7 +514,7 @@ impl ServerMod for Mekanism {
                 // The faces are the default configuration's, the machine's own once it has one.
                 Kind::Electric => ContainerSpec {
                     slots: 2,
-                    faces: config::item_faces(Layout::Electric, "north", &config::default_config(Layout::Electric).items),
+                    faces: config::item_faces(Layout::Electric, "north", config::default_config(Layout::Electric).items()),
                     inputs: vec![0],
                     outputs: vec![1],
                     menu: true,
@@ -519,7 +523,7 @@ impl ServerMod for Mekanism {
                 // machine's own once it has one.
                 Kind::Sawmill => ContainerSpec {
                     slots: 3,
-                    faces: config::item_faces(Layout::Sawmill, "north", &config::default_config(Layout::Sawmill).items),
+                    faces: config::item_faces(Layout::Sawmill, "north", config::default_config(Layout::Sawmill).items()),
                     inputs: vec![0],
                     outputs: vec![1, 2],
                     menu: true,
@@ -527,7 +531,7 @@ impl ServerMod for Mekanism {
                 // The main input, the extra one and the output, on the faces of the default configuration.
                 Kind::Combiner => ContainerSpec {
                     slots: 3,
-                    faces: config::item_faces(Layout::Combiner, "north", &config::default_config(Layout::Combiner).items),
+                    faces: config::item_faces(Layout::Combiner, "north", config::default_config(Layout::Combiner).items()),
                     inputs: vec![0, 1],
                     outputs: vec![2],
                     menu: true,
@@ -604,7 +608,7 @@ impl ServerMod for Mekanism {
             }
             if sneaking {
                 let t = self.tool.entry(player.id.clone()).or_insert(Transmission::Items);
-                *t = t.next();
+                *t = t.next_tool();
                 let _ = players::tell(&player.id, &format!("Configure State: Configurate ({})", t.label()));
                 return true;
             }
@@ -645,7 +649,7 @@ impl ServerMod for Mekanism {
                 let now = cfg.side(t)[side];
                 cfg.side_mut(t)[side] = config::cycle(layout, t, now, back);
             }
-            config::Click::Eject => cfg.eject_items = !cfg.eject_items,
+            config::Click::Eject(t) => cfg.eject[t as usize] = !cfg.eject[t as usize],
             config::Click::Clear { t, back } => {
                 let target = config::clear_target(layout, t, cfg.side(t), back);
                 *cfg.side_mut(t) = [target; 6];

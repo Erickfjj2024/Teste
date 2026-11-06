@@ -12,7 +12,7 @@ index 47e9d18..c013d2a 100644
                  format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
              }
 diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
-index 0e48436..f0e234c 100644
+index 0e48436..a5cba5a 100644
 --- a/crates/horizon-client/src/game.rs
 +++ b/crates/horizon-client/src/game.rs
 @@ -5747,6 +5747,16 @@ impl Game<'_> {
@@ -52,6 +52,26 @@ index 0e48436..f0e234c 100644
      /// InventoryMenu / CraftingMenu slot layouts.
      fn slot_position(&self, i: usize) -> (f32, f32) {
          if self.creative_inventory_open()
+@@ -16845,6 +16861,9 @@ impl Game<'_> {
+                         if self.dialog_open() {
+                             self.dialog_drag();
+                         }
++                        if self.screen == Screen::Inventory {
++                            self.native_window_drag();
++                        }
+                         if self.screen == Screen::BlockEditor {
+                             self.block_editor_drag();
+                         }
+@@ -17131,6 +17150,9 @@ impl Game<'_> {
+                     if pressed && (self.sort_mouse_press(button) || self.hdr_mouse_press(button)) {
+                         return Ok(());
+                     }
++                    if !pressed && button == MouseButton::Left {
++                        self::menu_screens::end_drag();
++                    }
+                     match self.screen {
+                         Screen::Playing => {
+                             if pressed && !self.captured {
 diff --git a/crates/horizon-client/src/game/block_entity_ticks.rs b/crates/horizon-client/src/game/block_entity_ticks.rs
 index 5b75319..2a936c7 100644
 --- a/crates/horizon-client/src/game/block_entity_ticks.rs
@@ -336,15 +356,15 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..681f9e1 100644
+index 609127a..14866e9 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
-@@ -7,13 +7,33 @@ use super::{Game, native_hooks::NativeScreen};
+@@ -7,13 +7,44 @@ use super::{Game, native_hooks::NativeScreen};
  use horizon_client::hud::HudBatch;
  use horizon_mods::{
      content::{MenuScreen, Widget, parse_color},
 -    screen::{button_at, fill_text, filled, fraction, hovered, read},
-+    screen::{Locals, Press, fill_text, filled, fraction, hovered, open_window, press, read, showing},
++    screen::{DRAG_HEIGHT, Locals, Press, fill_text, neighbor_step, window_origin, filled, fraction, hovered, open_window, press, read, showing},
 +};
 +use std::{
 +    collections::HashMap,
@@ -358,6 +378,16 @@ index 609127a..681f9e1 100644
 +/// What the open screen keeps on this client alone (the window open, a tab chosen): one screen is open at a time.
 +static LOCALS: Mutex<Option<Locals>> = Mutex::new(None);
 +
++/// A window being dragged: where the cursor was (from the screen's top left) and the offset the window had.
++static DRAG: Mutex<Option<([f32; 2], [f32; 2])>> = Mutex::new(None);
++
++/// The left button was released: a dragged window is let go.
++pub(super) fn end_drag() {
++    if let Ok(mut d) = DRAG.lock() {
++        *d = None;
++    }
++}
++
 +/// The id a press that stays on this client gives `native_screen_click`'s `button`: not a menu button.
 +pub(super) const LOCAL_PRESS: i32 = i32::MIN;
 +
@@ -366,6 +396,7 @@ index 609127a..681f9e1 100644
 +    if let Ok(mut l) = LOCALS.lock() {
 +        *l = None;
 +    }
++    end_drag();
 +}
 +
 +fn locals() -> Locals {
@@ -375,7 +406,7 @@ index 609127a..681f9e1 100644
  /// The screen of menu type `id`, if it has one.
  pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
      MENU_SCREENS.get()?.get(id)
-@@ -33,33 +53,14 @@ impl Game<'_> {
+@@ -33,33 +64,14 @@ impl Game<'_> {
                  .collect(),
              inventory_y: def.inventory_y as f32,
              inventory_x: def.inventory_x as f32,
@@ -413,7 +444,7 @@ index 609127a..681f9e1 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -95,15 +96,89 @@ impl Game<'_> {
+@@ -95,15 +107,132 @@ impl Game<'_> {
                      let text = fill_text(text, data);
                      self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
                  }
@@ -424,6 +455,11 @@ index 609127a..681f9e1 100644
 +                    self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
 +                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
++                Widget::Neighbor { x, y, side } => {
++                    if let Some(icon) = self.neighbor_icon(*side) {
++                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
++                    }
++                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
 +            }
 +        }
@@ -455,7 +491,8 @@ index 609127a..681f9e1 100644
 +        self.draw_widgets(&def.widgets, data, &locals, batch, origin);
 +        // The window open, over the panel.
 +        if let Some(window) = open_window(def, &locals) {
-+            let at = [ox + window.x as f32, oy + window.y as f32];
++            let origin = window_origin(window, &locals);
++            let at = [ox + origin[0], oy + origin[1]];
 +            if let Some(texture) = &window.texture
 +                && let Some([sw, sh]) = self.native_sprite_size(texture)
 +            {
@@ -479,7 +516,32 @@ index 609127a..681f9e1 100644
 +        let block = self.native_screen_block()?;
 +        let screen = screen_of(&block)?;
 +        let w = open_window(screen, &locals())?;
-+        Some([w.x as f32, w.y as f32, w.width as f32, w.height as f32])
++        let [x, y] = window_origin(w, &locals());
++        Some([x, y, w.width as f32, w.height as f32])
++    }
++
++    /// The item of the block beside the machine whose screen is open, on its relative `side`; None for air or a
++    /// block without an item.
++    fn neighbor_icon(&self, side: u8) -> Option<String> {
++        let [x, y, z] = self.native_screen_pos()?;
++        let facing = self.native_block_property([x, y, z], "facing").unwrap_or_default();
++        let [dx, dy, dz] = neighbor_step(&facing, side);
++        let id = self.native_block([x + dx, y + dy, z + dz]);
++        (id != "minecraft:air" && !id.is_empty()).then_some(id)
++    }
++
++    /// The cursor moved with a window held: it follows (kept on the screen's near area).
++    pub(super) fn drag_declared_window(&self, at: [f32; 2]) {
++        let Ok(drag) = DRAG.lock() else { return };
++        let Some((from, offset)) = *drag else { return };
++        if let Ok(mut l) = LOCALS.lock()
++            && let Some(now) = l.as_mut()
++        {
++            now.offset = [
++                (offset[0] + at[0] - from[0]).clamp(-200.0, 400.0),
++                (offset[1] + at[1] - from[1]).clamp(-100.0, 300.0),
++            ];
++        }
 +    }
 +
 +    /// Whether the open window covers container slot `slot` (16 by 16 at its position): a window is over everything, so
@@ -498,16 +560,28 @@ index 609127a..681f9e1 100644
 +        let screen = screen_of(block)?;
 +        let mut l = LOCALS.lock().ok()?;
 +        let mut now = l.take().unwrap_or_default();
++        // A press on the title edge of an open window, over none of its buttons, takes the window to drag.
++        let grab = open_window(screen, &now).map(|w| {
++            let o = window_origin(w, &now);
++            let inside = at[0] >= o[0] && at[0] < o[0] + w.width as f32 && at[1] >= o[1] && at[1] < o[1] + DRAG_HEIGHT;
++            (inside, now.offset)
++        });
 +        let result = press(screen, data, &mut now, at, alt);
 +        *l = Some(now);
-+        match result? {
++        let result = result?;
++        if let (Press::Local, Some((true, offset)), false) = (&result, grab.unwrap_or((false, [0.0; 2])), alt)
++            && let Ok(mut d) = DRAG.lock()
++        {
++            *d = Some((at, offset));
++        }
++        match result {
 +            Press::Send(id) => Some(id),
 +            Press::Local => Some(LOCAL_PRESS),
 +        }
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +189,7 @@ impl Game<'_> {
+@@ -114,8 +243,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -552,7 +626,7 @@ index 003737e..2696fe8 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..eac8147 100644
+index 325afbf..f6a8e61 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -1941,8 +1941,8 @@ impl Game<'_> {
@@ -597,7 +671,25 @@ index 325afbf..eac8147 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4384,6 +4386,11 @@ impl Game<'_> {
+@@ -4360,6 +4362,17 @@ impl Game<'_> {
+         self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
+         self.put_back_mod_block_entity(pos, taken, &items);
+     }
++    /// Where the open mod screen's block is.
++    pub(super) fn native_screen_pos(&self) -> Option<[i32; 3]> {
++        let s = self.shown_native_screen()?;
++        Some([s.key.0, s.key.1, s.key.2])
++    }
++    /// The cursor moved: an open mod screen's held window follows it.
++    pub(super) fn native_window_drag(&self) {
++        if let Some((_, _, at)) = self.native_screen_at() {
++            self.drag_declared_window(at);
++        }
++    }
+     /// The cursor from the open mod screen's top left, with its block and
+     /// data, for its press and tooltip hooks.
+     fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
+@@ -4384,6 +4397,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -1116,7 +1208,7 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..affba44 100644
+index e2ee6c7..73192a2 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
 @@ -332,12 +332,57 @@ pub struct MenuScreen {
@@ -1187,7 +1279,7 @@ index e2ee6c7..affba44 100644
  }
  
  /// The way a bar or a progress arrow fills.
-@@ -408,16 +456,38 @@ pub enum Widget {
+@@ -408,16 +456,41 @@ pub enum Widget {
          #[serde(default)]
          color: Option<String>,
      },
@@ -1224,10 +1316,13 @@ index e2ee6c7..affba44 100644
 +    },
 +    /// Widgets shown while a condition holds.
 +    Show { when: When, widgets: Vec<Widget> },
++    /// The icon of the block that stands beside the machine on one of its `side`s (0 front, 1 left, 2 right, 3 back, 4 top,
++    /// 5 bottom, as the machine faces), drawn 16 by 16 at `x`, `y`: what Mekanism's side buttons show.
++    Neighbor { x: i32, y: i32, side: u8 },
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +531,155 @@ impl MenuScreen {
+@@ -461,81 +534,161 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -1428,6 +1523,12 @@ index e2ee6c7..affba44 100644
 +                colour(c)?;
 +            }
 +        }
++        Widget::Neighbor { x, y, side } => {
++            rect(*x, *y, 16, 16)?;
++            if *side > 5 {
++                return Err(format!("{name}: a neighbour's side is 0 to 5"));
++            }
++        }
 +        Widget::Show { when, widgets } => {
 +            if depth >= 3 || widgets.len() > 64 {
 +                return Err(format!("{name}: groups nest 3 deep and hold 64 widgets"));
@@ -1449,7 +1550,7 @@ index e2ee6c7..affba44 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +727,42 @@ pub enum RenderElement {
+@@ -583,6 +736,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -1492,7 +1593,7 @@ index e2ee6c7..affba44 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +776,50 @@ pub enum RenderElement {
+@@ -596,6 +785,50 @@ pub enum RenderElement {
      },
  }
  
@@ -1543,7 +1644,7 @@ index e2ee6c7..affba44 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +867,48 @@ impl BlockRenderer {
+@@ -643,6 +876,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -1592,7 +1693,7 @@ index e2ee6c7..affba44 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1208,6 +1474,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1483,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
@@ -1699,7 +1800,7 @@ index d3024e4..190ddf2 100644
          &mut self,
          player: String,
 diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
-index bb9b346..2649046 100644
+index bb9b346..2fe6b4e 100644
 --- a/crates/horizon-mods/src/screen.rs
 +++ b/crates/horizon-mods/src/screen.rs
 @@ -1,7 +1,8 @@
@@ -1712,7 +1813,7 @@ index bb9b346..2649046 100644
  
  /// What a widget reads from the menu's data slots `data`: a constant, a data
  /// slot (16 bits on the wire) or two read as low and high halves.
-@@ -11,9 +12,124 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
+@@ -11,9 +12,154 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
          Value::Const(c) => *c,
          Value::Data(i) => slot(*i),
          Value::Pair([lo, hi]) => (slot(*hi) << 16) | slot(*lo),
@@ -1721,10 +1822,12 @@ index bb9b346..2649046 100644
  }
  
 +/// What a screen keeps on this client alone: the window open and its variables (a selected tab).
-+#[derive(Clone, Debug, Default, PartialEq, Eq)]
++#[derive(Clone, Debug, Default, PartialEq)]
 +pub struct Locals {
 +    pub window: Option<String>,
 +    pub vars: BTreeMap<String, i64>,
++    /// How far the open window was dragged from where the screen puts it.
++    pub offset: [f32; 2],
 +}
 +
 +impl Locals {
@@ -1763,6 +1866,33 @@ index bb9b346..2649046 100644
 +    let id = locals.window.as_deref()?;
 +    screen.windows.iter().find(|w| w.id == id)
 +}
++
++/// Where the open window's top left is: its place on the screen and how far it was dragged.
++pub fn window_origin(window: &Window, locals: &Locals) -> [f32; 2] {
++    [window.x as f32 + locals.offset[0], window.y as f32 + locals.offset[1]]
++}
++
++/// The step `[dx, dy, dz]` from a machine facing `facing` to the block beside its relative `side` (0 front, 1 left, 2 right,
++/// 3 back, 4 top, 5 bottom; the same mapping as Mekanism's `RelativeSide.getDirection`: the left is clockwise of the front
++/// seen from above, the right counterclockwise).
++pub fn neighbor_step(facing: &str, side: u8) -> [i32; 3] {
++    // North, east, south, west in clockwise order, as the steps along x and z.
++    const AROUND: [(&str, [i32; 3]); 4] =
++        [("north", [0, 0, -1]), ("east", [1, 0, 0]), ("south", [0, 0, 1]), ("west", [-1, 0, 0])];
++    let front = AROUND.iter().position(|(n, _)| *n == facing).unwrap_or(0);
++    let turn = |by: usize| AROUND[(front + by) % 4].1;
++    match side {
++        0 => turn(0),
++        1 => turn(1),
++        2 => turn(3),
++        3 => turn(2),
++        4 => [0, 1, 0],
++        _ => [0, -1, 0],
++    }
++}
++
++/// The height of a window's top edge that takes a drag (Mekanism's windows drag by their title).
++pub const DRAG_HEIGHT: f32 = 18.0;
 +
 +/// What a press did.
 +#[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1823,11 +1953,12 @@ index bb9b346..2649046 100644
 +    if let Some(window) = open_window(screen, locals).cloned() {
 +        // A window's own widgets are hit wherever they are, outside it too (its tabs sit at its side); a press that
 +        // lands on the window and on none of them is the window's.
-+        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
++        let origin = window_origin(&window, locals);
++        let rel = [at[0] - origin[0], at[1] - origin[1]];
 +        if let Some(pressed) = press_in(&window.widgets, data, locals, rel, alt) {
 +            return Some(pressed);
 +        }
-+        if inside(at, window.x, window.y, window.width, window.height) {
++        if inside(at, origin[0] as i32, origin[1] as i32, window.width, window.height) {
 +            return Some(Press::Local);
 +        }
 +    }
@@ -1837,7 +1968,7 @@ index bb9b346..2649046 100644
  /// `value` of `max` as 0 to 1; 0 when `max` is not over 0.
  pub fn fraction(value: i64, max: i64) -> f32 {
      if max <= 0 {
-@@ -34,21 +150,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
+@@ -34,21 +180,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
      }
  }
  
@@ -1859,7 +1990,7 @@ index bb9b346..2649046 100644
  /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
  pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
      let percent = (fraction(value, max) * 100.0).round() as i64;
-@@ -85,27 +186,40 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -85,27 +216,41 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
      out
  }
  
@@ -1898,7 +2029,8 @@ index bb9b346..2649046 100644
 +/// The tooltip of what is under `at`: the open window's widgets first, then the screen's.
 +pub fn hovered(screen: &MenuScreen, data: &[i32], locals: &Locals, at: [f32; 2]) -> Option<Vec<String>> {
 +    if let Some(window) = open_window(screen, locals) {
-+        let rel = [at[0] - window.x as f32, at[1] - window.y as f32];
++        let origin = window_origin(window, locals);
++        let rel = [at[0] - origin[0], at[1] - origin[1]];
 +        if let Some(lines) = hover_in(&window.widgets, data, locals, rel) {
 +            return Some(lines);
 +        }
@@ -1909,7 +2041,7 @@ index bb9b346..2649046 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -141,18 +255,100 @@ mod tests {
+@@ -141,18 +286,125 @@ mod tests {
              ["Energy: 25 / 100", "25%"]
          );
      }
@@ -1968,6 +2100,31 @@ index bb9b346..2649046 100644
 +        press(&s, &[], &mut l, [5.0, 5.0], false);
 +        press(&s, &[], &mut l, [10.0 + 85.0, 30.0 + 8.0], false);
 +        assert_eq!(l.window, None);
++    }
++
++    #[test]
++    fn a_neighbour_side_follows_the_way_the_machine_faces() {
++        assert_eq!(neighbor_step("north", 0), [0, 0, -1]);
++        assert_eq!(neighbor_step("north", 1), [1, 0, 0]);
++        assert_eq!(neighbor_step("north", 2), [-1, 0, 0]);
++        assert_eq!(neighbor_step("north", 3), [0, 0, 1]);
++        assert_eq!(neighbor_step("east", 0), [1, 0, 0]);
++        assert_eq!(neighbor_step("south", 3), [0, 0, -1]);
++        assert_eq!(neighbor_step("west", 4), [0, 1, 0]);
++        assert_eq!(neighbor_step("west", 5), [0, -1, 0]);
++    }
++
++    #[test]
++    fn a_dragged_window_takes_its_presses_where_it_is_now() {
++        let s = screen(WINDOWED);
++        let mut l = Locals { window: Some("config".into()), offset: [20.0, 5.0], ..Locals::default() };
++        // The window's button at its 5, 5 is now at the screen's 10 + 20 + 5, 30 + 5 + 5.
++        assert_eq!(press(&s, &[], &mut l, [35.0, 40.0], false), Some(Press::Local));
++        assert_eq!(l.var("tab"), 1);
++        // Where it was is no longer the window's.
++        assert_eq!(press(&s, &[], &mut l, [15.0, 35.0], false), None);
++        let w = open_window(&s, &l).unwrap();
++        assert_eq!(window_origin(w, &l), [30.0, 35.0]);
 +    }
 +
 +    #[test]

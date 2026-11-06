@@ -59,13 +59,25 @@ expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
-# As the original's configurator does: sneaking in the air changes what it configures (items to start with); a plain
-# click on a side only tells what it is; sneaking, the click bumps the side to the next type.
+# As the original's configurator does: sneaking in the air goes to the next mode (items, fluids, chemicals, energy, heat),
+# items to start with; a plain click on a side only tells what it is; sneaking, the click bumps the side to the next type.
 as = "Alex"
 motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Fluids)"]
+
+[[step]]
+as = "Alex"
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+
+[[step]]
+as = "Alex"
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
 expect.told = ["Alex: Configure State: Configurate (Energy)"]
 
 [[step]]
@@ -100,7 +112,7 @@ expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
 # at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
 blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
 ticks = 2
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
@@ -108,13 +120,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 1050 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 2000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
@@ -122,13 +134,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3010 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0] }]
 
 [[step]]
 # The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
@@ -147,8 +159,8 @@ expect.claimed = true
 expect.told = ["Alex: Energy behavior bumped to: Input/Output (Purple)"]
 
 [[step]]
-# A while later, sneaking in the air does change the mode, as before.
+# A while later, sneaking in the air does change the mode (energy to heat), as before.
 as = "Alex"
 ticks = 10
 use-item = { stack = "mekanism:configurator*1" }
-expect.told = ["Alex: Configure State: Configurate (Items)"]
+expect.told = ["Alex: Configure State: Configurate (Heat)"]

@@ -442,44 +442,62 @@ def side_config_window():
 window_tex = side_config_window()
 eject_tex = save_gui(image_button('button/auto_eject'), 'side_config_eject')
 tab_config = tab_sprite('tab_config', 'button/configuration', None)
-tab_items = tab_sprite('tab_items', 'transmission/items', 0xCFCFCF)
-tab_energy = tab_sprite('tab_energy', 'transmission/energy', 0x59C15F)
 
-def side_config_widgets():
-    """The window's widgets: for each transmission its tabs, title, the six side buttons coloured by their data type, the
-    eject state and the clear button; the transmission chosen is the screen's variable `type` (0 items, 1 energy)."""
+# the transmissions, by the port's number (the same as the mod's `Transmission`): the tab's colour, its icon and whether it can eject
+TRANSMISSION_INFO = {
+    0: ('Items', 'transmission/items', 0xCFCFCF, True),
+    1: ('Energy', 'transmission/energy', 0x59C15F, False),
+    2: ('Fluids', 'transmission/fluids', 0x366BD0, True),
+    3: ('Chemicals', 'transmission/chemicals', 0xFFDD4F, True),
+    4: ('Heat', 'transmission/heat', 0xFFA160, False)}
+# the transmissions a machine configures, in the order of its tabs (Layout::transmissions in the mod)
+MACHINE_TRANSMISSIONS = {'crusher': [0, 1], 'enrichment_chamber': [0, 1], 'energized_smelter': [0, 1],
+                         'precision_sawmill': [0, 1], 'combiner': [0, 1]}
+TAB_SPRITES = {n: tab_sprite(f'tab_{info[0].lower()}', info[1], info[2]) for n, info in TRANSMISSION_INFO.items()}
+
+def side_config_widgets(transmissions):
+    """The window's widgets: for each transmission of the machine its title, the six side buttons coloured by their data type,
+    the eject state and the clear button; its tabs outside the window, four at the left then the rest at the right
+    (GuiSideConfiguration); the transmission chosen is the screen's variable `type` (the transmission's number). The sides of
+    transmission t are in data slots 6 + 2t and 7 + 2t (the top and bottom, and the eject flag in the third nibble)."""
     widgets = []
-    # slot of the screen's data a transmission's sides are in: its first word, then the word with top and bottom
-    words = {0: (6, 7), 1: (8, 9)}
-    titles = {0: 'Items Config', 1: 'Energy Config'}
-    for ty in (0, 1):
+    for ty in transmissions:
+        name, _icon, _tint, can_eject = TRANSMISSION_INFO[ty]
+        slots = (6 + 2 * ty, 7 + 2 * ty)
+        title = f'{name} Config'
         group = []
         # the title, centred between the close button and the eject button's end
-        group.append({'type': 'text', 'x': 20 + (116 - text_width(titles[ty])) // 2, 'y': 5, 'text': titles[ty], 'color': '#404040'})
+        group.append({'type': 'text', 'x': 20 + (116 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'})
         for side, (x, y) in SIDE_BUTTONS.items():
-            slot, idx = (words[ty][0], side) if side < 4 else (words[ty][1], side - 4)
-            group.append({'type': 'swatch', 'x': x + 2, 'y': y + 2, 'w': 18, 'h': 18, 'value': {'nibble': [slot, idx]},
+            slot, idx = (slots[0], side) if side < 4 else (slots[1], side - 4)
+            group.append({'type': 'swatch', 'x': x + 1, 'y': y + 1, 'w': 20, 'h': 20, 'value': {'nibble': [slot, idx]},
                           'colors': SWATCH_COLORS, 'labels': [DATA_LABELS[i] for i in range(10)],
                           'tooltip': ['Front', 'Left', 'Right', 'Back', 'Top', 'Bottom'][side] + '\n{label}'})
+            # the block beside that side, drawn over the colour (as the original's side buttons do)
+            group.append({'type': 'neighbor', 'x': x + 3, 'y': y + 3, 'side': side})
             group.append({'type': 'button', 'x': x, 'y': y, 'w': 22, 'h': 22, 'id': 1000 + ty * 100 + side * 10,
                           'alt_id': 1000 + ty * 100 + side * 10 + 1})
         group.append({'type': 'button', 'x': 136, 'y': 95, 'w': 14, 'h': 14, 'id': 3000 + ty * 10, 'alt_id': 3000 + ty * 10 + 1,
                       'tooltip': 'Clear sides\nClick to cycle every side, right click to go back'})
-        if ty == 0:
+        if can_eject:
             group.append({'type': 'sprite', 'texture': eject_tex, 'x': 136, 'y': 6, 'w': 14, 'h': 14})
-            group.append({'type': 'button', 'x': 136, 'y': 6, 'w': 14, 'h': 14, 'id': 2000, 'tooltip': 'Auto-eject'})
+            group.append({'type': 'button', 'x': 136, 'y': 6, 'w': 14, 'h': 14, 'id': 2000 + ty, 'tooltip': 'Auto-eject'})
             for on, text in ((0, 'Eject: Off'), (1, 'Eject: On')):
-                group.append({'type': 'show', 'when': {'data': {'value': {'nibble': [7, 2]}, 'eq': on}}, 'widgets': [
+                group.append({'type': 'show', 'when': {'data': {'value': {'nibble': [slots[1], 2]}, 'eq': on}}, 'widgets': [
                     {'type': 'text', 'x': 41, 'y': 28, 'text': text, 'color': '#3CFE9A'}]})
         else:
             group.append({'type': 'text', 'x': 41, 'y': 28, 'text': "Can't Eject", 'color': '#3CFE9A'})
         widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': ty}}, 'widgets': group})
-    # the tabs of the other transmission, outside the window at its left (GuiConfigTypeTab)
-    for ty, tex, name in ((0, tab_items, 'Items'), (1, tab_energy, 'Energy')):
-        widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': 1 - ty}}, 'widgets': [
-            {'type': 'sprite', 'texture': tex, 'x': -26, 'y': 2 + 28 * ty, 'w': 26, 'h': 26},
-            {'type': 'button', 'x': -26, 'y': 2 + 28 * ty, 'w': 26, 'h': 26, 'local': {'set': {'var': 'type', 'value': ty}},
-             'tooltip': name}]})
+    # the tabs of the other transmissions, outside the window: the first four at its left, the rest at its right
+    for i, ty in enumerate(transmissions):
+        x = -26 if i < 4 else WIN_W
+        for other in transmissions:
+            if other == ty:
+                continue
+            widgets.append({'type': 'show', 'when': {'local': {'var': 'type', 'eq': other}}, 'widgets': [
+                {'type': 'sprite', 'texture': TAB_SPRITES[ty], 'x': x, 'y': 2 + 28 * (i % 4), 'w': 26, 'h': 26},
+                {'type': 'button', 'x': x, 'y': 2 + 28 * (i % 4), 'w': 26, 'h': 26,
+                 'local': {'set': {'var': 'type', 'value': ty}}, 'tooltip': TRANSMISSION_INFO[ty][0]}]})
     widgets.append({'type': 'text', 'x': (WIN_W - text_width('Slots')) // 2, 'y': 120, 'text': 'Slots', 'color': '#787878'})
     widgets.append({'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'})
     return widgets
@@ -489,7 +507,7 @@ for m in MACHINES:
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     px, py = layout['progress']
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': len(layout['slots']), 'data_slots': 10, 'results': layout['results'],
+        'slots': len(layout['slots']), 'data_slots': 16, 'results': layout['results'],
         'screen': {'texture': machine_panel(m, layout), 'own_labels': True, 'slots': layout['slots'],
                    'widgets': [
             # the vertical power bar: its contents are 4 by 52 inside the frame
@@ -502,12 +520,12 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.20', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.22', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                'texture': window_tex, 'widgets': side_config_widgets()}]}})
+                                'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m])}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it
