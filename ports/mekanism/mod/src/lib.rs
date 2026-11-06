@@ -409,7 +409,7 @@ impl Mekanism {
     fn run(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         self.refresh(def, tick);
         let layout = def.layout();
-        let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
+        let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress = e
             .data
             .get(..2)
@@ -417,6 +417,14 @@ impl Mekanism {
         // Its side configuration: what its data holds after the progress, or a new machine's.
         let stored = Config::decode(e.data.get(2..).unwrap_or(&[]), layout);
         let mut cfg = stored.unwrap_or_else(|| config::default_config(layout));
+        if stored.is_none() && def.kind == Kind::Infuser {
+            // Its block is not a furnace, which turns to face the player: a new one looks at the nearest player.
+            let front = cube::facing_name(front_for(e));
+            if front != facing {
+                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "facing", front);
+                facing = front.to_owned();
+            }
+        }
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         let mut dirty = stored.is_none() || !self.applied.contains(&key);
         if let Some(click) = self.take_click(e) {

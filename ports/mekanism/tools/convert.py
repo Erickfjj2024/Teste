@@ -104,6 +104,12 @@ for s in STORAGE:
 BLOCKS['steel_casing'] = ('minecraft:iron_block', {'hardness': 3.5, 'explosion_resistance': 9.0, 'requires_tool': True}, 'storage')
 for m in MACHINES:
     BLOCKS[m] = ('minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
+# The infuser's model has gaps, so it is not a furnace (which hides the faces of the blocks beside it): a beacon is a full
+# shape that does not occlude, and the facing and lit states the furnace had it declares itself (the mod turns it to face
+# the player that places it, as the furnace does).
+OPEN_MACHINES = {'metallurgic_infuser'}
+for m in OPEN_MACHINES:
+    BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
 CUSTOM_BLOCKS = ['basic_universal_cable', 'basic_energy_cube', 'creative_energy_cube']
 # ---------------------------------------------------------------- items: every plain one
@@ -163,6 +169,9 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
         continue
     kept_blocks.append(n)
     block = {'template': template, 'properties': props, 'item': True}
+    if n in OPEN_MACHINES:
+        block['state_properties'] = {'facing': {'type': 'enum', 'values': ['north', 'east', 'south', 'west']},
+                                     'lit': {'type': 'boolean'}}
     put(f'{OUT}/data/{NS}/horizon/block/{n}.json', block)
     put(f'{OUT}/assets/{NS}/blockstates/{n}.json', bs)
     ip = find(f'items/{n}.json', ASSET_DIRS)
@@ -583,7 +592,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.26', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.27', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -650,7 +659,7 @@ for cube_name, (cube_title, rate) in CUBES.items():
             {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
             {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.26', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.27', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},
