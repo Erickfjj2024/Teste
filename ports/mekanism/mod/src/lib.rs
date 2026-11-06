@@ -12,6 +12,7 @@ mod cube;
 mod chem_table;
 mod plus;
 mod process;
+mod redstone;
 mod generators;
 mod machine;
 mod sawmill;
@@ -26,6 +27,7 @@ use horizon_mod_sdk::server::{
 };
 use config::{Config, Data, Layout, Transmission};
 use generators::GenKind;
+use redstone::Control;
 use sides::Mode;
 use machine::{Book, Io, Recipe, Stack, Status, step};
 use std::collections::{HashMap, HashSet};
@@ -210,6 +212,9 @@ struct Mekanism {
     buttons: HashMap<(String, i32, i32, i32), Vec<i32>>,
     /// Whether a solar generator saw the sky when last asked, and when.
     suns: HashMap<(String, i32, i32, i32), (u64, bool)>,
+    /// The redstone signal each machine had the tick before (`redstoneLastTick`), and whether the one being run may work.
+    last_power: HashMap<(String, i32, i32, i32), bool>,
+    can: bool,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -574,7 +579,23 @@ impl Mekanism {
         let mut tank_now = [process::Tank::default(), process::Tank::default()];
         let mut tank_next = [process::Tank::default(), process::Tank::default()];
         // The slots after, the energy and progress after, what it did, and whether anything changed.
-        let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = match def.kind {
+        let can = self.can;
+        let (items, energy, next_progress, status, changed): (Vec<Option<ItemStack>>, u64, u32, Status, bool) = if !can {
+            // `canFunction` is false: the machine rests where it is, its tanks as they were.
+            if let Some(spec) = def.proc {
+                let held = |i: usize| {
+                    e.tanks.get(i).map_or_else(process::Tank::default, |t| process::Tank { chemical: t.substance.clone(), amount: t.amount })
+                };
+                if spec.cap_in > 0 {
+                    tank_now[0] = held(0);
+                }
+                if spec.cap_out > 0 {
+                    tank_now[1] = held(usize::from(spec.cap_in > 0));
+                }
+                tank_next = tank_now.clone();
+            }
+            (e.items.clone(), e.energy, progress, Status::Idle, false)
+        } else { match def.kind {
             Kind::Electric => {
                 let book = self.books.entry(def.block).or_default();
                 let io = Io { input: slot(0), output: slot(1), energy: e.energy, progress };
@@ -653,7 +674,7 @@ impl Mekanism {
                     next != io,
                 )
             }
-        };
+        } };
         let active = status == Status::Running;
         // The block shows when it runs, with its entity kept.
         let lit = e.state.contains("lit=true");
@@ -679,7 +700,10 @@ impl Mekanism {
             data.extend(chem::screen(&tank_next[1]));
             let _ = spec;
         }
-        if !changed && !dirty && data == e.menu_data {
+        let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
+        let mut saved = machine_data(next_progress, &cfg);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(energy), &mut saved, &mut data);
+        if !changed && !dirty && data == e.menu_data && saved == e.data {
             return None;
         }
         let tanks = spec
@@ -698,7 +722,7 @@ impl Mekanism {
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: machine_data(next_progress, &cfg),
+            data: saved,
             items: Some(items),
             energy: Some(energy),
             energy_faces,
@@ -1012,6 +1036,8 @@ impl ServerMod for Mekanism {
             flow: HashMap::new(),
             buttons: HashMap::new(),
             suns: HashMap::new(),
+            last_power: HashMap::new(),
+            can: true,
         }, r.on_chunks().on_items()))
     }
 
@@ -1093,6 +1119,9 @@ impl ServerMod for Mekanism {
             return None;
         }
         let def = MACHINES.iter().find(|d| d.block == block)?;
+        if id == redstone::NEXT || id == redstone::PREVIOUS {
+            return self.redstone_button(def, id, &e);
+        }
         if def.kind == Kind::Generator {
             return None;
         }
@@ -1104,10 +1133,12 @@ impl ServerMod for Mekanism {
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
         if id == chem::DUMP && def.block == "mekanism:metallurgic_infuser" {
             // GuiDumpButton: the tank is emptied (`dump`).
+            let tail: Vec<i32> = e.menu_data.get(20..).map(<[i32]>::to_vec).unwrap_or_default();
             let mut data = e.menu_data.clone();
             data.truncate(16);
             data.extend(chem::screen(&process::Tank::default()));
             data.extend(chem::screen(&process::Tank::default()));
+            data.extend(tail);
             return Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
@@ -1144,7 +1175,11 @@ impl ServerMod for Mekanism {
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: machine_data(progress, &cfg),
+            data: {
+                let mut saved = machine_data(progress, &cfg);
+                saved.extend(e.data.get(saved.len()..).unwrap_or(&[]));
+                saved
+            },
             items: None,
             energy: None,
             energy_faces: Some(faces),
@@ -1161,6 +1196,10 @@ impl ServerMod for Mekanism {
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {
+                self.can = true;
+                if def.kind != Kind::Tank {
+                    self.read_control(def, e);
+                }
                 out.extend(match def.kind {
                     Kind::Continuous => self.run_continuous(def, e, tick),
                     Kind::Tank => self.run_tank(def, e),

@@ -155,6 +155,18 @@ Todos soltam energia só pela frente (o solar, pelo fundo): encoste um cabo ou u
 | K7 | Slots de armadura na tela dos geradores (suporte à esquerda) | Aceitam armadura como nos outros |
 | K8 | Energia sai pela frente para um **cabo** ou **Energy Cube** encostado | Chega energia; pelos outros lados não |
 
+## L. Controle de redstone e aba de energia (mod 0.1.36, **APK v37**)
+
+| # | O que fazer | Esperado |
+|---|---|---|
+| L1 | Abrir qualquer máquina (Crusher, Purification Chamber, Rotary...) ou gerador | À direita da tela, embaixo do painel, uma aba vermelha pequena (26x18) com um ícone de redstone (sem sinal) |
+| L2 | Clicar na aba (esquerdo) várias vezes; clicar com o direito | Troca o ícone e a dica: IGNORED, NORMAL, INVERTED, PULSE; o direito volta |
+| L3 | Modo **NORMAL** sem sinal | A máquina para de trabalhar (o bloco apaga, a seta não anda) e retoma de onde estava quando você liga uma alavanca encostada |
+| L4 | Modo **INVERTED** com a alavanca ligada | Para; desligando a alavanca, trabalha |
+| L5 | Modo **PULSE** | Um clique da alavanca (ou botão) faz a máquina trabalhar só por um instante |
+| L6 | Fechar e reabrir o mundo | O modo escolhido continua |
+| L7 | Aba de energia (esquerda, embaixo, ícone de raio) numa máquina | Dica "Using: N FE/t" (0 parada), "Needed: ..." e "Unit: Forge Energy" |
+
 ## I. Como reportar
 
 Para cada item: o número (A3, D7...), **OK** ou **errado**, e se errado: o que esperava, o que viu e, se der, uma

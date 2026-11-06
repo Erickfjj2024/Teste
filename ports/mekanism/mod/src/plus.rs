@@ -186,7 +186,7 @@ impl Mekanism {
         }
         let book = self.conts.entry(def.block).or_default();
         let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode: false };
-        let (next, status) = continuous::step(&spec, book, &io);
+        let (next, status) = if self.can { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
         let mut tanks = next.tanks.clone();
         if def.layout == Layout::Separator {
             tank::dump(&mut tanks[1], spec.caps[1], modes[0], 8, 1024);
@@ -226,6 +226,8 @@ impl Mekanism {
         data.extend([modes[0] as i32, modes[1] as i32]);
         let mut saved = machine_data(progress, &cfg);
         saved.extend([modes[0] as u8, modes[1] as u8]);
+        let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), &mut saved, &mut data);
         let tanks_changed = tanks != io.tanks || e.tanks.len() != 3;
         if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data {
             return None;
@@ -289,7 +291,7 @@ impl Mekanism {
         let book_key = if mode { ROTARY_FLUID_BOOK } else { def.block };
         let book = self.conts.entry(book_key).or_default();
         let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode };
-        let (next, status) = continuous::step(&spec, book, &io);
+        let (next, status) = if self.can { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
         let tanks = next.tanks.clone();
         let active = status == Status::Running;
         let lit = e.state.contains("lit=true");
@@ -317,6 +319,8 @@ impl Mekanism {
         let mut saved = machine_data(progress, &cfg);
         saved.extend([0, 0]);
         saved[37] = u8::from(mode);
+        let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), &mut saved, &mut data);
         let tanks_changed = tanks[..2] != io.tanks[..2] || e.tanks.len() != 2;
         if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data {
             return None;

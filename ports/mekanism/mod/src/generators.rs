@@ -222,6 +222,7 @@ impl Mekanism {
     /// A tick of a generator.
     pub(crate) fn run_generator(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         let kind = def.generator?;
+        let can = self.can;
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let placed = e.data.get(8) == Some(&1);
@@ -276,7 +277,7 @@ impl Mekanism {
                     tank.amount += mb;
                     items_changed = true;
                 }
-                if tank.amount > 0 && room(energy) >= BIO_GENERATION {
+                if can && tank.amount > 0 && room(energy) >= BIO_GENERATION {
                     energy += BIO_GENERATION;
                     tank.amount -= 1;
                     active = true;
@@ -309,7 +310,7 @@ impl Mekanism {
                 if e.dimension == "minecraft:the_nether" {
                     boost += HEAT_NETHER;
                 }
-                let burning = tank.chemical == "minecraft:lava" && tank.amount >= HEAT_FLUID_RATE && room(energy) > 0;
+                let burning = can && tank.chemical == "minecraft:lava" && tank.amount >= HEAT_FLUID_RATE && room(energy) > 0;
                 if burning {
                     tank.amount -= HEAT_FLUID_RATE;
                     active = true;
@@ -323,7 +324,7 @@ impl Mekanism {
                 extra = (heat / HEAT_CAPACITY).round() as i32;
             }
             GenKind::Gas => {
-                let (used, made) = gas_tick(&tank.chemical, tank.amount, GAS_TANK, room(energy));
+                let (used, made) = if can { gas_tick(&tank.chemical, tank.amount, GAS_TANK, room(energy)) } else { (0, 0) };
                 if used > 0 {
                     tank.amount -= used;
                     energy += made;
@@ -337,7 +338,7 @@ impl Mekanism {
                     let (brightness, darken) = sky(env.day_time, env.rain, env.thunder);
                     let sees = env.has_skylight && darken < 4 && self.sky_clear(e, tick);
                     extra = i32::from(sees);
-                    if sees {
+                    if sees && can {
                         let made = solar_production(brightness, peak(env.temperature, env.downfall, env.precipitation)).min(room(energy));
                         energy += made;
                         producing = made;
@@ -383,6 +384,8 @@ impl Mekanism {
         data.extend(if kind == GenKind::Solar { [0; 5] } else { plus::big_tank(&tank, tank_cap) });
         let mut saved = heat.to_le_bytes().to_vec();
         saved.push(1);
+        let control = Control::from_byte(e.data.get(redstone::offset(Kind::Generator)).copied().unwrap_or(0));
+        redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), &mut saved, &mut data);
         let tanks_changed = kind != GenKind::Solar && (tank != held(e, 0) || e.tanks.len() != 1);
         if !items_changed && !dirty && !tanks_changed && energy == e.energy && data == e.menu_data && saved == e.data {
             return None;

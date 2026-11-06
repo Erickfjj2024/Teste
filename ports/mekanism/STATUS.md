@@ -304,6 +304,20 @@ queima 100 mB por tick, o solar vê o sol ao meio-dia, o de gás queima 10 mB de
   combustíveis comuns (não há consulta de tempo de queima na API); perda de calor por face mostrada arredondada; ambiente do calor
   fixo em 300 K (o original varia com o bioma); luz do bloco ativo e partículas (fumaça/chama) não existem.
 
+## 2i. Controle de redstone e aba de energia (mod 0.1.36, APK v37, API 20, **não testados no jogo**)
+
+Passou no teste simulado (50 passos: um Crusher no modo "normal" não trabalha sem sinal e trabalha quando o sinal chega) e em 66 testes
+unitários. Lido do código 26.3 (`TileEntityMekanism.isRedstoneActivated`, `GuiRedstoneControlTab`, `GuiEnergyTab`):
+- **Aba de controle de redstone** (176, 137; 26 por 18; cor 0xC9071F) em **todas as máquinas e geradores**: clique esquerdo passa para o
+  próximo modo, direito volta: ignorado, normal (trabalha com sinal), invertido (trabalha sem sinal), pulso (trabalha só no tick em que o
+  sinal chega). O modo fica salvo na máquina. Parada pela redstone, a máquina descansa onde está (progresso, tanques e itens ficam).
+  Nos geradores, a redstone só impede de gerar (o calor do Heat Generator continua esfriando).
+- **Aba de energia** (-26, 137) das máquinas: "Using: N FE/t" (o uso dela enquanto trabalha), "Needed: faltando para encher" e "Unit: Forge Energy".
+- **API 20 (`world.get-redstone`):** o sinal de redstone que chega a um bloco do mod, 0 a 15 (o maior dos seis vizinhos), lido no começo do
+  tick; exige o **APK v37**.
+- **Diferenças:** o original só pára a parte que processa e deixa o resto (trocar itens de lata por tanque) trabalhar; aqui a máquina
+  inteira descansa. Tanques de fluido/químico e Energy Cubes não têm a aba (também não têm no original).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

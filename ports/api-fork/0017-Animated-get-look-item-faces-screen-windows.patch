@@ -988,10 +988,10 @@ index 8554dc2..863b3a0 100644
                  let kind = Self::remote_station_kind(m)?;
                  let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..eeac001 100644
+index fcc3158..937d02a 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
-@@ -101,8 +101,27 @@ mod run {
+@@ -101,8 +101,36 @@ mod run {
          /// Collision boxes by block state id (`None`: a shape that depends on
          /// its surroundings, taken as empty).
          shapes: Arc<Vec<Option<Arc<[CollisionBox]>>>>,
@@ -999,8 +999,17 @@ index fcc3158..eeac001 100644
 +        day_time: i64,
 +        rain: f32,
 +        thunder: f32,
++        /// The redstone signal at each mod block entity of the dimension in place, read as the tick began.
++        signals: std::collections::HashMap<[i32; 3], u8>,
++        dimension: &'static str,
      }
      impl WorldView for LentWorld {
++        fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8 {
++            if dimension != self.dimension {
++                return 0;
++            }
++            self.signals.get(&[x, y, z]).copied().unwrap_or(0)
++        }
 +        fn environment(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<horizon_mods::Environment> {
 +            let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
 +            let chunk = chunks.get(&(x >> 4, z >> 4))?;
@@ -1019,7 +1028,7 @@ index fcc3158..eeac001 100644
          fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
              let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
              let chunk = chunks.get(&(x >> 4, z >> 4))?;
-@@ -310,6 +329,7 @@ mod run {
+@@ -310,6 +338,7 @@ mod run {
              let mut snapshot = self.mod_snapshot_with(players.clone());
              if self.mods.world {
                  snapshot.motions = self.server_motions();
@@ -1027,7 +1036,7 @@ index fcc3158..eeac001 100644
              }
              if self.mods.mods.wants_player_items() {
                  snapshot.inventories = self.server_inventories(&players);
-@@ -379,7 +399,13 @@ mod run {
+@@ -379,7 +408,13 @@ mod run {
                              g.map_or_else(String::new, |g| uuid_string(g.uuid))
                          }
                      };
@@ -1042,7 +1051,30 @@ index fcc3158..eeac001 100644
                  };
                  match event {
                      ModEvent::Chat(w, text) => {
-@@ -471,11 +497,16 @@ mod run {
+@@ -464,6 +499,22 @@ mod run {
+             if !self.mods.world {
+                 return;
+             }
++            // The redstone signals of the mod block entities, read while the world is still in place.
++            let dimension = self.dim.id();
++            let at: Vec<[i32; 3]> = self
++                .world
++                .block_entities
++                .iter_mut()
++                .filter_map(|(pos, e)| {
++                    matches!(e, horizon_client_render::containers::BlockEntity::Mod(_))
++                        .then_some([pos.0, pos.1, pos.2])
++                })
++                .take(horizon_mods::BLOCK_ENTITIES_PER_CALL)
++                .collect();
++            let signals: std::collections::HashMap<[i32; 3], u8> = at
++                .into_iter()
++                .map(|p| (p, self.native_neighbor_signal(dimension, p).clamp(0, 15) as u8))
++                .collect();
+             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
+             for (dim, chunks) in self.levels.parked_chunks() {
+                 dims.push((dim.id(), std::mem::take(chunks)));
+@@ -471,11 +522,18 @@ mod run {
              let registry = self.pack.assets.registry;
              let biomes = self.res.biomes().clone();
              let shapes = self.collision_table();
@@ -1056,10 +1088,12 @@ index fcc3158..eeac001 100644
 +                day_time,
 +                rain,
 +                thunder,
++                signals,
++                dimension,
              }));
          }
  
-@@ -511,6 +542,30 @@ mod run {
+@@ -511,6 +569,30 @@ mod run {
          }
  
          /// What the window's own player is doing, as capability `player-control` reads it.
@@ -1090,7 +1124,7 @@ index fcc3158..eeac001 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +712,71 @@ mod run {
+@@ -657,6 +739,71 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -1162,7 +1196,7 @@ index fcc3158..eeac001 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -1230,17 +1350,20 @@ mod run {
+@@ -1230,17 +1377,20 @@ mod run {
                      }
                      let held = Self::stored_tanks(m, specs);
                      let sides = Self::tank_sides(m, specs);
@@ -1184,7 +1218,7 @@ index fcc3158..eeac001 100644
                          })
                          .collect();
                      Some(horizon_mods::flow::TankNode {
-@@ -1350,7 +1473,13 @@ mod run {
+@@ -1350,7 +1500,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -1199,7 +1233,7 @@ index fcc3158..eeac001 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1531,15 @@ mod run {
+@@ -1402,9 +1558,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -1216,7 +1250,7 @@ index fcc3158..eeac001 100644
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1553,7 @@ mod run {
+@@ -1418,7 +1580,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -1225,7 +1259,7 @@ index fcc3158..eeac001 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1795,27 @@ mod run {
+@@ -1660,6 +1822,27 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
@@ -1710,10 +1744,10 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..13df3f3 100644
+index 783da48..5e8f0d5 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
-@@ -686,6 +686,25 @@ interface %world {
+@@ -686,6 +686,29 @@ interface %world {
      /// The biome at a position (`minecraft:plains`, ...), as the server
      /// stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded.
      get-biome: func(dimension: string, x: s32, y: s32, z: s32) -> option<string>;
@@ -1736,10 +1770,14 @@ index 783da48..13df3f3 100644
 +    /// The sky and weather at a position, as of this call: none where no chunk
 +    /// is loaded.
 +    get-environment: func(dimension: string, x: s32, y: s32, z: s32) -> option<environment>;
++    /// The redstone signal reaching a block of the mod that carries a block
++    /// entity, 0 to 15 (the strongest of the six neighbours, what a dispenser
++    /// reads), as of the start of this tick: 0 for any other position.
++    get-redstone: func(dimension: string, x: s32, y: s32, z: s32) -> u8;
      /// One collision box of a block, in blocks, relative to the block's own
      /// corner (a full cube is `0,0,0` to `1,1,1`).
      record collision-box {
-@@ -713,6 +732,23 @@ interface %world {
+@@ -713,6 +736,23 @@ interface %world {
      /// happens for a block with no such property or value, or one already set.
      /// At most 4096 per call.
      set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
@@ -1763,7 +1801,7 @@ index 783da48..13df3f3 100644
  }
  
  /// Capability `player-control`, server mods only (manifest `api = "0.3"`,
-@@ -736,6 +772,11 @@ interface player-control {
+@@ -736,6 +776,11 @@ interface player-control {
      }
      /// What the player with this id is doing; none for an id that is not online.
      get-motion: func(player: string) -> option<motion>;
@@ -1775,7 +1813,7 @@ index 783da48..13df3f3 100644
      /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
      /// distance reset. `yaw` and `pitch` stay as they are when none. The
      /// move is made after this call returns, before the next tick. An error
-@@ -1254,7 +1295,7 @@ interface server-events {
+@@ -1254,7 +1299,7 @@ interface server-events {
      /// the use: the hand swings and neither the item's own use nor the
      /// block's runs after it; false leaves it to the game. It is asked at the
      /// moment of the click, so what it asks for through imports is made at the
@@ -1785,7 +1823,7 @@ index 783da48..13df3f3 100644
      /// A player hit the entity `entity` of `kind` holding `stack`
      /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
 diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
-index 7a52a62..9b4dbcd 100644
+index 7a52a62..8e01c2d 100644
 --- a/crates/horizon-mods/src/api_level.rs
 +++ b/crates/horizon-mods/src/api_level.rs
 @@ -7,13 +7,13 @@
@@ -1793,18 +1831,18 @@ index 7a52a62..9b4dbcd 100644
  
  /// The newest level this Horizon serves.
 -pub const LEVEL: u32 = 15;
-+pub const LEVEL: u32 = 19;
++pub const LEVEL: u32 = 20;
  
  /// Every function the game offers mods, as `interface.function`, with its
  /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
  /// function takes the next level and raises [`LEVEL`] (the `api_reference`
  /// test fails until it is listed here).
 -pub const FUNCTIONS: [(&str, u32); 73] = [
-+pub const FUNCTIONS: [(&str, u32); 78] = [
++pub const FUNCTIONS: [(&str, u32); 79] = [
      ("log.write", 0),
      ("game.get-player", 0),
      ("game.get-clock", 0),
-@@ -87,6 +87,11 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
+@@ -87,6 +87,12 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
      ("chunks.set-forced", 13),
      ("world.set-block-property", 14),
      ("recipe-types.cooking-recipes", 15),
@@ -1813,6 +1851,7 @@ index 7a52a62..9b4dbcd 100644
 +    ("world.set-item-eject", 17),
 +    ("world.set-tank-filter", 18),
 +    ("world.get-environment", 19),
++    ("world.get-redstone", 20),
  ];
  
  /// What the game's program carries so the launcher can read its level
@@ -2582,7 +2621,7 @@ index 02de080..12e459b 100644
          let d = data();
          assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
-index d3024e4..7797e63 100644
+index d3024e4..3061646 100644
 --- a/crates/horizon-mods/src/runtime.rs
 +++ b/crates/horizon-mods/src/runtime.rs
 @@ -58,7 +58,7 @@ pub use server_bindings::{
@@ -2632,16 +2671,18 @@ index d3024e4..7797e63 100644
      /// `chunks.set-forced` of mod `id`.
      Chunk {
          name: String,
-@@ -426,6 +450,8 @@ pub trait WorldView: std::any::Any + Send {
+@@ -426,6 +450,10 @@ pub trait WorldView: std::any::Any + Send {
      fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
      /// The biome at a position, `minecraft:plains`; `None` as for blocks.
      fn biome(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
 +    /// The sky and weather at a position; `None` as for blocks.
 +    fn environment(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Environment>;
++    /// The redstone signal at a mod block entity's position, 0 to 15.
++    fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8;
      /// The collision boxes of the block at a position, relative to the
      /// block's corner; `None` where no chunk of that dimension is loaded.
      fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>>;
-@@ -2152,6 +2178,63 @@ impl mod_world::Host for State {
+@@ -2152,6 +2180,63 @@ impl mod_world::Host for State {
          });
          Ok(())
      }
@@ -2705,10 +2746,14 @@ index d3024e4..7797e63 100644
      fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.block(&dimension, x, y, z)
-@@ -2160,6 +2243,10 @@ impl mod_world::Host for State {
+@@ -2160,6 +2245,14 @@ impl mod_world::Host for State {
          let view = self.world.lock().ok()?;
          view.as_ref()?.biome(&dimension, x, y, z)
      }
++    fn get_redstone(&mut self, dimension: String, x: i32, y: i32, z: i32) -> u8 {
++        let Ok(view) = self.world.lock() else { return 0 };
++        view.as_ref().map_or(0, |v| v.redstone(&dimension, x, y, z))
++    }
 +    fn get_environment(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Environment> {
 +        let view = self.world.lock().ok()?;
 +        view.as_ref()?.environment(&dimension, x, y, z)
@@ -2716,7 +2761,7 @@ index d3024e4..7797e63 100644
      fn get_collision(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.collision(&dimension, x, y, z)
-@@ -2589,6 +2676,13 @@ impl player_control::Host for State {
+@@ -2589,6 +2682,13 @@ impl player_control::Host for State {
              .find(|(id, _)| *id == player)
              .map(|(_, m)| m.clone())
      }
@@ -3157,7 +3202,7 @@ index bb9b346..a851a1f 100644
      }
  }
 diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
-index feecac5..e312144 100644
+index feecac5..a4ed7a3 100644
 --- a/crates/horizon-mods/src/testing.rs
 +++ b/crates/horizon-mods/src/testing.rs
 @@ -30,6 +30,8 @@ pub struct TestGame {
@@ -3169,10 +3214,31 @@ index feecac5..e312144 100644
      /// Every name that joined, for their id.
      names: Vec<String>,
      tick: u64,
-@@ -81,6 +83,19 @@ impl crate::WorldView for ScriptWorld {
+@@ -48,6 +50,8 @@ pub struct TestGame {
+     /// Their tanks, by position: what each holds (`"minecraft:water*500"`,
+     /// empty for none) and the sides of its faces.
+     pub block_tanks: std::collections::BTreeMap<(i32, i32, i32), Vec<(String, [crate::FlowSide; 6])>>,
++    /// The redstone signal at block entities' positions, for `get-redstone`.
++    pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
+     /// Their menus' data slots, by position.
+     pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
+     /// The faces each transmitter connects through, by position.
+@@ -63,7 +67,7 @@ pub struct TestGame {
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+-struct ScriptWorld(std::collections::BTreeMap<(i32, i32, i32), String>);
++struct ScriptWorld(std::collections::BTreeMap<(i32, i32, i32), String>, std::collections::BTreeMap<(i32, i32, i32), u8>);
+ 
+ impl crate::WorldView for ScriptWorld {
+     fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String> {
+@@ -81,6 +85,22 @@ impl crate::WorldView for ScriptWorld {
          };
          Some(biome.into())
      }
++    fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8 {
++        if dimension == "minecraft:overworld" { self.1.get(&(x, y, z)).copied().unwrap_or(0) } else { 0 }
++    }
 +    fn environment(&self, dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<crate::Environment> {
 +        // Noon in the plains, clear.
 +        let overworld = dimension == "minecraft:overworld";
@@ -3189,7 +3255,7 @@ index feecac5..e312144 100644
      fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
          let state = self.block(dimension, x, y, z)?;
          let name = state.split('[').next().unwrap_or_default();
-@@ -174,6 +189,7 @@ impl TestGame {
+@@ -174,6 +194,7 @@ impl TestGame {
              }),
              players: Vec::new(),
              motions: Vec::new(),
@@ -3197,7 +3263,15 @@ index feecac5..e312144 100644
              names: Vec::new(),
              tick: 0,
              world: Default::default(),
-@@ -215,6 +231,7 @@ impl TestGame {
+@@ -181,6 +202,7 @@ impl TestGame {
+             block_items: Default::default(),
+             block_energy: Default::default(),
+             block_tanks: Default::default(),
++            power: Default::default(),
+             block_menu_data: Default::default(),
+             block_transmitters: Default::default(),
+             multiblock_seen: Default::default(),
+@@ -215,6 +237,7 @@ impl TestGame {
              clock: self.clock,
              players: self.players.clone(),
              motions: self.motions.clone(),
@@ -3205,7 +3279,7 @@ index feecac5..e312144 100644
              mobs: self.mobs.clone(),
              mobs_dimension: "minecraft:overworld".into(),
              inventories: self.inventories.clone(),
-@@ -465,6 +482,7 @@ impl TestGame {
+@@ -465,6 +488,7 @@ impl TestGame {
                              faces: *faces,
                              substance,
                              amount,
@@ -3213,7 +3287,7 @@ index feecac5..e312144 100644
                          }
                      })
                      .collect();
-@@ -558,6 +576,31 @@ impl TestGame {
+@@ -558,6 +582,31 @@ impl TestGame {
          if let (Some(e), Some(entry)) = (u.energy, self.block_energy.get_mut(&pos)) {
              entry.0 = e;
          }
@@ -3245,7 +3319,7 @@ index feecac5..e312144 100644
          true
      }
      /// `n` frames, 1/60 s apart.
-@@ -762,7 +805,7 @@ pub struct RecipeSet {
+@@ -762,7 +811,7 @@ pub struct RecipeSet {
  }
  
  /// Fields of the player to change; the others keep their values. A server
@@ -3254,7 +3328,53 @@ index feecac5..e312144 100644
  /// no `game-mode`.
  #[derive(Debug, Default, Deserialize)]
  #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-@@ -1338,7 +1381,22 @@ impl Step {
+@@ -956,6 +1005,16 @@ pub struct BlockTanksSet {
+     tanks: Vec<String>,
+ }
+ 
++/// The redstone signal a step puts at a block.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct PowerSet {
++    x: i32,
++    y: i32,
++    z: i32,
++    level: u8,
++}
++
+ /// The stored energy of a block entity a step sets or expects.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -1056,6 +1115,9 @@ pub struct Step {
+     /// Tanks of block entities before the ticks (as `set-items`).
+     #[serde(default)]
+     set_tanks: Vec<BlockTanksSet>,
++    /// Redstone signals to put at positions (0 takes it off).
++    #[serde(default)]
++    power: Vec<PowerSet>,
+     /// Energy of block entities before the ticks (as `set-items`).
+     #[serde(default)]
+     set_energy: Vec<BlockEnergySet>,
+@@ -1289,6 +1351,9 @@ impl Step {
+         for b in &self.blocks {
+             game.world.insert((b.x, b.y, b.z), b.state.clone());
+         }
++        for p in &self.power {
++            game.power.insert((p.x, p.y, p.z), p.level);
++        }
+         for s in &self.set_tanks {
+             if let Some(held) = game.block_tanks.get_mut(&(s.x, s.y, s.z)) {
+                 for (slot, text) in held.iter_mut().zip(&s.tanks) {
+@@ -1305,7 +1370,7 @@ impl Step {
+             game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
+         }
+         game.mods
+-            .lend_world(Box::new(ScriptWorld(game.world.clone())));
++            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone())));
+         if let Some(name) = &self.join {
+             game.join(name);
+         }
+@@ -1338,7 +1403,22 @@ impl Step {
          };
          if let Some(set) = &self.player {
              match actor {
@@ -3279,7 +3399,7 @@ index feecac5..e312144 100644
              }
          }
 diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
-index 151d098..982ad09 100644
+index 151d098..b7c5f59 100644
 --- a/crates/horizon-mods/tests/sandbox.rs
 +++ b/crates/horizon-mods/tests/sandbox.rs
 @@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
@@ -3290,12 +3410,12 @@ index 151d098..982ad09 100644
 +    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`.
      assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
 -    assert_eq!(LEVEL, 15);
-+    assert_eq!(LEVEL, 19);
++    assert_eq!(LEVEL, 20);
  }
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..1290fd5 100644
+index 57a0edc..ab74b79 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -3319,11 +3439,12 @@ index 57a0edc..1290fd5 100644
  ### record `collision-box`
  
  One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
-@@ -712,9 +726,13 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+@@ -712,9 +726,14 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
  | --- | --- | --- |
  | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
  | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
 +| `get-environment` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<environment>` | The sky and weather at a position, as of this call: none where no chunk is loaded. |
++| `get-redstone` | `func(dimension: string, x: s32, y: s32, z: s32) -> u8` | The redstone signal reaching a block of the mod that carries a block entity, 0 to 15 (the strongest of the six neighbours, what a dispenser reads), as of the start of this tick: 0 for any other position. |
  | `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
  | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
  | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
@@ -3333,7 +3454,7 @@ index 57a0edc..1290fd5 100644
  
  ## `player-control`
  
-@@ -737,6 +755,7 @@ What a player is doing as of the last server tick.
+@@ -737,6 +756,7 @@ What a player is doing as of the last server tick.
  | Function | Signature | What it does |
  | --- | --- | --- |
  | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
@@ -3341,7 +3462,7 @@ index 57a0edc..1290fd5 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
-@@ -1146,5 +1165,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+@@ -1146,5 +1166,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
  | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
  | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
  | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |

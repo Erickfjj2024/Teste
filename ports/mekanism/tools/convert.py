@@ -444,6 +444,11 @@ def copy_gui(rel, name):
     gui_sprite(rel).save(path)
     return f'{NS}:gui/{name}'
 
+# what each machine uses a tick while it works (the mod's `MACHINES` table; `MekanismConfig.usage`)
+MACHINE_USAGE = {'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
+                 'metallurgic_infuser': 5, 'purification_chamber': 10, 'chemical_injection_chamber': 15, 'osmium_compressor': 15,
+                 'chemical_oxidizer': 15, 'chemical_dissolution_chamber': 16, 'chemical_crystallizer': 15,
+                 'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2}
 MACHINE_NAMES = {'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
                  'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator',
                  **{f'{t}_fluid_tank': f'{t.title()} Fluid Tank' for t in TIERS + ['creative']},
@@ -798,6 +803,38 @@ power_h_fill = copy_gui('bar/horizontal_power', 'bar_horizontal_power')
 # the original scrolls a name longer than its 69 pixel box; here the longest is written shorter
 MODE_TEXT = ['Idle', 'Dumping', 'Dump excess']
 
+# the redstone control tab (GuiRedstoneControlTab at 176, 137, 26 by 18, tinted 0xC9071F) and the energy tab of the machines
+# (GuiEnergyTab at -26, 137): the screen's number `c` is the control (0 ignored, 1 normal, 2 inverted, 3 pulse), c+1 and
+# c+2 the energy still needed to be full
+def redstone_tab(mode):
+    from PIL import Image
+    holder = tinted(nine_slice(gui_sprite('holder_right'), 26, 18, 4), 0xC9071F)
+    icon = gui_sprite(f'redstone_control/{mode}')
+    if icon.size[1] > icon.size[0]:
+        icon = icon.crop((0, 0, icon.size[0], icon.size[0]))
+    holder.alpha_composite(icon, (4 + (18 - icon.size[0]) // 2, (18 - icon.size[1]) // 2))
+    return save_gui(holder, f'redstone_{mode}')
+
+tab_energy_info = copy_gui('tab/energy_info', 'tab_energy_info')
+REDSTONE_TIPS = ['Redstone Detection: IGNORED', 'Redstone Detection: NORMAL', 'Redstone Detection: INVERTED', 'Redstone Detection: PULSE']
+def redstone_widgets(c):
+    out = []
+    for k, mode in enumerate(['disabled', 'high', 'low', 'pulse']):
+        out.append({'type': 'show', 'when': {'data': {'value': {'data': c}, 'eq': k}}, 'widgets': [
+            {'type': 'sprite', 'texture': redstone_tab(mode), 'x': 176, 'y': 137, 'w': 26, 'h': 18},
+            {'type': 'button', 'x': 176, 'y': 137, 'w': 26, 'h': 18, 'id': 6000, 'alt_id': 6001, 'tooltip': REDSTONE_TIPS[k]}]})
+    return out
+
+def energy_tab_widgets(c, usage):
+    """GuiEnergyTab(this, energyContainer, lastEnergyUsed): what it uses a tick (its usage while it works, status 1) and
+    what it needs to be full."""
+    out = [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26}]
+    for working in (0, 1):
+        out.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': 1 if working else 0}}, 'widgets': [
+            {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
+             'tooltip': f'Using: {usage if working else 0} FE/t\nNeeded: {{{c + 1}+{c + 2}}} FE\nUnit: Forge Energy'}]})
+    return out
+
 def process_menu(m):
     L = PROCESS_LAYOUTS[m]
     title = MACHINE_NAMES[m]
@@ -865,12 +902,14 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.35', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.36', 'color': '#808080'})
+    ctl = 24 if continuous else 20
+    widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
-    return {'slots': len(L['slots']), 'data_slots': 24 if continuous else 20, 'results': L['results'],
+    return {'slots': len(L['slots']), 'data_slots': (24 if continuous else 20) + 3, 'results': L['results'],
             'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
                        'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                     'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}}
@@ -961,7 +1000,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.35', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.36', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -977,7 +1016,7 @@ for m in MACHINES:
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     px, py = layout['progress']
     put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', {
-        'slots': len(layout['slots']), 'data_slots': 16, 'results': layout['results'],
+        'slots': len(layout['slots']), 'data_slots': 19, 'results': layout['results'],
         'screen': {'texture': machine_panel(m, layout), 'own_labels': True, 'slots': layout['slots'],
                    'widgets': [
             # the vertical power bar: its contents are 4 by 52 inside the frame
@@ -990,10 +1029,11 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.35', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.36', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
-            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}],
+            {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
+                   + redstone_widgets(16) + energy_tab_widgets(16, MACHINE_USAGE[m]),
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                 'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}})
 
@@ -1254,9 +1294,10 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.35', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.36', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
-    return {'slots': len(slots), 'data_slots': 15, 'results': [], 'armor': GEN_ARMOR,
+    widgets += redstone_widgets(15)
+    return {'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
             'screen': {'texture': gen_panel(n, L), 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': []}}
 
 for g in GENERATORS:

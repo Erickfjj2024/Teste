@@ -148,7 +148,7 @@ expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
 # at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
 blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
 ticks = 2
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
 
 [[step]]
 # A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
@@ -156,13 +156,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 1050 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 2000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
 
 [[step]]
 # The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
@@ -170,13 +170,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3010 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 12500, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12500, 0] }]
 
 [[step]]
 # The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
@@ -409,3 +409,25 @@ expect.blocks = [
     { x = 320, y = 64, z = 0, state = "mekanism:solar_generator[lit=true]" },
     { x = 330, y = 64, z = 0, state = "mekanism:gas_burning_generator[facing=north,lit=true]" },
 ]
+
+[[step]]
+# Redstone control: a crusher set to "normal" (the tab, button 6000) waits for a signal, and works once there is one.
+blocks = [
+    { x = 340, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 340, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+press = { x = 340, y = 64, z = 0, id = 6000 }
+ticks = 1
+
+[[step]]
+set-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
+ticks = 230
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
+
+[[step]]
+power = [{ x = 340, y = 64, z = 0, level = 15 }]
+ticks = 230
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1"] }]
