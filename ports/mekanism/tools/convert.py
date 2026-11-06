@@ -311,7 +311,7 @@ for m in MACHINES:
             {'type': 'bar', 'x': 78, 'y': 38, 'w': 24, 'h': 6, 'value': {'data': 0}, 'max': {'const': 200},
              'color': '#46C846', 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
             {'type': 'text', 'x': 90, 'y': 6, 'text': 'Status {5}', 'color': '#404040'},
-            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.12', 'color': '#808080'}]}})
+            {'type': 'text', 'x': 140, 'y': 6, 'text': 'v0.1.13', 'color': '#808080'}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 # a creative tab with all of it

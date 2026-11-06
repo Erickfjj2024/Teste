@@ -154,7 +154,7 @@ original usa, e o que o porte tem hoje:
 | Estados do bloco trocando o modelo (`facing`, `active`) | **funciona** (confirmado) |
 | Modelos JSON comuns (máquinas, minérios, blocos) | feito, copiados do original |
 | Portas e LEDs do Energy Cube (mod 0.1.7) | **confirmado pelo usuário** ("ficou ótimo"): configuração padrão do original, frente = saída com LEDs acesos, outras 5 faces = entrada |
-| **Configurador** (mod 0.1.9, APK v12, **não testado no jogo**; o mod 0.1.8 derrubou o app, ver defeito abaixo) | item `mekanism:configurator`: clicar numa face do Energy Cube passa o modo daquela face (desligada → entrada → saída → entrada/saída), agachado volta; a face é a que o olhar do jogador acerta (nova função `player-control.get-look`, API 16); o bloco mostra o modo (propriedades `side_*`: portas e LEDs mudam) e a energia só passa pelas faces conforme o modo. Só o modo de configuração de energia, só nos cubos; sem os outros modos do original (vazio, girar, chave inglesa) nem a aba de configuração na tela das máquinas |
+| **Configurador e portas por face do Energy Cube** (mod 0.1.12, APK v15) | **confirmado pelo usuário**, inclusive a energia mudando de verdade numa máquina ligada à face. (o mod 0.1.8 derrubou o app; ver defeitos 5 a 10). Antes: | item `mekanism:configurator`: clicar numa face do Energy Cube passa o modo daquela face (desligada → entrada → saída → entrada/saída), agachado volta; a face é a que o olhar do jogador acerta (nova função `player-control.get-look`, API 16); o bloco mostra o modo (propriedades `side_*`: portas e LEDs mudam) e a energia só passa pelas faces conforme o modo. Só o modo de configuração de energia, só nos cubos; sem os outros modos do original (vazio, girar, chave inglesa) nem a aba de configuração na tela das máquinas |
 | Carregadores de modelo próprios (cubo de energia, cabos, tanques, fábricas, modelos `.obj.mek`) | **aproximados à mão**: moldura do cubo sim, portas e LEDs por face não; cabos com núcleo e braços simples, sem os modelos grandes/pequenos do original |
 | Núcleo do Energy Cube animado como o original (**confirmado**) | elemento novo `animated` do renderizador: escala 0,4, giro em Y a 4°/tick, giro em torno de (0,1,1) a 36°+4°/tick, balanço `sin(3°·t)/7`, brilho total, só aparece com energia |
 | Partes desenhadas por código (TESR): núcleo do cubo, nível de fluido nos tanques, rotores, o Digital Miner | **mecanismo existe** (bloco 11: `cube`, `fluid` que sobe, `spin`), **nunca testado no jogo**; o núcleo girando do cubo é o primeiro uso (mod 0.1.5) |
@@ -165,6 +165,6 @@ original usa, e o que o porte tem hoje:
 | Renderizadores de entidade (Robit) | **não há** (só displays de item) |
 | Telas com o aspecto do original (fundo, botões, abas) | simples por enquanto; o mecanismo de telas declarativas aceita textura de fundo |
 
-Ordem proposta para a fidelidade: (1) ~~núcleo `animated`~~ feito e confirmado; (2) ~~portas e LEDs do cubo~~ feito e confirmado, e o configurador (mod 0.1.8, falta confirmar);
+Ordem proposta para a fidelidade: (1) ~~núcleo `animated`~~ feito e confirmado; (2) ~~portas e LEDs do cubo e configurador~~ feito e confirmado;
 (3) cor e brilho por estado; (4) tanques de fluido; (5) cabos com os modelos do original; (6) telas com o fundo do
 original; (7) rotores, partículas e o resto conforme as máquinas chegarem.

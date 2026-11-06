@@ -328,37 +328,21 @@ impl ServerMod for Mekanism {
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        let Some(pos) = pos else { return false };
         if stack.item != CONFIGURATOR {
             return false;
         }
-        let say = |text: &str| {
-            let _ = players::tell(&player.id, &format!("Configurator: {text}"));
-        };
-        let Some(pos) = pos else {
-            say("heard, but not aimed at a block");
-            return false;
-        };
-        let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else {
-            say(&format!("heard at {} {} {}, but the block there is unknown", pos.x, pos.y, pos.z));
-            return false;
-        };
+        let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
         if !block.contains("_energy_cube") {
-            say(&format!("heard on {block}, which it does not configure yet"));
             return false;
         }
         let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
         let eye = [player.x, player.y + if sneaking { EYE_SNEAKING } else { EYE }, player.z];
         let block = [pos.x, pos.y, pos.z];
         // The side the look meets; when the look is not known, or misses, the one toward the player.
-        let look = player_control::get_look(&player.id);
-        let face = look
+        let face = player_control::get_look(&player.id)
             .and_then(|(yaw, pitch)| sides::face_hit(eye, sides::look(yaw, pitch), block))
             .unwrap_or_else(|| sides::face_toward(eye, block));
-        say(&format!(
-            "{} side{}",
-            SIDES[face],
-            if look.is_some() { "" } else { " (look unknown)" }
-        ));
         self.pending.push(Click {
             player: player.id.clone(),
             dimension: player.dimension.clone(),
@@ -383,9 +367,6 @@ impl ServerMod for Mekanism {
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.
         for c in &mut self.pending {
             c.tick += 1;
-        }
-        for c in self.pending.iter().filter(|c| c.tick >= 5) {
-            let _ = players::tell(&c.player, "Configurator: no energy cube answered there");
         }
         self.pending.retain(|c| c.tick < 5);
         out
