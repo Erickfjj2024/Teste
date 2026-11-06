@@ -223,7 +223,7 @@ index 2b92825..ec9d630 100644
              return;
          };
 diff --git a/crates/horizon-client/src/game/lan_stations.rs b/crates/horizon-client/src/game/lan_stations.rs
-index a3b2d7f..b0de275 100644
+index a3b2d7f..00ae176 100644
 --- a/crates/horizon-client/src/game/lan_stations.rs
 +++ b/crates/horizon-client/src/game/lan_stations.rs
 @@ -394,6 +394,18 @@ impl Game<'_> {
@@ -270,12 +270,20 @@ index a3b2d7f..b0de275 100644
          // A mod container's menu: its mod's buttons (`native_menu_button`),
          // as handleContainerButtonClick checks them: the open menu, not a
          // spectator, still valid.
-@@ -417,7 +447,18 @@ impl Game<'_> {
+@@ -417,7 +447,26 @@ impl Game<'_> {
                  // its own host too (`lan.rs:165`), so this one path covers
                  // both single player and a LAN guest.
                  let mut carried = g.carried.clone();
 +                self.lan_debug(host, conn, "(server: sending the button to the mod)");
++                #[cfg(feature = "mods")]
++                {
++                    self.mods.acting_guest = host.hub.guest(conn).map(|g| g.uuid);
++                }
                  self.mod_menu_button(pos, id, &mut carried);
++                #[cfg(feature = "mods")]
++                {
++                    self.mods.acting_guest = None;
++                }
 +                #[cfg(feature = "mods")]
 +                {
 +                    let line = format!(
@@ -583,20 +591,24 @@ index 609127a..9b1d9c4 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..c61d747 100644
+index 003737e..f0affe8 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
-@@ -63,6 +63,9 @@ pub(super) struct ModsState {
+@@ -63,6 +63,13 @@ pub(super) struct ModsState {
      /// What players did this tick, for server mods at its end.
      #[cfg(feature = "mods")]
      pub(super) events: Vec<ModEvent>,
 +    /// Temporary: lines for a guest's chat about where a menu button went, sent with its next packet.
 +    #[cfg(feature = "mods")]
 +    pub(super) debug: Vec<(u32, String)>,
++    /// The guest whose packet the server is handling, by id, for the events that packet makes (a menu button): the
++    /// packet is handled outside the swap that makes a guest the acting player.
++    #[cfg(feature = "mods")]
++    pub(super) acting_guest: Option<u128>,
      /// A running server mod has capability `world`: its calls get the
      /// levels' chunks to read.
      #[cfg(feature = "mods")]
-@@ -613,6 +616,7 @@ impl Game<'_> {
+@@ -613,6 +620,7 @@ impl Game<'_> {
              font_widths: self.mods.font_widths.clone(),
              players,
              motions: Vec::new(),
@@ -604,7 +616,7 @@ index 003737e..c61d747 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +858,9 @@ impl Game<'_> {
+@@ -854,7 +862,9 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -684,7 +696,7 @@ index 325afbf..bd16474 100644
              .remote
              .as_ref()
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..07fa27c 100644
+index fcc3158..9015c79 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -310,6 +310,7 @@ mod run {
@@ -695,7 +707,22 @@ index fcc3158..07fa27c 100644
              }
              if self.mods.mods.wants_player_items() {
                  snapshot.inventories = self.server_inventories(&players);
-@@ -396,11 +397,23 @@ mod run {
+@@ -379,7 +380,13 @@ mod run {
+                             g.map_or_else(String::new, |g| uuid_string(g.uuid))
+                         }
+                     };
+-                    players.iter().chain(&before).find(|p| p.id == id).cloned()
++                    players
++                        .iter()
++                        .chain(&before)
++                        .find(|p| p.id == id)
++                        .cloned()
++                        // With one player on the server there is no one else it can be.
++                        .or_else(|| (players.len() == 1).then(|| players[0].clone()))
+                 };
+                 match event {
+                     ModEvent::Chat(w, text) => {
+@@ -396,11 +403,23 @@ mod run {
                          }
                      }
                      ModEvent::MenuButton { who: w, pos, id } => {
@@ -724,7 +751,7 @@ index fcc3158..07fa27c 100644
                          }
                      }
                      ModEvent::Block {
-@@ -511,6 +524,30 @@ mod run {
+@@ -511,6 +530,30 @@ mod run {
          }
  
          /// What the window's own player is doing, as capability `player-control` reads it.
@@ -755,7 +782,7 @@ index fcc3158..07fa27c 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +694,27 @@ mod run {
+@@ -657,6 +700,27 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -783,7 +810,7 @@ index fcc3158..07fa27c 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -1350,7 +1408,13 @@ mod run {
+@@ -1350,7 +1414,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -798,7 +825,7 @@ index fcc3158..07fa27c 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1466,12 @@ mod run {
+@@ -1402,9 +1472,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -808,11 +835,14 @@ index fcc3158..07fa27c 100644
 -            let who = self.lan_acting.map_or(Who::Local, Who::Conn);
 +            // The player by their id, as an item use finds them (`acting_server_player`): the connection's guest is not
 +            // always in the list the tick looks it up in.
-+            let who = Who::Uuid(self.native_acting_id());
++            let who = Who::Uuid(match self.mods.acting_guest {
++                Some(uuid) => uuid,
++                None => self.native_acting_id(),
++            });
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1485,7 @@ mod run {
+@@ -1418,7 +1494,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -821,7 +851,7 @@ index fcc3158..07fa27c 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1727,20 @@ mod run {
+@@ -1660,6 +1736,20 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
