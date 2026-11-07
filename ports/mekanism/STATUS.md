@@ -377,6 +377,8 @@ Passou no teste simulado (62 passos: um balde de salmoura esvazia num tanque de 
   de vidro com a área do fluido pintada com a cor dele (a máscara vem da diferença entre o balde e o balde de água do jogo; a original do NeoForge
   não está nas fontes). Os tanques de fluido, a Rotary, a Chemical Washer e o Electrolytic Separator esvaziam e enchem esses baldes como os de
   água e lava; um balde cheio devolve um balde vazio.
+- **Correção (0.1.41):** o sal não aparecia: a procura do fundo parava na primeira seção de chunk vazia (sem blocos para ler) e, nos oceanos,
+  parava na grama marinha e nas algas (que não são o chão); agora essas seções são puladas e só um bloco com colisão conta como chão.
 - **Diferença:** os baldes não colocam o fluido no mundo (o porte não tem fluidos de mod no mundo); servem para encher tanques e máquinas.
 
 ## 3. NÃO testado no jogo (o usuário não viu)

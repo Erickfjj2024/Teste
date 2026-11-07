@@ -1131,17 +1131,28 @@ impl ServerMod for Mekanism {
         // with water over it).
         for n in 0..worldgen::SALT_PER_CHUNK {
             let (x, z, radius) = worldgen::salt_disk(chunk_x, chunk_z, n);
+            // The floor: the first block that stops motion going down from the sky (air, water, and the plants of the water
+            // that have no collision are passed; a chunk section with nothing in it has no blocks to read).
             let mut floor = None;
             for y in (worldgen::BOTTOM..320).rev() {
-                let Some(block) = world::get_block(dimension, x, y, z) else { break };
+                let Some(block) = world::get_block(dimension, x, y, z) else { continue };
                 let name = block.split('[').next().unwrap_or("");
-                if !matches!(name, "minecraft:air" | "minecraft:cave_air" | "minecraft:water") {
+                if matches!(name, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air" | "minecraft:water") {
+                    continue;
+                }
+                if world::get_collision(dimension, x, y, z).is_some_and(|c| !c.is_empty()) {
                     floor = Some(y);
                     break;
                 }
             }
             let Some(floor) = floor else { continue };
-            if !world::get_block(dimension, x, floor + 1, z).is_some_and(|b| b.starts_with("minecraft:water")) {
+            let wet = |b: &str| {
+                let name = b.split('[').next().unwrap_or("");
+                name == "minecraft:water"
+                    || b.contains("waterlogged=true")
+                    || matches!(name, "minecraft:seagrass" | "minecraft:tall_seagrass" | "minecraft:kelp" | "minecraft:kelp_plant" | "minecraft:bubble_column")
+            };
+            if !world::get_block(dimension, x, floor + 1, z).is_some_and(|b| wet(&b)) {
                 continue;
             }
             for p in worldgen::salt_blocks(x, floor + 1, z, radius) {
