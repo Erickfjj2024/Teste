@@ -624,3 +624,9 @@ transmissão), Bins; (2) blocos grandes: Advanced Solar, Wind, Digital Miner (bo
 (3) multiblocos: Dynamic Tank, Induction Matrix, Thermal Evaporation, Boiler, Turbine, SPS, Fission, Fusion (a API de multiblocos do Horizon já
 existe, falta o motor da estrutura e as telas); (4) Logistical Sorter e os transportadores especiais, QIO, Teleporter, Quantum Entangloporter;
 (5) equipamentos: MekaSuit, Meka-Tool e módulos, mekanismtools, mekanismadditions, Robit, radiação.
+
+## 2u. Upgrades de velocidade (conferido, mod 0.1.64)
+
+O relato "8 upgrades de velocidade e a máquina não ficou mais rápida" foi um engano de item (eram 8 de energia: o gasto caiu de 8 para 1 e a velocidade
+não muda). Com 8 de velocidade o mod faz a receita em 20 ticks em vez de 200 (testes simulados da Crusher, da Basic Crushing e da Advanced
+Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
