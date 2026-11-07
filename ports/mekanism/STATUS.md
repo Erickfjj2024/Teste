@@ -603,3 +603,14 @@ na tela (último número) e o ícone a usa, como as máquinas. Os tanques de qu�
 
 Pendências do roteiro (lista de trabalho): ver `AUDITORIA.md` e a lista abaixo da seção 2: máquinas de químico restantes, blocos grandes (bounding
 blocks), multiblocos, logística de itens, equipamentos.
+
+## 2t. Logistical Transporter (mod 0.1.61 + fork: meio de transmissão de **itens**, **precisa de APK novo**; não testado no jogo)
+
+- **Fork (API):** `transmitter-medium` ganhou o caso `items`. A cada 10 ticks a rede move até `throughput` itens dos slots de saída dos blocos de
+  mod ao lado (pelo lado voltado para a rede) para os containers ao lado que aceitam (baús, funis, entradas de máquinas), em rodízio. Só tira de
+  blocos de mod (baús de vanilla só recebem, para não esvaziar baú em baú).
+- **Mod:** 4 Logistical Transporters (Basic, Advanced, Elite, Ultimate: 1, 16, 32 e 64 itens a cada 10 ticks, o `pull` do `TransporterTier`) com
+  os modelos e texturas do original; ligam-se às máquinas, fábricas, cubos e containers de vanilla (tag `item_connectable`). As receitas dos
+  cabos, tubos, canos e transportadores (dentro de `recipe/transmitter/`) agora também são copiadas (antes só as da raiz).
+- **Diferenças:** os itens **não andam visivelmente** pelo transportador (passam direto, sem velocidade nem cor/roteamento), não há Logistical
+  Sorter, Restrictive/Diversion Transporter, configuração de pull/push por lado nem filtros. Sem teste simulado (o harness não simula itens em rede).

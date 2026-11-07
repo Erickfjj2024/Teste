@@ -338,7 +338,7 @@ index a3b2d7f..b24ac1f 100644
                      let net = host.hub.stack(&carried);
                      if let Some(g) = host.hub.guest_mut(conn) {
 diff --git a/crates/horizon-client/src/game/machines.rs b/crates/horizon-client/src/game/machines.rs
-index e82b6ca..1c31d7b 100644
+index e82b6ca..dcfcadc 100644
 --- a/crates/horizon-client/src/game/machines.rs
 +++ b/crates/horizon-client/src/game/machines.rs
 @@ -107,6 +107,11 @@ impl View {
@@ -453,6 +453,56 @@ index e82b6ca..1c31d7b 100644
      pub(super) fn tick_hopper(&mut self, pos: Pos) {
          let time = self.world.game_time;
          let waiting = {
+@@ -751,6 +840,49 @@ impl Game<'_> {
+             self.container_changed(pos);
+         }
+     }
++    /// Whether the container at `pos` is a mod block's (the only ones an item network takes from).
++    pub(super) fn mod_container_gives(&self, pos: [i32; 3]) -> bool {
++        self.containers().view((pos[0], pos[1], pos[2]), false).is_some_and(|v| v.kind == Kind::Mod)
++    }
++    /// One item out of a slot the mod block at `pos` lets out through `dir`; its slot and the item.
++    pub(super) fn take_from_mod_container(&mut self, pos: [i32; 3], dir: Direction) -> Option<(usize, ItemStack)> {
++        let p = (pos[0], pos[1], pos[2]);
++        let view = self.containers().view(p, false)?;
++        if view.kind != Kind::Mod {
++            return None;
++        }
++        for slot in view.slots_for_face(Some(dir)) {
++            let c = self.containers();
++            let Some(stack) = c.get(&view, slot) else { continue };
++            if !c.can_take(&view, slot, stack, dir) {
++                continue;
++            }
++            if let Some(one) = self.take_one(&view, slot) {
++                self.view_changed(&view);
++                return Some((slot, one));
++            }
++        }
++        None
++    }
++    /// An item that found no taker goes back where it came from.
++    pub(super) fn put_back_mod_container(&mut self, pos: [i32; 3], slot: usize, one: ItemStack) {
++        let p = (pos[0], pos[1], pos[2]);
++        if let Some(view) = self.containers().view(p, false) {
++            self.put_back(&view, slot, one);
++            self.view_changed(&view);
++        }
++    }
++    /// Offers `stack` to the container at `pos` through its face `dir`; what it did not take.
++    pub(super) fn give_to_container(&mut self, pos: [i32; 3], dir: Direction, stack: ItemStack) -> Option<ItemStack> {
++        let p = (pos[0], pos[1], pos[2]);
++        let Some(view) = self.containers().view(p, false) else { return Some(stack) };
++        if self.containers().is_full(&view, dir) {
++            return Some(stack);
++        }
++        let rest = self.add_item(None, &view, stack, Some(dir));
++        self.view_changed(&view);
++        rest
++    }
+     /// `HopperBlockEntity.ejectItems`: into the block container in front, else
+     /// a container entity there (`getContainerAt`).
+     fn hopper_eject(&mut self, pos: Pos, hopper: &View) -> bool {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
 index 609127a..8cee4c9 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
@@ -858,10 +908,20 @@ index 609127a..8cee4c9 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..9bfe346 100644
+index 003737e..7fa6bf1 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
-@@ -63,6 +63,10 @@ pub(super) struct ModsState {
+@@ -38,6 +38,9 @@ use {
+ 
+ #[derive(Default)]
+ pub(super) struct ModsState {
++    /// Where each item network's round robin starts this tick.
++    #[cfg(feature = "mods")]
++    pub(super) item_turn: usize,
+     #[cfg(feature = "mods")]
+     pub(super) mods: Mods,
+     /// Capability `input`: a claimed item's use while the button is down.
+@@ -63,6 +66,10 @@ pub(super) struct ModsState {
      /// What players did this tick, for server mods at its end.
      #[cfg(feature = "mods")]
      pub(super) events: Vec<ModEvent>,
@@ -872,7 +932,7 @@ index 003737e..9bfe346 100644
      /// A running server mod has capability `world`: its calls get the
      /// levels' chunks to read.
      #[cfg(feature = "mods")]
-@@ -394,14 +398,26 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+@@ -394,14 +401,26 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
          .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
          .collect();
      let _ = super::menu_screens::MENU_SCREENS.set(screens);
@@ -900,7 +960,7 @@ index 003737e..9bfe346 100644
      }));
      if !set
          && containers::mod_menu_types()
-@@ -613,6 +629,7 @@ impl Game<'_> {
+@@ -613,6 +632,7 @@ impl Game<'_> {
              font_widths: self.mods.font_widths.clone(),
              players,
              motions: Vec::new(),
@@ -908,7 +968,7 @@ index 003737e..9bfe346 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +871,11 @@ impl Game<'_> {
+@@ -854,7 +874,11 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -1224,7 +1284,7 @@ index 8554dc2..863b3a0 100644
                  let kind = Self::remote_station_kind(m)?;
                  let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..1cce71c 100644
+index fcc3158..5e5ad37 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -101,8 +101,36 @@ mod run {
@@ -1287,7 +1347,15 @@ index fcc3158..1cce71c 100644
                  };
                  match event {
                      ModEvent::Chat(w, text) => {
-@@ -464,6 +499,22 @@ mod run {
+@@ -438,6 +473,7 @@ mod run {
+             self.apply_mod_entity_updates(menu_updates);
+             self.transfer_mod_energy();
+             self.transfer_mod_tanks();
++            self.transfer_mod_items();
+             self.sync_declared_displays();
+             self.mods.players = players;
+             self.show_mod_output();
+@@ -464,6 +500,22 @@ mod run {
              if !self.mods.world {
                  return;
              }
@@ -1310,7 +1378,7 @@ index fcc3158..1cce71c 100644
              let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
              for (dim, chunks) in self.levels.parked_chunks() {
                  dims.push((dim.id(), std::mem::take(chunks)));
-@@ -471,11 +522,18 @@ mod run {
+@@ -471,11 +523,18 @@ mod run {
              let registry = self.pack.assets.registry;
              let biomes = self.res.biomes().clone();
              let shapes = self.collision_table();
@@ -1329,7 +1397,7 @@ index fcc3158..1cce71c 100644
              }));
          }
  
-@@ -511,6 +569,30 @@ mod run {
+@@ -511,6 +570,30 @@ mod run {
          }
  
          /// What the window's own player is doing, as capability `player-control` reads it.
@@ -1360,7 +1428,7 @@ index fcc3158..1cce71c 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +739,97 @@ mod run {
+@@ -657,6 +740,97 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
@@ -1458,7 +1526,15 @@ index fcc3158..1cce71c 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -990,7 +1163,7 @@ mod run {
+@@ -719,6 +893,7 @@ mod run {
+                         medium: match &spec.medium {
+                             horizon_mods::TransmitterMedium::Energy => Medium::Energy,
+                             horizon_mods::TransmitterMedium::Tank(kind) => Medium::Tank(kind.clone()),
++                            horizon_mods::TransmitterMedium::Items => Medium::Items,
+                         },
+                         throughput: spec.throughput,
+                         connect: Self::transmitter_connect(m),
+@@ -990,7 +1165,7 @@ mod run {
              let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
              let (energy, energy_faces) = match &kind.energy {
                  Some(spec) => (
@@ -1467,7 +1543,7 @@ index fcc3158..1cce71c 100644
                      Self::energy_faces(m, spec).to_vec(),
                  ),
                  None => (0, Vec::new()),
-@@ -1055,11 +1228,12 @@ mod run {
+@@ -1055,11 +1230,12 @@ mod run {
                      {
                          let name = |s: &str| horizon_world::nbt::JavaString::from(s);
                          if let Some(e) = u.energy {
@@ -1482,7 +1558,7 @@ index fcc3158..1cce71c 100644
                              );
                          }
                          if let Some(f) = &u.energy_faces {
-@@ -1173,8 +1347,8 @@ mod run {
+@@ -1173,8 +1349,8 @@ mod run {
                      let spec = kinds.iter().find(|k| k.block == m.id)?.energy.as_ref()?;
                      Some(horizon_mods::energy::EnergyNode {
                          pos: [pos.0, pos.1, pos.2],
@@ -1493,7 +1569,80 @@ index fcc3158..1cce71c 100644
                          max_receive: spec.max_receive,
                          max_extract: spec.max_extract,
                          faces: Self::energy_faces(m, spec),
-@@ -1230,17 +1404,20 @@ mod run {
+@@ -1208,6 +1384,72 @@ mod run {
+             }
+         }
+ 
++        /// One tick of items moving along the item networks: from the output slots of mod blocks beside a network into the
++        /// containers beside it that take them, up to the network's throughput, round robin over the sinks.
++        fn transfer_mod_items(&mut self) {
++            let kinds = self.mods.mods.block_entity_kinds();
++            if !kinds
++                .iter()
++                .any(|k| k.transmitter.as_ref().is_some_and(|t| matches!(t.medium, horizon_mods::TransmitterMedium::Items)))
++            {
++                return;
++            }
++            // Items move every ten ticks, `throughput` of them (Mekanism's transporters pull in bursts).
++            let tick = self.mods.item_turn;
++            self.mods.item_turn = tick.wrapping_add(1);
++            if tick % 10 != 0 {
++                return;
++            }
++            let transmitters = self.collect_transmitters(&kinds);
++            for (ends, throughput) in horizon_mods::network::item_networks(&transmitters) {
++                self.run_item_network(&ends, throughput, tick / 10);
++            }
++        }
++
++        /// One network's tick.
++        fn run_item_network(&mut self, ends: &[([i32; 3], usize)], throughput: u64, round: usize) {
++            use horizon_core::geometry::Direction;
++            let face_of = |f: usize| match f {
++                0 => Direction::Down,
++                1 => Direction::Up,
++                2 => Direction::North,
++                3 => Direction::South,
++                4 => Direction::West,
++                _ => Direction::East,
++            };
++            let mut left = throughput;
++            let mut turn = round;
++            for &(src, src_face) in ends {
++                if left == 0 {
++                    break;
++                }
++                // The neighbour's own face toward the network.
++                let from_dir = face_of(src_face ^ 1);
++                if !self.mod_container_gives(src) {
++                    continue;
++                }
++                while left > 0 {
++                    let Some((slot, one)) = self.take_from_mod_container(src, from_dir) else { break };
++                    let mut rest = Some(one);
++                    let n = ends.len();
++                    for k in 0..n {
++                        let (dst, dst_face) = ends[(turn + k) % n];
++                        if dst == src {
++                            continue;
++                        }
++                        let Some(stack) = rest.take() else { break };
++                        rest = self.give_to_container(dst, face_of(dst_face ^ 1), stack);
++                    }
++                    turn = turn.wrapping_add(1);
++                    if let Some(back) = rest {
++                        self.put_back_mod_container(src, slot, back);
++                        break;
++                    }
++                    left -= 1;
++                }
++            }
++        }
++
+         /// One tick of fluids and chemicals moving between neighbouring
+         /// block entities' tanks of this level (`horizon_mods::flow`).
+         fn transfer_mod_tanks(&mut self) {
+@@ -1230,17 +1472,20 @@ mod run {
                      }
                      let held = Self::stored_tanks(m, specs);
                      let sides = Self::tank_sides(m, specs);
@@ -1515,7 +1664,7 @@ index fcc3158..1cce71c 100644
                          })
                          .collect();
                      Some(horizon_mods::flow::TankNode {
-@@ -1350,7 +1527,13 @@ mod run {
+@@ -1350,7 +1595,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -1530,7 +1679,7 @@ index fcc3158..1cce71c 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1585,15 @@ mod run {
+@@ -1402,9 +1653,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -1547,7 +1696,7 @@ index fcc3158..1cce71c 100644
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1607,7 @@ mod run {
+@@ -1418,7 +1675,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -1556,7 +1705,7 @@ index fcc3158..1cce71c 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1849,34 @@ mod run {
+@@ -1660,6 +1917,34 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
@@ -2115,7 +2264,7 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..ca0130b 100644
+index 783da48..9809458 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
 @@ -686,6 +686,33 @@ interface %world {
@@ -2188,7 +2337,18 @@ index 783da48..ca0130b 100644
      /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
      /// distance reset. `yaw` and `pitch` stay as they are when none. The
      /// move is made after this call returns, before the next tick. An error
-@@ -1254,7 +1303,7 @@ interface server-events {
+@@ -1081,6 +1130,10 @@ interface server-events {
+         /// Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside
+         /// the network with a tank of that kind.
+         tank(string),
++        /// Items: the item slots of the blocks beside the network. Every ten ticks the game moves up to `throughput` items
++        /// from the slots the mod blocks beside it let out (their `outputs`, through the face toward the network) into the
++        /// containers beside it that take them (chests, hoppers, a block's `inputs`), shared round robin.
++        items,
+     }
+     /// A cable or a pipe. Transmitters of one medium that touch through faces
+     /// both connect through make one network. Every tick, after the mods'
+@@ -1254,7 +1307,7 @@ interface server-events {
      /// the use: the hand swings and neither the item's own use nor the
      /// block's runs after it; false leaves it to the game. It is asked at the
      /// moment of the click, so what it asks for through imports is made at the
@@ -3037,10 +3197,35 @@ index cc5d02d..8672179 100644
          TankNode {
              pos: [x, 0, 0],
 diff --git a/crates/horizon-mods/src/network.rs b/crates/horizon-mods/src/network.rs
-index bf2fb39..eed4f5d 100644
+index bf2fb39..7f3891d 100644
 --- a/crates/horizon-mods/src/network.rs
 +++ b/crates/horizon-mods/src/network.rs
-@@ -252,7 +252,7 @@ pub fn transfer_tanks(all: &[Transmitter], nodes: &mut [TankNode]) {
+@@ -18,6 +18,8 @@ pub enum Medium {
+     Energy,
+     /// Tanks of this kind (`fluid`, `gas`...).
+     Tank(String),
++    /// Items between containers.
++    Items,
+ }
+ 
+ /// One cable or pipe block.
+@@ -103,6 +105,15 @@ fn attached(all: &[Transmitter], members: &[usize]) -> Vec<([i32; 3], usize)> {
+     out
+ }
+ 
++/// The item networks: for each, the blocks beside it with the face of the network side they touch, and its throughput (items a tick).
++pub fn item_networks(all: &[Transmitter]) -> Vec<(Vec<([i32; 3], usize)>, u64)> {
++    networks(all)
++        .into_iter()
++        .filter(|(members, _)| all[members[0]].medium == Medium::Items)
++        .map(|(members, throughput)| (attached(all, &members), throughput))
++        .collect()
++}
++
+ /// Shares `total` among `caps` as evenly as their limits allow (water
+ /// filling): the remainder of an uneven split goes to the first ones.
+ pub fn share(total: u64, caps: &[u64]) -> Vec<u64> {
+@@ -252,7 +263,7 @@ pub fn transfer_tanks(all: &[Transmitter], nodes: &mut [TankNode]) {
                  .filter(|&r| (r.0, r.1) != (src.0, src.1))
                  .filter(|&r| {
                      let t = tank(nodes, r);
@@ -3049,7 +3234,7 @@ index bf2fb39..eed4f5d 100644
                  })
                  .collect();
              let caps: Vec<u64> = sinks
-@@ -379,6 +379,7 @@ mod tests {
+@@ -379,6 +390,7 @@ mod tests {
              faces: [side; 6],
              substance: substance.into(),
              amount,
@@ -3057,6 +3242,24 @@ index bf2fb39..eed4f5d 100644
          };
          let all = vec![cable(1, Medium::Tank("fluid".into()), 30)];
          let mut nodes = vec![
+@@ -393,4 +405,17 @@ mod tests {
+         assert_eq!(nodes[1].tanks[0].substance, "minecraft:water");
+         assert_eq!(nodes[2].tanks[0].amount, 5);
+     }
++
++    #[test]
++    fn an_item_network_lists_the_blocks_beside_it() {
++        let items = |x| cable(x, Medium::Items, 4);
++        let all = [items(0), items(1), cable(5, Medium::Energy, 10)];
++        let nets = item_networks(&all);
++        assert_eq!(nets.len(), 1);
++        let (ends, throughput) = &nets[0];
++        assert_eq!(*throughput, 4);
++        // Beside the two cables, but not the cables themselves.
++        assert!(ends.iter().all(|(p, _)| p[0] == -1 || p[0] == 2 || p[1] != 0 || p[2] != 0));
++        assert!(ends.iter().any(|(p, f)| *p == [-1, 0, 0] && *f == 2 || *p == [2, 0, 0]));
++    }
+ }
 diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
 index 02de080..c5f4b38 100644
 --- a/crates/horizon-mods/src/recipe_types.rs
@@ -3771,7 +3974,7 @@ index bb9b346..f712e01 100644
      }
  }
 diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
-index feecac5..a4ed7a3 100644
+index feecac5..fb386a3 100644
 --- a/crates/horizon-mods/src/testing.rs
 +++ b/crates/horizon-mods/src/testing.rs
 @@ -30,6 +30,8 @@ pub struct TestGame {
@@ -3856,7 +4059,15 @@ index feecac5..a4ed7a3 100644
                          }
                      })
                      .collect();
-@@ -558,6 +582,31 @@ impl TestGame {
+@@ -481,6 +505,7 @@ impl TestGame {
+                     medium: match spec.medium {
+                         crate::TransmitterMedium::Energy => crate::network::Medium::Energy,
+                         crate::TransmitterMedium::Tank(kind) => crate::network::Medium::Tank(kind),
++                        crate::TransmitterMedium::Items => crate::network::Medium::Items,
+                     },
+                     throughput: spec.throughput,
+                     connect,
+@@ -558,6 +583,31 @@ impl TestGame {
          if let (Some(e), Some(entry)) = (u.energy, self.block_energy.get_mut(&pos)) {
              entry.0 = e;
          }
@@ -3888,7 +4099,7 @@ index feecac5..a4ed7a3 100644
          true
      }
      /// `n` frames, 1/60 s apart.
-@@ -762,7 +811,7 @@ pub struct RecipeSet {
+@@ -762,7 +812,7 @@ pub struct RecipeSet {
  }
  
  /// Fields of the player to change; the others keep their values. A server
@@ -3897,7 +4108,7 @@ index feecac5..a4ed7a3 100644
  /// no `game-mode`.
  #[derive(Debug, Default, Deserialize)]
  #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-@@ -956,6 +1005,16 @@ pub struct BlockTanksSet {
+@@ -956,6 +1006,16 @@ pub struct BlockTanksSet {
      tanks: Vec<String>,
  }
  
@@ -3914,7 +4125,7 @@ index feecac5..a4ed7a3 100644
  /// The stored energy of a block entity a step sets or expects.
  #[derive(Debug, Deserialize)]
  #[serde(deny_unknown_fields)]
-@@ -1056,6 +1115,9 @@ pub struct Step {
+@@ -1056,6 +1116,9 @@ pub struct Step {
      /// Tanks of block entities before the ticks (as `set-items`).
      #[serde(default)]
      set_tanks: Vec<BlockTanksSet>,
@@ -3924,7 +4135,7 @@ index feecac5..a4ed7a3 100644
      /// Energy of block entities before the ticks (as `set-items`).
      #[serde(default)]
      set_energy: Vec<BlockEnergySet>,
-@@ -1289,6 +1351,9 @@ impl Step {
+@@ -1289,6 +1352,9 @@ impl Step {
          for b in &self.blocks {
              game.world.insert((b.x, b.y, b.z), b.state.clone());
          }
@@ -3934,7 +4145,7 @@ index feecac5..a4ed7a3 100644
          for s in &self.set_tanks {
              if let Some(held) = game.block_tanks.get_mut(&(s.x, s.y, s.z)) {
                  for (slot, text) in held.iter_mut().zip(&s.tanks) {
-@@ -1305,7 +1370,7 @@ impl Step {
+@@ -1305,7 +1371,7 @@ impl Step {
              game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
          }
          game.mods
@@ -3943,7 +4154,7 @@ index feecac5..a4ed7a3 100644
          if let Some(name) = &self.join {
              game.join(name);
          }
-@@ -1338,7 +1403,22 @@ impl Step {
+@@ -1338,7 +1404,22 @@ impl Step {
          };
          if let Some(set) = &self.player {
              match actor {
@@ -3984,7 +4195,7 @@ index 151d098..e390609 100644
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..a9c43c0 100644
+index 57a0edc..6b3937d 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -4032,7 +4243,15 @@ index 57a0edc..a9c43c0 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
-@@ -1146,5 +1167,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+@@ -1004,6 +1025,7 @@ What a transmitter block carries.
+ | --- | --- | --- |
+ | `energy` |  | Energy: the blocks beside the network with an `energy-spec`. |
+ | `tank` | `string` | Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside the network with a tank of that kind. |
++| `items` |  | Items: the item slots of the blocks beside the network. Every ten ticks the game moves up to `throughput` items from the slots the mod blocks beside it let out (their `outputs`, through the face toward the network) into the containers beside it that take them (chests, hoppers, a block's `inputs`), shared round robin. |
+ 
+ ### record `transmitter-spec`
+ 
+@@ -1146,5 +1168,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
  | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
  | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
  | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |

@@ -164,7 +164,8 @@ OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissoluti
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
-TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid')]
+TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid'),
+                ('logistical_transporter', 'item')]
 TRANSMITTER_BLOCKS = [f'{tier}_{kind}' for kind, _ in TRANSMITTERS for tier in ('basic', 'advanced', 'elite', 'ultimate')]
 CUBE_TIERS = ['basic', 'advanced', 'elite', 'ultimate', 'creative']
 CUSTOM_BLOCKS = [*TRANSMITTER_BLOCKS, *[f'{t}_energy_cube' for t in CUBE_TIERS]]
@@ -409,6 +410,14 @@ put(f'{OUT}/data/{NS}/tags/block/chemical_connectable.json', {'values': [
 put(f'{OUT}/data/{NS}/tags/block/fluid_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_mechanical_pipe')], *[f'{NS}:{m}' for m in FLUID_BLOCKS],
     f'{GNS}:heat_generator', f'{GNS}:bio_generator']})
+
+# the blocks a logistical transporter joins: the machines that have item slots, the factories and the vanilla containers
+ITEM_BLOCKS = [m for m in MACHINES if m not in FLUID_TANKS and m not in CHEM_TANKS and m not in ('electric_pump', 'fluidic_plenisher')]
+put(f'{OUT}/data/{NS}/tags/block/item_connectable.json', {'values': [
+    *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_logistical_transporter')], *[f'{NS}:{m}' for m in ITEM_BLOCKS],
+    *[f'{NS}:{t}_energy_cube' for t in CUBE_TIERS],
+    'minecraft:chest', 'minecraft:trapped_chest', 'minecraft:barrel', 'minecraft:furnace', 'minecraft:blast_furnace', 'minecraft:smoker',
+    'minecraft:hopper', 'minecraft:dropper', 'minecraft:dispenser', 'minecraft:brewing_stand', 'minecraft:crafter']})
 
 # menus of the machines: slots at Mekanism's places, an energy bar, the progress and the title.
 # The panel is Mekanism's own GUI sprites put together here: the nine-slice base, the slot frames and the arrow.
@@ -1188,7 +1197,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.60', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.61', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1287,7 +1296,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.60', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.61', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1389,7 +1398,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 48, 'y': label_y, 'text': 'v0.1.60', 'color': '#808080'},
+        {'type': 'text', 'x': width - 48, 'y': label_y, 'text': 'v0.1.61', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1432,7 +1441,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.60', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.61', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1474,7 +1483,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.60', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.61', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1741,7 +1750,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.60', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.61', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1825,7 +1834,7 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
         put(f'{OUT}/data/{NS}/recipe/{rel}', r)
         nrec += 1
 # crafting recipes of what was kept (vanilla types only)
-for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
+for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     r = read_json(p)
     if not str(r.get('type', '')).startswith('minecraft:crafting_'):
         continue
@@ -1838,7 +1847,7 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
             if s.startswith(NS + ':') and s.split(':')[1] not in have:
                 ok = False
         if ok:
-            put(f'{OUT}/data/{NS}/recipe/{os.path.basename(p)}', r)
+            put(f'{OUT}/data/{NS}/recipe/' + os.path.relpath(p, f'{GEN}/data/{NS}/recipe').replace(os.sep, '__'), r)
             nrec += 1
 # the factories' recipes (`mekanism:mek_data` too: the factory below keeps what it holds in the one it makes)
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/factory/*/*.json')):

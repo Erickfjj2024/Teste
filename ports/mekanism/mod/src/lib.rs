@@ -285,6 +285,8 @@ fn cube_capacity(block: &str) -> (u64, bool) {
 const CABLE_RATES: [u64; 4] = [8_000, 128_000, 1_024_000, 8_192_000];
 const TUBE_RATES: [u64; 4] = [750, 2_000, 64_000, 256_000];
 const PIPE_RATES: [u64; 4] = [250, 1_000, 8_000, 32_000];
+/// What a logistical transporter moves every ten ticks (`TransporterTier` pull: 1, 16, 32 and 64 items).
+const TRANSPORTER_RATES: [u64; 4] = [1, 16, 32, 64];
 
 struct Mekanism {
     books: HashMap<&'static str, Book>,
@@ -1246,6 +1248,7 @@ impl ServerMod for Mekanism {
                 ("universal_cable", TransmitterMedium::Energy, CABLE_RATES),
                 ("pressurized_tube", TransmitterMedium::Tank("chemical".into()), TUBE_RATES),
                 ("mechanical_pipe", TransmitterMedium::Tank("fluid".into()), PIPE_RATES),
+                ("logistical_transporter", TransmitterMedium::Items, TRANSPORTER_RATES),
             ] {
                 let mut k = kind(&format!("mekanism:{tier}_{name}"), false);
                 k.keep_data = false;

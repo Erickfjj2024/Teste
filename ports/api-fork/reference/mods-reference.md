@@ -1025,6 +1025,7 @@ What a transmitter block carries.
 | --- | --- | --- |
 | `energy` |  | Energy: the blocks beside the network with an `energy-spec`. |
 | `tank` | `string` | Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside the network with a tank of that kind. |
+| `items` |  | Items: the item slots of the blocks beside the network. Every ten ticks the game moves up to `throughput` items from the slots the mod blocks beside it let out (their `outputs`, through the face toward the network) into the containers beside it that take them (chests, hoppers, a block's `inputs`), shared round robin. |
 
 ### record `transmitter-spec`
 
