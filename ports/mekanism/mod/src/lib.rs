@@ -15,6 +15,7 @@ mod process;
 mod boiler;
 mod bounding;
 mod dynamic;
+mod entangloporter;
 mod evaporation;
 mod fission;
 mod fusion;
@@ -361,6 +362,9 @@ struct Mekanism {
     bound_owner: HashMap<(String, i32, i32, i32), [i32; 3]>,
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
     sorter_buttons: Vec<(String, BlockPos, i32)>,
+    /// The shared buffers of the quantum entangloporters, by frequency, and the buttons pressed on their screens.
+    entangled: HashMap<u8, entangloporter::Shared>,
+    qe_buttons: Vec<(String, BlockPos, i32)>,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
@@ -1431,6 +1435,15 @@ impl ServerMod for Mekanism {
         let mut sorter = kind(sorter::SORTER, true);
         sorter.container = Some(ContainerSpec { slots: sorter::SLOTS as u32, faces: sorter::item_faces(laser::NORTH), inputs: vec![0], outputs: vec![1], menu: true });
         r = r.block_entity_kind(sorter);
+        // The quantum entangloporter: a mirror of the shared energy, fluid and chemical, and the shared item slot.
+        let mut qe = kind(entangloporter::BLOCK, true);
+        qe.keep_data = false;
+        qe.energy = Some(EnergySpec { capacity: entangloporter::ENERGY_CAPACITY, max_receive: entangloporter::ENERGY_CAPACITY, max_extract: entangloporter::ENERGY_CAPACITY, faces: vec![FlowSide::Both; 6] });
+        for kind_name in ["fluid", "chemical"] {
+            qe.tanks.push(TankSpec { kind: kind_name.into(), capacity: entangloporter::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![FlowSide::Both; 6] });
+        }
+        qe.container = Some(ContainerSpec { slots: 1, faces: vec![vec![0]; 6], inputs: vec![0], outputs: vec![0], menu: true });
+        r = r.block_entity_kind(qe);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1483,6 +1496,8 @@ impl ServerMod for Mekanism {
             bound_owner: HashMap::new(),
             spses: HashMap::new(),
             sorter_buttons: Vec::new(),
+            entangled: HashMap::new(),
+            qe_buttons: Vec::new(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
@@ -1637,6 +1652,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == entangloporter::BLOCK {
+            self.qe_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == sorter::SORTER {
             self.sorter_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1780,6 +1799,10 @@ impl ServerMod for Mekanism {
             out.extend(self.run_dynamic(&valves));
         }
         out.extend(self.run_bounding(&entities, tick));
+        let qes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(entangloporter::BLOCK)).collect();
+        if !qes.is_empty() || !self.qe_buttons.is_empty() {
+            out.extend(self.run_entanglements(&qes, tick));
+        }
         let sorters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(sorter::SORTER)).collect();
         if !sorters.is_empty() || !self.sorter_buttons.is_empty() {
             out.extend(self.run_sorters(&sorters, tick));

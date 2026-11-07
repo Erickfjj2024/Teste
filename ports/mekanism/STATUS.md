@@ -682,3 +682,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2af. Logistical Sorter (mod 0.1.75; fork: API 22 `world.pull-items`)
 `sorter.rs` + fork: o sorter puxa itens do contêiner de trás (filtros em 5 slots ou tudo com auto-eject) para o slot de entrada, passa ao de saída e o ejetor do jogo (ou um transportador) o leva à frente. Diferenças em DIFERENCAS.md seção 8.
+
+### 2ag. Quantum Entangloporter (mod 0.1.76)
+`entangloporter.rs`: blocos da mesma frequência (número) compartilham energia, fluido, químico e um item; cada um guarda uma fatia. Os portos dos multiblocos entraram nas tags `*_connectable`. Diferenças em DIFERENCAS.md seção 9.

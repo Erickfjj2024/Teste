@@ -155,6 +155,15 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 8.4 | O destino da frente é o do ejetor do jogo (baú, máquina, hopper) ou um transportador logístico ao lado; sem a cor/rota de transporte | ABERTA |
 | 8.5 | O item passa pelo slot de entrada e depois pelo de saída (2 etapas); o original move direto | LIMITE API |
 
+## 9. Quantum Entangloporter (mod 0.1.76)
+| # | Diferença | Estado |
+|---|---|---|
+| 9.1 | Frequência é um **número** (1 a 99) escolhido por botões: sem nome, sem frequências privadas, sem segurança/dono, sem lista de frequências | LIMITE API |
+| 9.2 | Compartilha energia (256 MFE), 1 fluido (256.000 mB), 1 químico (8.192.000 mB) e 1 pilha de item; **calor não** | ABERTA |
+| 9.3 | Cada bloco guarda uma **fatia igual** do total (para não duplicar); um cabo/cano puxa só a fatia daquele bloco por tick, e o item é espelhado inteiro em todos (um item puxado de dois ao mesmo tempo pode duplicar) | LIMITE API |
+| 9.4 | Sem configuração de lados (tudo entra e sai por todas as faces), sem ejeção automática (precisa de cabo/cano/transportador puxando), sem carregamento de chunk | ABERTA |
+| 9.5 | Os portos dos multiblocos e os lasers passaram a conectar com cabos, tubos, canos e transportadores (tags `*_connectable`), o que faltava | — |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |
