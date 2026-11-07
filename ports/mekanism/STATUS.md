@@ -614,3 +614,13 @@ blocks), multiblocos, logística de itens, equipamentos.
   cabos, tubos, canos e transportadores (dentro de `recipe/transmitter/`) agora também são copiadas (antes só as da raiz).
 - **Diferenças:** os itens **não andam visivelmente** pelo transportador (passam direto, sem velocidade nem cor/roteamento), não há Logistical
   Sorter, Restrictive/Diversion Transporter, configuração de pull/push por lado nem filtros. Sem teste simulado (o harness não simula itens em rede).
+
+## Roteiro (o que falta construir)
+
+Feito até aqui: upgrades/redstone/aba de energia, PRC + pigmentos, baldes e sal, Energy Cubes (4 níveis), 36 fábricas, bomba e plenisher,
+liquifier, nucleosynthesizer, transportador de itens. **Falta**, na ordem planejada: (1) Isotopic Centrifuge e Solar Neutron Activator (ligados à cadeia
+nuclear/radiação, que não existe), Chargepad, Oredictionificator, Formulaic Assemblicator, Resistive/Fuelwood Heater (precisam do calor como
+transmissão), Bins; (2) blocos grandes: Advanced Solar, Wind, Digital Miner (bounding blocks, ou o jeito simplificado de um só bloco com modelo mais alto);
+(3) multiblocos: Dynamic Tank, Induction Matrix, Thermal Evaporation, Boiler, Turbine, SPS, Fission, Fusion (a API de multiblocos do Horizon já
+existe, falta o motor da estrutura e as telas); (4) Logistical Sorter e os transportadores especiais, QIO, Teleporter, Quantum Entangloporter;
+(5) equipamentos: MekaSuit, Meka-Tool e módulos, mekanismtools, mekanismadditions, Robit, radiação.
