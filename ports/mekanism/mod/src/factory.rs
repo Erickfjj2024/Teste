@@ -66,13 +66,21 @@ impl Mekanism {
             self.tried.insert(def.block, tick);
             self.books.insert(def.base, load_book(def.source));
         }
-        let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
+        let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress_of = |i: usize| {
             let at = if i == 0 { 0 } else { TAIL + 2 * (i - 1) };
             e.data.get(at..at + 2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])))
         };
         let stored = Config::decode(e.data.get(2..).unwrap_or(&[]), layout);
         let mut cfg = stored.unwrap_or_else(|| config::default_config(layout));
+        if stored.is_none() {
+            // Its block is not a furnace, which turns to face the player: a new one looks at the nearest player.
+            let front = cube::facing_name(front_for(e));
+            if front != facing {
+                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "facing", front);
+                facing = front.to_owned();
+            }
+        }
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         let mut dirty = stored.is_none() || !self.applied.contains(&key);
         if let Some(click) = self.take_click(e) {

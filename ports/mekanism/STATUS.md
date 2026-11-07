@@ -546,3 +546,10 @@ Mekanism e já dropavam. Agora todas usam `type`. O cubo/máquina dropado leva a
 
 Os 12 blocos apareciam em branco na aba criativa (só o nome ao passar o dedo): o modelo das fábricas usa o carregador `neoforge:composite`
 (corpo + LED), que o Horizon não tem. O conversor agora junta os filhos de qualquer modelo composto em um só (como já fazia nos geradores).
+
+## 2p (correção 2). Blocos vizinhos sumiam ao lado das fábricas (mod 0.1.50)
+
+As fábricas usavam a fornalha como base (um cubo cheio, que esconde as faces dos blocos ao lado), mas o modelo delas tem reentrâncias. Agora
+usam a base sem oclusão (a mesma das máquinas abertas: infuser, oxidizer, tanques...) e declaram `facing` e `lit` elas mesmas; a nova olha para
+quem a coloca. Conferido por script: todas as outras máquinas de base fornalha (crusher, enrichment chamber, smelter, sawmill, combiner,
+purification, injection e compressor) têm um único cubo cheio no modelo, então não escondem nada indevidamente.
