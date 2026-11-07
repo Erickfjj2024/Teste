@@ -12,6 +12,7 @@ mod cube;
 mod chem_table;
 mod plus;
 mod process;
+mod boiler;
 mod dynamic;
 mod evaporation;
 mod induction;
@@ -341,6 +342,7 @@ struct Mekanism {
     matrices: HashMap<(String, [i32; 3]), u64>,
     /// The thermal evaporation plants, and the recipes they run.
     plants: HashMap<(String, [i32; 3]), evaporation::Plant>,
+    boilers: HashMap<(String, [i32; 3]), boiler::Boiler>,
     evaporating: HashMap<String, (u64, String, u64)>,
     matrix_given: HashMap<(String, [i32; 3]), u64>,
     /// What each fluidic plenisher knows of its work.
@@ -1293,6 +1295,21 @@ impl ServerMod for Mekanism {
             }
             r = r.block_entity_kind(k);
         }
+        // The thermoelectric boiler: the casing, the dispersers and the superheating elements only join the structure; the valves hold its four tanks.
+        for part in [boiler::CASING, boiler::DISPERSER, boiler::ELEMENT] {
+            let mut k = kind(part, false);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: boiler::GROUP.into() });
+            r = r.block_entity_kind(k);
+        }
+        let mut bv = kind(boiler::VALVE, true);
+        bv.keep_data = false;
+        bv.multiblock = Some(MultiblockSpec { group: boiler::GROUP.into() });
+        bv.container = Some(ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: vec![1], menu: true });
+        for (kind_name, side) in [("fluid", FlowSide::Input), ("chemical", FlowSide::Output), ("chemical", FlowSide::Input), ("chemical", FlowSide::Output)] {
+            bv.tanks.push(TankSpec { kind: kind_name.into(), capacity: boiler::SPEC_CAPACITY, max_rate: boiler::VALVE_RATE, faces: vec![side; 6] });
+        }
+        r = r.block_entity_kind(bv);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1337,6 +1354,7 @@ impl ServerMod for Mekanism {
             dynamic: HashMap::new(),
             matrices: HashMap::new(),
             plants: HashMap::new(),
+            boilers: HashMap::new(),
             evaporating: HashMap::new(),
             matrix_given: HashMap::new(),
             plenishers: HashMap::new(),
@@ -1574,6 +1592,8 @@ impl ServerMod for Mekanism {
             self.dynamic_structures(dimension, structures)
         } else if group == induction::GROUP {
             self.matrix_structures(dimension, structures)
+        } else if group == boiler::GROUP {
+            self.boiler_structures(dimension, structures)
         } else if group == evaporation::GROUP {
             self.evaporation_structures(dimension, structures)
         } else {
@@ -1587,6 +1607,10 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let boiler_valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(boiler::VALVE)).collect();
+        if !boiler_valves.is_empty() {
+            out.extend(self.run_boiler(&boiler_valves));
         }
         let plant: Vec<&BlockEntity> = entities
             .iter()

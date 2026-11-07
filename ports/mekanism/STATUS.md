@@ -656,3 +656,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2x. Thermal Evaporation Plant (mod 0.1.67, partial)
 `evaporation.rs`: 4x4x(3..18) tower validation, heat model (solar corners, dissipation), ops/tick by temperature, recipes `mekanism:evaporating`, shared input/output tank mirrors, bucket slots. Registered (group `mekanism:evaporation`), unit-tested (100 pass). Converter entries (blocks, controller menu) done; chemical output tank (brine/lithium). Pending: in-game test.
+
+### 2y. Thermoelectric Boiler (mod 0.1.68)
+`boiler.rs`: cuboid 3..18 validation with a full disperser plane and connected superheating elements below it, one heat for the structure (50 per block), air loss, heated-coolant (superheated sodium) heat transfer, boiling by `0.2*heat/10`, element-capped; four tanks (water/steam/hot/cold) mirrored in the valves. Deviations: valves have no mode (all take water and hot coolant in, give steam and cold coolant out); GUI simplified (shows temperature in tenths of K). Needs heated coolant (fission reactor, still to do) or a creative chemical source to test.
