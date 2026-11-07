@@ -101,8 +101,21 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 4.6.7 | Combustível (fissile fuel) depende da cadeia nuclear ainda não portada | ABERTA |
 | 4.6.8 | Valores de calor (1.000.000 por mB, capacidade 1000/bloco) e limiares copiados da config padrão; condutividade do sódio 0,4 e entalpia 5 (padrão do `CooledCoolant`) | SUPOSIÇÃO |
 
-### 4.7 Fusion Reactor, SPS
-Ainda **não construídos** (tarefa #4).
+### 4.7 Fusion Reactor (mod 0.1.71)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.7.1 | **Sem laser**: Laser, Laser Amplifier e Laser Tractor Beam não existem ainda, então o plasma não esquenta (a função `add_laser_energy` está pronta, falta quem a chame). O atalho criativo (clique direito na Laser Focus Matrix) também não existe | ABERTA |
+| 4.7.2 | **Hohlraum** é um item comum que conta como cheio (o port não tem itens com químico): dá 10 mB de combustível e é consumido ao acender. A receita (infusão de ouro + carbono) vem do original, mas ele sai "vazio" e já vale como cheio | LIMITE API |
+| 4.7.3 | Portas **sem modo** (entrada / saída); todas aceitam água, deutério, trítio e combustível e entregam vapor e energia | ABERTA |
+| 4.7.4 | Logic Adapter é só um bloco (sem redstone); Reactor Glass conta como moldura | ABERTA |
+| 4.7.5 | Tela simplificada (sem abas Heat/Fuel/Stats, sem campo de texto: taxa de injeção por botões ±2); sem o gráfico de temperatura | ABERTA |
+| 4.7.6 | O reator **não mata** entidades dentro dele enquanto queima (`kill`, dano 50000) | ABERTA |
+| 4.7.7 | Sem transferência de calor para blocos vizinhos pelas portas (`simulateAdjacent`) | ABERTA |
+| 4.7.8 | Hohlraum só entra pelo slot do controlador (não por automação) | ABERTA |
+| 4.7.9 | O formato (grade 5×5, 12 faltando por face) foi lido do código; posições de borda usam o primeiro eixo de borda (a grade é simétrica, deve ser equivalente) | SUPOSIÇÃO |
+
+### 4.8 SPS
+Ainda **não construído** (tarefa #4).
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

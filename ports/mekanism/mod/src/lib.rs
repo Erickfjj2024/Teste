@@ -16,6 +16,7 @@ mod boiler;
 mod dynamic;
 mod evaporation;
 mod fission;
+mod fusion;
 mod induction;
 mod factory;
 mod pump;
@@ -347,6 +348,8 @@ struct Mekanism {
     boilers: HashMap<(String, [i32; 3]), boiler::Boiler>,
     turbines: HashMap<(String, [i32; 3]), turbine::Turbine>,
     reactors: HashMap<(String, [i32; 3]), fission::Shared>,
+    fusions: HashMap<(String, [i32; 3]), fusion::Shared>,
+    fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
     /// The blades players are putting on or taking off rotors.
@@ -1358,6 +1361,27 @@ impl ServerMod for Mekanism {
             fp.tanks.push(TankSpec { kind: kind_name.into(), capacity: fission::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
         }
         r = r.block_entity_kind(fp);
+        // The fusion reactor: frames, adapters, focus matrices and glass only join the structure; the ports hold its five tanks and give the
+        // energy; the controller holds the hohlraum slot and the screen.
+        for part in [fusion::FRAME, fusion::ADAPTER, fusion::MATRIX, fusion::GLASS] {
+            let mut k = kind(part, false);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
+            r = r.block_entity_kind(k);
+        }
+        let mut fport = kind(fusion::PORT, true);
+        fport.keep_data = false;
+        fport.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
+        fport.energy = Some(EnergySpec { capacity: 1 << 40, max_receive: 0, max_extract: 1 << 40, faces: vec![FlowSide::Output; 6] });
+        for (kind_name, side) in [("fluid", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Output)] {
+            fport.tanks.push(TankSpec { kind: kind_name.into(), capacity: fusion::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
+        }
+        r = r.block_entity_kind(fport);
+        let mut fctl = kind(fusion::CONTROLLER, true);
+        fctl.keep_data = false;
+        fctl.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
+        fctl.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(fctl);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1405,6 +1429,8 @@ impl ServerMod for Mekanism {
             boilers: HashMap::new(),
             turbines: HashMap::new(),
             reactors: HashMap::new(),
+            fusions: HashMap::new(),
+            fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
             evaporating: HashMap::new(),
@@ -1556,6 +1582,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == fusion::CONTROLLER {
+            self.fusion_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == fission::PORT {
             self.fission_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1662,6 +1692,8 @@ impl ServerMod for Mekanism {
             self.dynamic_structures(dimension, structures)
         } else if group == induction::GROUP {
             self.matrix_structures(dimension, structures)
+        } else if group == fusion::GROUP {
+            self.fusion_structures(dimension, structures)
         } else if group == fission::GROUP {
             self.fission_structures(dimension, structures)
         } else if group == turbine::GROUP {
@@ -1681,6 +1713,13 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let fusion_parts: Vec<&BlockEntity> = entities
+            .iter()
+            .filter(|e| matches!(e.state.split('[').next(), Some(fusion::PORT | fusion::CONTROLLER)))
+            .collect();
+        if !fusion_parts.is_empty() {
+            out.extend(self.run_fusion(&fusion_parts, tick));
         }
         let reactor_ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(fission::PORT)).collect();
         if !reactor_ports.is_empty() {
