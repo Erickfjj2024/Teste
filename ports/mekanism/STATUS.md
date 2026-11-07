@@ -641,3 +641,15 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 - **Tela:** só nas válvulas (o original abre de qualquer bloco da caixa): medidor largo do tanque, quanto tem, a capacidade e o volume, e dois slots de
   balde (cheio entra, vazio sai) que mexem no tanque da estrutura. Sem a aba de modo de edição.
 - Teste simulado (`factory.toml`: caixa 3×3×3 com válvula) e 91 unitários.
+
+## 2w. Induction Matrix (multibloco, mod 0.1.66, **não testado no jogo**)
+
+- **Blocos:** Induction Casing, Induction Port, 4 Induction Cells (8, 64, 512 e 4000 GFE) e 4 Induction Providers (256 kFE, 2,048 MFE, 16,384 MFE e
+  131,072 MFE por tick), com as receitas originais.
+- **Estrutura** (`MatrixValidator`): caixa oca de 3 a 18 de casing, portas só nas faces, dentro só células, provedores e ar (precisa de ao menos uma
+  célula); capacidade = soma das células; taxa = soma dos provedores.
+- **Energia:** as portas guardam um espelho da energia da matriz, no máximo o que os provedores movem num tick, e esse é todo o espaço que elas têm
+  (`set-energy-capacity`): o que uma porta ganha ou perde entra no total ou sai dele; o total fica nos bytes das portas (sobrevive ao recarregar).
+  Cabos e cubos ligados às portas enchem e esvaziam a matriz. Uma porta serve de entrada e de saída ao mesmo tempo (o original deixa escolher o modo).
+- **Tela** (só nas portas, simplificada): energia guardada e capacidade (em MFE), taxa (kFE/t), quantas células e provedores.
+- O teste simulado só confere que a estrutura é achada (o harness não simula o limite de capacidade das portas).

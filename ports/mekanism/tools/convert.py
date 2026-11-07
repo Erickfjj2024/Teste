@@ -164,7 +164,8 @@ OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissoluti
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
-DYNAMIC = ['dynamic_tank', 'dynamic_valve']
+INDUCTION = ['induction_casing', 'induction_port', *[f'{t}_induction_cell' for t in TIERS], *[f'{t}_induction_provider' for t in TIERS]]
+DYNAMIC = ['dynamic_tank', 'dynamic_valve', *INDUCTION]
 for m in DYNAMIC:
     BLOCKS[m] = ('minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 9.0, 'requires_tool': True}, 'machine')
 TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid'),
@@ -1200,7 +1201,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.65', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.66', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1299,7 +1300,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.65', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.66', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1401,7 +1402,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.65', 'color': '#808080'},
+        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.66', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1436,9 +1437,35 @@ def dynamic_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.65', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.66', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 7, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
+
+def induction_port_menu(m):
+    """GuiMatrix (simplified): the energy the matrix holds (in MFE), its capacity, what its providers move and what it is made of."""
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 12, 1), (7, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 162, 46, 3), (7, 33))
+    texture = save_gui(panel, m)
+    title = 'Induction Matrix'
+    widgets = [
+        {'type': 'sprite', 'texture': power_h_fill, 'x': 8, 'y': 18, 'w': 160, 'h': 10, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
+         'direction': 'right', 'tooltip': 'Energy: {value} / {max} MFE'},
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 11, 'y': 37, 'text': 'Stored: {0+1} MFE', 'color': '#00CD00'},
+        {'type': 'text', 'x': 11, 'y': 48, 'text': 'Capacity: {2+3} MFE', 'color': '#00CD00'},
+        {'type': 'text', 'x': 11, 'y': 59, 'text': 'Transfer: {4+5} kFE/t', 'color': '#00CD00'},
+        {'type': 'text', 'x': 11, 'y': 70, 'text': 'Cells {6}  Providers {7}', 'color': '#00CD00'},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.66', 'color': '#808080'}]
+    return {'slots': 1, 'data_slots': 8,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
 def pump_menu(m):
     """GuiElectricPump: the fluid gauge at 6, 13, the bucket slots at 28, 20 and 28, 51 with an arrow between them, the inner screen
@@ -1466,7 +1493,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.65', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.66', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1479,6 +1506,7 @@ def pump_menu(m):
                                      'widgets': widgets, 'windows': [window]}}, m, 3, 24)
 
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
+put(f'{OUT}/data/{NS}/horizon/menu/induction_port.json', induction_port_menu('induction_port'))
 for m in MACHINES:
     if m in ('electric_pump', 'fluidic_plenisher'):
         put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', pump_menu(m))
@@ -1509,7 +1537,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.65', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.66', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1776,7 +1804,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.65', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.66', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

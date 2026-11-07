@@ -13,6 +13,7 @@ mod chem_table;
 mod plus;
 mod process;
 mod dynamic;
+mod induction;
 mod factory;
 mod pump;
 mod reaction;
@@ -335,6 +336,9 @@ struct Mekanism {
     pump_nodes: HashMap<(String, i32, i32, i32), (Vec<(i32, i32, i32)>, String)>,
     /// The tank each dynamic tank structure shares among its valves.
     dynamic: HashMap<(String, [i32; 3]), dynamic::Shared>,
+    /// The energy each induction matrix holds, and what its ports were last given.
+    matrices: HashMap<(String, [i32; 3]), u64>,
+    matrix_given: HashMap<(String, [i32; 3]), u64>,
     /// What each fluidic plenisher knows of its work.
     plenishers: HashMap<(String, i32, i32, i32), pump::Plenish>,
     capacity: HashMap<(String, i32, i32, i32), u64>,
@@ -1255,6 +1259,19 @@ impl ServerMod for Mekanism {
             valve.tanks.push(TankSpec { kind: kind_name.into(), capacity: dynamic::SPEC_CAPACITY, max_rate: dynamic::VALVE_RATE, faces: vec![FlowSide::Both; 6] });
         }
         r = r.block_entity_kind(valve);
+        // The induction matrix: the casing, the cells and the providers only join the structure; the ports hold its energy.
+        for part in ["mekanism:induction_casing"].into_iter().chain(induction::CELLS.iter().map(|c| c.0)).chain(induction::PROVIDERS.iter().map(|c| c.0)) {
+            let mut k = kind(part, false);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: induction::GROUP.into() });
+            r = r.block_entity_kind(k);
+        }
+        let mut port = kind(induction::PORT, true);
+        port.keep_data = false;
+        port.multiblock = Some(MultiblockSpec { group: induction::GROUP.into() });
+        port.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        port.energy = Some(EnergySpec { capacity: induction::SPEC_CAPACITY, max_receive: induction::SPEC_CAPACITY, max_extract: induction::SPEC_CAPACITY, faces: vec![FlowSide::Both; 6] });
+        r = r.block_entity_kind(port);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1297,6 +1314,8 @@ impl ServerMod for Mekanism {
             installs: HashMap::new(),
             pump_nodes: HashMap::new(),
             dynamic: HashMap::new(),
+            matrices: HashMap::new(),
+            matrix_given: HashMap::new(),
             plenishers: HashMap::new(),
             capacity: HashMap::new(),
             force: false,
@@ -1530,6 +1549,8 @@ impl ServerMod for Mekanism {
     fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> {
         if group == dynamic::GROUP {
             self.dynamic_structures(dimension, structures)
+        } else if group == induction::GROUP {
+            self.matrix_structures(dimension, structures)
         } else {
             Vec::new()
         }
@@ -1541,6 +1562,10 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(induction::PORT)).collect();
+        if !ports.is_empty() {
+            out.extend(self.run_matrix(&ports));
         }
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
