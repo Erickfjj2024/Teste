@@ -13,6 +13,7 @@ mod chem_table;
 mod plus;
 mod process;
 mod boiler;
+mod bounding;
 mod dynamic;
 mod evaporation;
 mod fission;
@@ -169,7 +170,7 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, speed: 0, mean: 1.0 }
 }
 
-const MACHINES: [Def; 74] = [
+const MACHINES: [Def; 76] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -210,6 +211,8 @@ const MACHINES: [Def; 74] = [
     generator("mekanism:heat_generator", GenKind::Heat),
     generator("mekanism:solar_generator", GenKind::Solar),
     generator("mekanism:gas_burning_generator", GenKind::Gas),
+    generator("mekanism:advanced_solar_generator", GenKind::AdvSolar),
+    generator("mekanism:wind_generator", GenKind::Wind),
     // The factories of the electric machines: `FactoryTier` gives 3, 5, 7 and 9 lines.
     factory("mekanism:basic_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 3, 0),
     factory("mekanism:advanced_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 5, 0),
@@ -353,6 +356,8 @@ struct Mekanism {
     fusions: HashMap<(String, [i32; 3]), fusion::Shared>,
     /// The energy lasers delivered to the blocks they hit, until those take it.
     beams: HashMap<(String, [i32; 3]), u64>,
+    /// The machine each bounding block just placed belongs to, until the block writes it down.
+    bound_owner: HashMap<(String, i32, i32, i32), [i32; 3]>,
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
@@ -1133,9 +1138,9 @@ impl ServerMod for Mekanism {
                 Kind::Generator => {
                     let kind = def.generator.unwrap_or(GenKind::Solar);
                     ContainerSpec {
-                        slots: if kind == GenKind::Solar { 1 } else { 2 },
+                        slots: if kind.tankless() { 1 } else { 2 },
                         faces: generators::item_faces(kind, "north"),
-                        inputs: if kind == GenKind::Solar { Vec::new() } else { vec![0] },
+                        inputs: if kind.tankless() { Vec::new() } else { vec![0] },
                         outputs: Vec::new(),
                         menu: true,
                     }
@@ -1174,6 +1179,8 @@ impl ServerMod for Mekanism {
                     GenKind::Heat => (generators::HEAT_ENERGY, Some(("fluid", generators::HEAT_TANK))),
                     GenKind::Gas => (generators::GAS_ENERGY, Some(("chemical", generators::GAS_TANK))),
                     GenKind::Solar => (generators::SOLAR_ENERGY, None),
+                    GenKind::AdvSolar => (generators::ADV_SOLAR_ENERGY, None),
+                    GenKind::Wind => (generators::WIND_ENERGY, None),
                 };
                 k.energy = Some(EnergySpec { capacity: cap, max_receive: 0, max_extract: cap, faces: generators::energy_faces(kind, "north") });
                 if let Some((fluid, capacity)) = tank {
@@ -1413,6 +1420,10 @@ impl ServerMod for Mekanism {
             sport.tanks.push(TankSpec { kind: kind_name.into(), capacity: sps::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
         }
         r = r.block_entity_kind(sport);
+        // The bounding blocks the big machines place around themselves.
+        let mut bounding = kind(bounding::BLOCK, true);
+        bounding.keep_data = false;
+        r = r.block_entity_kind(bounding);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1462,6 +1473,7 @@ impl ServerMod for Mekanism {
             reactors: HashMap::new(),
             fusions: HashMap::new(),
             beams: HashMap::new(),
+            bound_owner: HashMap::new(),
             spses: HashMap::new(),
             laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
@@ -1754,6 +1766,7 @@ impl ServerMod for Mekanism {
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
         }
+        out.extend(self.run_bounding(&entities, tick));
         let sps_ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(sps::PORT)).collect();
         if !sps_ports.is_empty() {
             out.extend(self.run_sps(&sps_ports, tick));

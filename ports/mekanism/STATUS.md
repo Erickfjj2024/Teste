@@ -676,3 +676,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ad. SPS (mod 0.1.73)
 `sps.rs`: cubo 7x7x7 arredondado de casing, portas onde a grade permite, bobinas só atrás de portas; a energia das portas transforma polônio em antimatéria (1 000 000 FE por mB de polônio, 1000 mB por mB de antimatéria). Diferenças em DIFERENCAS.md 4.8.
+
+### 2ae. Advanced Solar, Wind Generator e Bounding Blocks (mod 0.1.74)
+`bounding.rs`: máquinas grandes colocam bounding blocks ao redor (Advanced Solar: 1 acima + plano 3x3 dois acima; Wind: 4 acima, com mastro e topo visíveis por `part`; Pigment Mixer: 1 acima). `generators.rs`: `AdvSolar` (12 FE/t, buffer 240) e `Wind` (1 a 5 FE/t pela altura do topo). Diferenças em DIFERENCAS.md seção 7.

@@ -135,6 +135,17 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 6.7 | A orientação do bloco ao colocar usa o jogador mais próximo (até 12 blocos) e o ângulo de visão; vale só no primeiro tick | LIMITE API |
 | 6.8 | As receitas do laser e do amplificador (tipo `mekanism:mek_data`) **não foram copiadas**: os blocos só saem do inventário criativo | ABERTA |
 
+## 7. Blocos grandes e Bounding Blocks (mod 0.1.74)
+| # | Diferença | Estado |
+|---|---|---|
+| 7.1 | O bloco principal coloca `mekanism:bounding_block` nas células vazias ao redor a cada segundo e as repõe se quebradas; **o bounding block não é quebrável** (some quando a máquina some) e **clicar nele não abre a tela** da máquina | LIMITE API |
+| 7.2 | A máquina **não é recusada** quando as células que precisa estão ocupadas (o original impede a colocação); as que estiverem ocupadas ficam sem bounding block | LIMITE API |
+| 7.3 | Wind Generator: o modelo real é desenhado por código (renderer de bloco), que o port não tem; o port usa um mastro e uma cruz de pás **estáticas** feitos à mão, sem girar; sem som | LIMITE API |
+| 7.4 | Wind Generator só gera no overworld (altura 24 a 319 fixas; o original lê a altura/limites da dimensão e a lista `no_wind`); a produção é calculada a cada tick (o original, a cada segundo) | SUPOSIÇÃO |
+| 7.5 | O Pigment Mixer agora também tem seu bounding block (acima), como no original | — |
+| 7.6 | Advanced Solar: modelo e pontos de geração (12 FE/t, 240 de buffer) do original; os 9 blocos do painel e o de cima são bounding blocks | — |
+| 7.7 | Máquinas com bounding block que ainda **não existem**: Digital Miner, Solar Neutron Activator, Isotopic Centrifuge, Seismic Vibrator, Security Desk, Modification Station, Teleporter | ABERTA |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

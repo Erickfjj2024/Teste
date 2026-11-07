@@ -59,7 +59,7 @@ pub fn base_slots(def: &Def) -> usize {
         (Kind::Pump, _) => 3,
         (Kind::Factory, _) => config::factory_slot_count(def.lines, def.form),
         (Kind::Generator, _) => match def.generator {
-            Some(GenKind::Solar) => 1,
+            Some(GenKind::Solar | GenKind::AdvSolar | GenKind::Wind) => 1,
             _ => 2,
         },
         (Kind::Tank, _) => 0,

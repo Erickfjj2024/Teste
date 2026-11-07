@@ -12,6 +12,15 @@ pub enum GenKind {
     Heat,
     Solar,
     Gas,
+    AdvSolar,
+    Wind,
+}
+
+impl GenKind {
+    /// The generators with no tank and no fuel slot: the sun's and the wind's.
+    pub fn tankless(self) -> bool {
+        matches!(self, GenKind::Solar | GenKind::AdvSolar | GenKind::Wind)
+    }
 }
 
 /// The bioethanol a bio-generator burns, and where its tank comes from.
@@ -29,6 +38,12 @@ pub const HEAT_NETHER: f64 = 10.0;
 pub const HEAT_TANK: u64 = 1_000;
 /// `solarGeneration`.
 pub const SOLAR_GENERATION: f64 = 2.0;
+/// `advancedSolarGeneration`, and the wind generator's `generationMin`, `generationMax` and `minY`.
+pub const ADV_SOLAR_GENERATION: f64 = 12.0;
+pub const WIND_MIN: f64 = 1.0;
+pub const WIND_MAX: f64 = 5.0;
+pub const WIND_MIN_Y: i32 = 24;
+pub const WIND_MAX_Y: i32 = 319;
 /// `gbgTankCapacity`.
 pub const GAS_TANK: u64 = 1_000;
 /// What the energy containers hold (`GeneratorsStorageConfig`: 12, 30 and 2 seconds of ticks, and 1000 times the hydrogen's
@@ -36,6 +51,8 @@ pub const GAS_TANK: u64 = 1_000;
 pub const HEAT_ENERGY: u64 = 240;
 pub const BIO_ENERGY: u64 = 600;
 pub const SOLAR_ENERGY: u64 = 40;
+pub const ADV_SOLAR_ENERGY: u64 = 240;
+pub const WIND_ENERGY: u64 = 100;
 pub const GAS_ENERGY: u64 = 2_000;
 
 pub const HEAT_CAPACITY: f64 = 10.0;
@@ -169,11 +186,25 @@ pub fn solar_production(brightness: f32, peak: f32) -> u64 {
     (SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64
 }
 
+/// The advanced solar generator's.
+pub fn adv_solar_production(brightness: f32, peak: f32) -> u64 {
+    (ADV_SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64
+}
+
+/// What a wind generator makes with its top at height `top_y` under the open sky (`getMultiplier` and `getCurrentGeneration`): the
+/// minimum at `minY` and under, the maximum at the top of the world, in a straight line between.
+pub fn wind_production(top_y: i32) -> u64 {
+    let y = top_y.clamp(WIND_MIN_Y, WIND_MAX_Y);
+    let slope = (WIND_MAX - WIND_MIN) / f64::from(WIND_MAX_Y - WIND_MIN_Y);
+    let generation = WIND_MIN + slope * f64::from(y - WIND_MIN_Y);
+    (WIND_MIN * (generation / WIND_MIN)) as u64
+}
+
 /// The faces of a generator each item slot is reached from (`forSide` of its tile): the fuel slot (0) by every side but the
 /// right, the energy slot (1) by the right.
 pub fn item_faces(kind: GenKind, facing: &str) -> Vec<Vec<u32>> {
     let mut faces = vec![Vec::new(); 6];
-    if kind == GenKind::Solar {
+    if kind.tankless() {
         return vec![vec![0]; 6];
     }
     for side in 0..6 {
@@ -193,7 +224,11 @@ pub fn tank_faces(facing: &str) -> Vec<FlowSide> {
 pub fn energy_faces(kind: GenKind, facing: &str) -> Vec<FlowSide> {
     let mut faces = vec![FlowSide::None; 6];
     match kind {
-        GenKind::Solar => faces[config::DOWN] = FlowSide::Output,
+        GenKind::Solar | GenKind::AdvSolar => faces[config::DOWN] = FlowSide::Output,
+        GenKind::Wind => {
+            faces[config::DOWN] = FlowSide::Output;
+            faces[config::face_of(facing, config::FRONT)] = FlowSide::Output;
+        }
         _ => faces[config::face_of(facing, config::FRONT)] = FlowSide::Output,
     }
     faces
@@ -212,7 +247,7 @@ impl Mekanism {
         let mut clear = true;
         for y in e.pos.y + 1..320 {
             match world::get_block(&e.dimension, e.pos.x, y, e.pos.z) {
-                Some(b) if !matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air") => {
+                Some(b) if !matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air" | "mekanism:bounding_block") => {
                     clear = false;
                     break;
                 }
@@ -233,7 +268,7 @@ impl Mekanism {
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let placed = e.data.get(8) == Some(&1);
         let mut heat = e.data.get(..8).and_then(|b| b.try_into().ok()).map_or(AMBIENT * HEAT_CAPACITY, f64::from_le_bytes);
-        if !placed && kind != GenKind::Solar {
+        if !placed && !matches!(kind, GenKind::Solar | GenKind::AdvSolar) {
             // A new generator looks at the nearest player, as one placed in front of them does.
             let front = cube::facing_name(front_for(e));
             if front != facing {
@@ -245,13 +280,15 @@ impl Mekanism {
             GenKind::Bio => BIO_ENERGY,
             GenKind::Heat => HEAT_ENERGY,
             GenKind::Solar => SOLAR_ENERGY,
+            GenKind::AdvSolar => ADV_SOLAR_ENERGY,
+            GenKind::Wind => WIND_ENERGY,
             GenKind::Gas => GAS_ENERGY,
         };
         let tank_cap = match kind {
             GenKind::Bio => BIO_TANK,
             GenKind::Heat => HEAT_TANK,
             GenKind::Gas => GAS_TANK,
-            GenKind::Solar => 0,
+            GenKind::Solar | GenKind::AdvSolar | GenKind::Wind => 0,
         };
         let mut energy = e.energy.min(capacity);
         let mut tank = held(e, 0);
@@ -340,13 +377,27 @@ impl Mekanism {
                 }
                 extra = used as i32;
             }
-            GenKind::Solar => {
+            GenKind::Wind => {
+                // The top of the turbine, four blocks up, has to see the sky; only the overworld has wind here.
+                let mut top = e.clone();
+                top.pos.y += 4;
+                let open = e.dimension == "minecraft:overworld" && self.sky_clear(&top, tick);
+                extra = i32::from(open);
+                if open && can {
+                    let made = wind_production(top.pos.y).min(room(energy));
+                    energy += made;
+                    producing = made;
+                    active = made > 0;
+                }
+            }
+            GenKind::Solar | GenKind::AdvSolar => {
                 if let Some(env) = world::get_environment(&e.dimension, e.pos.x, e.pos.y, e.pos.z) {
                     let (brightness, darken) = sky(env.day_time, env.rain, env.thunder);
                     let sees = env.has_skylight && darken < 4 && self.sky_clear(e, tick);
                     extra = i32::from(sees);
                     if sees && can {
-                        let made = solar_production(brightness, peak(env.temperature, env.downfall, env.precipitation)).min(room(energy));
+                        let share = peak(env.temperature, env.downfall, env.precipitation);
+                        let made = if kind == GenKind::AdvSolar { adv_solar_production(brightness, share) } else { solar_production(brightness, share) }.min(room(energy));
                         energy += made;
                         producing = made;
                         active = made > 0;
@@ -361,7 +412,7 @@ impl Mekanism {
         if active != lit {
             let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "lit", if active { "true" } else { "false" });
         }
-        if !self.filtered.contains(&key) && kind != GenKind::Solar {
+        if !self.filtered.contains(&key) && !kind.tankless() {
             let accepts: Vec<String> = match kind {
                 GenKind::Bio => vec![BIOETHANOL.into()],
                 GenKind::Heat => vec!["minecraft:lava".into()],
@@ -388,12 +439,12 @@ impl Mekanism {
             losses.1.round() as i32,
             0,
         ];
-        data.extend(if kind == GenKind::Solar { [0; 5] } else { plus::big_tank(&tank, tank_cap) });
+        data.extend(if kind.tankless() { [0; 5] } else { plus::big_tank(&tank, tank_cap) });
         let mut saved = heat.to_le_bytes().to_vec();
         saved.push(1);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Generator)).copied().unwrap_or(0));
         redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), (0, self.install.get(&key).copied().unwrap_or(0), upgrades::counts_of(def, e), 0), &facing, &mut saved, &mut data);
-        let tanks_changed = kind != GenKind::Solar && (tank != held(e, 0) || e.tanks.len() != 1);
+        let tanks_changed = !kind.tankless() && (tank != held(e, 0) || e.tanks.len() != 1);
         if !items_changed && !dirty && !tanks_changed && energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
@@ -405,7 +456,7 @@ impl Mekanism {
             energy: Some(energy),
             energy_faces: dirty.then(|| energy_faces(kind, &facing)),
             tanks: tanks_changed.then(|| vec![plus::as_tank(&tank)]),
-            tank_faces: dirty.then(|| vec![tank_faces(&facing)]).filter(|_| kind != GenKind::Solar),
+            tank_faces: dirty.then(|| vec![tank_faces(&facing)]).filter(|_| !kind.tankless()),
             menu_data: Some(data),
             transmitter_faces: None,
         })
@@ -415,6 +466,15 @@ impl Mekanism {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wind_blows_harder_higher_up() {
+        assert_eq!(wind_production(0), 1);
+        assert_eq!(wind_production(24), 1);
+        assert_eq!(wind_production(319), 5);
+        assert!(wind_production(200) > wind_production(100));
+        assert_eq!(adv_solar_production(1.0, 1.0), 12);
+    }
 
     #[test]
     fn heat_settles_where_the_loss_equals_the_burn() {
