@@ -164,6 +164,18 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 9.4 | Sem configuração de lados (tudo entra e sai por todas as faces), sem ejeção automática (precisa de cabo/cano/transportador puxando), sem carregamento de chunk | ABERTA |
 | 9.5 | Os portos dos multiblocos e os lasers passaram a conectar com cabos, tubos, canos e transportadores (tags `*_connectable`), o que faltava | — |
 
+## 10. Teleporter (mod 0.1.77)
+| # | Diferença | Estado |
+|---|---|---|
+| 10.1 | Frequência é um **número** (1 a 99) por botões: sem nome, sem privadas, sem cor de frequência, sem segurança | LIMITE API |
+| 10.2 | Só **jogadores** são teletransportados (não mobs, itens nem veículos/passageiros) | LIMITE API |
+| 10.3 | Sem portal desenhado na abertura (partículas/efeito), sem som, sem avanço | LIMITE API |
+| 10.4 | O destino é o teleporter mais próximo da mesma frequência **carregado** (o original também; mas sem carregar o chunk, `IChunkLoader` não existe) | ABERTA |
+| 10.5 | Capacidade de energia 5.000.000 FE (suposição: o valor do 26.3 é um placeholder); sem slot de carga de energia | SUPOSIÇÃO |
+| 10.6 | A escala de coordenadas só conhece o Nether (8); outras dimensões de mod contam escala 1 | SUPOSIÇÃO |
+| 10.7 | Cálculo de custo sem passageiros; o jogador chegado espera 5 ticks no destino e só é enviado de novo depois de sair da abertura | — |
+| 10.8 | O alinhamento do jogador ao chegar (yaw para o quadro) não é feito: mantém a direção em que olhava | ABERTA |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

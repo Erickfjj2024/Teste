@@ -685,3 +685,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ag. Quantum Entangloporter (mod 0.1.76)
 `entangloporter.rs`: blocos da mesma frequência (número) compartilham energia, fluido, químico e um item; cada um guarda uma fatia. Os portos dos multiblocos entraram nas tags `*_connectable`. Diferenças em DIFERENCAS.md seção 9.
+
+### 2ah. Teleporter (mod 0.1.77)
+`teleporter.rs`: quadro de 9 teleporter_frame ao redor de uma abertura de 1x2; teleporters da mesma frequência (número) enviam os jogadores na abertura ao mais próximo, por energia (100 + 2/bloco, +1000 trocando de dimensão). Diferenças em DIFERENCAS.md seção 10.

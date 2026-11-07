@@ -32,6 +32,7 @@ mod sps;
 mod sides;
 mod sorter;
 mod tank;
+mod teleporter;
 mod turbine;
 mod upgrades;
 mod worldgen;
@@ -365,6 +366,8 @@ struct Mekanism {
     /// The shared buffers of the quantum entangloporters, by frequency, and the buttons pressed on their screens.
     entangled: HashMap<u8, entangloporter::Shared>,
     qe_buttons: Vec<(String, BlockPos, i32)>,
+    teleporter_buttons: Vec<(String, BlockPos, i32)>,
+    frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
@@ -1444,6 +1447,11 @@ impl ServerMod for Mekanism {
         }
         qe.container = Some(ContainerSpec { slots: 1, faces: vec![vec![0]; 6], inputs: vec![0], outputs: vec![0], menu: true });
         r = r.block_entity_kind(qe);
+        // The teleporter: it takes energy from every side and sends the players that stand in its frame.
+        let mut tele = kind(teleporter::TELEPORTER, true);
+        tele.energy = Some(EnergySpec { capacity: teleporter::CAPACITY, max_receive: teleporter::CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
+        tele.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(tele);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1498,6 +1506,8 @@ impl ServerMod for Mekanism {
             sorter_buttons: Vec::new(),
             entangled: HashMap::new(),
             qe_buttons: Vec::new(),
+            teleporter_buttons: Vec::new(),
+            frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
@@ -1652,6 +1662,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == teleporter::TELEPORTER {
+            self.teleporter_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == entangloporter::BLOCK {
             self.qe_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1799,6 +1813,10 @@ impl ServerMod for Mekanism {
             out.extend(self.run_dynamic(&valves));
         }
         out.extend(self.run_bounding(&entities, tick));
+        let teleporters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(teleporter::TELEPORTER)).collect();
+        if !teleporters.is_empty() || !self.teleporter_buttons.is_empty() {
+            out.extend(self.run_teleporters(&teleporters, tick));
+        }
         let qes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(entangloporter::BLOCK)).collect();
         if !qes.is_empty() || !self.qe_buttons.is_empty() {
             out.extend(self.run_entanglements(&qes, tick));
