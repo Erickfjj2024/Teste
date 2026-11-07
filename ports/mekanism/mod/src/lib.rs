@@ -1127,6 +1127,30 @@ impl ServerMod for Mekanism {
                 }
             }
         }
+        // Salt on the floors of lakes and oceans: disks of dirt and clay turned to salt (`SaltConfig`, placed on the ocean floor
+        // with water over it).
+        for n in 0..worldgen::SALT_PER_CHUNK {
+            let (x, z, radius) = worldgen::salt_disk(chunk_x, chunk_z, n);
+            let mut floor = None;
+            for y in (worldgen::BOTTOM..320).rev() {
+                let Some(block) = world::get_block(dimension, x, y, z) else { break };
+                let name = block.split('[').next().unwrap_or("");
+                if !matches!(name, "minecraft:air" | "minecraft:cave_air" | "minecraft:water") {
+                    floor = Some(y);
+                    break;
+                }
+            }
+            let Some(floor) = floor else { continue };
+            if !world::get_block(dimension, x, floor + 1, z).is_some_and(|b| b.starts_with("minecraft:water")) {
+                continue;
+            }
+            for p in worldgen::salt_blocks(x, floor + 1, z, radius) {
+                let Some(block) = world::get_block(dimension, p[0], p[1], p[2]) else { continue };
+                if worldgen::salt_replaces(block.split('[').next().unwrap_or("")) {
+                    changes.push(BlockChange { x: p[0], y: p[1], z: p[2], state: "mekanism:block_salt".into() });
+                }
+            }
+        }
         for batch in changes.chunks(4096) {
             let _ = world::set_blocks(dimension, batch);
         }

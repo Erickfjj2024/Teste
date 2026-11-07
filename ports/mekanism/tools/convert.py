@@ -1019,6 +1019,28 @@ def with_upgrades(menu, machine, base, c):
 
 upgrade_items_and_recipes()
 
+# ---- the buckets of Mekanism's fluids (liquid gases, brine, lithium...): a vanilla bucket with its fluid area tinted by the fluid
+# (`neoforge:fluid_container`: the bucket's texture and a mask of where the fluid is), full ones the tanks take and give
+BUCKET_FLUIDS = ['brine', 'chlorine', 'ethene', 'heavy_water', 'hydrofluoric_acid', 'hydrogen', 'hydrogen_chloride', 'lithium',
+                 'nutritional_paste', 'oxygen', 'sodium', 'steam', 'sulfur_dioxide', 'sulfur_trioxide', 'sulfuric_acid',
+                 'superheated_sodium', 'uranium_hexafluoride', 'uranium_oxide']
+BUCKET_TINTS = {'heavy_water': '#0D1455', 'nutritional_paste': '#EB6CA3'}
+
+def bucket_items():
+    mask = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets/bucket_fluid_mask.png')
+    put(f'{OUT}/assets/{NS}/textures/item/bucket_fluid_mask.png', src=mask)
+    for name in BUCKET_FLUIDS:
+        n = f'{name}_bucket'
+        tint = BUCKET_TINTS.get(name) or FLUIDS.get(f'{NS}:{name}') or chemical_meta(f'{NS}:{name}')[0]
+        put(f'{OUT}/data/{NS}/horizon/item/{n}.json', {'template': 'minecraft:stick', 'max_stack_size': 1})
+        put(f'{OUT}/assets/{NS}/models/item/{n}.json', {'parent': 'minecraft:item/generated',
+            'textures': {'layer0': 'minecraft:item/bucket', 'layer1': f'{NS}:item/bucket_fluid_mask'}})
+        put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/{n}',
+            'tints': [{'type': 'minecraft:constant', 'value': 0xFFFFFF}, {'type': 'minecraft:constant', 'value': int(tint.lstrip('#')[-6:], 16)}]}})
+        kept_items.append(n)
+
+bucket_items()
+
 def process_menu(m):
     L = PROCESS_LAYOUTS[m]
     title = MACHINE_NAMES[m]
@@ -1087,7 +1109,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.39', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.40', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1186,7 +1208,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.39', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.40', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1215,7 +1237,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.39', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.40', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1480,7 +1502,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.39', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.40', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

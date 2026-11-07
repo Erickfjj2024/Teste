@@ -366,6 +366,19 @@ Lido do código 26.3 (`TileEntityPressurizedReactionChamber`, `GuiPRC`, `TileEnt
   são sempre as mesmas; a energia do topo do misturador fica ligada (no original o topo é desativado: `addDisabledSides`); os slots de pigmento
   (lata) e a aba de energia (-26,137) só dão a dica básica; cada máquina nova usa o modelo e as texturas do original.
 
+## 2l. Sal no mundo e baldes de fluidos e gases (mod 0.1.40, o mesmo APK v40, **não testados no jogo**)
+
+Passou no teste simulado (62 passos: um balde de salmoura esvazia num tanque de fluido e o balde vazio sai) e em 77 testes unitários.
+- **Sal (`SaltConfig`):** em chunks novos do overworld, 2 discos por chunk de raio 2 a 3 (altura 1 acima e abaixo) no fundo de lagos e oceanos
+  (com água em cima), onde há terra ou argila vira bloco de sal. O centro fica a 3 blocos da borda do chunk para o disco não passar para o vizinho
+  (no original os discos passam). Sal só aparece em mundo novo ou em região ainda não explorada.
+- **Baldes (18):** salmoura, cloro, eteno, água pesada, ácido fluorídrico, hidrogênio, cloreto de hidrogênio, lítio, pasta nutritiva, oxigênio,
+  sódio, vapor, dióxido e trióxido de enxofre, ácido sulfúrico, sódio superaquecido, hexafluoreto e óxido de urânio. Um balde vazio é um balde
+  de vidro com a área do fluido pintada com a cor dele (a máscara vem da diferença entre o balde e o balde de água do jogo; a original do NeoForge
+  não está nas fontes). Os tanques de fluido, a Rotary, a Chemical Washer e o Electrolytic Separator esvaziam e enchem esses baldes como os de
+  água e lava; um balde cheio devolve um balde vazio.
+- **Diferença:** os baldes não colocam o fluido no mundo (o porte não tem fluidos de mod no mundo); servem para encher tanques e máquinas.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

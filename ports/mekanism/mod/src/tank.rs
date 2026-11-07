@@ -91,22 +91,38 @@ pub fn creative(tank: &mut Tank, cap: u64) {
     }
 }
 
+/// The full buckets and the fluids they hold: vanilla's two and Mekanism's eighteen (its liquid gases, brine, lithium...).
+const BUCKETS: [(&str, &str); 20] = [
+    ("minecraft:water_bucket", "minecraft:water"),
+    ("minecraft:lava_bucket", "minecraft:lava"),
+    ("mekanism:brine_bucket", "mekanism:brine"),
+    ("mekanism:chlorine_bucket", "mekanism:chlorine"),
+    ("mekanism:ethene_bucket", "mekanism:ethene"),
+    ("mekanism:heavy_water_bucket", "mekanism:heavy_water"),
+    ("mekanism:hydrofluoric_acid_bucket", "mekanism:hydrofluoric_acid"),
+    ("mekanism:hydrogen_bucket", "mekanism:hydrogen"),
+    ("mekanism:hydrogen_chloride_bucket", "mekanism:hydrogen_chloride"),
+    ("mekanism:lithium_bucket", "mekanism:lithium"),
+    ("mekanism:nutritional_paste_bucket", "mekanism:nutritional_paste"),
+    ("mekanism:oxygen_bucket", "mekanism:oxygen"),
+    ("mekanism:sodium_bucket", "mekanism:sodium"),
+    ("mekanism:steam_bucket", "mekanism:steam"),
+    ("mekanism:sulfur_dioxide_bucket", "mekanism:sulfur_dioxide"),
+    ("mekanism:sulfur_trioxide_bucket", "mekanism:sulfur_trioxide"),
+    ("mekanism:sulfuric_acid_bucket", "mekanism:sulfuric_acid"),
+    ("mekanism:superheated_sodium_bucket", "mekanism:superheated_sodium"),
+    ("mekanism:uranium_hexafluoride_bucket", "mekanism:uranium_hexafluoride"),
+    ("mekanism:uranium_oxide_bucket", "mekanism:uranium_oxide"),
+];
+
 /// The fluid a full bucket holds.
 pub fn fluid_of(bucket: &str) -> Option<&'static str> {
-    match bucket {
-        "minecraft:water_bucket" => Some("minecraft:water"),
-        "minecraft:lava_bucket" => Some("minecraft:lava"),
-        _ => None,
-    }
+    BUCKETS.iter().find(|(b, _)| *b == bucket).map(|(_, f)| *f)
 }
 
 /// The full bucket of a fluid.
 pub fn bucket_of(fluid: &str) -> Option<&'static str> {
-    match fluid {
-        "minecraft:water" => Some("minecraft:water_bucket"),
-        "minecraft:lava" => Some("minecraft:lava_bucket"),
-        _ => None,
-    }
+    BUCKETS.iter().find(|(_, f)| *f == fluid).map(|(b, _)| *b)
 }
 
 fn stack(item: &str, count: u32) -> Stack {
@@ -189,6 +205,15 @@ mod tests {
         assert!(!buckets(&mut i, &mut o, &mut tank, 32_000, EditMode::Fill));
         let (mut i, mut o, mut tank) = (st("minecraft:bucket", 1), None, t("minecraft:water", 999));
         assert!(!buckets(&mut i, &mut o, &mut tank, 32_000, EditMode::Both));
+    }
+
+    #[test]
+    fn mekanism_buckets_hold_its_fluids() {
+        assert_eq!(fluid_of("mekanism:brine_bucket"), Some("mekanism:brine"));
+        assert_eq!(bucket_of("mekanism:sulfuric_acid"), Some("mekanism:sulfuric_acid_bucket"));
+        let (mut i, mut o, mut tank) = (st("mekanism:hydrogen_bucket", 1), None, Tank::default());
+        assert!(buckets(&mut i, &mut o, &mut tank, 32_000, EditMode::Both));
+        assert_eq!((i, o, tank), (None, st("minecraft:bucket", 1), t("mekanism:hydrogen", 1000)));
     }
 
     #[test]

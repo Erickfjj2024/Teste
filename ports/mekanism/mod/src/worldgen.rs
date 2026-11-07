@@ -92,6 +92,47 @@ pub fn vein(cx: i32, cz: i32, kind_index: usize, n: u32) -> Vec<[i32; 3]> {
     out
 }
 
+/// `SaltConfig`: how many salt disks a chunk gets, their radius (2 to 3, `minRadius` and `maxRadius`) and how far above and under the
+/// floor they reach (`halfHeight`).
+pub const SALT_PER_CHUNK: u32 = 2;
+pub const SALT_MIN_RADIUS: i32 = 2;
+pub const SALT_MAX_RADIUS: i32 = 3;
+pub const SALT_HALF_HEIGHT: i32 = 1;
+
+/// The `n`th salt disk of chunk (`cx`, `cz`): its centre column (a few blocks in from the chunk's edge, so the disk stays in the
+/// chunk) and its radius.
+pub fn salt_disk(cx: i32, cz: i32, n: u32) -> (i32, i32, i32) {
+    let seed = (cx as u64).wrapping_mul(341_873_128_712)
+        ^ (cz as u64).wrapping_mul(132_897_987_541)
+        ^ (0x5A17u64 << 40)
+        ^ u64::from(n).wrapping_mul(0x2545_F491_4F6C_DD1D);
+    let mut rng = Rng::new(seed);
+    let radius = SALT_MIN_RADIUS + rng.below((SALT_MAX_RADIUS - SALT_MIN_RADIUS + 1) as u32) as i32;
+    let margin = SALT_MAX_RADIUS as u32;
+    (cx * 16 + margin as i32 + rng.below(16 - 2 * margin) as i32, cz * 16 + margin as i32 + rng.below(16 - 2 * margin) as i32, radius)
+}
+
+/// The blocks a salt disk of `radius` around (`x`, `z`) reaches from the water above the floor (`y`): the circle, and
+/// `SALT_HALF_HEIGHT` up and down.
+pub fn salt_blocks(x: i32, y: i32, z: i32, radius: i32) -> Vec<[i32; 3]> {
+    let mut out = Vec::new();
+    for dx in -radius..=radius {
+        for dz in -radius..=radius {
+            if dx * dx + dz * dz <= radius * radius {
+                for dy in -SALT_HALF_HEIGHT..=SALT_HALF_HEIGHT {
+                    out.push([x + dx, y + dy, z + dz]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether salt grows in a block (the disk's `target`: dirt and clay).
+pub fn salt_replaces(block: &str) -> bool {
+    matches!(block, "minecraft:dirt" | "minecraft:clay")
+}
+
 /// What a block becomes when ore grows in it: stone gives the ore, deepslate
 /// its deepslate ore; nothing else is replaced.
 pub fn replace(ore: &str, block: &str) -> Option<String> {
@@ -140,6 +181,19 @@ mod tests {
         assert_eq!(replace("tin", "minecraft:deepslate").as_deref(), Some("mekanism:deepslate_tin_ore"));
         assert_eq!(replace("tin", "minecraft:dirt"), None);
         assert_eq!(replace("tin", "minecraft:air"), None);
+    }
+    #[test]
+    fn a_salt_disk_stays_in_its_chunk_and_is_always_the_same() {
+        for n in 0..SALT_PER_CHUNK {
+            let (x, z, r) = salt_disk(-3, 7, n);
+            assert_eq!((x, z, r), salt_disk(-3, 7, n));
+            assert!((SALT_MIN_RADIUS..=SALT_MAX_RADIUS).contains(&r));
+            assert!((-48..-32).contains(&(x - r)) && (-48..-32).contains(&(x + r)), "x {x}");
+            assert!((112..128).contains(&(z - r)) && (112..128).contains(&(z + r)), "z {z}");
+        }
+        // A radius 2 disk: the circle's 13 columns, three blocks tall.
+        assert_eq!(salt_blocks(0, 60, 0, 2).len(), 13 * 3);
+        assert!(salt_replaces("minecraft:clay") && !salt_replaces("minecraft:sand"));
     }
     #[test]
     fn the_world_has_every_ore_mekanism_adds() {
