@@ -165,7 +165,8 @@ for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
 INDUCTION = ['induction_casing', 'induction_port', *[f'{t}_induction_cell' for t in TIERS], *[f'{t}_induction_provider' for t in TIERS]]
-DYNAMIC = ['dynamic_tank', 'dynamic_valve', *INDUCTION]
+EVAPORATION = ['thermal_evaporation_block', 'thermal_evaporation_valve', 'thermal_evaporation_controller']
+DYNAMIC = ['dynamic_tank', 'dynamic_valve', *INDUCTION, *EVAPORATION]
 for m in DYNAMIC:
     BLOCKS[m] = ('minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 9.0, 'requires_tool': True}, 'machine')
 TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid'),
@@ -1441,6 +1442,37 @@ def dynamic_valve_menu(m):
     return {'slots': 2, 'data_slots': 7, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
+def evaporation_menu(m):
+    """GuiThermalEvaporationController (simplified): the input and output gauges with their bucket slots, and the heat and speed."""
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 142))
+    for x in (7, 133):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 36, 50, 2), (x, 18))
+    for x, y, kind in ((54, 19, 'input'), (54, 51, 'output'), (118, 19, 'input'), (118, 51, 'output')):
+        panel.alpha_composite(gui_sprite(f'slot/{kind}'), (x - 1, y - 1))
+        panel.alpha_composite(gui_sprite(f'slot/overlay/{kind}'), (x - 1, y - 1))
+    texture = save_gui(panel, m)
+    title = 'Thermal Evaporation Plant'
+    widgets = [
+        {'type': 'gauge', 'x': 8, 'y': 19, 'w': 34, 'h': 48, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]}, 'kind': {'data': 6},
+         'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
+        {'type': 'gauge', 'x': 134, 'y': 19, 'w': 34, 'h': 48, 'value': {'pair': [4, 5]}, 'max': {'const': 10000}, 'kind': {'data': 7},
+         'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 76, 'y': 20, 'text': 'Temp {8}', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 76, 'y': 30, 'text': 'Height {11}', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 76, 'y': 40, 'text': 'Sun {9}/4', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 76, 'y': 50, 'text': 'Rate {10}', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.67', 'color': '#808080'}]
+    return {'slots': 4, 'data_slots': 12, 'results': [1, 3],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[54, 19], [54, 51], [118, 19], [118, 51]], 'widgets': widgets}}
+
 def induction_port_menu(m):
     """GuiMatrix (simplified): the energy the matrix holds (in MFE), its capacity, what its providers move and what it is made of."""
     panel = nine_slice(gui_sprite('base'), 176, 166, 4)
@@ -1506,6 +1538,7 @@ def pump_menu(m):
                                      'widgets': widgets, 'windows': [window]}}, m, 3, 24)
 
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
+put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/induction_port.json', induction_port_menu('induction_port'))
 for m in MACHINES:
     if m in ('electric_pump', 'fluidic_plenisher'):

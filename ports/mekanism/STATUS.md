@@ -655,4 +655,4 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 - O teste simulado só confere que a estrutura é achada (o harness não simula o limite de capacidade das portas).
 
 ### 2x. Thermal Evaporation Plant (mod 0.1.67, partial)
-`evaporation.rs`: 4x4x(3..18) tower validation, heat model (solar corners, dissipation), ops/tick by temperature, recipes `mekanism:evaporating`, shared input/output tank mirrors, bucket slots. Registered (group `mekanism:evaporation`), unit-tested (100 pass). Pending: converter entries (blocks/models/menu/lang/tags), harness step, in-game test.
+`evaporation.rs`: 4x4x(3..18) tower validation, heat model (solar corners, dissipation), ops/tick by temperature, recipes `mekanism:evaporating`, shared input/output tank mirrors, bucket slots. Registered (group `mekanism:evaporation`), unit-tested (100 pass). Converter entries (blocks, controller menu) done; chemical output tank (brine/lithium). Pending: in-game test.

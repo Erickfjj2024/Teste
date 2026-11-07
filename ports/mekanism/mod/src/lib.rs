@@ -1288,8 +1288,8 @@ impl ServerMod for Mekanism {
             if slots > 0 {
                 k.container = Some(ContainerSpec { slots, faces: vec![Vec::new(); 6], inputs: vec![0, 2], outputs: vec![1, 3], menu: true });
             }
-            for _ in 0..2 {
-                k.tanks.push(TankSpec { kind: "fluid".into(), capacity: evaporation::SPEC_CAPACITY, max_rate: 100_000, faces: vec![FlowSide::Both; 6] });
+            for kind_name in ["fluid", "chemical"] {
+                k.tanks.push(TankSpec { kind: kind_name.into(), capacity: evaporation::SPEC_CAPACITY, max_rate: 100_000, faces: vec![FlowSide::Both; 6] });
             }
             r = r.block_entity_kind(k);
         }
