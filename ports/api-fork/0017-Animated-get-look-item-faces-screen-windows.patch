@@ -338,7 +338,7 @@ index a3b2d7f..b24ac1f 100644
                      let net = host.hub.stack(&carried);
                      if let Some(g) = host.hub.guest_mut(conn) {
 diff --git a/crates/horizon-client/src/game/machines.rs b/crates/horizon-client/src/game/machines.rs
-index e82b6ca..dcfcadc 100644
+index e82b6ca..94b8373 100644
 --- a/crates/horizon-client/src/game/machines.rs
 +++ b/crates/horizon-client/src/game/machines.rs
 @@ -107,6 +107,11 @@ impl View {
@@ -361,13 +361,13 @@ index e82b6ca..dcfcadc 100644
 +            let mut container = Arc::clone(self.world.block_entities.mod_container(state.0)?);
 +            // A mod may give this entity its own faces (a machine's side configuration): a byte for each face,
 +            // a bit for each slot, kept in the entity.
-+            if let Some(horizon_world::nbt::Tag::ByteArray(masks)) =
++            if let Some(horizon_world::nbt::Tag::IntArray(masks)) =
 +                m.nbt.get(&horizon_world::nbt::JavaString::from("item_faces"))
 +                && masks.len() == 6
 +            {
 +                let mut own = (*container).clone();
 +                for (face, mask) in own.faces.iter_mut().zip(masks.iter()) {
-+                    *face = (0..8).filter(|s| *mask as u8 & (1 << s) != 0).filter(|s| *s < own_slots(container.slots)).collect();
++                    *face = (0..32).filter(|s| *mask as u32 & (1 << s) != 0).filter(|s| *s < own_slots(container.slots)).collect();
 +                }
 +                container = Arc::new(own);
 +            }
@@ -1284,7 +1284,7 @@ index 8554dc2..863b3a0 100644
                  let kind = Self::remote_station_kind(m)?;
                  let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..5e5ad37 100644
+index fcc3158..e03e4c9 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -101,8 +101,36 @@ mod run {
@@ -1438,8 +1438,8 @@ index fcc3158..5e5ad37 100644
 +            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
 +                self.world.block_entities.get_mut(&key)
 +            {
-+                let masks: Vec<u8> = faces.iter().map(|f| f.iter().fold(0u8, |a, s| a | (1 << (*s & 7)))).collect();
-+                m.nbt.insert(Self::jname("item_faces"), horizon_world::nbt::Tag::ByteArray(masks));
++                let masks: Vec<i32> = faces.iter().map(|f| f.iter().fold(0u32, |a, s| a | (1 << (*s & 31))) as i32).collect();
++                m.nbt.insert(Self::jname("item_faces"), horizon_world::nbt::Tag::IntArray(masks));
 +                self.world.modified.insert((key.0 >> 4, key.2 >> 4));
 +            }
 +        }
@@ -2264,7 +2264,7 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..9809458 100644
+index 783da48..1b87a8e 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
 @@ -686,6 +686,33 @@ interface %world {
@@ -2307,7 +2307,7 @@ index 783da48..9809458 100644
      set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
 +    /// Sets which slots of the block entity's container each face reaches: the
 +    /// six lists are down, up, north, south, west, east, each of slot numbers
-+    /// (0 to 7). A hopper or dropper put through a face uses its list, as it
++    /// (0 to 31). A hopper or dropper put through a face uses its list, as it
 +    /// would the kind's own `faces`, which this replaces for that one entity
 +    /// (kept with it). Made after this call returns; nothing happens for a
 +    /// block with no mod container. API 17.
@@ -3345,7 +3345,7 @@ index 02de080..c5f4b38 100644
          let d = data();
          assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
-index d3024e4..35894c7 100644
+index d3024e4..01a3cb5 100644
 --- a/crates/horizon-mods/src/runtime.rs
 +++ b/crates/horizon-mods/src/runtime.rs
 @@ -58,7 +58,7 @@ pub use server_bindings::{
@@ -3425,8 +3425,8 @@ index d3024e4..35894c7 100644
 +        z: i32,
 +        faces: Vec<Vec<u32>>,
 +    ) -> Result<(), String> {
-+        if faces.len() != 6 || faces.iter().any(|f| f.len() > 8 || f.iter().any(|s| *s > 7)) {
-+            return Err("six faces, each with at most 8 slots numbered 0 to 7".into());
++        if faces.len() != 6 || faces.iter().any(|f| f.len() > 32 || f.iter().any(|s| *s > 31)) {
++            return Err("six faces, each with at most 32 slots numbered 0 to 31".into());
 +        }
 +        let made = self
 +            .out
@@ -4195,7 +4195,7 @@ index 151d098..e390609 100644
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..6b3937d 100644
+index 57a0edc..f563ecd 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -4229,7 +4229,7 @@ index 57a0edc..6b3937d 100644
  | `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
  | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
  | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
-+| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 7). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
++| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
 +| `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
 +| `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
  

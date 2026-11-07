@@ -742,7 +742,7 @@ interface %world {
     set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
     /// Sets which slots of the block entity's container each face reaches: the
     /// six lists are down, up, north, south, west, east, each of slot numbers
-    /// (0 to 7). A hopper or dropper put through a face uses its list, as it
+    /// (0 to 31). A hopper or dropper put through a face uses its list, as it
     /// would the kind's own `faces`, which this replaces for that one entity
     /// (kept with it). Made after this call returns; nothing happens for a
     /// block with no mod container. API 17.
