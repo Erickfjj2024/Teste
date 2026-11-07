@@ -56,6 +56,7 @@ pub fn base_slots(def: &Def) -> usize {
         (Kind::Continuous, Layout::Rotary) => 5,
         (Kind::Continuous, _) => 3,
         (Kind::Reaction, _) => 3,
+        (Kind::Factory, _) => def.lines * 2 + 1,
         (Kind::Generator, _) => match def.generator {
             Some(GenKind::Solar) => 1,
             _ => 2,
@@ -235,7 +236,7 @@ impl Mekanism {
         // The energy upgrades change what the machine holds.
         let capacity = match def.kind {
             Kind::Generator | Kind::Tank => 0,
-            _ => max_energy(def.usage * STORED_TICKS, counts[ENERGY]),
+            _ => max_energy(base_capacity(def), counts[ENERGY]),
         };
         if capacity != 0 && self.capacity.get(&key) != Some(&capacity) {
             let _ = world::set_energy_capacity(&e.dimension, e.pos.x, e.pos.y, e.pos.z, capacity);

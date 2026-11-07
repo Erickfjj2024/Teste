@@ -416,6 +416,23 @@ Mais diferenças fechadas (precisam do APK v41, que traz widgets novos):
 **APK v42 + mod 0.1.46:** o botão Uninstall remove todos com **Shift** (o Shift da tela do Horizon vale; toque longo/direito também) e as linhas
 da lista de upgrades e o botão Uninstall ganham destaque quando o cursor (simulado) está sobre eles. Widgets novos no fork: `shift_id` e `hover` do botão.
 
+## 2p. Fábricas de Crushing, Enriching e Smelting (mod 0.1.48, o mesmo APK v47, **não testadas no jogo**)
+
+12 blocos: `basic/advanced/elite/ultimate` × crushing, enriching, smelting, com 3, 5, 7 e 9 linhas (`FactoryTier.processes`). Passou no teste
+simulado (`factory.toml`: 3 linhas trabalhando juntas, cada uma com a sua entrada, saída e progresso, a energia dividida e o slot de
+carga convertendo redstone) e em 83 testes unitários.
+
+- **Como funciona:** cada linha é a máquina comum (mesma receita, mesmo gasto por tick, 200 ticks) com slot de entrada e de saída próprios;
+  todas tiram da mesma energia (o gasto soma). A capacidade é a de `Factory.setMachineData`: metade da da máquina vezes as linhas (a da máquina
+  é a suposição de sempre). Upgrades de velocidade, energia, mudo e experiência valem como nas máquinas; o controle de redstone, a aba de
+  energia (soma o gasto) e a configuração de lados (entrada, saída, carga) também.
+- **Tela** (`GuiFactory`): os slots de cada linha nos lugares do original (55/35/29/27 + linha × 38/26/19), a seta que desce, o slot de carga, a
+  barra de energia; a do Ultimate é 34 mais larga.
+- **Receitas:** as originais (a fábrica de baixo + circuitos + ligas + lingotes), como receitas comuns: a de baixo **não passa o que guarda**.
+- **Faltam** (diferenças): a aba de ordenação (Sorting), a entrada só aceitar o que tem receita (os slots aceitam qualquer item), a
+  mesma entrada em todas as linhas (`inputProducesOutput`), o instalador de nível, e as fábricas de combining, sawing, compressing,
+  injecting, purifying e infusing.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

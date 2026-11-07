@@ -135,6 +135,9 @@ pub enum Layout {
     ChemTank,
     /// The chemical infuser: two chemical item slots in (0, 1) and one out (2); tanks: left, right, centre.
     ChemInfuser,
+    /// A factory of that many lines (`FactoryTier.processes`): the input and output slots of each line one after the other
+    /// (line `i` has input slot `2i` and output slot `2i + 1`), then the charge slot.
+    Factory(u8),
     /// The pigment mixer: the infuser's shape, but its top side is disabled (`addDisabledSides(TOP)`).
     Mixer,
     /// The chemical washer: the fluid slot (0), the slurry output slot (1) and the fluid output slot (2); tanks: fluid,
@@ -155,7 +158,7 @@ impl Layout {
     pub fn transmissions(self) -> &'static [Transmission] {
         use Transmission::{Chemicals as C, Energy as E, Fluids as F, Items as I};
         match self {
-            Layout::Electric | Layout::Sawmill | Layout::Combiner => &[I, E],
+            Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(_) => &[I, E],
             Layout::ChemTank => &[C, I],
             Layout::ChemInfuser | Layout::Mixer => &[C, I, E],
             Layout::Washer => &[C, F, I, E],
@@ -343,7 +346,7 @@ pub fn default_config(layout: Layout) -> Config {
             *chem = [Data::InputOutput; 6];
             eject[Transmission::Chemicals as usize] = true;
         }
-        Layout::Electric | Layout::Sawmill | Layout::Combiner => {}
+        Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(_) => {}
     }
     let mut cfg = Config { sides, eject };
     enforce(layout, &mut cfg);
@@ -427,6 +430,9 @@ impl Config {
 
 /// The slots of a machine a data type reaches.
 pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
+    if let Layout::Factory(lines) = layout {
+        return factory_slots(lines, data);
+    }
     match (layout, data) {
         (Layout::Rotary, Data::Energy) => &[4],
         (_, Data::None | Data::Energy) => &[],
@@ -474,6 +480,33 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
         (Layout::Separator, Data::Output1) => &[1],
         (Layout::Separator, Data::Output2) => &[2],
         (Layout::Separator, Data::InputOutput) => &[0, 1, 2],
+        _ => &[],
+    }
+}
+
+/// The slots of a factory of `lines` lines a data type reaches: its inputs (even slots), its outputs (odd slots), its charge slot
+/// (after them).
+fn factory_slots(lines: u8, data: Data) -> &'static [u32] {
+    const INPUTS: [&[u32]; 4] = [&[0, 2, 4], &[0, 2, 4, 6, 8], &[0, 2, 4, 6, 8, 10, 12], &[0, 2, 4, 6, 8, 10, 12, 14, 16]];
+    const OUTPUTS: [&[u32]; 4] = [&[1, 3, 5], &[1, 3, 5, 7, 9], &[1, 3, 5, 7, 9, 11, 13], &[1, 3, 5, 7, 9, 11, 13, 15, 17]];
+    const BOTH: [&[u32]; 4] = [
+        &[0, 1, 2, 3, 4, 5],
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+    ];
+    const CHARGE: [&[u32]; 4] = [&[6], &[10], &[14], &[18]];
+    let at = match lines {
+        3 => 0,
+        5 => 1,
+        7 => 2,
+        _ => 3,
+    };
+    match data {
+        Data::Input => INPUTS[at],
+        Data::Output => OUTPUTS[at],
+        Data::InputOutput => BOTH[at],
+        Data::Energy => CHARGE[at],
         _ => &[],
     }
 }

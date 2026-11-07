@@ -1,0 +1,31 @@
+# A basic crushing factory works three lines at once from one energy store: each line has its own input, output and progress.
+
+items = ["minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold"]
+
+[[recipe]]
+id = "mekanism:crushing/iron"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[recipe]]
+id = "mekanism:crushing/gold"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:gold_ingot"},"output":{"count":1,"id":"mekanism:dust_gold"}}'''
+
+[[step]]
+join = "Alex"
+blocks = [
+    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 0, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=false]" },
+]
+# Lines 1 and 3 have an ingot (line 3 gold); line 2 has none; the charge slot (the seventh) holds redstone.
+set-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", "", "minecraft:gold_ingot*1", "", "minecraft:redstone*3", "", ""] },
+]
+ticks = 1
+
+[[step]]
+ticks = 220
+# 200 ticks later, each working line has made its dust, from its own input; the empty line did nothing.
+expect.block-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", "", "", "mekanism:dust_gold*1", "minecraft:redstone*2", "", ""] },
+]
+expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=true]" }]
