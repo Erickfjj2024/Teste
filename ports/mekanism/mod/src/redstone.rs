@@ -46,7 +46,7 @@ impl Control {
 /// numbers (the control, then the energy it still needs as two halves).
 pub fn offset(kind: Kind) -> usize {
     match kind {
-        Kind::Continuous | Kind::Reaction => 39,
+        Kind::Continuous | Kind::Reaction | Kind::Pump => 39,
         Kind::Generator => 9,
         _ => 37,
     }
@@ -55,7 +55,7 @@ pub fn offset(kind: Kind) -> usize {
 pub fn menu_slot(kind: Kind) -> usize {
     match kind {
         Kind::Process => 20,
-        Kind::Continuous | Kind::Reaction => 24,
+        Kind::Continuous | Kind::Reaction | Kind::Pump => 24,
         Kind::Generator => 15,
         _ => 16,
     }

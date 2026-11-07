@@ -138,6 +138,8 @@ pub enum Layout {
     /// A factory of that many lines (`FactoryTier.processes`): the input and output slots of each line one after the other
     /// (line `i` has input slot `2i` and output slot `2i + 1`), then the charge slot.
     Factory(u8, u8),
+    /// The electric pump: a bucket slot in (top) and out (bottom), its charge slot (back); its tank gives on top.
+    Pump(u8),
     /// The pigment mixer: the infuser's shape, but its top side is disabled (`addDisabledSides(TOP)`).
     Mixer,
     /// The chemical washer: the fluid slot (0), the slurry output slot (1) and the fluid output slot (2); tanks: fluid,
@@ -158,6 +160,7 @@ impl Layout {
     pub fn transmissions(self) -> &'static [Transmission] {
         use Transmission::{Chemicals as C, Energy as E, Fluids as F, Items as I};
         match self {
+            Layout::Pump(_) => &[F, I, E],
             Layout::Factory(_, form) if form >= 3 => &[I, C, E],
             Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(..) => &[I, E],
             Layout::ChemTank => &[C, I],
@@ -200,6 +203,9 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         }
         // `setupInputConfig`: a tank that only takes in, and `setupOutputConfig`: one that only gives.
         (Layout::Adv | Layout::Crystallizer, Transmission::Chemicals) => &[Data::None, Data::Input],
+        (Layout::Pump(0), Transmission::Fluids) => &[Data::None, Data::Output],
+        (Layout::Pump(_), Transmission::Fluids) => &[Data::None, Data::Input],
+        (Layout::Pump(_), Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy],
         (Layout::Factory(_, 3), Transmission::Chemicals) => &[Data::None, Data::Input],
         (Layout::Factory(_, 4), Transmission::Chemicals) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
         (Layout::Oxidizer, Transmission::Chemicals) => &[Data::None, Data::Output],
@@ -277,6 +283,13 @@ pub fn default_config(layout: Layout) -> Config {
             items[BACK] = Data::Energy;
         }
         Layout::ChemTank => items = [Data::None; 6],
+        // The drain slot on top, the full one at the bottom, the charge slot at the back.
+        Layout::Pump(_) => {
+            items = [Data::None; 6];
+            items[TOP] = Data::Input;
+            items[BOTTOM] = Data::Output;
+            items[BACK] = Data::Energy;
+        }
         _ => {}
     }
     let mut sides = [[Data::None; 6]; 5];
@@ -356,6 +369,8 @@ pub fn default_config(layout: Layout) -> Config {
             *chem = [Data::InputOutput; 6];
             eject[Transmission::Chemicals as usize] = true;
         }
+        // `AttributeSideConfig.PUMP`: the tank gives on top.
+        Layout::Pump(form) => sides[Transmission::Fluids as usize][TOP] = if form == 0 { Data::Output } else { Data::Input },
         Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(..) => {}
     }
     let mut cfg = Config { sides, eject };
@@ -445,6 +460,10 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
     }
     match (layout, data) {
         (Layout::Rotary, Data::Energy) => &[4],
+        (Layout::Pump(_), Data::Input) => &[0],
+        (Layout::Pump(_), Data::Output) => &[1],
+        (Layout::Pump(_), Data::InputOutput) => &[0, 1],
+        (Layout::Pump(_), Data::Energy) => &[2],
         (_, Data::None | Data::Energy) => &[],
         (Layout::Electric, Data::Input) => &[0],
         (Layout::Electric, Data::Output) => &[1],
@@ -637,6 +656,9 @@ pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<
                 out[1][face] = both(false, matches!(c, Data::Output1 | Data::InputOutput) && pushes);
                 out[2][face] = both(false, matches!(c, Data::Output2 | Data::InputOutput) && pushes);
             }
+            // The pump's tank gives through the sides its fluid configuration says.
+            Layout::Pump(0) => out[0][face] = both(false, matches!(f, Data::Output | Data::InputOutput)),
+            Layout::Pump(_) => out[0][face] = both(takes(f), false),
             _ => out[0][face] = both(takes(c), gives(c)),
         }
     }

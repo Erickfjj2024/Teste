@@ -13,6 +13,7 @@ mod chem_table;
 mod plus;
 mod process;
 mod factory;
+mod pump;
 mod reaction;
 mod redstone;
 mod generators;
@@ -63,6 +64,8 @@ enum Kind {
     Reaction,
     /// A factory (`factory`): several lines of an electric machine's work.
     Factory,
+    /// The electric pump (`pump`): sucks the fluid sources of the world into its tank.
+    Pump,
 }
 
 /// A storage tank's tier: what it holds and moves a tick.
@@ -127,6 +130,11 @@ const fn factory(block: &'static str, base: &'static str, source: Source, usage:
     Def { block, source, usage, kind: Kind::Factory, layout: Layout::Factory(lines as u8, form), proc: None, cont: None, tank: None, generator: None, lines, base, form }
 }
 
+/// The electric pump.
+const fn pump_machine(block: &'static str, form: u8) -> Def {
+    Def { block, source: Source::Files(""), usage: pump::USAGE, kind: Kind::Pump, layout: Layout::Pump(form), proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form }
+}
+
 /// A storage tank block of a tier.
 const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, creative: bool) -> Def {
     Def {
@@ -151,7 +159,7 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, mean: 1.0 }
 }
 
-const MACHINES: [Def; 70] = [
+const MACHINES: [Def; 72] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -227,6 +235,10 @@ const MACHINES: [Def; 70] = [
     factory("mekanism:advanced_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 5, 3),
     factory("mekanism:elite_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 7, 3),
     factory("mekanism:ultimate_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 9, 3),
+    // The electric pump takes fluid sources of the world.
+    pump_machine("mekanism:electric_pump", 0),
+    // The fluidic plenisher pours the fluid of its tank into the world.
+    pump_machine("mekanism:fluidic_plenisher", 1),
     // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
     tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
     tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
@@ -311,6 +323,10 @@ struct Mekanism {
     removals: HashMap<(String, i32, i32, i32), Vec<i32>>,
     /// Upgrades a player sneak-used on a machine: the player, the type, how many they held and the slot they were in.
     installs: HashMap<(String, i32, i32, i32), Vec<(String, usize, u32, u32)>>,
+    /// The fluid blocks each electric pump found beside the ones it took (`recurringNodes`), and the fluid it is on.
+    pump_nodes: HashMap<(String, i32, i32, i32), (Vec<(i32, i32, i32)>, String)>,
+    /// What each fluidic plenisher knows of its work.
+    plenishers: HashMap<(String, i32, i32, i32), pump::Plenish>,
     capacity: HashMap<(String, i32, i32, i32), u64>,
     force: bool,
     /// The reaction chamber's recipes.
@@ -569,7 +585,7 @@ impl Mekanism {
             Kind::Combiner => self.combs.is_empty(),
             Kind::Process => self.procs.get(def.block).is_none_or(process::Book::is_empty),
             // Their ticks are `run_continuous` and `run_tank`.
-            Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory => false,
+            Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory | Kind::Pump => false,
         };
         let due = self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20);
         if empty && due {
@@ -580,7 +596,7 @@ impl Mekanism {
                 }
                 Kind::Sawmill => self.saws = load_saw_book(),
                 Kind::Combiner => self.combs = load_comb_book(),
-                Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory => {}
+                Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory | Kind::Pump => {}
                 Kind::Process => {
                     if let Some(spec) = &def.proc {
                         self.procs.insert(def.block, load_proc_book(def.source, spec.shape));
@@ -773,7 +789,7 @@ impl Mekanism {
                 }
                 (slots, next.energy, next.progress, status, next != io)
             }
-            Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory => unreachable!("they have their own ticks"),
+            Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory | Kind::Pump => unreachable!("they have their own ticks"),
             Kind::Combiner => {
                 let io = combiner::Io { main: slot(0), extra: slot(1), output: slot(2), energy: e.energy, progress, ticks: ticks_now };
                 let (next, status) = combiner::step(usage_now, &self.combs, &io);
@@ -985,6 +1001,14 @@ impl ServerMod for Mekanism {
                     outputs: vec![1],
                     menu: true,
                 },
+                // The empty bucket in (top), the full one out (bottom) and the charge slot (back).
+                Kind::Pump => ContainerSpec {
+                    slots: 3,
+                    faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
+                    inputs: vec![0],
+                    outputs: vec![1],
+                    menu: true,
+                },
                 // A line's input and output slots one after the other, then the charge slot, on the default configuration's faces.
                 Kind::Factory => ContainerSpec {
                     slots: config::factory_slot_count(def.lines, def.form) as u32,
@@ -1108,6 +1132,15 @@ impl ServerMod for Mekanism {
                     faces: flow,
                 });
             }
+            if def.kind == Kind::Pump {
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
+                k.tanks.push(TankSpec {
+                    kind: "fluid".into(),
+                    capacity: pump::TANK,
+                    max_rate: 1000,
+                    faces: flow.first().map_or_else(|| vec![FlowSide::None; 6], |f| f.iter().map(|x| flow_side(*x)).collect()),
+                });
+            }
             if def.kind == Kind::Factory && def.form >= 3 {
                 // One chemical tank for all the lines, as big as the machine's for each of them.
                 let cap = MACHINES.iter().find(|d| d.block == def.base).and_then(|d| d.proc).map_or(0, |s| s.cap_in) * def.lines as u64;
@@ -1210,6 +1243,8 @@ impl ServerMod for Mekanism {
             install: HashMap::new(),
             removals: HashMap::new(),
             installs: HashMap::new(),
+            pump_nodes: HashMap::new(),
+            plenishers: HashMap::new(),
             capacity: HashMap::new(),
             force: false,
             reactions: reaction::Book::default(),
@@ -1460,6 +1495,7 @@ impl ServerMod for Mekanism {
                     Kind::Generator => self.run_generator(def, e, tick),
                     Kind::Reaction => self.run_reaction(def, e, tick),
                     Kind::Factory => self.run_factory(def, e, tick),
+                    Kind::Pump => self.run_pump(def, e, tick),
                     _ => self.run(def, e, tick),
                 });
             } else if block.ends_with("_energy_cube") {

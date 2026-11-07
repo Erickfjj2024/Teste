@@ -76,3 +76,27 @@ ticks = 205
 # 205 ticks later both working lines made an ingot (the tank holds 210 a line: 630) and used a tick of osmium each tick.
 expect.block-items = [{ x = 30, y = 64, z = -1, slots = ["mekanism:dust_refined_obsidian*1", "mekanism:ingot_refined_obsidian*1", "", "mekanism:ingot_refined_obsidian*1", "", "", "", "", "", ""] }]
 expect.block-tanks = [{ x = 30, y = 64, z = -1, tanks = ["mekanism:osmium*225"] }]
+
+# An electric pump takes the lava source below it into its tank, a bucket every 19 ticks (the lava turns to air).
+[[step]]
+blocks = [
+    { x = 50, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 50, y = 64, z = -1, state = "mekanism:electric_pump[facing=north,lit=false]" },
+    { x = 50, y = 63, z = -1, state = "minecraft:lava[level=0]" },
+]
+ticks = 45
+
+expect.blocks = [{ x = 50, y = 63, z = -1, state = "minecraft:air" }]
+
+# A fluidic plenisher pours the water of its tank into the air below it, spreading (a bucket every 20 ticks).
+[[step]]
+blocks = [
+    { x = 60, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 60, y = 64, z = -1, state = "mekanism:fluidic_plenisher[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-tanks = [{ x = 60, y = 64, z = -1, tanks = ["minecraft:water*5000"] }]
+ticks = 70
+expect.blocks = [{ x = 60, y = 63, z = -1, state = "minecraft:water[level=0]" }]

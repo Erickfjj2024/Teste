@@ -590,3 +590,16 @@ campo novo `facing`) usa esse número: o mesmo que o mod usa para entrada/saída
 
 O cubo não tem a propriedade `facing` (guarda a frente nos bytes do bloco), então o ícone lia "norte" sempre. Agora o cubo escreve a frente
 na tela (último número) e o ícone a usa, como as máquinas. Os tanques de químico seguem fixos ao norte (como no original, que não os gira).
+
+## 2s. Electric Pump e Fluidic Plenisher (mod 0.1.58, **não testados no jogo**)
+
+- **Electric Pump:** a cada 19 ticks (menos com upgrade de velocidade) gasta energia e suga a fonte de água ou lava embaixo dele e, depois, as que
+  acham-se em volta das que já pegou (até 80 blocos); a lava vira ar, a água **não some** (regra de conversão de fonte infinita ligada, como o
+  padrão do original). Tanque de 10 baldes que entrega ao bloco de cima; baldes vazios no slot de cima enchem e saem no de baixo; slot de carga.
+  Falta o upgrade de filtro (água pesada) e o ruído/partículas.
+- **Fluidic Plenisher:** o tanque (só água e lava) recebe baldes cheios e, a cada 20 ticks, despeja uma fonte no próximo nó da busca em largura
+  (os 4 lados e o de baixo), até 4096 nós; depois só reabastece o bloco de baixo. A busca não é guardada no mundo (recomeça ao carregar).
+- Testes simulados novos em `factory.toml` (lava removida pela bomba, água despejada pelo plenisher) e 87 unitários.
+
+Pendências do roteiro (lista de trabalho): ver `AUDITORIA.md` e a lista abaixo da seção 2: máquinas de químico restantes, blocos grandes (bounding
+blocks), multiblocos, logística de itens, equipamentos.
