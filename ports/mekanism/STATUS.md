@@ -413,8 +413,8 @@ Mais diferenças fechadas (precisam do APK v41, que traz widgets novos):
 - **Instalar com Shift+usar:** segurando um upgrade e usando-o agachado sobre uma máquina que aceita o tipo, o monte todo entra até o máximo
   (`ItemUpgrade.useOn`). O slot da mão não é informado pela API: o mod usa o primeiro monte igual da barra de atalhos.
 
-Não feito (e por quê): **Uninstall com Shift** continua "toque direito/longo remove todos": o celular não tem Shift no widget, e o toque
-longo é o equivalente; **destaque ao passar o mouse** na lista de upgrades não existe (não há "passar o dedo").
+**APK v42 + mod 0.1.46:** o botão Uninstall remove todos com **Shift** (o Shift da tela do Horizon vale; toque longo/direito também) e as linhas
+da lista de upgrades e o botão Uninstall ganham destaque quando o cursor (simulado) está sobre eles. Widgets novos no fork: `shift_id` e `hover` do botão.
 
 ## 3. NÃO testado no jogo (o usuário não viu)
 

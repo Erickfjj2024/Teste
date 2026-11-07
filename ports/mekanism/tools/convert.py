@@ -953,7 +953,7 @@ def upgrade_window(machine, base, c):
             group.append({'type': 'sprite', 'texture': upgrade_icon(k), 'x': 9, 'y': y + 2, 'w': 8, 'h': 8})
             group.append({'type': 'text', 'x': 19, 'y': y + 2, 'text': UPGRADE_NAMES[k], 'color': '#404040'})
             group.append({'type': 'button', 'x': 7, 'y': y, 'w': 100, 'h': 12, 'local': {'set': {'var': 'sel', 'value': k + 1}},
-                          'tooltip': UPGRADE_DESC[k]})
+                          'tooltip': UPGRADE_DESC[k], 'hover': '#33FFFFFF'})
         return group
     for combo in range(1, 1 << len(listed)):
         mask = sum(1 << listed[i] for i in range(len(listed)) if combo & (1 << i))
@@ -999,8 +999,8 @@ def upgrade_window(machine, base, c):
             {'type': 'show', 'when': {'data': {'value': {'data': count_at}, 'eq': n}}, 'widgets': [
                 {'type': 'sprite', 'texture': save_gui(nine_slice(gui_sprite('button_digital'), 56, 12, 1), 'upgrade_button_on'), 'x': 115, 'y': 54, 'w': 56, 'h': 12},
                 {'type': 'text', 'x': 115 + (56 - text_width('Uninstall')) // 2, 'y': 56, 'text': 'Uninstall', 'color': '#FFFFFF'},
-                {'type': 'button', 'x': 115, 'y': 54, 'w': 56, 'h': 12, 'id': 6100 + k, 'alt_id': 6110 + k,
-                 'tooltip': 'Uninstalls a single upgrade, right press to uninstall all.'}]} for n in range(1, UPGRADE_MAX[k] + 1)]})
+                {'type': 'button', 'x': 115, 'y': 54, 'w': 56, 'h': 12, 'id': 6100 + k, 'alt_id': 6110 + k, 'shift_id': 6110 + k,
+                 'tooltip': 'Uninstalls a single upgrade, hold Shift (or a long press) to uninstall all.', 'hover': '#33FFFFFF'}]} for n in range(1, UPGRADE_MAX[k] + 1)]})
     # the "Uninstall" button: dark (inactive) here, lit over it while the selected type has something installed
     widgets.insert(1, {'type': 'sprite', 'texture': save_gui(nine_slice(gui_sprite('button_digital_inactive'), 56, 12, 1), 'upgrade_button_off'), 'x': 115, 'y': 54, 'w': 56, 'h': 12})
     widgets.insert(2, {'type': 'text', 'x': 115 + (56 - text_width('Uninstall')) // 2, 'y': 56, 'text': 'Uninstall', 'color': '#A0A0A0'})
@@ -1148,7 +1148,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.45', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.46', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1247,7 +1247,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.45', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.46', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1276,7 +1276,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.45', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.46', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1543,7 +1543,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.45', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.46', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

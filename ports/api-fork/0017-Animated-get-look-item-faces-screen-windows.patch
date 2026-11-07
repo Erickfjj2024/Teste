@@ -432,7 +432,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..c0b3848 100644
+index 609127a..1c8945f 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -4,16 +4,77 @@
@@ -445,7 +445,7 @@ index 609127a..c0b3848 100644
 -    content::{MenuScreen, Widget, parse_color},
 -    screen::{button_at, fill_text, filled, fraction, hovered, read},
 +    content::{ArmorSlots, Direction, MenuScreen, Widget, parse_color},
-+    screen::{DRAG_HEIGHT, Locals, Press, fill_text, neighbor_step, window_origin, filled, fraction, hovered, open_window, press, read, showing},
++    screen::{DRAG_HEIGHT, Locals, Press, press_with, fill_text, neighbor_step, window_origin, filled, fraction, hovered, open_window, press, read, showing},
 +};
 +use std::{
 +    collections::HashMap,
@@ -539,7 +539,7 @@ index 609127a..c0b3848 100644
 -            return false;
 -        };
 +    /// Draws a list of widgets (showing now) with their origin at `origin`.
-+    fn draw_widgets(&self, widgets: &[Widget], data: &[i32], locals: &Locals, batch: &mut HudBatch, origin: [f32; 2]) {
++    fn draw_widgets(&self, widgets: &[Widget], data: &[i32], locals: &Locals, batch: &mut HudBatch, origin: [f32; 2], cursor: [f32; 2]) {
          let [ox, oy] = origin;
 -        if let Some(texture) = &def.texture
 -            && let Some([sw, sh]) = self.native_sprite_size(texture)
@@ -565,7 +565,7 @@ index 609127a..c0b3848 100644
                      let Some([sw, sh]) = self.native_sprite_size(texture) else {
                          continue;
                      };
-@@ -88,22 +131,236 @@ impl Game<'_> {
+@@ -88,22 +131,243 @@ impl Game<'_> {
                          }
                          _ => (src, dst),
                      };
@@ -594,13 +594,13 @@ index 609127a..c0b3848 100644
 +                        let f = f32::from(*s) / 100.0;
 +                        batch.scale_since(start, at[0], at[1], f, f);
 +                    }
-+                }
+                 }
+-                Widget::Button { .. } => {}
 +                Widget::Swatch { x, y, w, h, value, colors, .. } => {
 +                    let i = read(value, data).max(0) as usize;
 +                    let argb = colors.get(i).or(colors.last()).and_then(|c| parse_color(c)).unwrap_or(0xFF80_8080);
 +                    self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
-                 }
--                Widget::Button { .. } => {}
++                }
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
 +                Widget::Gauge { x, y, w, h, value, max, kind, types, direction, .. } => {
 +                    let k = read(kind, data).max(0) as usize;
@@ -624,6 +624,12 @@ index 609127a..c0b3848 100644
 +                }
 +                Widget::Item { x, y, item } => {
 +                    self.native_item(batch, item, [ox + *x as f32, oy + *y as f32], 16.0);
++                }
++                Widget::Button { x, y, w, h, hover: Some(c), .. } => {
++                    let on = cursor[0] >= ox + *x as f32 && cursor[1] >= oy + *y as f32 && cursor[0] < ox + (*x + *w) as f32 && cursor[1] < oy + (*y + *h) as f32;
++                    if on && let Some(argb) = parse_color(c) {
++                        self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
++                    }
 +                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
              }
@@ -712,7 +718,8 @@ index 609127a..c0b3848 100644
 +                [ox, oy, def.width as f32, def.height as f32],
 +            );
 +        }
-+        self.draw_widgets(&def.widgets, data, &locals, batch, origin);
++        let cursor = [self.cursor.0, self.cursor.1];
++        self.draw_widgets(&def.widgets, data, &locals, batch, origin, cursor);
 +        // The window open, over the panel.
 +        if let Some(window) = open_window(def, &locals) {
 +            let origin = window_origin(window, &locals);
@@ -727,7 +734,7 @@ index 609127a..c0b3848 100644
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
 +            }
-+            self.draw_widgets(&window.widgets, data, &locals, batch, at);
++            self.draw_widgets(&window.widgets, data, &locals, batch, at, cursor);
 +        }
          true
      }
@@ -794,7 +801,7 @@ index 609127a..c0b3848 100644
 +            let inside = at[0] >= o[0] && at[0] < o[0] + w.width as f32 && at[1] >= o[1] && at[1] < o[1] + DRAG_HEIGHT;
 +            (inside, now.offset)
 +        });
-+        let result = press(screen, data, &mut now, at, alt);
++        let result = press_with(screen, data, &mut now, at, alt, self.has_shift_down());
 +        *l = Some(now);
 +        let result = result?;
 +        if let (Press::Local, (true, offset), false) = (&result, grab.unwrap_or((false, [0.0; 2])), alt)
@@ -809,7 +816,7 @@ index 609127a..c0b3848 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +371,7 @@ impl Game<'_> {
+@@ -114,8 +378,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -2126,7 +2133,7 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..96c3868 100644
+index e2ee6c7..943874f 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
 @@ -295,12 +295,63 @@ pub struct MenuType {
@@ -2294,7 +2301,7 @@ index e2ee6c7..96c3868 100644
      },
      /// A line of text; `{0}`, `{1}`... are data slots.
      Text {
-@@ -407,17 +525,67 @@ pub enum Widget {
+@@ -407,17 +525,73 @@ pub enum Widget {
          text: String,
          #[serde(default)]
          color: Option<String>,
@@ -2314,11 +2321,17 @@ index e2ee6c7..96c3868 100644
          id: i32,
          #[serde(default)]
 +        alt_id: Option<i32>,
++        /// Sent instead of `id` when the press is made with Shift held (the on-screen Shift counts).
++        #[serde(default)]
++        shift_id: Option<i32>,
 +        #[serde(default)]
 +        local: Option<LocalAction>,
 +        #[serde(default)]
-+        tooltip: Option<String>,
-+    },
+         tooltip: Option<String>,
++        /// A colour (`#AARRGGBB`, usually translucent) drawn over the button while the cursor is on it.
++        #[serde(default)]
++        hover: Option<String>,
+     },
 +    /// A rectangle filled with `colors[value]` (`#RRGGBB`), the last when `value` is past the list; its tooltip fills
 +    /// `{label}` with `labels[value]`.
 +    Swatch {
@@ -2331,8 +2344,8 @@ index e2ee6c7..96c3868 100644
 +        #[serde(default)]
 +        labels: Vec<String>,
 +        #[serde(default)]
-         tooltip: Option<String>,
-     },
++        tooltip: Option<String>,
++    },
 +    /// A tank: a rectangle filled from the bottom up to `value` of `max` with the chemical (or fluid) that `kind` says, a
 +    /// number from 1 into `types` (0 is an empty tank): the type's sprite tiled over it and tinted with its colour. Its
 +    /// tooltip fills `{label}` (the type's), `{value}` and `{max}`; `empty` is shown instead while `kind` is 0.
@@ -2363,7 +2376,7 @@ index e2ee6c7..96c3868 100644
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +629,197 @@ impl MenuScreen {
+@@ -461,81 +635,200 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -2555,16 +2568,19 @@ index e2ee6c7..96c3868 100644
 +                rest = &after[close + 1..];
 +            }
 +        }
-+        Widget::Button { x, y, w, h, local, .. } => {
++        Widget::Button { x, y, w, h, local, hover, .. } => {
++            if let Some(h) = hover {
++                colour(h)?;
++            }
 +            rect(*x, *y, *w, *h)?;
 +            match local {
 +                Some(LocalAction::Open(id)) if !windows.contains(&id.as_str()) => {
 +                    return Err(format!("{name}: a button opens window {id:?}, which the screen does not have"));
-                 }
--                Widget::Button { x, y, w, h, .. } => rect(*x, *y, *w, *h)?,
++                }
 +                Some(LocalAction::Set { var, .. }) if var.is_empty() || var.len() > 32 => {
 +                    return Err(format!("{name}: a variable's name is 1 to 32 bytes"));
-+                }
+                 }
+-                Widget::Button { x, y, w, h, .. } => rect(*x, *y, *w, *h)?,
 +                _ => {}
 +            }
 +        }
@@ -2627,7 +2643,7 @@ index e2ee6c7..96c3868 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +867,42 @@ pub enum RenderElement {
+@@ -583,6 +876,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -2670,7 +2686,7 @@ index e2ee6c7..96c3868 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +916,50 @@ pub enum RenderElement {
+@@ -596,6 +925,50 @@ pub enum RenderElement {
      },
  }
  
@@ -2721,7 +2737,7 @@ index e2ee6c7..96c3868 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +1007,48 @@ impl BlockRenderer {
+@@ -643,6 +1016,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -2770,7 +2786,7 @@ index e2ee6c7..96c3868 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1011,6 +1417,9 @@ impl Content {
+@@ -1011,6 +1426,9 @@ impl Content {
                      "{name}: slots is 1 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
                  ));
              }
@@ -2780,7 +2796,7 @@ index e2ee6c7..96c3868 100644
              let mut seen = BTreeSet::new();
              for &r in &file.results {
                  if r >= file.slots {
-@@ -1023,6 +1432,15 @@ impl Content {
+@@ -1023,6 +1441,15 @@ impl Content {
                      return Err(format!("{name}: result {r} is listed twice"));
                  }
              }
@@ -2796,7 +2812,7 @@ index e2ee6c7..96c3868 100644
              if let Some(screen) = &file.screen {
                  screen.check(&name, file.slots, file.data_slots)?;
              }
-@@ -1208,6 +1626,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1635,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
@@ -3147,7 +3163,7 @@ index d3024e4..35894c7 100644
          &mut self,
          player: String,
 diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
-index bb9b346..a851a1f 100644
+index bb9b346..f712e01 100644
 --- a/crates/horizon-mods/src/screen.rs
 +++ b/crates/horizon-mods/src/screen.rs
 @@ -1,7 +1,8 @@
@@ -3160,7 +3176,7 @@ index bb9b346..a851a1f 100644
  
  /// What a widget reads from the menu's data slots `data`: a constant, a data
  /// slot (16 bits on the wire) or two read as low and high halves.
-@@ -11,9 +12,154 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
+@@ -11,9 +12,170 @@ pub fn read(value: &Value, data: &[i32]) -> i64 {
          Value::Const(c) => *c,
          Value::Data(i) => slot(*i),
          Value::Pair([lo, hi]) => (slot(*hi) << 16) | slot(*lo),
@@ -3261,14 +3277,15 @@ index bb9b346..a851a1f 100644
 +    locals: &mut Locals,
 +    at: [f32; 2],
 +    alt: bool,
++    shift: bool,
 +) -> Option<Press> {
 +    let hit = showing(widgets, data, locals).into_iter().find_map(|w| match w {
-+        Widget::Button { x, y, w, h, id, alt_id, local, .. } if inside(at, *x, *y, *w, *h) => {
-+            Some((*id, *alt_id, local.clone()))
++        Widget::Button { x, y, w, h, id, alt_id, shift_id, local, .. } if inside(at, *x, *y, *w, *h) => {
++            Some((*id, *alt_id, *shift_id, local.clone()))
 +        }
 +        _ => None,
 +    })?;
-+    let (id, alt_id, local) = hit;
++    let (id, alt_id, shift_id, local) = hit;
 +    if let Some(action) = local {
 +        match action {
 +            LocalAction::Open(window) => {
@@ -3281,6 +3298,9 @@ index bb9b346..a851a1f 100644
 +            }
 +        }
 +        return Some(Press::Local);
++    }
++    if let (true, Some(shifted)) = (shift, shift_id) {
++        return Some(Press::Send(shifted));
 +    }
 +    if alt {
 +        return alt_id.map(Press::Send);
@@ -3297,25 +3317,37 @@ index bb9b346..a851a1f 100644
 +    at: [f32; 2],
 +    alt: bool,
 +) -> Option<Press> {
++    press_with(screen, data, locals, at, alt, false)
++}
++
++/// `press` with the Shift key's state: a button with a `shift_id` sends it while Shift is held.
++pub fn press_with(
++    screen: &MenuScreen,
++    data: &[i32],
++    locals: &mut Locals,
++    at: [f32; 2],
++    alt: bool,
++    shift: bool,
++) -> Option<Press> {
 +    if let Some(window) = open_window(screen, locals).cloned() {
 +        // A window's own widgets are hit wherever they are, outside it too (its tabs sit at its side); a press that
 +        // lands on the window and on none of them is the window's.
 +        let origin = window_origin(&window, locals);
 +        let rel = [at[0] - origin[0], at[1] - origin[1]];
-+        if let Some(pressed) = press_in(&window.widgets, data, locals, rel, alt) {
++        if let Some(pressed) = press_in(&window.widgets, data, locals, rel, alt, shift) {
 +            return Some(pressed);
 +        }
 +        if inside(at, origin[0] as i32, origin[1] as i32, window.width, window.height) {
 +            return Some(Press::Local);
 +        }
 +    }
-+    press_in(&screen.widgets, data, locals, at, alt)
++    press_in(&screen.widgets, data, locals, at, alt, shift)
 +}
 +
  /// `value` of `max` as 0 to 1; 0 when `max` is not over 0.
  pub fn fraction(value: i64, max: i64) -> f32 {
      if max <= 0 {
-@@ -34,21 +180,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
+@@ -34,21 +196,6 @@ pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
      }
  }
  
@@ -3337,7 +3369,7 @@ index bb9b346..a851a1f 100644
  /// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
  pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
      let percent = (fraction(value, max) * 100.0).round() as i64;
-@@ -68,7 +199,13 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -68,7 +215,13 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
          out.push_str(&rest[..open]);
          let after = &rest[open + 1..];
          match after.find('}').and_then(|close| {
@@ -3352,7 +3384,7 @@ index bb9b346..a851a1f 100644
              Some((close, read(&Value::Data(n), data)))
          }) {
              Some((close, v)) => {
-@@ -85,27 +222,50 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
+@@ -85,31 +238,67 @@ pub fn fill_text(text: &str, data: &[i32]) -> String {
      out
  }
  
@@ -3413,7 +3445,24 @@ index bb9b346..a851a1f 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -141,18 +301,150 @@ mod tests {
+ 
++    #[test]
++    fn shift_sends_the_shift_id() {
++        let s: MenuScreen = serde_json::from_str(
++            r##"{"width":100,"height":100,"slots":[],"widgets":[
++                {"type":"button","x":0,"y":0,"w":10,"h":10,"id":1,"alt_id":2,"shift_id":3,"hover":"#40FFFFFF"}]}"##,
++        )
++        .unwrap();
++        let mut l = Locals::default();
++        assert_eq!(press_with(&s, &[], &mut l, [5.0, 5.0], false, true), Some(Press::Send(3)));
++        assert_eq!(press_with(&s, &[], &mut l, [5.0, 5.0], false, false), Some(Press::Send(1)));
++        assert_eq!(press_with(&s, &[], &mut l, [5.0, 5.0], true, false), Some(Press::Send(2)));
++    }
++
+     #[test]
+     fn values_read_constants_slots_and_pairs() {
+         let data = [7, -1, 0x1234, 0x0002];
+@@ -141,18 +330,150 @@ mod tests {
              ["Energy: 25 / 100", "25%"]
          );
      }
