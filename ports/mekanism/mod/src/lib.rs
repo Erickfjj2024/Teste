@@ -23,6 +23,7 @@ mod pump;
 mod reaction;
 mod redstone;
 mod generators;
+mod laser;
 mod machine;
 mod sawmill;
 mod sides;
@@ -349,6 +350,9 @@ struct Mekanism {
     turbines: HashMap<(String, [i32; 3]), turbine::Turbine>,
     reactors: HashMap<(String, [i32; 3]), fission::Shared>,
     fusions: HashMap<(String, [i32; 3]), fusion::Shared>,
+    /// The energy lasers delivered to the blocks they hit, until those take it.
+    beams: HashMap<(String, [i32; 3]), u64>,
+    laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -1364,7 +1368,8 @@ impl ServerMod for Mekanism {
         // The fusion reactor: frames, adapters, focus matrices and glass only join the structure; the ports hold its five tanks and give the
         // energy; the controller holds the hohlraum slot and the screen.
         for part in [fusion::FRAME, fusion::ADAPTER, fusion::MATRIX, fusion::GLASS] {
-            let mut k = kind(part, false);
+            // The focus matrix ticks to take the energy lasers deliver.
+            let mut k = kind(part, part == fusion::MATRIX);
             k.keep_data = false;
             k.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
             r = r.block_entity_kind(k);
@@ -1382,6 +1387,14 @@ impl ServerMod for Mekanism {
         fctl.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
         fctl.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(fctl);
+        // The laser and its amplifier: energy in (the laser from behind only), the amplifier's thresholds and delay in its data.
+        let mut laser = kind(laser::LASER, true);
+        laser.energy = Some(EnergySpec { capacity: laser::LASER_CAPACITY, max_receive: laser::LASER_CAPACITY, max_extract: 0, faces: vec![FlowSide::None; 6] });
+        r = r.block_entity_kind(laser);
+        let mut amp = kind(laser::AMPLIFIER, true);
+        amp.energy = Some(EnergySpec { capacity: laser::AMPLIFIER_CAPACITY, max_receive: laser::AMPLIFIER_CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
+        amp.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(amp);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1430,6 +1443,8 @@ impl ServerMod for Mekanism {
             turbines: HashMap::new(),
             reactors: HashMap::new(),
             fusions: HashMap::new(),
+            beams: HashMap::new(),
+            laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
@@ -1582,6 +1597,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == laser::AMPLIFIER {
+            self.laser_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == fusion::CONTROLLER {
             self.fusion_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1713,6 +1732,13 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let laser_parts: Vec<&BlockEntity> = entities
+            .iter()
+            .filter(|e| matches!(e.state.split('[').next(), Some(laser::LASER | laser::AMPLIFIER | fusion::MATRIX)))
+            .collect();
+        if !laser_parts.is_empty() {
+            out.extend(self.run_lasers(&laser_parts));
         }
         let fusion_parts: Vec<&BlockEntity> = entities
             .iter()

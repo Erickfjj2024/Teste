@@ -670,3 +670,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ab. Fusion Reactor (mod 0.1.71)
 `fusion.rs`: rounded 5x5x5 shell (grid of the original), one controller in the middle of the top, empty inside; deuterium/tritium injection, hohlraum ignition at 100 MK, burn heats the plasma, plasma heats the case, case boils water and gives passive energy. Ports: five-tank mirror + energy; controller: hohlraum slot and screen. Differences in DIFERENCAS.md 4.7 (no laser yet, hohlraum counts as full...).
+
+### 2ac. Laser e Laser Amplifier (mod 0.1.72)
+`laser.rs`: laser (20 FE/t, energia por trás) e amplificador (limites mín/máx e atraso, botões na tela) disparam em linha até 64 blocos; o amplificador e a Laser Focus Matrix recebem a energia (a matriz esquenta o plasma do Fusion). Diferenças em DIFERENCAS.md seção 6.

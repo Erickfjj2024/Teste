@@ -104,7 +104,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 ### 4.7 Fusion Reactor (mod 0.1.71)
 | # | Diferença | Estado |
 |---|---|---|
-| 4.7.1 | **Sem laser**: Laser, Laser Amplifier e Laser Tractor Beam não existem ainda, então o plasma não esquenta (a função `add_laser_energy` está pronta, falta quem a chame). O atalho criativo (clique direito na Laser Focus Matrix) também não existe | ABERTA |
+| 4.7.1 | O plasma só esquenta pelo Laser/Amplifier (seção 6); o atalho criativo (clique direito na Laser Focus Matrix → 10× a temperatura de queima) não existe | ABERTA |
 | 4.7.2 | **Hohlraum** é um item comum que conta como cheio (o port não tem itens com químico): dá 10 mB de combustível e é consumido ao acender. A receita (infusão de ouro + carbono) vem do original, mas ele sai "vazio" e já vale como cheio | LIMITE API |
 | 4.7.3 | Portas **sem modo** (entrada / saída); todas aceitam água, deutério, trítio e combustível e entregam vapor e energia | ABERTA |
 | 4.7.4 | Logic Adapter é só um bloco (sem redstone); Reactor Glass conta como moldura | ABERTA |
@@ -116,6 +116,18 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 
 ### 4.8 SPS
 Ainda **não construído** (tarefa #4).
+
+## 6. Lasers (mod 0.1.72)
+| # | Diferença | Estado |
+|---|---|---|
+| 6.1 | O raio é **invisível** (sem renderização do feixe) | LIMITE API |
+| 6.2 | O laser **não cava blocos**, não fere nem queima entidades/itens no caminho, não é bloqueado por escudos nem armaduras (dissipação/refração) | ABERTA |
+| 6.3 | **Laser Tractor Beam não existe** | ABERTA |
+| 6.4 | Capacidade do laser = 50.000 FE (suposição: uso × 2500); o amplificador 5.000.000 FE (config `storage.laserAmplifier`) | SUPOSIÇÃO |
+| 6.5 | Amplificador: sem modo de saída de redstone nem modos de entrada de redstone; limites por botões (−100k, −1k, +1k, +100k), sem campo de texto | ABERTA |
+| 6.6 | O alvo é o primeiro bloco com colisão no caminho (não o `clip` com formas de contorno); só amplificador e Laser Focus Matrix recebem o raio | SUPOSIÇÃO |
+| 6.7 | A orientação do bloco ao colocar usa o jogador mais próximo (até 12 blocos) e o ângulo de visão; vale só no primeiro tick | LIMITE API |
+| 6.8 | As receitas do laser e do amplificador (tipo `mekanism:mek_data`) **não foram copiadas**: os blocos só saem do inventário criativo | ABERTA |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 
