@@ -12,6 +12,7 @@ mod cube;
 mod chem_table;
 mod plus;
 mod process;
+mod bin;
 mod boiler;
 mod bounding;
 mod dynamic;
@@ -366,6 +367,10 @@ struct Mekanism {
     /// The shared buffers of the quantum entangloporters, by frequency, and the buttons pressed on their screens.
     entangled: HashMap<u8, entangloporter::Shared>,
     qe_buttons: Vec<(String, BlockPos, i32)>,
+    bin_buttons: Vec<(String, BlockPos, i32)>,
+    bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
+    bin_shown: HashMap<(String, i32, i32, i32), u64>,
+    bin_set: HashSet<(String, i32, i32, i32)>,
     teleporter_buttons: Vec<(String, BlockPos, i32)>,
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
@@ -1452,6 +1457,12 @@ impl ServerMod for Mekanism {
         tele.energy = Some(EnergySpec { capacity: teleporter::CAPACITY, max_receive: teleporter::CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
         tele.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(tele);
+        // The bins: the output window and the input slot over a count kept in the data.
+        for (name, _) in bin::BINS {
+            let mut b = kind(name, true);
+            b.container = Some(ContainerSpec { slots: 2, faces: vec![vec![0, 1]; 6], inputs: vec![1], outputs: vec![0], menu: true });
+            r = r.block_entity_kind(b);
+        }
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1506,6 +1517,10 @@ impl ServerMod for Mekanism {
             sorter_buttons: Vec::new(),
             entangled: HashMap::new(),
             qe_buttons: Vec::new(),
+            bin_buttons: Vec::new(),
+            bin_inserts: HashMap::new(),
+            bin_shown: HashMap::new(),
+            bin_set: HashSet::new(),
             teleporter_buttons: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
@@ -1599,6 +1614,17 @@ impl ServerMod for Mekanism {
                 .push((player.id.clone(), k, stack.count, slot));
             return true;
         }
+        if let Some(pos) = pos
+            && !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)
+            && world::get_block(&player.dimension, pos.x, pos.y, pos.z).is_some_and(|b| bin::capacity_of(b.split('[').next().unwrap_or("")).is_some())
+        {
+            // Using an item on a bin puts the whole stack in (an empty hand opens the screen).
+            let slot = player_items::get_inventory(&player.id)
+                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
+                .map_or(0, |s| s as u32);
+            self.bin_inserts.entry((player.dimension.clone(), pos.x, pos.y, pos.z)).or_default().push((player.id.clone(), slot));
+            return true;
+        }
         if stack.item == turbine::BLADE {
             // `BlockTurbineRotor.useItemOn`: a blade on a rotor puts it on (sneaking: takes one off, into the stack).
             let Some(pos) = pos else { return false };
@@ -1662,6 +1688,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if bin::capacity_of(block).is_some() {
+            self.bin_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == teleporter::TELEPORTER {
             self.teleporter_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1816,6 +1846,10 @@ impl ServerMod for Mekanism {
         let teleporters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(teleporter::TELEPORTER)).collect();
         if !teleporters.is_empty() || !self.teleporter_buttons.is_empty() {
             out.extend(self.run_teleporters(&teleporters, tick));
+        }
+        let bins: Vec<&BlockEntity> = entities.iter().filter(|e| bin::capacity_of(e.state.split('[').next().unwrap_or("")).is_some()).collect();
+        if !bins.is_empty() || !self.bin_buttons.is_empty() {
+            out.extend(self.run_bins(&bins, tick));
         }
         let qes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(entangloporter::BLOCK)).collect();
         if !qes.is_empty() || !self.qe_buttons.is_empty() {

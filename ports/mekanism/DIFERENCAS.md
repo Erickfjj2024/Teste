@@ -176,6 +176,18 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 10.7 | Cálculo de custo sem passageiros; o jogador chegado espera 5 ticks no destino e só é enviado de novo depois de sair da abertura | — |
 | 10.8 | O alinhamento do jogador ao chegar (yaw para o quadro) não é feito: mantém a direção em que olhava | ABERTA |
 
+## 11. Bins (mod 0.1.78)
+| # | Diferença | Estado |
+|---|---|---|
+| 11.1 | O bin **ganha uma tela** (entrada, saída, contagem, "ejetar para baixo" e "travar item"); no original não há tela: coloca-se item usando-o e tira-se socando | LIMITE API |
+| 11.2 | **Não dá para socar** o bin para tirar uma pilha (ou um item com Shift); tira-se pelo slot de saída da tela, por hopper, cano ou transportador | LIMITE API |
+| 11.3 | Usar um item no bin coloca a pilha toda; não há "clique duplo para guardar tudo do mesmo item" | ABERTA |
+| 11.4 | Itens com dados (encantamentos, nome, durabilidade...) **não são aceitos**; só itens comuns | LIMITE API |
+| 11.5 | O tamanho da pilha de cada item é adivinhado pelo nome (64 para materiais/blocos e itens do Mekanism, 1 para o resto); itens que empilham até 16 aparecem de 1 em 1 | SUPOSIÇÃO |
+| 11.6 | "Ejetar para baixo" (Shift+clique do original) é um botão na tela; com ele ligado só a face de baixo dá itens e as outras só recebem | ABERTA |
+| 11.7 | Travar item por botão (o original usa o Configurator); sem receita de upgrade de nível que carrega o conteúdo | ABERTA |
+| 11.8 | Bin criativo guarda 2^63 (não é infinito de verdade, mas nunca esvazia na prática) | SUPOSIÇÃO |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |
