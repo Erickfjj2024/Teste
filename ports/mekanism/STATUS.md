@@ -665,3 +665,5 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2aa. Fission Reactor (mod 0.1.70)
 `fission.rs`: cuboid 3..18 with casing, ports and logic adapters on the walls, columns of fuel assemblies topped by exactly one control rod; surface area and boil efficiency as the original; fuel burns (rate limit, max = assemblies) into heat (1,000,000 per mB, 1000 heat capacity per block) and nuclear waste; water boils to steam, sodium to superheated sodium (feeds the boiler); air loss, damage 1200..1800 K, repair, meltdown by chance (blocks in radius 8 destroyed, reactor reset to 75 damage). Screen on the port: five-tank mirror, burn rate buttons, on/off. Deviations: ports have no mode, logic adapter is a plain block (no redstone output), no radiation, no meltdown entity damage, no liquid-fuel input item chain yet (fissile fuel comes from the nuclear chain still to do).
+
+> **Regra:** toda diferença, simplificação ou suposição de cada fatia nova vai para `DIFERENCAS.md` no mesmo commit.

@@ -1,0 +1,117 @@
+# Diferenças entre o Mekanism original e o port
+
+Catálogo de tudo que **hoje não é igual** ao Mekanism (26.3 / NeoForge) no port para o Horizon. Regra daqui em diante: **toda fatia nova
+que entrar com qualquer diferença, simplificação, suposição ou item faltando é registrada aqui no mesmo commit** (campo "Onde" = arquivo/versão).
+Estado: `ABERTA` (ainda diferente), `SUPOSIÇÃO` (valor chutado, não lido do original), `LIMITE API` (depende do Horizon/fork), `FECHADA` (resolvida; fica só para histórico).
+
+Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferença apareceu; **APK vN** = precisa de recurso do fork.
+
+---
+
+## 1. Itens e dados gerais
+
+| # | Diferença | Estado | Onde |
+|---|---|---|---|
+| 1.1 | Todos os itens "normais" são itens comuns (graveto renomeado com textura). Ferramentas, jetpack, tablet, MekaSuit, Meka-Tool, Robit, módulos etc. **não existem** | ABERTA | tarefa #6 |
+| 1.2 | Os upgrades são **8 itens** (`upgrade_speed`…) em vez de um item `mekanism:upgrade` com o tipo num componente | LIMITE API | mod 0.1.3x |
+| 1.3 | Capacidade de energia das máquinas = uso por tick × 2500 (o 26.3 tem `TODO` nesses valores); cabo básico 1024/tick | SUPOSIÇÃO | config.rs |
+| 1.4 | Dureza e resistência dos blocos são aproximadas (minérios 3, deepslate 4,5, armazenamento 5, casing 3,5) | SUPOSIÇÃO | convert.py |
+| 1.5 | Baldes de fluido do Mekanism não colocam fluido no mundo (só enchem tanques/máquinas); fluidos de mod não existem no mundo | LIMITE API | mod 0.1.4x |
+| 1.6 | Minérios entram **depois** da geração do chunk (passada própria), não no worldgen original | LIMITE API | worldgen.rs |
+| 1.7 | Receitas: só as cujos ingredientes existem no port (solar pede painel + tablet, gás pede núcleo eletrolítico etc.) | ABERTA | convert.py |
+| 1.8 | Silenciamento (Muffling) e contenção de XP são só guardados nos upgrades: o port não tem som de máquina nem XP de máquina | LIMITE API | upgrades.rs |
+| 1.9 | Sem radiação (`RadiationManager`), sem dano por radiação, sem Geiger/dosímetro | ABERTA | — |
+| 1.10 | Sem sons de máquina, partículas e animações de bloco (rotação da turbina, LEDs) | LIMITE API | — |
+
+## 2. Máquinas e fábricas
+
+| # | Diferença | Estado | Onde |
+|---|---|---|---|
+| 2.1 | Com a redstone parada, a máquina **inteira** descansa; no original só pára a parte que processa | ABERTA | redstone.rs |
+| 2.2 | Setas de progresso do extrator de pigmento, pintora e misturador não mudam de cor com o pigmento | ABERTA | convert.py |
+| 2.3 | Topo do Pigment Mixer: energia fica ligada (no original `addDisabledSides`) | ABERTA | config.rs |
+| 2.4 | Dica "Using" da aba de energia mostra o uso básico, não o com upgrades | ABERTA | convert.py |
+| 2.5 | O ritmo de despejo do Electrolytic Separator não acompanha a velocidade | ABERTA | upgrades.rs |
+| 2.6 | A lista de upgrades não rola (5ª linha escondida), sem realce ao passar o dedo na lista | LIMITE API | convert.py |
+| 2.7 | Fábricas: sem aba **Sorting**; entrada aceita qualquer item (não só o que tem receita); sem `inputProducesOutput` (mesma entrada em todas as linhas) | ABERTA | factory.rs |
+| 2.8 | Fábricas: a receita de subir de nível **não carrega** o que a fábrica de baixo guarda; sem o instalador de nível | ABERTA | convert.py |
+| 2.9 | Heat Generator: tabela de queima = lista dos combustíveis comuns (a API não consulta tempo de queima) | LIMITE API | generators.rs |
+| 2.10 | Geradores: slots de energia (item que recarrega) sem efeito, pois não há itens de energia (tablet) | ABERTA | — |
+| 2.11 | Ícone de sol do Solar Generator desenhado à mão (sprites `sees_sun`/`no_sun` ausentes das fontes) | ABERTA | convert.py |
+| 2.12 | Perda de calor por face mostrada arredondada | ABERTA | generators.rs |
+| 2.13 | Advanced Solar, Wind Generator, Digital Miner, Isotopic Centrifuge, Neutron Activator: **não existem** (blocos grandes / cadeia nuclear) | ABERTA | tarefas #1/#3 |
+
+## 3. Transmissão e logística
+
+| # | Diferença | Estado | Onde |
+|---|---|---|---|
+| 3.1 | Itens **não andam visivelmente** pelo Logistical Transporter (teleportam), sem cor/roteamento, sem Restrictive/Diversion/Sorter, sem pull/push por lado nem filtros | ABERTA | tarefa #5 |
+| 3.2 | Calor (Thermodynamic Conductor, Resistive Heater, Fuelwood Heater) não existe como transmissão | ABERTA | — |
+| 3.3 | QIO, Teleporter, Quantum Entangloporter não existem | ABERTA | tarefa #5 |
+| 3.4 | Harness de teste não simula redes de itens nem o limite de capacidade das portas (só testes unitários e conferência de estrutura) | LIMITE API | tests/ |
+
+## 4. Multiblocos (todos **sem teste no jogo**)
+
+### 4.1 Dynamic Tank (mod 0.1.65)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.1.1 | Tela só nas válvulas; sem aba de modo de edição (Fill/Empty) | ABERTA |
+| 4.1.2 | Sem filtro de entrada por tipo na válvula além do "tanque cheio" | ABERTA |
+
+### 4.2 Induction Matrix (mod 0.1.66)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.2.1 | Uma porta é entrada **e** saída ao mesmo tempo (o original deixa escolher o modo) | ABERTA |
+| 4.2.2 | Tela simplificada (energia guardada, capacidade, taxa, células e provedores; sem gráfico de entrada/saída) | ABERTA |
+
+### 4.3 Thermal Evaporation Plant (mod 0.1.67)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.3.1 | Tela simplificada (dois medidores e 4 slots de balde; temperatura, altura, sol, ritmo em texto) | ABERTA |
+| 4.3.2 | Sol só conta se o céu estiver visível e `sky()` indicar dia; chuva/trovão aproximados pelo helper dos geradores | SUPOSIÇÃO |
+| 4.3.3 | Sem bloco de logic/redstone de saída; sem som | ABERTA |
+
+### 4.4 Thermoelectric Boiler (mod 0.1.68)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.4.1 | Válvulas **sem modo** (original: Input / Output Steam / Output Coolant): todas aceitam água e coolant quente e entregam vapor e coolant frio | ABERTA |
+| 4.4.2 | Tela simplificada; temperatura em décimos de kelvin | ABERTA |
+| 4.4.3 | Água exibida na tela por índice próprio (sem medidor animado); sem renderização 3D da água/vapor dentro da estrutura | LIMITE API |
+| 4.4.4 | Volume de água = ar contido entre piso e dispersores (contagem própria, não a exploração `FormationProtocol.explore` com blocos de moldura); volume de vapor = largura×comprimento×altura acima do plano | SUPOSIÇÃO |
+| 4.4.5 | Depende de sódio superaquecido do Fission (ou tanque criativo) para ser testado | — |
+
+### 4.5 Industrial Turbine (mod 0.1.69)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.5.1 | Sem modo de despejo de vapor (Idle/Dumping/Dumping excess) | ABERTA |
+| 4.5.2 | Sem animação do rotor e das lâminas | LIMITE API |
+| 4.5.3 | Lâminas: tirar = clicar **agachado segurando uma lâmina** (original: mão vazia); blocos do rotor guardam lâminas num slot (cai ao quebrar) | LIMITE API |
+| 4.5.4 | Tela simplificada na válvula; energia/água distribuídas igualmente entre válvulas/ventilações | ABERTA |
+| 4.5.5 | Pressure Disperser é de **dois** grupos (boiler e turbina) por mudança no fork (grupo "a,b") | LIMITE API / fork |
+
+### 4.6 Fission Reactor (mod 0.1.70)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.6.1 | Portas **sem modo** (Input / Output Waste / Output Coolant) | ABERTA |
+| 4.6.2 | Logic Adapter é só um bloco de parede (sem saída de redstone nem modos) | ABERTA |
+| 4.6.3 | Sem radiação (nem na queima, nem no meltdown, nem em entidades dentro da zona quente) | ABERTA |
+| 4.6.4 | Meltdown: remove blocos num raio de 8 (exceto bedrock/obsidiana/barreira/portais), sem a explosão real, sem dano a entidades, sem a cadeia de explosões do original | ABERTA |
+| 4.6.5 | Sem cache/restauração do reator ao reconstruir (o original guarda por UUID); aqui o estado volta pelo menor canto da estrutura | ABERTA |
+| 4.6.6 | Taxa de queima por botões (−1, −0,1, +0,1, +1), sem campo de texto/slider | ABERTA |
+| 4.6.7 | Combustível (fissile fuel) depende da cadeia nuclear ainda não portada | ABERTA |
+| 4.6.8 | Valores de calor (1.000.000 por mB, capacidade 1000/bloco) e limiares copiados da config padrão; condutividade do sódio 0,4 e entalpia 5 (padrão do `CooledCoolant`) | SUPOSIÇÃO |
+
+### 4.7 Fusion Reactor, SPS
+Ainda **não construídos** (tarefa #4).
+
+## 5. Fork do Horizon (precisam de APK novo)
+
+| # | Mudança | Estado |
+|---|---|---|
+| 5.1 | Bloco com **vários grupos** de multibloco separados por vírgula (`a,b`) | pendente APK (ainda não gerado) |
+| 5.2 | Itens `set-item-faces` até 32 slots, `transmitter-medium: items`, widgets `Item`, `shift_id`/`hover`, barra de energia nativa | APK v50 |
+
+---
+
+## Histórico de fechamentos
+(preencher quando uma diferença for resolvida e confirmada no jogo)
