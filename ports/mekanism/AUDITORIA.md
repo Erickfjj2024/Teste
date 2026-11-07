@@ -62,7 +62,7 @@ Também falta a geração retroativa (retrogen) dos minérios em chunks já gera
 5. **Itens de energia:** não há Energy Tablet nem itens que carregam: os slots de carga/descarga das máquinas (e o dos geradores)
    só convertem redstone/bloco de redstone (aproximação) e nada mais.
 6. **Calor:** não existe `Heat` como transmissão (nem Thermodynamic Conductor, Resistive Heater, evaporação): o Heat Generator tem um
-   modelo de calor próprio e fixo em 300 K de ambiente (o original usa a temperatura do bioma).
+   modelo de calor próprio e e a temperatura ambiente vem do bioma como no original (mod 0.1.44).
 7. **Tabela de queima do Heat Generator:** lista dos combustíveis comuns (a API do Horizon não consulta tempo de queima).
 8. **Solar [código]:** o brilho do céu é calculado pela fórmula clássica do vanilla (hora do dia + chuva + trovão); o original lê o
    atributo `SKY_LIGHT_FACTOR` do 26.3, que pode diferir um pouco. A visão do céu varre os blocos acima (heightmap `WORLD_SURFACE`).

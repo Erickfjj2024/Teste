@@ -864,7 +864,7 @@ def energy_tab_widgets(c, usage):
     for working in (0, 1):
         out.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': 1 if working else 0}}, 'widgets': [
             {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
-             'tooltip': f'Using: {usage if working else 0} FE/t\nNeeded: {{{c + 1}+{c + 2}}} FE\nUnit: Forge Energy'}]})
+             'tooltip': f'Using: {{{c + 14}}} FE/t\nNeeded: {{{c + 1}+{c + 2}}} FE\nUnit: Forge Energy' if working else f'Using: 0 FE/t\nNeeded: {{{c + 1}+{c + 2}}} FE\nUnit: Forge Energy'}]})
     return out
 
 # ---- upgrades (GuiUpgradeWindowTab at 176, 6; GuiUpgradeWindow, GuiUpgradeScrollList, GuiSupportedUpgrades): the upgrade items,
@@ -1010,7 +1010,7 @@ def with_upgrades(menu, machine, base, c):
     menu['slots'] = base + 2
     menu['results'] = list(menu.get('results', [])) + [base + 1]
     menu['accepts'] = [{'slot': base, 'items': [f'{NS}:upgrade_{UPGRADES[k]}' for k in upgrade_support(machine)]}]
-    menu['data_slots'] = c + 14
+    menu['data_slots'] = c + 15
     screen = menu['screen']
     screen['slots'] = list(screen['slots']) + [None, None]
     screen['widgets'] = list(screen['widgets']) + upgrade_tab_widgets()
@@ -1110,7 +1110,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.43', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.44', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1209,7 +1209,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.43', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.44', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1238,7 +1238,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.43', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.44', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1505,7 +1505,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.43', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.44', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

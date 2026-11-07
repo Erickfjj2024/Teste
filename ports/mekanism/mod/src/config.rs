@@ -135,6 +135,8 @@ pub enum Layout {
     ChemTank,
     /// The chemical infuser: two chemical item slots in (0, 1) and one out (2); tanks: left, right, centre.
     ChemInfuser,
+    /// The pigment mixer: the infuser's shape, but its top side is disabled (`addDisabledSides(TOP)`).
+    Mixer,
     /// The chemical washer: the fluid slot (0), the slurry output slot (1) and the fluid output slot (2); tanks: fluid,
     /// slurry in, slurry out.
     Washer,
@@ -155,7 +157,7 @@ impl Layout {
         match self {
             Layout::Electric | Layout::Sawmill | Layout::Combiner => &[I, E],
             Layout::ChemTank => &[C, I],
-            Layout::ChemInfuser => &[C, I, E],
+            Layout::ChemInfuser | Layout::Mixer => &[C, I, E],
             Layout::Washer => &[C, F, I, E],
             Layout::Separator => &[F, C, I, E],
             Layout::Rotary => &[C, F, I, E],
@@ -172,7 +174,7 @@ impl Layout {
     pub fn pushes_chemicals(self) -> bool {
         matches!(
             self,
-            Layout::Oxidizer | Layout::Dissolution | Layout::ChemTank | Layout::ChemInfuser | Layout::Washer | Layout::Separator | Layout::Rotary | Layout::Reaction
+            Layout::Oxidizer | Layout::Dissolution | Layout::ChemTank | Layout::ChemInfuser | Layout::Mixer | Layout::Washer | Layout::Separator | Layout::Rotary | Layout::Reaction
         )
     }
 }
@@ -198,7 +200,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         (Layout::ChemTank | Layout::Washer | Layout::Rotary | Layout::Reaction, Transmission::Chemicals) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput]
         }
-        (Layout::ChemInfuser, Transmission::Chemicals) => {
+        (Layout::ChemInfuser | Layout::Mixer, Transmission::Chemicals) => {
             &[Data::None, Data::Input1, Data::Input2, Data::Output, Data::InputOutput]
         }
         (Layout::Separator, Transmission::Chemicals) => &[Data::None, Data::Output1, Data::Output2, Data::InputOutput],
@@ -207,7 +209,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         (Layout::Rotary, Transmission::Fluids) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
         // Their item slots: a tank's two, the infuser's two inputs and output, the washer's and the separator's.
         (Layout::ChemTank, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
-        (Layout::ChemInfuser, Transmission::Items) => {
+        (Layout::ChemInfuser | Layout::Mixer, Transmission::Items) => {
             &[Data::None, Data::Input1, Data::Input2, Data::Output, Data::InputOutput, Data::Energy]
         }
         (Layout::Separator, Transmission::Items) => {
@@ -253,7 +255,7 @@ pub fn default_config(layout: Layout) -> Config {
     }
     match layout {
         // `TWO_INPUT_ITEM`: the left and right slots take, the front gives, the back is the charge slot.
-        Layout::ChemInfuser => {
+        Layout::ChemInfuser | Layout::Mixer => {
             items = [Data::None; 6];
             items[LEFT] = Data::Input1;
             items[RIGHT] = Data::Input2;
@@ -297,7 +299,7 @@ pub fn default_config(layout: Layout) -> Config {
             eject[Transmission::Chemicals as usize] = true;
         }
         // The infuser: left and right take the two chemicals, the front gives the third, and it pushes it out.
-        Layout::ChemInfuser => {
+        Layout::ChemInfuser | Layout::Mixer => {
             *chem = [Data::None; 6];
             chem[LEFT] = Data::Input1;
             chem[RIGHT] = Data::Input2;
@@ -343,7 +345,23 @@ pub fn default_config(layout: Layout) -> Config {
         }
         Layout::Electric | Layout::Sawmill | Layout::Combiner => {}
     }
-    Config { sides, eject }
+    let mut cfg = Config { sides, eject };
+    enforce(layout, &mut cfg);
+    cfg
+}
+
+/// A side the machine cannot use (the mixer's top) holds nothing, whatever a click did.
+pub fn enforce(layout: Layout, cfg: &mut Config) {
+    if layout == Layout::Mixer {
+        for t in 0..5 {
+            cfg.sides[t][TOP] = Data::None;
+        }
+    }
+}
+
+/// Whether `side` of the machine cannot be configured.
+pub fn disabled(layout: Layout, side: usize) -> bool {
+    layout == Layout::Mixer && side == TOP
 }
 
 impl Config {
@@ -435,10 +453,10 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
         (Layout::ChemTank, Data::Output) => &[1],
         (Layout::ChemTank, Data::InputOutput) => &[0, 1],
         // The infuser's two chemical item slots in and the one out.
-        (Layout::ChemInfuser, Data::Input1) => &[0],
-        (Layout::ChemInfuser, Data::Input2) => &[1],
-        (Layout::ChemInfuser, Data::Output) => &[2],
-        (Layout::ChemInfuser, Data::InputOutput) => &[0, 1, 2],
+        (Layout::ChemInfuser | Layout::Mixer, Data::Input1) => &[0],
+        (Layout::ChemInfuser | Layout::Mixer, Data::Input2) => &[1],
+        (Layout::ChemInfuser | Layout::Mixer, Data::Output) => &[2],
+        (Layout::ChemInfuser | Layout::Mixer, Data::InputOutput) => &[0, 1, 2],
         // The washer's fluid slot, then its two output slots.
         (Layout::Washer, Data::Input) => &[0],
         (Layout::Washer, Data::Output) => &[1, 2],
@@ -520,7 +538,7 @@ pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<
     let fluid = cfg.side(Transmission::Fluids);
     let pushes = layout.pushes_chemicals() && cfg.ejects(Transmission::Chemicals);
     let count = match layout {
-        Layout::ChemInfuser | Layout::Washer | Layout::Separator => 3,
+        Layout::ChemInfuser | Layout::Mixer | Layout::Washer | Layout::Separator => 3,
         Layout::Reaction => 3,
         Layout::Dissolution | Layout::Rotary => 2,
         _ => 1,
@@ -537,7 +555,7 @@ pub fn tank_flow(layout: Layout, facing: &str, cfg: &Config, mode: bool) -> Vec<
                 out[0][face] = both(takes(c), false);
                 out[1][face] = both(false, gives(c));
             }
-            Layout::ChemInfuser => {
+            Layout::ChemInfuser | Layout::Mixer => {
                 out[0][face] = both(matches!(c, Data::Input1 | Data::InputOutput), false);
                 out[1][face] = both(matches!(c, Data::Input2 | Data::InputOutput), false);
                 out[2][face] = both(false, matches!(c, Data::Output | Data::InputOutput) && pushes);
@@ -779,5 +797,15 @@ mod tests {
         assert_eq!(click_of(2005), None);
         assert_eq!(click_of(3011), Some(Click::Clear { t: Transmission::Energy, back: true }));
         assert_eq!(click_of(5), None);
+    }
+
+    #[test]
+    fn the_mixers_top_stays_disabled() {
+        let mut c = default_config(Layout::Mixer);
+        assert!(TRANSMISSIONS.iter().all(|t| c.side(*t)[TOP] == Data::None));
+        assert!(disabled(Layout::Mixer, TOP) && !disabled(Layout::Mixer, FRONT) && !disabled(Layout::ChemInfuser, TOP));
+        c.side_mut(Transmission::Energy)[TOP] = Data::Input;
+        enforce(Layout::Mixer, &mut c);
+        assert_eq!(c.side(Transmission::Energy)[TOP], Data::None);
     }
 }

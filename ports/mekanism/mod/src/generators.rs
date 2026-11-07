@@ -40,6 +40,11 @@ pub const GAS_ENERGY: u64 = 2_000;
 
 pub const HEAT_CAPACITY: f64 = 10.0;
 pub const AMBIENT: f64 = 300.0;
+
+/// `HeatAPI.getAmbientTemp`: 300 K at a biome temperature of 0.8, 25 K for each degree above or below (the biome's clamped to -5..5).
+pub fn ambient_of(biome_temperature: f32) -> f64 {
+    AMBIENT + 25.0 * (f64::from(biome_temperature).clamp(-5.0, 5.0) - 0.8)
+}
 const INVERSE_CONDUCTION: f64 = 5.0;
 const INVERSE_INSULATION: f64 = 100.0;
 const AIR_INVERSE: f64 = 10_000.0;
@@ -58,21 +63,22 @@ pub struct HeatOut {
 }
 
 /// `boost` is the heat the lava beside it and the nether add; `burning` that it took lava from its tank this tick.
-pub fn heat_tick(heat: f64, boost: f64, burning: bool) -> HeatOut {
+/// `ambient` is the air's temperature there (`ambient_of`).
+pub fn heat_tick(heat: f64, boost: f64, burning: bool, ambient: f64) -> HeatOut {
     let mut heat = (heat + boost).max(0.0);
     if burning {
         heat += HEAT_GENERATION;
     }
     let temp = heat / HEAT_CAPACITY;
-    let carnot = 1.0 - temp.min(AMBIENT) / temp.max(AMBIENT);
-    let lost = THERMAL_EFFICIENCY * (temp - AMBIENT);
+    let carnot = 1.0 - temp.min(ambient) / temp.max(ambient);
+    let lost = THERMAL_EFFICIENCY * (temp - ambient);
     heat = (heat - lost).max(0.0);
     let energy = ((lost.abs() * carnot) as u64).min(HEAT_MAX_PRODUCTION);
     // The air takes heat on each of the six sides; the bottom is not insulated.
     let mut environment = 0.0;
     for insulation in [INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, 0.0] {
         let t = heat / HEAT_CAPACITY;
-        let per_side = (t - AMBIENT) / (AIR_INVERSE + insulation + INVERSE_CONDUCTION);
+        let per_side = (t - ambient) / (AIR_INVERSE + insulation + INVERSE_CONDUCTION);
         heat = (heat - per_side * HEAT_CAPACITY).max(0.0);
         if per_side > 0.0 {
             environment += per_side;
@@ -315,7 +321,8 @@ impl Mekanism {
                     tank.amount -= HEAT_FLUID_RATE;
                     active = true;
                 }
-                let out = heat_tick(heat, boost, burning);
+                let ambient = world::get_environment(&e.dimension, e.pos.x, e.pos.y, e.pos.z).map_or(AMBIENT, |env| ambient_of(env.temperature));
+                let out = heat_tick(heat, boost, burning, ambient);
                 heat = out.heat;
                 let made = out.energy.min(room(energy));
                 energy += made;
@@ -385,7 +392,7 @@ impl Mekanism {
         let mut saved = heat.to_le_bytes().to_vec();
         saved.push(1);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Generator)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), (0, self.install.get(&key).copied().unwrap_or(0), upgrades::counts_of(def, e)), &mut saved, &mut data);
+        redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), (0, self.install.get(&key).copied().unwrap_or(0), upgrades::counts_of(def, e), 0), &mut saved, &mut data);
         let tanks_changed = kind != GenKind::Solar && (tank != held(e, 0) || e.tanks.len() != 1);
         if !items_changed && !dirty && !tanks_changed && energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
@@ -415,7 +422,7 @@ mod tests {
         let mut heat = AMBIENT * HEAT_CAPACITY;
         let mut last = HeatOut { heat, energy: 0, environment: 0.0 };
         for _ in 0..2000 {
-            last = heat_tick(heat, 0.0, true);
+            last = heat_tick(heat, 0.0, true, AMBIENT);
             heat = last.heat;
         }
         let temp = heat / HEAT_CAPACITY;
@@ -423,12 +430,15 @@ mod tests {
         assert!((35..=42).contains(&last.energy), "makes {}", last.energy);
         // Without fuel it cools back to the air's temperature.
         for _ in 0..20_000 {
-            heat = heat_tick(heat, 0.0, false).heat;
+            heat = heat_tick(heat, 0.0, false, AMBIENT).heat;
         }
         assert!((heat / HEAT_CAPACITY - AMBIENT).abs() < 1.0);
         // The lava beside it and the nether add heat even with no fuel.
-        let warm = (0..2000).fold(AMBIENT * HEAT_CAPACITY, |h, _| heat_tick(h, 7.0 * 3.0 + 10.0, false).heat);
+        let warm = (0..2000).fold(AMBIENT * HEAT_CAPACITY, |h, _| heat_tick(h, 7.0 * 3.0 + 10.0, false, AMBIENT).heat);
         assert!(warm / HEAT_CAPACITY > AMBIENT + 20.0);
+        for (biome, kelvin) in [(0.8, 300.0), (2.0, 330.0), (-0.5, 267.5), (50.0, 405.0), (-9.0, 155.0)] {
+            assert!((ambient_of(biome) - kelvin).abs() < 1e-3, "{biome}");
+        }
     }
 
     #[test]

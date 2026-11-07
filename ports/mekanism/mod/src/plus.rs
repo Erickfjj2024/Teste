@@ -231,7 +231,7 @@ impl Mekanism {
         let mut saved = machine_data(progress, &cfg);
         saved.extend([modes[0] as u8, modes[1] as u8]);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts), &mut saved, &mut data);
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts, spec.usage), &mut saved, &mut data);
         let tanks_changed = tanks != io.tanks || e.tanks.len() != 3;
         if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
@@ -323,7 +323,7 @@ impl Mekanism {
         saved.extend([0, 0]);
         saved[37] = u8::from(mode);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Continuous)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts), &mut saved, &mut data);
+        redstone::stamp(Kind::Continuous, control, capacity.saturating_sub(next.energy), (0, self.install.get(&key).copied().unwrap_or(0), counts, spec.usage), &mut saved, &mut data);
         let tanks_changed = tanks[..2] != io.tanks[..2] || e.tanks.len() != 2;
         if !items_changed && !dirty && !tanks_changed && next.energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;
@@ -470,6 +470,7 @@ impl Mekanism {
                 *cfg.side_mut(t) = [target; 6];
             }
         }
+        config::enforce(layout, &mut cfg);
         let faces = self.apply_config(e, layout, &facing, &cfg);
         // The configuration's words replace those in the screen's numbers (6 to 15).
         let mut data = e.menu_data.clone();

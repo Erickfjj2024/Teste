@@ -75,23 +75,25 @@ pub struct Io {
 /// One tick with `speed` speed and `energy_up` energy upgrades: the progress and what it uses follow them; the recipe is done
 /// when the progress reaches its (upgraded) duration. Returns what it holds after, its status and the ticks the recipe takes
 /// (the base duration when there is none).
-pub fn step(book: &Book, io: &Io, speed: u8, energy_up: u8) -> (Io, Status, u32) {
+pub fn step(book: &Book, io: &Io, speed: u8, energy_up: u8) -> (Io, Status, u32, u64) {
     let mut next = io.clone();
     let base = upgrades::ticks(BASE_DURATION, speed);
+    let idle_usage = upgrades::energy_per_tick(USAGE, speed, energy_up);
     if book.is_empty() {
         next.progress = 0;
-        return (next, Status::NoBook, base);
+        return (next, Status::NoBook, base, idle_usage);
     }
     let Some(input) = io.input.as_ref() else {
         next.progress = 0;
-        return (next, Status::Idle, base);
+        return (next, Status::Idle, base, idle_usage);
     };
     let Some(recipe) = book.find(&input.item, &io.fluid.chemical, &io.gas_in.chemical) else {
         next.progress = 0;
         let status = if book.takes_item(&input.item) { Status::Blocked } else { Status::NoRecipe };
-        return (next, status, base);
+        return (next, status, base, idle_usage);
     };
     let ticks = upgrades::ticks(recipe.duration, speed);
+    let usage = upgrades::energy_per_tick(USAGE + recipe.energy, speed, energy_up);
     // Enough of each input and room for each output, or it waits.
     let item_room = match (&recipe.out_item, &io.output) {
         (None, _) => true,
@@ -104,11 +106,10 @@ pub fn step(book: &Book, io: &Io, speed: u8, energy_up: u8) -> (Io, Status, u32)
     };
     if input.count < recipe.item_count || io.fluid.amount < recipe.fluid || io.gas_in.amount < recipe.gas || !item_room || !gas_room {
         next.progress = 0;
-        return (next, Status::Blocked, ticks);
+        return (next, Status::Blocked, ticks, usage);
     }
-    let usage = upgrades::energy_per_tick(USAGE + recipe.energy, speed, energy_up);
     if io.energy < usage {
-        return (next, Status::NoEnergy, ticks);
+        return (next, Status::NoEnergy, ticks, usage);
     }
     next.energy -= usage;
     next.progress += 1;
@@ -133,7 +134,7 @@ pub fn step(book: &Book, io: &Io, speed: u8, energy_up: u8) -> (Io, Status, u32)
             }
         }
     }
-    (next, Status::Running, ticks)
+    (next, Status::Running, ticks, usage)
 }
 
 /// The recipes of type `mekanism:reaction`.
@@ -205,10 +206,10 @@ impl Mekanism {
             energy: e.energy,
             progress,
         };
-        let (next, status, ticks) = if self.can {
+        let (next, status, ticks, usage) = if self.can {
             step(&self.reactions, &io, counts[upgrades::SPEED], counts[upgrades::ENERGY])
         } else {
-            (io.clone(), Status::Idle, upgrades::ticks(BASE_DURATION, counts[upgrades::SPEED]))
+            (io.clone(), Status::Idle, upgrades::ticks(BASE_DURATION, counts[upgrades::SPEED]), upgrades::energy_per_tick(USAGE, counts[upgrades::SPEED], counts[upgrades::ENERGY]))
         };
         let active = status == Status::Running;
         let lit = e.state.contains("lit=true");
@@ -230,7 +231,7 @@ impl Mekanism {
         let mut saved = machine_data(next.progress, &cfg);
         saved.extend([0, 0]);
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
-        redstone::stamp(def.kind, control, capacity.saturating_sub(next.energy), (ticks, self.install.get(&key).copied().unwrap_or(0), counts), &mut saved, &mut data);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(next.energy), (ticks, self.install.get(&key).copied().unwrap_or(0), counts, usage), &mut saved, &mut data);
         let tanks_now = [io.fluid.clone(), io.gas_in.clone(), io.gas_out.clone()];
         let tanks_next = [next.fluid.clone(), next.gas_in.clone(), next.gas_out.clone()];
         let tanks_changed = tanks_now != tanks_next || e.tanks.len() != 3;
@@ -315,7 +316,7 @@ mod tests {
         let b = book();
         let (mut io, mut st) = (io.clone(), Status::Idle);
         for _ in 0..ticks {
-            let (n, s, _) = step(&b, &io, speed, 0);
+            let (n, s, _, _) = step(&b, &io, speed, 0);
             io = n;
             st = s;
         }
@@ -339,7 +340,7 @@ mod tests {
         assert_eq!(done.output, stack("mekanism:dust_sulfur", 1));
         // The substrate recipe uses 2 + 10 a tick.
         let io = Io { input: stack("mekanism:substrate", 1), fluid: tank("mekanism:ethene_fluid", 100), gas_in: tank("mekanism:oxygen", 100), energy: 1000, ..Io::default() };
-        let (n, st, ticks) = step(&book(), &io, 0, 0);
+        let (n, st, ticks, _) = step(&book(), &io, 0, 0);
         assert_eq!((st, n.energy, ticks), (Status::Running, 1000 - 12, 60));
     }
 

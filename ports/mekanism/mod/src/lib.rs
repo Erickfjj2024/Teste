@@ -163,7 +163,7 @@ const MACHINES: [Def; 34] = [
     // Pigments: an item gives a pigment, a pigment paints an item, two pigments mix into a third.
     chemical("mekanism:pigment_extractor", "mekanism:pigment_extracting", Layout::Oxidizer, spec(Shape::ItemToChem, 5, 100, 0, 20_000, false)),
     chemical("mekanism:painting_machine", "mekanism:painting", Layout::Adv, spec(Shape::ItemChemToItem, 5, 200, 15_000, 0, false)),
-    continuous_machine("mekanism:pigment_mixer", "mekanism:pigment_mixing", Layout::ChemInfuser,
+    continuous_machine("mekanism:pigment_mixer", "mekanism:pigment_mixing", Layout::Mixer,
         continuous::Spec { shape: continuous::Shape::Infuser, usage: 5, caps: [1_000, 1_000, 2_000] }),
     // An item, a fluid and a gas make an item and a gas (14 recipes: gasification and substrate).
     reaction_machine("mekanism:pressurized_reaction_chamber"),
@@ -541,6 +541,9 @@ impl Mekanism {
             );
             return false;
         }
+        if config::disabled(layout, side) {
+            return false;
+        }
         let next = config::cycle(layout, t, now, false);
         cfg.side_mut(t)[side] = next;
         let _ = players::tell(
@@ -749,7 +752,7 @@ impl Mekanism {
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
         let mut saved = machine_data(next_progress, &cfg);
         let base_ticks = def.proc.map_or(machine::TICKS, |s| s.ticks);
-        let shown = (upgrades::ticks(base_ticks, speed), self.install.get(&(e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).copied().unwrap_or(0), counts);
+        let shown = (upgrades::ticks(base_ticks, speed), self.install.get(&(e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).copied().unwrap_or(0), counts, usage_now);
         redstone::stamp(def.kind, control, capacity.saturating_sub(energy), shown, &mut saved, &mut data);
         if !changed && !dirty && data == e.menu_data && saved == e.data && !self.force {
             return None;
@@ -943,7 +946,7 @@ impl ServerMod for Mekanism {
                 // The chemical infuser, the washer and the separator: three slots, on the default configuration's faces.
                 Kind::Continuous => {
                     let (inputs, outputs) = match def.layout {
-                        Layout::ChemInfuser => (vec![0, 1], vec![2]),
+                        Layout::ChemInfuser | Layout::Mixer => (vec![0, 1], vec![2]),
                         Layout::Rotary => (vec![0, 2], vec![1, 3]),
                         _ => (vec![0], vec![1, 2]),
                     };
@@ -1284,6 +1287,7 @@ impl ServerMod for Mekanism {
                 *cfg.side_mut(t) = [target; 6];
             }
         }
+        config::enforce(layout, &mut cfg);
         let progress = e.data.get(..2).map_or(0, |b| u32::from(u16::from_le_bytes([b[0], b[1]])));
         let faces = self.apply_config(&e, layout, &facing, &cfg);
         // The screen's first six numbers stay; the configuration's four follow them.

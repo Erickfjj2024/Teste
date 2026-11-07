@@ -389,6 +389,19 @@ cubo básico; capacidade e taxa por tick de `EnergyCubeTier`: Advanced 16 milhõ
 256 000 (o Basic, 4 milhões e 4 000). As receitas são as originais (o cubo do nível de baixo, tabletes de energia, ligas infusas e lingotes de
 osmio), feitas como receitas comuns: o cubo de baixo **não passa a energia** que guarda para o novo (no original passa). Falta o instalador de nível.
 
+## 2n. Rodada "o que difere do original" (mod 0.1.44, o mesmo APK v40, **não testada no jogo**)
+
+Passou no teste simulado (67 passos) e em 78 testes unitários. Corrigido:
+
+- **Aba de energia:** "Using" mostra o gasto **com upgrades** (velocidade e energia), como o original; ocioso ou sem receita mostra 0.
+- **Heat Generator:** a temperatura ambiente vem do bioma, `300 + 25·(temperatura do bioma − 0,8)` (bioma limitado a −5…5), em vez de 300 K fixo.
+  Em bioma frio perde menos calor e rende mais; em deserto, o contrário.
+- **Pigment Mixer:** o lado de cima é desativado (`addDisabledSides(TOP)`): nenhum tipo de dado, e o configurador e os botões não o mudam.
+
+Ainda diferem (precisam de mudança no Horizon, ficam para a próxima rodada): setas de progresso coloridas pelo pigmento, "Uninstall" com
+Shift (no porte: toque longo/direito remove todos), textura animada do fluido no medidor, tela interna do Crystallizer, rolagem e destaque da
+lista de upgrades, instalar upgrade com Shift+clique no bloco.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

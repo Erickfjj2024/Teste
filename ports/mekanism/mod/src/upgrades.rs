@@ -234,13 +234,14 @@ pub fn is_removal(id: i32) -> bool {
     (REMOVE_ONE..REMOVE_ONE + 8).contains(&id) || (REMOVE_ALL..REMOVE_ALL + 8).contains(&id)
 }
 
-/// The numbers the window reads: the ticks a recipe takes, the install progress, the eight counts and which of the five types
-/// shown in the list (speed, energy, chemical, muffling, experience) are installed, one bit each.
-pub fn window_numbers(ticks_required: u32, progress: u32, counts: &[u8; 8]) -> Vec<i32> {
+/// The numbers the window reads: the ticks a recipe takes, the install progress, the eight counts, which of the five types
+/// shown in the list (speed, energy, chemical, muffling, experience) are installed (one bit each) and what the machine uses a tick.
+pub fn window_numbers(ticks_required: u32, progress: u32, counts: &[u8; 8], usage: u64) -> Vec<i32> {
     let mask: i32 = (0..5).filter(|k| counts[*k] > 0).map(|k| 1 << k).sum();
     let mut v = vec![ticks_required as i32, progress as i32];
     v.extend(counts.iter().map(|c| i32::from(*c)));
     v.push(mask);
+    v.push(usage.min(i32::MAX as u64) as i32);
     v
 }
 
@@ -321,8 +322,8 @@ mod tests {
         let mut counts = [0u8; 8];
         counts[SPEED] = 2;
         counts[MUFFLING] = 1;
-        let v = window_numbers(200, 5, &counts);
-        assert_eq!(v.len(), 11);
+        let v = window_numbers(200, 5, &counts, 26);
+        assert_eq!((v.len(), v[11]), (12, 26));
         assert_eq!((v[0], v[1], v[2], v[5], v[10]), (200, 5, 2, 1, 0b01001));
         assert!(is_removal(6103) && is_removal(6117) && !is_removal(6108));
         assert_eq!(type_of("mekanism:upgrade_speed"), Some(SPEED));
