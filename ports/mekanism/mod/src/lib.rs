@@ -29,6 +29,7 @@ mod machine;
 mod sawmill;
 mod sps;
 mod sides;
+mod sorter;
 mod tank;
 mod turbine;
 mod upgrades;
@@ -359,6 +360,8 @@ struct Mekanism {
     /// The machine each bounding block just placed belongs to, until the block writes it down.
     bound_owner: HashMap<(String, i32, i32, i32), [i32; 3]>,
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
+    sorter_buttons: Vec<(String, BlockPos, i32)>,
+    sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
@@ -1424,6 +1427,10 @@ impl ServerMod for Mekanism {
         let mut bounding = kind(bounding::BLOCK, true);
         bounding.keep_data = false;
         r = r.block_entity_kind(bounding);
+        // The logistical sorter: the intake, the outbox and five filter slots.
+        let mut sorter = kind(sorter::SORTER, true);
+        sorter.container = Some(ContainerSpec { slots: sorter::SLOTS as u32, faces: sorter::item_faces(laser::NORTH), inputs: vec![0], outputs: vec![1], menu: true });
+        r = r.block_entity_kind(sorter);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1475,6 +1482,8 @@ impl ServerMod for Mekanism {
             beams: HashMap::new(),
             bound_owner: HashMap::new(),
             spses: HashMap::new(),
+            sorter_buttons: Vec::new(),
+            sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
@@ -1628,6 +1637,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == sorter::SORTER {
+            self.sorter_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if block == laser::AMPLIFIER {
             self.laser_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1767,6 +1780,10 @@ impl ServerMod for Mekanism {
             out.extend(self.run_dynamic(&valves));
         }
         out.extend(self.run_bounding(&entities, tick));
+        let sorters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(sorter::SORTER)).collect();
+        if !sorters.is_empty() || !self.sorter_buttons.is_empty() {
+            out.extend(self.run_sorters(&sorters, tick));
+        }
         let sps_ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(sps::PORT)).collect();
         if !sps_ports.is_empty() {
             out.extend(self.run_sps(&sps_ports, tick));

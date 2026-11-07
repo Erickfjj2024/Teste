@@ -747,6 +747,13 @@ interface %world {
     /// (kept with it). Made after this call returns; nothing happens for a
     /// block with no mod container. API 17.
     set-item-faces: func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>;
+    /// Pulls items out of the container beside the block entity, on its face
+    /// `face` (0 to 5: down, up, north, south, west, east), into the block
+    /// entity's own container through that same face: up to `max` items of the
+    /// ids in `items` (any when empty), the ones the other container lets out
+    /// through its side toward this block and this one lets in. Once, after
+    /// this call returns; a Mekanism sorter calls it every few ticks. API 22.
+    pull-items: func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>;
     /// Turns on or off the block entity pushing items out: every 10 ticks, from
     /// the slots of the kind's `outputs` that a face reaches, into the
     /// container beside that face (a chest, a hopper, another machine), as

@@ -679,3 +679,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ae. Advanced Solar, Wind Generator e Bounding Blocks (mod 0.1.74)
 `bounding.rs`: máquinas grandes colocam bounding blocks ao redor (Advanced Solar: 1 acima + plano 3x3 dois acima; Wind: 4 acima, com mastro e topo visíveis por `part`; Pigment Mixer: 1 acima). `generators.rs`: `AdvSolar` (12 FE/t, buffer 240) e `Wind` (1 a 5 FE/t pela altura do topo). Diferenças em DIFERENCAS.md seção 7.
+
+### 2af. Logistical Sorter (mod 0.1.75; fork: API 22 `world.pull-items`)
+`sorter.rs` + fork: o sorter puxa itens do contêiner de trás (filtros em 5 slots ou tudo com auto-eject) para o slot de entrada, passa ao de saída e o ejetor do jogo (ou um transportador) o leva à frente. Diferenças em DIFERENCAS.md seção 8.

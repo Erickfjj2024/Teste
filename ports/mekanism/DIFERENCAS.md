@@ -146,11 +146,21 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 7.6 | Advanced Solar: modelo e pontos de geração (12 FE/t, 240 de buffer) do original; os 9 blocos do painel e o de cima são bounding blocks | — |
 | 7.7 | Máquinas com bounding block que ainda **não existem**: Digital Miner, Solar Neutron Activator, Isotopic Centrifuge, Seismic Vibrator, Security Desk, Modification Station, Teleporter | ABERTA |
 
+## 8. Logistical Sorter (mod 0.1.75, exige APK novo: API 22 `world.pull-items`)
+| # | Diferença | Estado |
+|---|---|---|
+| 8.1 | Os filtros são **itens postos em 5 slots** (não são gastos): só filtro por item. Faltam filtros de tag, material e mod, cor por filtro (roteamento nos transportadores), mínimo/máximo, "permitir padrão" | ABERTA |
+| 8.2 | Sem Round Robin, sem controle de redstone, sem modo "ativo" (luz) | ABERTA |
+| 8.3 | Puxa até uma pilha (64) a cada 10 ticks (o original 1 pilha a cada 5, e só quando o destino aceita); com "single item", 1 | SUPOSIÇÃO |
+| 8.4 | O destino da frente é o do ejetor do jogo (baú, máquina, hopper) ou um transportador logístico ao lado; sem a cor/rota de transporte | ABERTA |
+| 8.5 | O item passa pelo slot de entrada e depois pelo de saída (2 etapas); o original move direto | LIMITE API |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |
 |---|---|---|
 | 5.1 | Bloco com **vários grupos** de multibloco separados por vírgula (`a,b`) | pendente APK (ainda não gerado) |
+| 5.3 | `world.pull-items` (API 22): puxa itens do contêiner ao lado para o bloco do mod (usado pelo Sorter) | pendente APK |
 | 5.2 | Itens `set-item-faces` até 32 slots, `transmitter-medium: items`, widgets `Item`, `shift_id`/`hover`, barra de energia nativa | APK v50 |
 
 ---
