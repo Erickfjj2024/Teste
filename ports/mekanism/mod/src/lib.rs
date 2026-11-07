@@ -12,6 +12,7 @@ mod cube;
 mod chem_table;
 mod plus;
 mod process;
+mod dynamic;
 mod factory;
 mod pump;
 mod reaction;
@@ -34,6 +35,7 @@ use generators::GenKind;
 use redstone::Control;
 use sides::Mode;
 use machine::{Book, Io, Recipe, Stack, Status, step};
+use horizon_mod_sdk::server::{MultiblockSpec, Structure};
 use std::collections::{HashMap, HashSet};
 
 /// Where a machine's recipes come from.
@@ -331,6 +333,8 @@ struct Mekanism {
     installs: HashMap<(String, i32, i32, i32), Vec<(String, usize, u32, u32)>>,
     /// The fluid blocks each electric pump found beside the ones it took (`recurringNodes`), and the fluid it is on.
     pump_nodes: HashMap<(String, i32, i32, i32), (Vec<(i32, i32, i32)>, String)>,
+    /// The tank each dynamic tank structure shares among its valves.
+    dynamic: HashMap<(String, [i32; 3]), dynamic::Shared>,
     /// What each fluidic plenisher knows of its work.
     plenishers: HashMap<(String, i32, i32, i32), pump::Plenish>,
     capacity: HashMap<(String, i32, i32, i32), u64>,
@@ -1238,6 +1242,19 @@ impl ServerMod for Mekanism {
             tier.energy = Some(energy(capacity, rate, FlowSide::Both));
             r = r.block_entity_kind(tier);
         }
+        // The dynamic tank: the casing only joins the structure; the valves hold its tank (a fluid and a chemical) and its two bucket slots.
+        let mut casing = kind(dynamic::CASING, false);
+        casing.keep_data = false;
+        casing.multiblock = Some(MultiblockSpec { group: dynamic::GROUP.into() });
+        r = r.block_entity_kind(casing);
+        let mut valve = kind(dynamic::VALVE, true);
+        valve.keep_data = false;
+        valve.multiblock = Some(MultiblockSpec { group: dynamic::GROUP.into() });
+        valve.container = Some(ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: vec![1], menu: true });
+        for kind_name in ["fluid", "chemical"] {
+            valve.tanks.push(TankSpec { kind: kind_name.into(), capacity: dynamic::SPEC_CAPACITY, max_rate: dynamic::VALVE_RATE, faces: vec![FlowSide::Both; 6] });
+        }
+        r = r.block_entity_kind(valve);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1279,6 +1296,7 @@ impl ServerMod for Mekanism {
             removals: HashMap::new(),
             installs: HashMap::new(),
             pump_nodes: HashMap::new(),
+            dynamic: HashMap::new(),
             plenishers: HashMap::new(),
             capacity: HashMap::new(),
             force: false,
@@ -1509,9 +1527,21 @@ impl ServerMod for Mekanism {
         })
     }
 
+    fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> {
+        if group == dynamic::GROUP {
+            self.dynamic_structures(dimension, structures)
+        } else {
+            Vec::new()
+        }
+    }
+
     fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
         self.now = tick;
         let mut out = Vec::new();
+        let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
+        if !valves.is_empty() {
+            out.extend(self.run_dynamic(&valves));
+        }
         for e in &entities {
             let block = e.state.split('[').next().unwrap_or("");
             if let Some(def) = MACHINES.iter().find(|d| d.block == block) {

@@ -630,3 +630,14 @@ existe, falta o motor da estrutura e as telas); (4) Logistical Sorter e os trans
 O relato "8 upgrades de velocidade e a máquina não ficou mais rápida" foi um engano de item (eram 8 de energia: o gasto caiu de 8 para 1 e a velocidade
 não muda). Com 8 de velocidade o mod faz a receita em 20 ticks em vez de 200 (testes simulados da Crusher, da Basic Crushing e da Advanced
 Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
+
+## 2v. Dynamic Tank (multibloco, mod 0.1.65, **não testado no jogo**)
+
+- **Estrutura** (`TankValidator`): caixa oca de `mekanism:dynamic_tank` de 3 a 18 blocos de lado, com o interior vazio (ar ou fluido) e `mekanism:dynamic_valve`
+  só nas faces (nunca em aresta ou canto); quem a valida é o mod com o evento `multiblock-changed` do Horizon; cada membro guarda
+  `[válido, volume, canto mínimo]`. Capacidade: 16 000 baldes por bloco do interior (`mBPerTank`), de **um** fluido ou **um** químico, não os dois.
+- **Tanque:** vive nas válvulas: todas guardam a mesma quantidade (um espelho do total); o que cada uma ganha ou perde num tick (tubos, canos)
+  entra no total, que é escrito de novo em todas. Quando cheio, o filtro do tanque fecha a entrada. O total sobrevive ao recarregar (as válvulas o guardam).
+- **Tela:** só nas válvulas (o original abre de qualquer bloco da caixa): medidor largo do tanque, quanto tem, a capacidade e o volume, e dois slots de
+  balde (cheio entra, vazio sai) que mexem no tanque da estrutura. Sem a aba de modo de edição.
+- Teste simulado (`factory.toml`: caixa 3×3×3 com válvula) e 91 unitários.

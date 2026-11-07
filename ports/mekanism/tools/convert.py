@@ -164,6 +164,9 @@ OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissoluti
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
 
+DYNAMIC = ['dynamic_tank', 'dynamic_valve']
+for m in DYNAMIC:
+    BLOCKS[m] = ('minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 9.0, 'requires_tool': True}, 'machine')
 TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid'),
                 ('logistical_transporter', 'item')]
 TRANSMITTER_BLOCKS = [f'{tier}_{kind}' for kind, _ in TRANSMITTERS for tier in ('basic', 'advanced', 'elite', 'ultimate')]
@@ -1197,7 +1200,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.64', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.65', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1296,7 +1299,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.64', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.65', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1398,7 +1401,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.64', 'color': '#808080'},
+        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.65', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1414,6 +1417,28 @@ def factory_menu(m):
     menu['screen']['windows'][-1]['x'] += ox
     menu['accepts'] = menu.get('accepts', []) + [{'slot': charge_at, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}]
     return menu
+
+def dynamic_valve_menu(m):
+    """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
+    def frames(panel):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 66, 50, 2), (48, 18))
+        for x, y, overlay in ((146, 19, 'slot/overlay/input'), (146, 51, 'slot/overlay/output')):
+            panel.alpha_composite(gui_sprite('slot/input' if overlay.endswith('input') else 'slot/output'), (x - 1, y - 1))
+            panel.alpha_composite(gui_sprite(overlay), (x - 1, y - 1))
+    texture = tank_panel(m, None, [frames])
+    title = 'Dynamic Tank'
+    widgets = [
+        {'type': 'gauge', 'x': 49, 'y': 19, 'w': 64, 'h': 48, 'value': {'pair': [0, 1]}, 'max': {'pair': [3, 4]}, 'kind': {'data': 2},
+         'types': GAUGE_TYPES, 'tooltip': '{label}: {value} B', 'empty': 'Empty'},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/wide', 'gauge_overlay_wide'), 'x': 49, 'y': 19, 'w': 64, 'h': 48},
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.65', 'color': '#808080'}]
+    return {'slots': 2, 'data_slots': 7, 'results': [1],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
 def pump_menu(m):
     """GuiElectricPump: the fluid gauge at 6, 13, the bucket slots at 28, 20 and 28, 51 with an arrow between them, the inner screen
@@ -1441,7 +1466,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.64', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.65', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1453,6 +1478,7 @@ def pump_menu(m):
                           'screen': {'texture': texture, 'own_labels': True, 'slots': [[28, 20], [28, 51], [143, 35]],
                                      'widgets': widgets, 'windows': [window]}}, m, 3, 24)
 
+put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
 for m in MACHINES:
     if m in ('electric_pump', 'fluidic_plenisher'):
         put(f'{OUT}/data/{NS}/horizon/menu/{m}.json', pump_menu(m))
@@ -1483,7 +1509,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.64', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.65', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1750,7 +1776,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.64', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.65', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

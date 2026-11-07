@@ -163,3 +163,41 @@ set-items = [{ x = 110, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "
 ticks = 330
 expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", ""] }]
 
+
+# A 3x3x3 hollow box of dynamic tank blocks with a valve in the middle of its top is a tank for one block of inside (16 000 buckets).
+[[step]]
+blocks = [
+    { x = 200, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 66, z = 201, state = "mekanism:dynamic_valve" },
+    { x = 201, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+]
+ticks = 5
+
+[[step]]
+set-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
+ticks = 5
+expect.block-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
+expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5, 0, 64, 16000, 0, 1, 0] }]
