@@ -13,6 +13,7 @@ mod chem_table;
 mod plus;
 mod process;
 mod dynamic;
+mod evaporation;
 mod induction;
 mod factory;
 mod pump;
@@ -338,6 +339,9 @@ struct Mekanism {
     dynamic: HashMap<(String, [i32; 3]), dynamic::Shared>,
     /// The energy each induction matrix holds, and what its ports were last given.
     matrices: HashMap<(String, [i32; 3]), u64>,
+    /// The thermal evaporation plants, and the recipes they run.
+    plants: HashMap<(String, [i32; 3]), evaporation::Plant>,
+    evaporating: HashMap<String, (u64, String, u64)>,
     matrix_given: HashMap<(String, [i32; 3]), u64>,
     /// What each fluidic plenisher knows of its work.
     plenishers: HashMap<(String, i32, i32, i32), pump::Plenish>,
@@ -1272,6 +1276,23 @@ impl ServerMod for Mekanism {
         port.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         port.energy = Some(EnergySpec { capacity: induction::SPEC_CAPACITY, max_receive: induction::SPEC_CAPACITY, max_extract: induction::SPEC_CAPACITY, faces: vec![FlowSide::Both; 6] });
         r = r.block_entity_kind(port);
+        // The thermal evaporation plant: the walls only join it; valves and controller hold its two tanks (the controller also its four bucket slots).
+        let mut wall = kind(evaporation::BLOCK, false);
+        wall.keep_data = false;
+        wall.multiblock = Some(MultiblockSpec { group: evaporation::GROUP.into() });
+        r = r.block_entity_kind(wall);
+        for (name, slots) in [(evaporation::VALVE, 0), (evaporation::CONTROLLER, 4)] {
+            let mut k = kind(name, true);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: evaporation::GROUP.into() });
+            if slots > 0 {
+                k.container = Some(ContainerSpec { slots, faces: vec![Vec::new(); 6], inputs: vec![0, 2], outputs: vec![1, 3], menu: true });
+            }
+            for _ in 0..2 {
+                k.tanks.push(TankSpec { kind: "fluid".into(), capacity: evaporation::SPEC_CAPACITY, max_rate: 100_000, faces: vec![FlowSide::Both; 6] });
+            }
+            r = r.block_entity_kind(k);
+        }
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1315,6 +1336,8 @@ impl ServerMod for Mekanism {
             pump_nodes: HashMap::new(),
             dynamic: HashMap::new(),
             matrices: HashMap::new(),
+            plants: HashMap::new(),
+            evaporating: HashMap::new(),
             matrix_given: HashMap::new(),
             plenishers: HashMap::new(),
             capacity: HashMap::new(),
@@ -1551,6 +1574,8 @@ impl ServerMod for Mekanism {
             self.dynamic_structures(dimension, structures)
         } else if group == induction::GROUP {
             self.matrix_structures(dimension, structures)
+        } else if group == evaporation::GROUP {
+            self.evaporation_structures(dimension, structures)
         } else {
             Vec::new()
         }
@@ -1562,6 +1587,13 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let plant: Vec<&BlockEntity> = entities
+            .iter()
+            .filter(|e| matches!(e.state.split('[').next(), Some(evaporation::VALVE | evaporation::CONTROLLER)))
+            .collect();
+        if !plant.is_empty() {
+            out.extend(self.run_evaporation(&plant, tick));
         }
         let ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(induction::PORT)).collect();
         if !ports.is_empty() {
