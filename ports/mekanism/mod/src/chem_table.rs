@@ -1,5 +1,5 @@
 // Written by tools/convert.py: the chemicals the machines' screens draw, in the order of their numbers (from 1).
-pub const CHEMICALS: [&str; 68] = [
+pub const CHEMICALS: [&str; 69] = [
     "mekanism:bio",
     "mekanism:carbon",
     "mekanism:diamond",
@@ -68,4 +68,5 @@ pub const CHEMICALS: [&str; 68] = [
     "mekanismgenerators:bioethanol",
     "mekanism:heavy_water",
     "mekanism:nutritional_paste",
+    "mekanism:nuclear_waste",
 ];

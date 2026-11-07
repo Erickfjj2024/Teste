@@ -131,6 +131,7 @@ GNS = 'mekanism'
 GSRC = 'mekanismgenerators'
 GNS_SRC = 'mekanismgenerators'
 GENERATORS = ['heat_generator', 'bio_generator', 'solar_generator', 'gas_burning_generator']
+FISSION = ['fission_reactor_casing', 'fission_reactor_port', 'fission_reactor_logic_adapter', 'fission_fuel_assembly', 'control_rod_assembly']
 TURBINE = ['turbine_casing', 'turbine_valve', 'turbine_vent', 'turbine_rotor', 'rotational_complex', 'electromagnetic_coil', 'saturating_condenser']
 TIERS = ['basic', 'advanced', 'elite', 'ultimate']
 FLUID_TANKS = [f'{t}_fluid_tank' for t in TIERS + ['creative']]
@@ -710,6 +711,9 @@ def chemical_ids():
             add(out['right']['id'])
     for f in FLUIDS:
         add(f)
+    # what the multiblocks hold that no recipe names
+    for extra in ('mekanism:nuclear_waste', 'mekanism:steam', 'mekanism:sodium', 'mekanism:superheated_sodium', 'mekanism:fissile_fuel'):
+        add(extra)
     return ids
 
 CHEMICALS = chemical_ids()
@@ -1209,7 +1213,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.69', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.70', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1308,7 +1312,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.69', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1410,7 +1414,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.69', 'color': '#808080'},
+        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.70', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1445,7 +1449,7 @@ def dynamic_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.69', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 7, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
@@ -1476,7 +1480,7 @@ def evaporation_menu(m):
         {'type': 'text', 'x': 76, 'y': 30, 'text': 'Height {11}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 40, 'text': 'Sun {9}/4', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 50, 'text': 'Rate {10}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.69', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 4, 'data_slots': 12, 'results': [1, 3],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[54, 19], [54, 51], [118, 19], [118, 51]], 'widgets': widgets}}
 
@@ -1506,7 +1510,7 @@ def boiler_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 74, 'y': 39, 'text': '', 'color': '#00CD00'},
         {'type': 'text', 'x': 34, 'y': 70, 'text': 'T {20}  Boil {21}/{22}  SH {23}', 'color': '#00CD00', 'scale': 70},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.69', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 25, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[73, 19], [73, 51]], 'widgets': widgets}}
 
@@ -1536,8 +1540,54 @@ def turbine_valve_menu(m):
         {'type': 'text', 'x': 10, 'y': 51, 'text': 'Blades {17}  Coils {18}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 60, 'text': 'Vents {16}  Condensers {19}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 69, 'text': 'Dispersers {15}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.69', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 21,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+
+def fission_port_menu(m):
+    """GuiFissionReactor (simplified): fuel, coolant, heated coolant and waste gauges, the burn rate with its buttons, and the on/off button."""
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 142))
+    for x in (7, 35, 117, 145):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 24, 50, 2), (x, 18))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 76, 50, 3), (36 + 28, 18))
+    for x, w in ((64, 20), (86, 20), (108, 20)):
+        pass
+    for x, y, w in ((64, 70, 22), (88, 70, 22), (112, 70, 22), (136, 70, 22)):
+        pass
+    texture = save_gui(panel, m)
+    title = 'Fission Reactor'
+    widgets = []
+    for i, x in enumerate((8, 36, 118, 146)):
+        widgets.append({'type': 'gauge', 'x': x, 'y': 19, 'w': 22, 'h': 48, 'value': {'pair': [4 * i, 4 * i + 1]}, 'max': {'pair': [4 * i + 2, 4 * i + 3]},
+                        'kind': {'data': 16 + i}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+    widgets += [
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 66, 'y': 21, 'text': 'Temp {20}/10 K', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 66, 'y': 30, 'text': 'Damage {21}%', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 66, 'y': 39, 'text': 'Rate {22}/100', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 66, 'y': 48, 'text': 'Burn {23}/100  Max {24}', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 66, 'y': 57, 'text': 'Boil {25}  Eff {28}%', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 66, 'y': 66, 'text': 'Assemblies {27}', 'color': '#00CD00', 'scale': 75},
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.70', 'color': '#808080'}]
+    # the buttons: on/off and the burn rate
+    for k, (bid, label, x) in enumerate([(7101, '-1', 8), (7102, '-.1', 34), (7103, '+.1', 118), (7104, '+1', 144)]):
+        widgets.append({'type': 'text', 'x': x + 3, 'y': 71, 'text': label, 'color': '#404040'})
+        widgets.append({'type': 'button', 'x': x, 'y': 69, 'w': 22, 'h': 12, 'id': bid, 'tooltip': 'Burn rate'})
+    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 1}}, 'widgets': [
+        {'type': 'text', 'x': 66, 'y': 72, 'text': 'ON - click to SCRAM', 'color': '#00CD00', 'scale': 70}]})
+    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 0}}, 'widgets': [
+        {'type': 'text', 'x': 66, 'y': 72, 'text': 'OFF - click to start', 'color': '#CD0000', 'scale': 70}]})
+    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 2}}, 'widgets': [
+        {'type': 'text', 'x': 66, 'y': 72, 'text': 'FORCED OFF', 'color': '#CD0000', 'scale': 70}]})
+    widgets.append({'type': 'button', 'x': 60, 'y': 69, 'w': 56, 'h': 14, 'id': 7100, 'tooltip': 'Activate / Scram'})
+    return {'slots': 1, 'data_slots': 30,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
 def induction_port_menu(m):
@@ -1562,7 +1612,7 @@ def induction_port_menu(m):
         {'type': 'text', 'x': 11, 'y': 48, 'text': 'Capacity: {2+3} MFE', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 59, 'text': 'Transfer: {4+5} kFE/t', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 70, 'text': 'Cells {6}  Providers {7}', 'color': '#00CD00'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.69', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.70', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 8,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1592,7 +1642,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.69', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.70', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1608,6 +1658,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dyna
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))
+put(f'{OUT}/data/{NS}/horizon/menu/fission_reactor_port.json', fission_port_menu('fission_reactor_port'))
 put(f'{OUT}/data/{NS}/horizon/menu/induction_port.json', induction_port_menu('induction_port'))
 for m in MACHINES:
     if m in ('electric_pump', 'fluidic_plenisher'):
@@ -1639,7 +1690,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.69', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.70', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1906,7 +1957,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.69', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.70', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1933,8 +1984,11 @@ for g in GENERATORS:
         {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'type': 'minecraft:survives_explosion'}]}]})
     put(f'{OUT}/data/{GNS}/horizon/menu/{g}.json', gen_menu(g))
 # the turbine: full blocks and a rotor, no states; its blade is an item
-for g in TURBINE:
+for g in TURBINE + FISSION:
     bs = read_json(f'{GDIR}/blockstates/{g}.json')
+    if all(k.startswith('mode=') for k in bs['variants']):
+        # the port's mode is not a state of the port's block: it shows the input one
+        bs = {'variants': {'': bs['variants']['mode=input']}}
     ok = True
     for v in bs['variants'].values():
         ref = v['model']
@@ -1954,7 +2008,7 @@ gen_model(f'{GSRC}:item/turbine_blade')
 put(f'{OUT}/data/{NS}/horizon/item/turbine_blade.json', {'template': 'minecraft:stick'})
 put(f'{OUT}/assets/{NS}/items/turbine_blade.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/generators/turbine_blade'}})
 kept_items.append('turbine_blade')
-for p in sorted(glob.glob(f'{GGEN}/data/{GNS_SRC}/recipe/turbine/*.json')) + [f'{GGEN}/data/{GNS_SRC}/recipe/{n}.json' for n in ('electromagnetic_coil', 'rotational_complex', 'saturating_condenser')]:
+for p in sorted(glob.glob(f'{GGEN}/data/{GNS_SRC}/recipe/turbine/*.json') + glob.glob(f'{GGEN}/data/{GNS_SRC}/recipe/fission_reactor/*.json')) + [f'{GGEN}/data/{GNS_SRC}/recipe/{n}.json' for n in ('electromagnetic_coil', 'rotational_complex', 'saturating_condenser')]:
     text = open(p).read().replace(f'{GSRC}:', f'{NS}:')
     r = json.loads(text)
     name = r['result']['id'].split(':')[-1]
@@ -2152,7 +2206,7 @@ for tag in sorted(asked):
         ntags += 1
 
 # mining: pickaxe for ores, storage, casings and machines; ores need a stone or iron tool
-pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:{t}_energy_cube' for t in CUBE_TIERS] + [f'{GNS}:{g}' for g in GENERATORS] + [f'{GNS}:{g}' for g in TURBINE]
+pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:{t}_energy_cube' for t in CUBE_TIERS] + [f'{GNS}:{g}' for g in GENERATORS] + [f'{GNS}:{g}' for g in TURBINE + FISSION]
 put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe.json', {'values': pick})
 need_iron = [f'{NS}:{n}' for n in BLOCKS if n.endswith('_ore') or n.startswith('block_') or n == 'steel_casing']
 put(f'{OUT}/data/minecraft/tags/block/needs_iron_tool.json', {'values': need_iron})
@@ -2164,7 +2218,7 @@ for d in ASSET_DIRS:
         lang.update(read_json(p))
 keep = {f'item.{NS}.{n}' for n in kept_items} | {f'block.{NS}.{n}' for n in kept_blocks}
 out = {k: v for k, v in lang.items() if k in keep}
-for g in GENERATORS + TURBINE:
+for g in GENERATORS + TURBINE + FISSION:
     out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 out[f'item.{NS}.turbine_blade'] = glang[f'item.{GSRC}.turbine_blade']
 for k, u in enumerate(UPGRADES):
