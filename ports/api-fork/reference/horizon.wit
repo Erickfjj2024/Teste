@@ -1110,6 +1110,7 @@ interface server-events {
     /// slots, energy and tanks of the member blocks it chooses.
     record multiblock-spec {
         /// The group's name (`mymod:turbine`); the mod's own.
+        /// A block of several groups names them separated by commas.
         group: string,
     }
     record multiblock-member {
