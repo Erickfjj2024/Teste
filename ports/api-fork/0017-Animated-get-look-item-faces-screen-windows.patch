@@ -913,7 +913,7 @@ index 003737e..9bfe346 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..990ec7f 100644
+index 325afbf..155d146 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -946,7 +946,7 @@ index 325afbf..990ec7f 100644
          }
          let _ = (block, data, at, right, button);
      }
-@@ -2100,6 +2105,25 @@ impl Game<'_> {
+@@ -2100,6 +2105,29 @@ impl Game<'_> {
      /// replaced (width `0..=13`, colour `rgb`) or set to `None` to hide it.
      /// Asked each frame a stack is drawn. Client-side. 60.
      pub(super) fn native_item_bar(&self, stack: &ItemStack, bar: &mut Option<(i32, u32)>) {
@@ -968,11 +968,15 @@ index 325afbf..990ec7f 100644
 +            #[cfg(not(feature = "mods"))]
 +            let from_kind = || None::<u64>;
 +            *bar = kept_energy_bar(data, from_kind);
++            // Diagnostic (temporary): a full red bar when a mod block's data has no energy, yellow when it has but no bar came out.
++            if bar.is_none() && !id.starts_with("minecraft:") {
++                *bar = Some((13, if data.get("energy").is_some() { 0xFFFF00 } else { 0xFF0000 }));
++            }
 +        }
          let _ = (stack, bar);
      }
      /// Append an item's custom decorations after its default bar, cooldown and count.
-@@ -2130,10 +2154,7 @@ impl Game<'_> {
+@@ -2130,10 +2158,7 @@ impl Game<'_> {
          face: [i32; 3],
          claimed: &mut bool,
      ) {
@@ -984,7 +988,7 @@ index 325afbf..990ec7f 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -3369,6 +3390,17 @@ impl Game<'_> {
+@@ -3369,6 +3394,17 @@ impl Game<'_> {
          name: &str,
          src: [f32; 4],
          dst: [f32; 4],
@@ -1002,7 +1006,7 @@ index 325afbf..990ec7f 100644
      ) -> bool {
          let Some(mut r) = self.gui.atlas.sprites.get(name).copied() else {
              return false;
-@@ -3378,7 +3410,7 @@ impl Game<'_> {
+@@ -3378,7 +3414,7 @@ impl Game<'_> {
          r.v0 += src[1] * dv;
          r.u1 = r.u0 + src[2] * du;
          r.v1 = r.v0 + src[3] * dv;
@@ -1011,7 +1015,7 @@ index 325afbf..990ec7f 100644
          true
      }
      /// Item `item`'s icon (`mymod:machine`) with its top left at `at`,
-@@ -4118,8 +4150,13 @@ impl Game<'_> {
+@@ -4118,8 +4154,13 @@ impl Game<'_> {
          let Some(screen) = screen else {
              return Vec::new();
          };
@@ -1027,7 +1031,7 @@ index 325afbf..990ec7f 100644
              .collect()
      }
      /// A menu opened on this client with its slots under `key`, on block
-@@ -4132,6 +4169,7 @@ impl Game<'_> {
+@@ -4132,6 +4173,7 @@ impl Game<'_> {
          menu: &str,
      ) {
          self.mod_screen = None;
@@ -1035,7 +1039,7 @@ index 325afbf..990ec7f 100644
          let Some(t) = target else {
              return;
          };
-@@ -4159,6 +4197,7 @@ impl Game<'_> {
+@@ -4159,6 +4201,7 @@ impl Game<'_> {
          if let Some(screen) = screen {
              self.mod_screen = Some(OpenNativeScreen {
                  key,
@@ -1043,7 +1047,7 @@ index 325afbf..990ec7f 100644
                  window,
                  block,
                  screen,
-@@ -4166,6 +4205,10 @@ impl Game<'_> {
+@@ -4166,6 +4209,10 @@ impl Game<'_> {
              });
          }
      }
@@ -1054,7 +1058,7 @@ index 325afbf..990ec7f 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4201,23 +4244,47 @@ impl Game<'_> {
+@@ -4201,23 +4248,47 @@ impl Game<'_> {
              .copied()
              .flatten()
              .map(|p| (p[0], p[1]))
@@ -1110,7 +1114,7 @@ index 325afbf..990ec7f 100644
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4427,17 @@ impl Game<'_> {
+@@ -4360,6 +4431,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -1128,7 +1132,7 @@ index 325afbf..990ec7f 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4462,11 @@ impl Game<'_> {
+@@ -4384,6 +4466,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -1140,7 +1144,7 @@ index 325afbf..990ec7f 100644
          let window = self
              .remote
              .as_ref()
-@@ -4884,6 +4967,7 @@ mod tests {
+@@ -4884,6 +4971,7 @@ mod tests {
      fn mod_screen_data_is_its_windows_only() {
          let mut s = super::OpenNativeScreen {
              key: (0, 0, 0),
@@ -1148,7 +1152,7 @@ index 325afbf..990ec7f 100644
              window: 4,
              block: "gtmod:machine".into(),
              screen: super::NativeScreen::default(),
-@@ -5123,3 +5207,39 @@ mod tests {
+@@ -5123,3 +5211,44 @@ mod tests {
          assert!(debug_takes(Corner::BottomRight, true, [false, true]));
      }
  }
@@ -1157,12 +1161,17 @@ index 325afbf..990ec7f 100644
 +/// else `capacity`'s, 13 pixels at most, in Mekanism's energy colour; none while it holds no energy.
 +fn kept_energy_bar(data: &horizon_world::nbt::Tag, capacity: impl FnOnce() -> Option<u64>) -> Option<(i32, u32)> {
 +    use horizon_world::nbt::Tag;
-+    let Some(Tag::Long(energy)) = data.get("energy") else { return None };
++    let energy = &match data.get("energy") {
++        Some(Tag::Long(v)) => *v,
++        Some(Tag::Int(v)) => i64::from(*v),
++        _ => return None,
++    };
 +    if *energy <= 0 {
 +        return None;
 +    }
 +    let cap = match data.get("energy_cap") {
 +        Some(Tag::Long(c)) if *c > 0 => *c as u64,
++        Some(Tag::Int(c)) if *c > 0 => *c as u64,
 +        _ => capacity().filter(|c| *c > 0)?,
 +    };
 +    let ratio = (*energy as f32 / cap as f32).clamp(0.0, 1.0);
