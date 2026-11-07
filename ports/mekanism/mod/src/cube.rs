@@ -99,6 +99,8 @@ pub fn screen(rate: u64, energy: u64, capacity: u64, modes: &[Mode; 6], front: u
         0,
     ];
     data.extend(words(modes, front));
+    // Where its front looks, for the window's icons of the blocks beside each side.
+    data.push(crate::redstone::facing_number(facing_name(front)));
     data
 }
 
@@ -160,10 +162,12 @@ mod tests {
     }
 
     #[test]
-    fn the_screen_numbers_are_sixteen() {
+    fn the_screen_numbers_are_seventeen() {
         let d = screen(5, 4_000_000, 4_000_000, &sides::default_modes(NORTH), NORTH);
-        assert_eq!(d.len(), 16);
-        assert_eq!(d[0], 5);
+        assert_eq!(d.len(), 17);
+        assert_eq!((d[0], d[16]), (5, 0));
+        // The front it looks to is the last number (north 0, east 1, south 2, west 3).
+        assert_eq!(screen(0, 0, 4, &sides::default_modes(sides::SOUTH), sides::SOUTH)[16], 2);
         // A creative cube's trillions read as full in 32 bits.
         let c = screen(0, 1_000_000_000_000, 1_000_000_000_000, &[Mode::None; 6], NORTH);
         assert_eq!((c[1], c[2]), (0xFFFF, 0xFFFF));

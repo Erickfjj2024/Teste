@@ -564,3 +564,8 @@ A janela de configuração desenhava o bloco ao lado de cada lado a partir da pr
 fora da direção padrão ela nasce numa posição fixa e o mod a gira para quem a colocou, e os ícones ficavam trocados. Agora o mod escreve a
 direção da frente em um número da tela (norte 0, leste 1, sul 2, oeste 3, o último depois dos números dos upgrades) e o ícone (`neighbor`,
 campo novo `facing`) usa esse número: o mesmo que o mod usa para entrada/saída de cada face. Tanques e cubos (sem esse número) leem a propriedade como antes.
+
+## 2p (correção 5). Ícones de vizinhos no Energy Cube (mod 0.1.54)
+
+O cubo não tem a propriedade `facing` (guarda a frente nos bytes do bloco), então o ícone lia "norte" sempre. Agora o cubo escreve a frente
+na tela (último número) e o ícone a usa, como as máquinas. Os tanques de químico seguem fixos ao norte (como no original, que não os gira).

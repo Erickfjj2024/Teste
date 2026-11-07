@@ -630,9 +630,6 @@ def side_config_widgets(transmissions, machine=None, facing_slot=None):
                 {'type': 'button', 'x': x, 'y': 2 + 28 * (i % 4), 'w': 26, 'h': 26,
                  'local': {'set': {'var': 'type', 'value': i}}, 'tooltip': TRANSMISSION_INFO[ty][0]}]})
     widgets.append({'type': 'text', 'x': (WIN_W - text_width('Slots')) // 2, 'y': 120, 'text': 'Slots', 'color': '#787878'})
-    if facing_slot is not None:
-        # diagnostic (temporary): the mod's facing, 0 north, 1 east, 2 south, 3 west
-        widgets.append({'type': 'text', 'x': 8, 'y': 122, 'text': 'F={%d}' % facing_slot, 'color': '#C00000'})
     widgets.append({'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'})
     return widgets
 
@@ -1182,7 +1179,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.53', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.54', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1281,7 +1278,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.53', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.54', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1348,7 +1345,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8 + (18 if tier == 'ultimate' else 0), 'y': 75, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 48, 'y': 75, 'text': 'v0.1.53', 'color': '#808080'},
+        {'type': 'text', 'x': width - 48, 'y': 75, 'text': 'v0.1.54', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1392,7 +1389,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.53', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.54', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1470,7 +1467,7 @@ CUBES = {'basic_energy_cube': ('Basic Energy Cube', 4000), 'advanced_energy_cube
          'creative_energy_cube': ('Creative Energy Cube', 1000000000)}
 for cube_name, (cube_title, rate) in CUBES.items():
     put(f'{OUT}/data/{NS}/horizon/menu/{cube_name}.json', {
-        'slots': 2, 'data_slots': 16, 'results': [],
+        'slots': 2, 'data_slots': 17, 'results': [],
         # ContainerBuilder.armorSideBar(180, 41, 0): the four armor slots and the off-hand's, the player's own
         'armor': {'x': 180, 'y': 41, 'offhand': 0},
         'screen': {'texture': energy_cube_panel(cube_name), 'own_labels': True, 'slots': [[17, 35], [143, 35]],
@@ -1491,7 +1488,7 @@ for cube_name, (cube_title, rate) in CUBES.items():
             {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
              'tooltip': f'Input Rate: {{0}} FE\nMax Output: {rate} FE\nUnit: Forge Energy'}],
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                'texture': window_tex, 'widgets': side_config_widgets([1])}]}})
+                                'texture': window_tex, 'widgets': side_config_widgets([1], None, 16)}]}})
 # Status: 0 idle, 1 running, 2 no recipe for the input, 3 no energy, 4 not enough input or no room, 5 no recipes loaded
 
 def refs(v):
@@ -1659,7 +1656,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.53', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.54', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
