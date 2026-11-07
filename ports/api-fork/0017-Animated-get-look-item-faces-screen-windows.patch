@@ -891,7 +891,7 @@ index 003737e..9bfe346 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..dfa15bf 100644
+index 325afbf..8b440a8 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -924,7 +924,34 @@ index 325afbf..dfa15bf 100644
          }
          let _ = (block, data, at, right, button);
      }
-@@ -2130,10 +2135,7 @@ impl Game<'_> {
+@@ -2100,6 +2105,26 @@ impl Game<'_> {
+     /// replaced (width `0..=13`, colour `rgb`) or set to `None` to hide it.
+     /// Asked each frame a stack is drawn. Client-side. 60.
+     pub(super) fn native_item_bar(&self, stack: &ItemStack, bar: &mut Option<(i32, u32)>) {
++        // A server mod's block that kept its energy in the item (`keep_data`): the bar is how full it is, shown while it holds
++        // any (Mekanism's `EnergyContainerType.isBarVisible`, `StorageUtils.getBarWidth`, the client `energyColor`).
++        #[cfg(feature = "mods")]
++        if bar.is_none()
++            && let Some((id, data)) = horizon_client::block_entity_item::data(stack)
++            && let Some(horizon_world::nbt::Tag::Long(energy)) = data.get("energy")
++            && *energy > 0
++            && let Some(capacity) = self
++                .mods
++                .mods
++                .block_entity_kinds()
++                .into_iter()
++                .find(|k| k.block == id)
++                .and_then(|k| k.energy)
++                .map(|e| e.capacity)
++                .filter(|c| *c > 0)
++        {
++            let ratio = (*energy as f32 / capacity as f32).clamp(0.0, 1.0);
++            *bar = Some(((13.0 * ratio).round() as i32, 0x3C_FE9A));
++        }
+         let _ = (stack, bar);
+     }
+     /// Append an item's custom decorations after its default bar, cooldown and count.
+@@ -2130,10 +2155,7 @@ impl Game<'_> {
          face: [i32; 3],
          claimed: &mut bool,
      ) {
@@ -936,7 +963,7 @@ index 325afbf..dfa15bf 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -3369,6 +3371,17 @@ impl Game<'_> {
+@@ -3369,6 +3391,17 @@ impl Game<'_> {
          name: &str,
          src: [f32; 4],
          dst: [f32; 4],
@@ -954,7 +981,7 @@ index 325afbf..dfa15bf 100644
      ) -> bool {
          let Some(mut r) = self.gui.atlas.sprites.get(name).copied() else {
              return false;
-@@ -3378,7 +3391,7 @@ impl Game<'_> {
+@@ -3378,7 +3411,7 @@ impl Game<'_> {
          r.v0 += src[1] * dv;
          r.u1 = r.u0 + src[2] * du;
          r.v1 = r.v0 + src[3] * dv;
@@ -963,7 +990,7 @@ index 325afbf..dfa15bf 100644
          true
      }
      /// Item `item`'s icon (`mymod:machine`) with its top left at `at`,
-@@ -4118,8 +4131,13 @@ impl Game<'_> {
+@@ -4118,8 +4151,13 @@ impl Game<'_> {
          let Some(screen) = screen else {
              return Vec::new();
          };
@@ -979,7 +1006,7 @@ index 325afbf..dfa15bf 100644
              .collect()
      }
      /// A menu opened on this client with its slots under `key`, on block
-@@ -4132,6 +4150,7 @@ impl Game<'_> {
+@@ -4132,6 +4170,7 @@ impl Game<'_> {
          menu: &str,
      ) {
          self.mod_screen = None;
@@ -987,7 +1014,7 @@ index 325afbf..dfa15bf 100644
          let Some(t) = target else {
              return;
          };
-@@ -4159,6 +4178,7 @@ impl Game<'_> {
+@@ -4159,6 +4198,7 @@ impl Game<'_> {
          if let Some(screen) = screen {
              self.mod_screen = Some(OpenNativeScreen {
                  key,
@@ -995,7 +1022,7 @@ index 325afbf..dfa15bf 100644
                  window,
                  block,
                  screen,
-@@ -4166,6 +4186,10 @@ impl Game<'_> {
+@@ -4166,6 +4206,10 @@ impl Game<'_> {
              });
          }
      }
@@ -1006,7 +1033,7 @@ index 325afbf..dfa15bf 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4201,23 +4225,47 @@ impl Game<'_> {
+@@ -4201,23 +4245,47 @@ impl Game<'_> {
              .copied()
              .flatten()
              .map(|p| (p[0], p[1]))
@@ -1018,8 +1045,7 @@ index 325afbf..dfa15bf 100644
 +            && self
 +                .shown_native_screen()
 +                .is_some_and(|s| super::menu_screens::window_slot_position(&s.block, slot - 300).is_some())
-     }
--    /// The container slots the open mod screen shows (300.. ids).
++    }
 +    /// Where the open mod screen puts the player's armor or off-hand slot `id` (500 to 504), if it has one.
 +    pub(super) fn native_screen_armor(&self, id: usize) -> Option<(f32, f32)> {
 +        let s = self.shown_native_screen()?;
@@ -1028,7 +1054,8 @@ index 325afbf..dfa15bf 100644
 +            .iter()
 +            .find(|(i, _)| *i == id)
 +            .map(|(_, p)| (p[0], p[1]))
-+    }
+     }
+-    /// The container slots the open mod screen shows (300.. ids).
 +    /// The container slots the open mod screen shows (300.. ids), then the player's armor ones it adds.
      pub(super) fn native_screen_slots(&self) -> Option<Vec<usize>> {
          let s = self.shown_native_screen()?;
@@ -1062,7 +1089,7 @@ index 325afbf..dfa15bf 100644
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4408,17 @@ impl Game<'_> {
+@@ -4360,6 +4428,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -1080,7 +1107,7 @@ index 325afbf..dfa15bf 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4443,11 @@ impl Game<'_> {
+@@ -4384,6 +4463,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -1092,7 +1119,7 @@ index 325afbf..dfa15bf 100644
          let window = self
              .remote
              .as_ref()
-@@ -4884,6 +4948,7 @@ mod tests {
+@@ -4884,6 +4968,7 @@ mod tests {
      fn mod_screen_data_is_its_windows_only() {
          let mut s = super::OpenNativeScreen {
              key: (0, 0, 0),
