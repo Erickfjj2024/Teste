@@ -24,7 +24,7 @@ mod worldgen;
 
 use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack, Tank, TankSpec,
-    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, players,
+    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, player_items, players,
     recipe_types, serde_json, world,
 };
 use config::{Config, Data, Layout, Transmission};
@@ -245,6 +245,8 @@ struct Mekanism {
     /// capacity each machine was given, and whether upgrades changed the machine being run (so it answers even if idle).
     install: HashMap<(String, i32, i32, i32), u32>,
     removals: HashMap<(String, i32, i32, i32), Vec<i32>>,
+    /// Upgrades a player sneak-used on a machine: the player, the type, how many they held and the slot they were in.
+    installs: HashMap<(String, i32, i32, i32), Vec<(String, usize, u32, u32)>>,
     capacity: HashMap<(String, i32, i32, i32), u64>,
     force: bool,
     /// The reaction chamber's recipes.
@@ -1120,6 +1122,7 @@ impl ServerMod for Mekanism {
             can: true,
             install: HashMap::new(),
             removals: HashMap::new(),
+            installs: HashMap::new(),
             capacity: HashMap::new(),
             force: false,
             reactions: reaction::Book::default(),
@@ -1184,6 +1187,25 @@ impl ServerMod for Mekanism {
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        if let Some(k) = upgrades::type_of(&stack.item) {
+            // `ItemUpgrade.useOn`: sneaking on a machine that takes the type puts the whole stack in, as far as it fits.
+            let (Some(pos), true) = (pos, player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)) else { return false };
+            let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
+            let name = block.split('[').next().unwrap_or("");
+            let Some(def) = MACHINES.iter().find(|d| d.block == name) else { return false };
+            if !upgrades::supported(def).contains(&k) {
+                return false;
+            }
+            // The hotbar slot the stack is in (the held slot is not told: the first of the same stack).
+            let slot = player_items::get_inventory(&player.id)
+                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
+                .map_or(0, |s| s as u32);
+            self.installs
+                .entry((player.dimension.clone(), pos.x, pos.y, pos.z))
+                .or_default()
+                .push((player.id.clone(), k, stack.count, slot));
+            return true;
+        }
         if stack.item != CONFIGURATOR {
             return false;
         }

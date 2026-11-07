@@ -432,7 +432,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..1581933 100644
+index 609127a..c0b3848 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -4,16 +4,77 @@
@@ -556,9 +556,31 @@ index 609127a..1581933 100644
              match w {
                  Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
                      let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
-@@ -90,20 +133,221 @@ impl Game<'_> {
+@@ -71,7 +114,7 @@ impl Game<'_> {
+                         self.native_fill(batch, filled(rect, frac, *direction), argb);
+                     }
+                 }
+-                Widget::Sprite { texture, x, y, w, h, src, value, max, direction, .. } => {
++                Widget::Sprite { texture, x, y, w, h, src, value, max, direction, tints, tint_by, .. } => {
+                     let Some([sw, sh]) = self.native_sprite_size(texture) else {
+                         continue;
                      };
-                     self.native_sprite(batch, texture, src, dst);
+@@ -88,22 +131,236 @@ impl Game<'_> {
+                         }
+                         _ => (src, dst),
+                     };
+-                    self.native_sprite(batch, texture, src, dst);
++                    let tint = tint_by
++                        .as_ref()
++                        .and_then(|v| usize::try_from(read(v, data)).ok())
++                        .and_then(|i| i.checked_sub(1))
++                        .and_then(|i| tints.get(i))
++                        .and_then(|c| parse_color(c))
++                        .map_or(u32::MAX, |argb| {
++                            let [a, r, g, b] = argb.to_be_bytes();
++                            rgba(r, g, b, a)
++                        });
++                    self.native_sprite_tinted(batch, texture, src, dst, tint);
                  }
 -                Widget::Text { x, y, text, color } => {
 +                Widget::Text { x, y, text, color, scale } => {
@@ -577,7 +599,8 @@ index 609127a..1581933 100644
 +                    let i = read(value, data).max(0) as usize;
 +                    let argb = colors.get(i).or(colors.last()).and_then(|c| parse_color(c)).unwrap_or(0xFF80_8080);
 +                    self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
-+                }
+                 }
+-                Widget::Button { .. } => {}
 +                // Buttons draw nothing of their own (a sprite or a swatch under them does); a group was opened by `showing`.
 +                Widget::Gauge { x, y, w, h, value, max, kind, types, direction, .. } => {
 +                    let k = read(kind, data).max(0) as usize;
@@ -593,16 +616,18 @@ index 609127a..1581933 100644
 +                            self.draw_tiled_bottom_up(batch, &t.texture, rect, frac, tint);
 +                        }
 +                    }
-                 }
--                Widget::Button { .. } => {}
++                }
 +                Widget::Neighbor { x, y, side } => {
 +                    if let Ok(icon) = self.neighbor_icon(*side) {
 +                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
 +                    }
 +                }
++                Widget::Item { x, y, item } => {
++                    self.native_item(batch, item, [ox + *x as f32, oy + *y as f32], 16.0);
++                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
-+            }
-+        }
+             }
+         }
 +    }
 +
 +    /// Fills the bottom `frac` of rectangle `rect` with `texture` tiled from its bottom left corner and tinted (a tank's
@@ -701,9 +726,9 @@ index 609127a..1581933 100644
 +                    [0.0, 0.0, sw, sh],
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
-             }
++            }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at);
-         }
++        }
          true
      }
  
@@ -784,7 +809,7 @@ index 609127a..1581933 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +358,7 @@ impl Game<'_> {
+@@ -114,8 +371,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -859,7 +884,7 @@ index 003737e..9bfe346 100644
                      continue;
                  }
 diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
-index 325afbf..2bc15d1 100644
+index 325afbf..dfa15bf 100644
 --- a/crates/horizon-client/src/game/native_hooks.rs
 +++ b/crates/horizon-client/src/game/native_hooks.rs
 @@ -814,6 +814,9 @@ pub struct NativeScreen {
@@ -904,7 +929,34 @@ index 325afbf..2bc15d1 100644
          let _ = (stack, pos, face, claimed);
      }
      /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
-@@ -4118,8 +4120,13 @@ impl Game<'_> {
+@@ -3369,6 +3371,17 @@ impl Game<'_> {
+         name: &str,
+         src: [f32; 4],
+         dst: [f32; 4],
++    ) -> bool {
++        self.native_sprite_tinted(batch, name, src, dst, u32::MAX)
++    }
++    /// `native_sprite` multiplied by `tint` (packed as the batch packs a colour).
++    pub(super) fn native_sprite_tinted(
++        &self,
++        batch: &mut HudBatch,
++        name: &str,
++        src: [f32; 4],
++        dst: [f32; 4],
++        tint: u32,
+     ) -> bool {
+         let Some(mut r) = self.gui.atlas.sprites.get(name).copied() else {
+             return false;
+@@ -3378,7 +3391,7 @@ impl Game<'_> {
+         r.v0 += src[1] * dv;
+         r.u1 = r.u0 + src[2] * du;
+         r.v1 = r.v0 + src[3] * dv;
+-        batch.rect_uv(dst[0], dst[1], dst[2], dst[3], r, u32::MAX);
++        batch.rect_uv(dst[0], dst[1], dst[2], dst[3], r, tint);
+         true
+     }
+     /// Item `item`'s icon (`mymod:machine`) with its top left at `at`,
+@@ -4118,8 +4131,13 @@ impl Game<'_> {
          let Some(screen) = screen else {
              return Vec::new();
          };
@@ -920,7 +972,7 @@ index 325afbf..2bc15d1 100644
              .collect()
      }
      /// A menu opened on this client with its slots under `key`, on block
-@@ -4132,6 +4139,7 @@ impl Game<'_> {
+@@ -4132,6 +4150,7 @@ impl Game<'_> {
          menu: &str,
      ) {
          self.mod_screen = None;
@@ -928,7 +980,7 @@ index 325afbf..2bc15d1 100644
          let Some(t) = target else {
              return;
          };
-@@ -4159,6 +4167,7 @@ impl Game<'_> {
+@@ -4159,6 +4178,7 @@ impl Game<'_> {
          if let Some(screen) = screen {
              self.mod_screen = Some(OpenNativeScreen {
                  key,
@@ -936,7 +988,7 @@ index 325afbf..2bc15d1 100644
                  window,
                  block,
                  screen,
-@@ -4166,6 +4175,10 @@ impl Game<'_> {
+@@ -4166,6 +4186,10 @@ impl Game<'_> {
              });
          }
      }
@@ -947,7 +999,7 @@ index 325afbf..2bc15d1 100644
      /// The mod screen showing now, if any.
      fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
          self.mod_screen
-@@ -4201,23 +4214,47 @@ impl Game<'_> {
+@@ -4201,23 +4225,47 @@ impl Game<'_> {
              .copied()
              .flatten()
              .map(|p| (p[0], p[1]))
@@ -959,7 +1011,8 @@ index 325afbf..2bc15d1 100644
 +            && self
 +                .shown_native_screen()
 +                .is_some_and(|s| super::menu_screens::window_slot_position(&s.block, slot - 300).is_some())
-+    }
+     }
+-    /// The container slots the open mod screen shows (300.. ids).
 +    /// Where the open mod screen puts the player's armor or off-hand slot `id` (500 to 504), if it has one.
 +    pub(super) fn native_screen_armor(&self, id: usize) -> Option<(f32, f32)> {
 +        let s = self.shown_native_screen()?;
@@ -968,8 +1021,7 @@ index 325afbf..2bc15d1 100644
 +            .iter()
 +            .find(|(i, _)| *i == id)
 +            .map(|(_, p)| (p[0], p[1]))
-     }
--    /// The container slots the open mod screen shows (300.. ids).
++    }
 +    /// The container slots the open mod screen shows (300.. ids), then the player's armor ones it adds.
      pub(super) fn native_screen_slots(&self) -> Option<Vec<usize>> {
          let s = self.shown_native_screen()?;
@@ -1003,7 +1055,7 @@ index 325afbf..2bc15d1 100644
      }
      /// The first row of the player's inventory on the open mod screen.
      pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
-@@ -4360,6 +4397,17 @@ impl Game<'_> {
+@@ -4360,6 +4408,17 @@ impl Game<'_> {
          self.native_menu_button_v2([pos.0, pos.1, pos.2], &mut taken, id, carried);
          self.put_back_mod_block_entity(pos, taken, &items);
      }
@@ -1021,7 +1073,7 @@ index 325afbf..2bc15d1 100644
      /// The cursor from the open mod screen's top left, with its block and
      /// data, for its press and tooltip hooks.
      fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
-@@ -4384,6 +4432,11 @@ impl Game<'_> {
+@@ -4384,6 +4443,11 @@ impl Game<'_> {
          let Some(button) = button else {
              return false;
          };
@@ -1033,7 +1085,7 @@ index 325afbf..2bc15d1 100644
          let window = self
              .remote
              .as_ref()
-@@ -4884,6 +4937,7 @@ mod tests {
+@@ -4884,6 +4948,7 @@ mod tests {
      fn mod_screen_data_is_its_windows_only() {
          let mut s = super::OpenNativeScreen {
              key: (0, 0, 0),
@@ -2074,7 +2126,7 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..f01de5f 100644
+index e2ee6c7..96c3868 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
 @@ -295,12 +295,63 @@ pub struct MenuType {
@@ -2229,7 +2281,20 @@ index e2ee6c7..f01de5f 100644
  #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
  #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
  pub enum Widget {
-@@ -407,17 +519,65 @@ pub enum Widget {
+@@ -399,6 +511,12 @@ pub enum Widget {
+         direction: Direction,
+         #[serde(default)]
+         tooltip: Option<String>,
++        /// Colours (`#RRGGBB`) the sprite is tinted with: `tints[tint_by - 1]`, untinted while `tint_by` is 0 or past the list
++        /// (a progress arrow in the colour of the chemical it works on).
++        #[serde(default)]
++        tints: Vec<String>,
++        #[serde(default)]
++        tint_by: Option<Value>,
+     },
+     /// A line of text; `{0}`, `{1}`... are data slots.
+     Text {
+@@ -407,17 +525,67 @@ pub enum Widget {
          text: String,
          #[serde(default)]
          color: Option<String>,
@@ -2293,10 +2358,12 @@ index e2ee6c7..f01de5f 100644
 +    /// The icon of the block that stands beside the machine on one of its `side`s (0 front, 1 left, 2 right, 3 back, 4 top,
 +    /// 5 bottom, as the machine faces), drawn 16 by 16 at `x`, `y`: what Mekanism's side buttons show.
 +    Neighbor { x: i32, y: i32, side: u8 },
++    /// The icon of item `item` (`minecraft:iron_ingot`), drawn 16 by 16 at `x`, `y`; nothing when the item is unknown.
++    Item { x: i32, y: i32, item: String },
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +621,185 @@ impl MenuScreen {
+@@ -461,81 +629,197 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -2416,9 +2483,15 @@ index e2ee6c7..f01de5f 100644
 +            data(max)?;
 +            colour(color)?;
 +        }
-+        Widget::Sprite { texture, x, y, w, h, src, value, max, .. } => {
++        Widget::Sprite { texture, x, y, w, h, src, value, max, tints, tint_by, .. } => {
 +            sprite(texture)?;
 +            rect(*x, *y, *w, *h)?;
++            if let Some(v) = tint_by {
++                data(v)?;
++            }
++            for t in tints {
++                colour(t)?;
++            }
 +            if value.is_some() != max.is_some() {
 +                return Err(format!("{name}: a sprite takes value and max together"));
 +            }
@@ -2527,6 +2600,12 @@ index e2ee6c7..f01de5f 100644
 +                return Err(format!("{name}: a neighbour's side is 0 to 5"));
 +            }
 +        }
++        Widget::Item { x, y, item } => {
++            rect(*x, *y, 16, 16)?;
++            if item.is_empty() || item.len() > 128 || !item.contains(':') {
++                return Err(format!("{name}: an item widget names an item as namespace:path"));
++            }
++        }
 +        Widget::Show { when, widgets } => {
 +            if depth >= 3 || widgets.len() > 64 {
 +                return Err(format!("{name}: groups nest 3 deep and hold 64 widgets"));
@@ -2548,7 +2627,7 @@ index e2ee6c7..f01de5f 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +847,42 @@ pub enum RenderElement {
+@@ -583,6 +867,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -2591,7 +2670,7 @@ index e2ee6c7..f01de5f 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +896,50 @@ pub enum RenderElement {
+@@ -596,6 +916,50 @@ pub enum RenderElement {
      },
  }
  
@@ -2642,7 +2721,7 @@ index e2ee6c7..f01de5f 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +987,48 @@ impl BlockRenderer {
+@@ -643,6 +1007,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -2691,7 +2770,7 @@ index e2ee6c7..f01de5f 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1011,6 +1397,9 @@ impl Content {
+@@ -1011,6 +1417,9 @@ impl Content {
                      "{name}: slots is 1 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
                  ));
              }
@@ -2701,7 +2780,7 @@ index e2ee6c7..f01de5f 100644
              let mut seen = BTreeSet::new();
              for &r in &file.results {
                  if r >= file.slots {
-@@ -1023,6 +1412,15 @@ impl Content {
+@@ -1023,6 +1432,15 @@ impl Content {
                      return Err(format!("{name}: result {r} is listed twice"));
                  }
              }
@@ -2717,7 +2796,7 @@ index e2ee6c7..f01de5f 100644
              if let Some(screen) = &file.screen {
                  screen.check(&name, file.slots, file.data_slots)?;
              }
-@@ -1208,6 +1606,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1626,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {

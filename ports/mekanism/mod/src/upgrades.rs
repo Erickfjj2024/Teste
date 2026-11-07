@@ -196,6 +196,23 @@ impl Mekanism {
                 }
             }
         }
+        // The stacks players sneak-used on the machine.
+        if let Some(requests) = self.installs.remove(&key) {
+            for (who, k, held, slot) in requests {
+                let room = u32::from(MAX[k].saturating_sub(counts[k]));
+                let added = held.min(room);
+                let Some(inv) = player_items::get_inventory(&who) else { continue };
+                let Some(Some(have)) = inv.get(slot as usize) else { continue };
+                if added == 0 || have.item != item_of(k) {
+                    continue;
+                }
+                let added = added.min(have.count);
+                counts[k] += added as u8;
+                let rest = (have.count > added).then(|| ItemStack { item: have.item.clone(), count: have.count - added, components: have.components.clone() });
+                let _ = player_items::set_slot(&who, slot, rest.as_ref());
+                changed = true;
+            }
+        }
         // What is waiting in the upgrade slot.
         let input = stack(&e.items[slots]);
         let progress = self.install.get(&key).copied().unwrap_or(0);

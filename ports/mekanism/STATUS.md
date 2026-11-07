@@ -402,6 +402,20 @@ Ainda diferem (precisam de mudança no Horizon, ficam para a próxima rodada): s
 Shift (no porte: toque longo/direito remove todos), textura animada do fluido no medidor, tela interna do Crystallizer, rolagem e destaque da
 lista de upgrades, instalar upgrade com Shift+clique no bloco.
 
+### 2n (continuação). APK v41 + mod 0.1.45
+
+Mais diferenças fechadas (precisam do APK v41, que traz widgets novos):
+- **Setas de progresso coloridas** do Pigment Extractor, Painting Machine e Pigment Mixer: tingidas com a cor do pigmento (o original faz um
+  degradê de `colorFrom` a `colorTo`; aqui é a cor única do pigmento).
+- **Medidores de água e lava** usam a textura de fluido do jogo (primeiro quadro), água tingida de azul, lava sem tinta.
+- **Crystallizer:** a tela interna mostra o nome do químico, o item que ele vira entre parênteses e o item num slot escuro (`GuiCrystallizerScreen`).
+- **Lista de upgrades:** com mais de quatro tipos instalados aparece uma barra de rolagem (toque na metade de cima ou de baixo dela).
+- **Instalar com Shift+usar:** segurando um upgrade e usando-o agachado sobre uma máquina que aceita o tipo, o monte todo entra até o máximo
+  (`ItemUpgrade.useOn`). O slot da mão não é informado pela API: o mod usa o primeiro monte igual da barra de atalhos.
+
+Não feito (e por quê): **Uninstall com Shift** continua "toque direito/longo remove todos": o celular não tem Shift no widget, e o toque
+longo é o equivalente; **destaque ao passar o mouse** na lista de upgrades não existe (não há "passar o dedo").
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

@@ -1,9 +1,9 @@
 id = "mekanism"
 name = "Mekanism"
-version = "0.1.44"
+version = "0.1.45"
 description = "Mekanism for Horizon, one file: ores, resources, steel casing, the crusher, the enrichment chamber, the energized smelter, energy cubes and cables. Rust port of Mekanism (MIT), in stages."
 authors = ["The Mekanism team (Mekanism, MIT)", "Rust port"]
 api = "0.3"
 side = "server"
-capabilities = ["registries", "players", "world", "recipe-types", "chunks", "storage", "player-control"]
-experimental = ["recipe-types", "chunks", "player-control"]
+capabilities = ["registries", "players", "world", "recipe-types", "chunks", "storage", "player-control", "player-items"]
+experimental = ["recipe-types", "chunks", "player-control", "player-items"]

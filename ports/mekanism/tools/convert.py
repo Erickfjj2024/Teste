@@ -675,7 +675,15 @@ def gauge_types():
     out = []
     for cid in CHEMICALS:
         tint, icon = chemical_meta(cid)
-        out.append({'texture': chemical_icon_sprite(icon), 'tint': tint, 'label': cid.split(':')[1].replace('_', ' ').title()})
+        texture = chemical_icon_sprite(icon)
+        if cid in ('minecraft:water', 'minecraft:lava'):
+            # a gauge draws the vanilla still texture (the first frame): water tinted blue, lava as it is
+            from PIL import Image
+            name = cid.split(':')[1]
+            img = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f'assets/{name}_still_frame.png')).convert('RGBA')
+            texture = save_gui(img, f'fluid_{name}')
+            tint = '#3F76E4' if name == 'water' else '#FFFFFF'
+        out.append({'texture': texture, 'tint': tint, 'label': cid.split(':')[1].replace('_', ' ').title()})
     return out
 
 GAUGE_TYPES = gauge_types()
@@ -724,9 +732,9 @@ PROCESS_LAYOUTS = {
     'chemical_crystallizer': {
         'ticks': 200, 'slots': [[8, 65], [129, 57]], 'results': [1],
         'title': (25, 152, 'center'), 'inventory': None, 'debug': (40, 73),
-        'frames': [('slot/extra', 8, 65), ('slot/output', 129, 57), ('slot/power', 152, 5)],
+        'frames': [('slot/extra', 8, 65), ('slot/output', 129, 57), ('slot/power', 152, 5), ('slot/dark', 129, 14)],
         'overlays': [('slot/overlay/plus', 8, 65)], 'power': ('vertical', 157, 23), 'progress': [('large_right', 53, 61)],
-        'gauges': [('standard', 7, 4, 16, 58, 'in', 10000)], 'screen': (31, 13, 115, 42)},
+        'gauges': [('standard', 7, 4, 16, 58, 'in', 10000)], 'screen': (31, 13, 115, 42), 'crystals': True},
     # GuiChemicalInfuser: two chemical item slots in and one out, three gauges, two arrows driven by whether it works
     'chemical_infuser': {
         'continuous': True, 'slots': [[6, 56], [154, 56], [80, 65]], 'results': [2],
@@ -775,13 +783,13 @@ PROCESS_LAYOUTS['pressurized_reaction_chamber'] = {
                ('small', 140, 45, 16, 28, 't2', 10000)]}
 # the pigment machines: the extractor is the oxidizer's screen with a 20 bucket tank, the painting machine and the mixer have their own
 PROCESS_LAYOUTS['pigment_extractor'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100,
-                                       'gauges': [('standard', 131, 13, 16, 58, 'out', 20000)]}
+                                       'tint_arrow': 'out', 'gauges': [('standard', 131, 13, 16, 58, 'out', 20000)]}
 PROCESS_LAYOUTS['painting_machine'] = {
     'ticks': 200, 'slots': [[45, 35], [116, 35], [6, 56]], 'results': [1], 'title_y': 4, 'label_y': 74, 'debug': (80, 66),
     'frames': [('slot/input', 45, 35), ('slot/output', 116, 35), ('slot/extra', 6, 56), ('slot/power', 144, 35)],
     'overlays': [('slot/overlay/minus', 6, 56)], 'power': ('vertical', 164, 15), 'progress': [('large_right', 64, 39)],
-    'gauges': [('standard', 25, 13, 16, 58, 'in', 15000)]}
-PROCESS_LAYOUTS['pigment_mixer'] = {**PROCESS_LAYOUTS['chemical_infuser'], 'title_y': 5, 'label_y': 74,
+    'tint_arrow': 'in', 'gauges': [('standard', 25, 13, 16, 58, 'in', 15000)]}
+PROCESS_LAYOUTS['pigment_mixer'] = {**PROCESS_LAYOUTS['chemical_infuser'], 'title_y': 5, 'label_y': 74, 'tint_arrow': 't2',
                                     'gauges': [('standard', 25, 13, 16, 58, 't0', 1000), ('standard', 133, 13, 16, 58, 't1', 1000),
                                                ('standard', 79, 4, 16, 58, 't2', 2000)]}
 for _m in ('chemical_injection_chamber', 'osmium_compressor'):
@@ -931,9 +939,7 @@ def upgrade_window(machine, base, c):
     widgets.append({'type': 'text', 'x': (UP_W - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'})
     # the list: rows of what is installed, as many as the mask says, in the order of the types; the selected one is lit
     listed = [k for k in sup if k < LISTED_UPGRADES]
-    for combo in range(1, 1 << len(listed)):
-        mask = sum(1 << listed[i] for i in range(len(listed)) if combo & (1 << i))
-        rows = [listed[i] for i in range(len(listed)) if combo & (1 << i)][:4]
+    def list_rows(rows, shown_from):
         group = []
         for r, k in enumerate(rows):
             y = 19 + 12 * r
@@ -948,6 +954,23 @@ def upgrade_window(machine, base, c):
             group.append({'type': 'text', 'x': 19, 'y': y + 2, 'text': UPGRADE_NAMES[k], 'color': '#404040'})
             group.append({'type': 'button', 'x': 7, 'y': y, 'w': 100, 'h': 12, 'local': {'set': {'var': 'sel', 'value': k + 1}},
                           'tooltip': UPGRADE_DESC[k]})
+        return group
+    for combo in range(1, 1 << len(listed)):
+        mask = sum(1 << listed[i] for i in range(len(listed)) if combo & (1 << i))
+        every = [listed[i] for i in range(len(listed)) if combo & (1 << i)]
+        if len(every) <= 4:
+            group = list_rows(every, 0)
+        else:
+            # more than four rows: a scroll bar beside the list (GuiScrollBar); a press on its top or bottom half moves the list
+            group = [{'type': 'swatch', 'x': 108, 'y': 19, 'w': 5, 'h': 48, 'value': {'const': 0}, 'colors': ['#373737']}]
+            for off in range(len(every) - 3):
+                thumb_h = 48 * 4 // len(every)
+                thumb_y = 19 + (48 - thumb_h) * off // (len(every) - 4)
+                group.append({'type': 'show', 'when': {'local': {'var': 'scroll', 'eq': off}}, 'widgets': list_rows(every[off:off + 4], off) + [
+                    {'type': 'swatch', 'x': 108, 'y': thumb_y, 'w': 5, 'h': thumb_h, 'value': {'const': 0}, 'colors': ['#C6C6C6']}]})
+            half = 24
+            group.append({'type': 'button', 'x': 108, 'y': 19, 'w': 5, 'h': half, 'local': {'set': {'var': 'scroll', 'value': 0}}, 'tooltip': 'Scroll up'})
+            group.append({'type': 'button', 'x': 108, 'y': 19 + half, 'w': 5, 'h': 48 - half, 'local': {'set': {'var': 'scroll', 'value': len(every) - 4}}, 'tooltip': 'Scroll down'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': mask_at}, 'eq': mask}}, 'widgets': group})
     # the description of the selected type (or "No selection."): its name, how many and what effect, in small print
     widgets.append({'type': 'show', 'when': {'local': {'var': 'sel', 'eq': 0}}, 'widgets': [
@@ -1065,7 +1088,8 @@ def process_menu(m):
         # a machine that works every tick shows its arrows full while it works (data slot 0 is 1 or 0)
         widgets.append({'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/full', f'progress_{ptype}_full'), 'x': qx, 'y': qy,
                         'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': 1} if (continuous and not L.get('timed')) else {'data': ctl0 + 3},
-                        'direction': direction, 'tooltip': 'Working' if (continuous and not L.get('timed')) else 'Progress: {percent}%'})
+                        'direction': direction, 'tooltip': 'Working' if (continuous and not L.get('timed')) else 'Progress: {percent}%',
+                        **({'tints': [t['tint'] for t in GAUGE_TYPES], 'tint_by': {'data': TANK_DATA[L['tint_arrow']][1]}} if 'tint_arrow' in L else {})})
     for gk, gx, gy, gw, gh, tank, cap in L['gauges']:
         amount, which = TANK_DATA[tank]
         widgets.append({'type': 'gauge', 'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh, 'value': {'data': amount},
@@ -1074,6 +1098,20 @@ def process_menu(m):
         if gk in GAUGE_SIZES:
             widgets.append({'type': 'sprite', 'texture': copy_gui(f'gauge/overlay/{gk}', f'gauge_overlay_{gk}'),
                             'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh})
+    if L.get('crystals'):
+        # GuiCrystallizerScreen: in its inner screen the chemical's name, the item it crystallizes into in brackets and that item
+        # in a dark slot at the right
+        for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/crystallizing/*.json')):
+            r = read_json(p)
+            chem, item = r['input']['ingredient'], r['output']['id']
+            if chem not in CHEMICALS:
+                continue
+            words = item.split(':')[1].split('_')
+            label = ' '.join(w.title() for w in (words[1:] + words[:1] if words[0] == 'dust' else words))
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': TANK_DATA['in'][1]}, 'eq': CHEMICALS.index(chem) + 1}}, 'widgets': [
+                {'type': 'text', 'x': 34, 'y': 16, 'text': chem.split(':')[1].replace('_', ' ').title(), 'color': '#3CFE9A'},
+                {'type': 'text', 'x': 34, 'y': 26, 'text': f'({label})', 'color': '#3CFE9A'},
+                {'type': 'item', 'x': 129, 'y': 14, 'item': item}]})
     if L.get('rotary'):
         # the arrow of the mode (data slot 22 is the mode: 0 condensentrates, 1 decondensentrates), full while it works
         for k, ptype in enumerate(['large_right', 'large_left']):
@@ -1110,7 +1148,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.44', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.45', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1209,7 +1247,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.44', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.45', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1238,7 +1276,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.44', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.45', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1505,7 +1543,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.44', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.45', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
