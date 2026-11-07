@@ -9,28 +9,65 @@ use crate::machine::{Book, Io, Stack, Status, step};
 /// after its side configuration, its control and its upgrades.
 pub const TAIL: usize = 46;
 
-/// One line of a factory.
+/// One line of a factory: its input, what it makes (one slot, two for sawing) and its progress.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Line {
     pub input: Option<Stack>,
     pub output: Option<Stack>,
+    pub secondary: Option<Stack>,
     pub progress: u32,
 }
 
-/// One tick of every line, in order, each from the energy the ones before left. Returns the lines after, the energy left, what each
+/// The recipes a factory works from.
+pub struct Books<'a> {
+    pub items: &'a Book,
+    pub combine: &'a combiner::Book,
+    pub saw: &'a sawmill::Book,
+}
+
+/// One tick of every line, in order, each from the energy the ones before left (`form` 0 items, 1 combining with the `extra` input all
+/// the lines share, 2 sawing, whose chance is rolled by `dice`). Returns the lines after, the extra input, the energy left, what each
 /// did and the energy used.
-pub fn step_lines(usage: u64, ticks: u32, book: &Book, lines: &[Line], energy: u64) -> (Vec<Line>, u64, Vec<Status>, u64) {
+pub fn step_lines(
+    form: u8,
+    usage: u64,
+    ticks: u32,
+    books: &Books,
+    lines: &[Line],
+    extra: Option<Stack>,
+    energy: u64,
+    dice: &mut dyn FnMut() -> f64,
+) -> (Vec<Line>, Option<Stack>, u64, Vec<Status>, u64) {
     let mut left = energy;
+    let mut extra = extra;
     let mut out = Vec::with_capacity(lines.len());
     let mut statuses = Vec::with_capacity(lines.len());
     for line in lines {
-        let io = Io { input: line.input.clone(), output: line.output.clone(), energy: left, progress: line.progress, ticks };
-        let (next, status) = step(usage, book, &io);
-        left = next.energy;
-        out.push(Line { input: next.input, output: next.output, progress: next.progress });
+        let (next, status) = match form {
+            1 => {
+                let io = combiner::Io { main: line.input.clone(), extra: extra.clone(), output: line.output.clone(), energy: left, progress: line.progress, ticks };
+                let (n, status) = combiner::step(usage, books.combine, &io);
+                extra = n.extra.clone();
+                left = n.energy;
+                (Line { input: n.main, output: n.output, secondary: None, progress: n.progress }, status)
+            }
+            2 => {
+                let io = sawmill::Io { input: line.input.clone(), main: line.output.clone(), secondary: line.secondary.clone(), energy: left, progress: line.progress, ticks };
+                let (n, status) = sawmill::step(usage, books.saw, &io, dice());
+                left = n.energy;
+                (Line { input: n.input, output: n.main, secondary: n.secondary, progress: n.progress }, status)
+            }
+            _ => {
+                let io = Io { input: line.input.clone(), output: line.output.clone(), energy: left, progress: line.progress, ticks };
+                let (n, status) = step(usage, books.items, &io);
+                left = n.energy;
+                (Line { input: n.input, output: n.output, secondary: None, progress: n.progress }, status)
+            }
+        };
+        out.push(next);
         statuses.push(status);
     }
-    (out, left, statuses, energy - left)
+    (out, extra, left, statuses, energy - left)
 }
 
 /// What the screen's status says of all the lines: working if one is, else the first problem, else idle.
@@ -60,11 +97,24 @@ impl Mekanism {
     /// A tick of a factory.
     pub(crate) fn run_factory(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         let n = def.lines;
+        let form = def.form;
+        let per = config::factory_slots_per_line(form);
         let layout = def.layout;
         // Its machine's recipes, asked again every second until the game lends them.
-        if self.books.get(def.base).is_none_or(Book::is_empty) && self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20) {
+        let loaded = match form {
+            1 => !self.combs.is_empty(),
+            2 => !self.saws.is_empty(),
+            _ => self.books.get(def.base).is_some_and(|b| !b.is_empty()),
+        };
+        if !loaded && self.tried.get(def.block).is_none_or(|t| tick.saturating_sub(*t) >= 20) {
             self.tried.insert(def.block, tick);
-            self.books.insert(def.base, load_book(def.source));
+            match form {
+                1 => self.combs = load_comb_book(),
+                2 => self.saws = load_saw_book(),
+                _ => {
+                    self.books.insert(def.base, load_book(def.source));
+                }
+            }
         }
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let progress_of = |i: usize| {
@@ -92,14 +142,29 @@ impl Mekanism {
         let ticks = upgrades::ticks(machine::TICKS, speed);
         let capacity = upgrades::max_energy(base_capacity(def), energy_up);
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
-        let lines: Vec<Line> = (0..n).map(|i| Line { input: slot(2 * i), output: slot(2 * i + 1), progress: progress_of(i) }).collect();
+        let lines: Vec<Line> = (0..n)
+            .map(|i| Line {
+                input: slot(per * i),
+                output: slot(per * i + 1),
+                secondary: if form == 2 { slot(per * i + 2) } else { None },
+                progress: progress_of(i),
+            })
+            .collect();
+        let extra_at = n * per;
+        let charge_at = config::factory_slot_count(n, form) - 1;
+        let extra = if form == 1 { slot(extra_at) } else { None };
         // The charge slot first, then the lines.
-        let (energy, charged) = if self.can { charge(e.energy, capacity, slot(2 * n)) } else { (e.energy, slot(2 * n)) };
-        let (next, left, statuses, used) = if self.can {
-            let book = self.books.entry(def.base).or_default();
-            step_lines(usage, ticks, book, &lines, energy)
+        let (energy, charged) = if self.can { charge(e.energy, capacity, slot(charge_at)) } else { (e.energy, slot(charge_at)) };
+        let (next, extra_next, left, statuses, used) = if self.can {
+            let mut seed = self.roll(tick, &e.pos);
+            let mut dice = || {
+                seed = (seed * 7919.0 + 0.618_033_988_75).fract();
+                seed
+            };
+            let books = Books { items: self.books.get(def.base).unwrap_or(&EMPTY_BOOK), combine: &self.combs, saw: &self.saws };
+            step_lines(form, usage, ticks, &books, &lines, extra.clone(), energy, &mut dice)
         } else {
-            (lines.clone(), energy, vec![Status::Idle; n], 0)
+            (lines.clone(), extra.clone(), energy, vec![Status::Idle; n], 0)
         };
         let status = overall(&statuses);
         let active = statuses.contains(&Status::Running);
@@ -109,10 +174,15 @@ impl Mekanism {
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let mut items: Vec<Option<ItemStack>> = Vec::with_capacity(e.items.len());
-        for (i, l) in next.iter().enumerate() {
+        for l in &next {
             items.push(item(&l.input));
             items.push(item(&l.output));
-            let _ = i;
+            if form == 2 {
+                items.push(item(&l.secondary));
+            }
+        }
+        if form == 1 {
+            items.push(item(&extra_next));
         }
         items.push(item(&charged));
         items.extend(e.items.iter().skip(items.len()).cloned());
@@ -127,7 +197,7 @@ impl Mekanism {
         for l in next.iter().skip(1) {
             saved.extend((l.progress as u16).to_le_bytes());
         }
-        let changed = next != lines || charged != slot(2 * n) || left != e.energy;
+        let changed = next != lines || charged != slot(charge_at) || extra_next != extra || left != e.energy;
         if !changed && !dirty && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
@@ -146,6 +216,8 @@ impl Mekanism {
     }
 }
 
+static EMPTY_BOOK: std::sync::LazyLock<Book> = std::sync::LazyLock::new(Book::default);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +232,13 @@ mod tests {
         b
     }
 
+    fn go(lines: &[Line], energy: u64) -> (Vec<Line>, Option<Stack>, u64, Vec<Status>, u64) {
+        let (comb, saw) = (combiner::Book::default(), sawmill::Book::default());
+        let items = book();
+        let books = Books { items: &items, combine: &comb, saw: &saw };
+        step_lines(0, 8, 0, &books, lines, None, energy, &mut || 0.0)
+    }
+
     #[test]
     fn each_line_works_and_uses_energy() {
         let lines = vec![
@@ -167,7 +246,7 @@ mod tests {
             Line { input: stack("minecraft:cobblestone", 1), ..Line::default() },
             Line::default(),
         ];
-        let (next, left, statuses, used) = step_lines(8, 0, &book(), &lines, 100);
+        let (next, _, left, statuses, used) = go(&lines, 100);
         assert_eq!(statuses, [Status::Running, Status::Running, Status::Idle]);
         assert_eq!((used, left), (16, 84));
         assert_eq!((next[0].progress, next[1].progress, next[2].progress), (1, 1, 0));
@@ -180,7 +259,7 @@ mod tests {
             Line { input: stack("minecraft:cobblestone", 4), ..Line::default() },
         ];
         // Enough for one line only: the first works, the second waits for energy.
-        let (next, left, statuses, _) = step_lines(8, 0, &book(), &lines, 10);
+        let (next, _, left, statuses, _) = go(&lines, 10);
         assert_eq!(statuses, [Status::Running, Status::NoEnergy]);
         assert_eq!((left, next[1].progress), (2, 0));
         assert_eq!(overall(&statuses), Status::Running);
@@ -192,7 +271,7 @@ mod tests {
             Line { input: stack("minecraft:cobblestone", 2), progress: 199, ..Line::default() },
             Line { input: stack("minecraft:cobblestone", 2), progress: 5, ..Line::default() },
         ];
-        let (next, _, _, _) = step_lines(8, 0, &book(), &lines, 100);
+        let (next, _, _, _, _) = go(&lines, 100);
         assert_eq!(next[0].output, stack("minecraft:gravel", 1));
         assert_eq!(next[0].input, stack("minecraft:cobblestone", 1));
         assert_eq!((next[0].progress, next[1].progress), (0, 6));
@@ -213,5 +292,37 @@ mod tests {
         assert_eq!(overall(&[Status::Idle, Status::Blocked]), Status::Blocked);
         assert_eq!(overall(&[Status::NoEnergy, Status::Blocked]), Status::NoEnergy);
         assert_eq!(overall(&[Status::Idle, Status::Idle]), Status::Idle);
+    }
+
+    #[test]
+    fn combining_lines_share_the_extra_input() {
+        let mut comb = combiner::Book::default();
+        comb.add(&["minecraft:flint".to_owned()], &["minecraft:cobblestone".to_owned()], combiner::Recipe { main_count: 1, extra_count: 1, output: "minecraft:gravel".into(), out_count: 1 });
+        let (saw, items) = (sawmill::Book::default(), Book::default());
+        let books = Books { items: &items, combine: &comb, saw: &saw };
+        let lines = vec![
+            Line { input: stack("minecraft:flint", 2), ..Line::default() },
+            Line { input: stack("minecraft:flint", 2), ..Line::default() },
+        ];
+        let (next, extra, _, statuses, _) = step_lines(1, 8, 1, &books, &lines, stack("minecraft:cobblestone", 5), 100, &mut || 0.0);
+        // One tick takes each line's recipe at once here (a one tick recipe): each used one of the shared stack.
+        assert_eq!(statuses, [Status::Running, Status::Running]);
+        assert_eq!(extra, stack("minecraft:cobblestone", 3));
+        assert_eq!(next[0].output, stack("minecraft:gravel", 1));
+        assert_eq!(next[1].output, stack("minecraft:gravel", 1));
+    }
+
+    #[test]
+    fn the_slots_of_each_form_follow_the_screen() {
+        use crate::config::{factory_slot_count, slots_vec, Data, Layout};
+        assert_eq!(factory_slot_count(3, 0), 7);
+        assert_eq!(factory_slot_count(3, 1), 8);
+        assert_eq!(factory_slot_count(3, 2), 10);
+        assert_eq!(slots_vec(Layout::Factory(3, 0), Data::Input), [0, 2, 4]);
+        assert_eq!(slots_vec(Layout::Factory(3, 0), Data::Energy), [6]);
+        assert_eq!(slots_vec(Layout::Factory(3, 1), Data::Extra), [6]);
+        assert_eq!(slots_vec(Layout::Factory(3, 1), Data::Energy), [7]);
+        assert_eq!(slots_vec(Layout::Factory(3, 2), Data::Output), [1, 2, 4, 5, 7, 8]);
+        assert_eq!(slots_vec(Layout::Factory(3, 2), Data::Input), [0, 3, 6]);
     }
 }

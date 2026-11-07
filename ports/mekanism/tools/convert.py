@@ -135,7 +135,10 @@ FLUID_TANKS = [f'{t}_fluid_tank' for t in TIERS + ['creative']]
 CHEM_TANKS = [f'{t}_chemical_tank' for t in TIERS + ['creative']]
 # the factories: `FactoryTier.processes` lines each, of the electric machines' work
 FACTORY_LINES = {'basic': 3, 'advanced': 5, 'elite': 7, 'ultimate': 9}
-FACTORY_KINDS = {'crushing': 'crusher', 'enriching': 'enrichment_chamber', 'smelting': 'energized_smelter'}
+FACTORY_KINDS = {'crushing': 'crusher', 'enriching': 'enrichment_chamber', 'smelting': 'energized_smelter', 'combining': 'combiner',
+                 'sawing': 'precision_sawmill'}
+# the slot form of each: 0 an input and an output a line, 1 plus an extra input the lines share, 2 two outputs a line
+FACTORY_FORM = {'crushing': 0, 'enriching': 0, 'smelting': 0, 'combining': 1, 'sawing': 2}
 FACTORIES = {f'{t}_{k}_factory': (t, k) for t in FACTORY_LINES for k in FACTORY_KINDS}
 MACHINES = ['crusher', 'enrichment_chamber', 'energized_smelter', 'precision_sawmill', 'combiner'] + PROCESS_MACHINES \
     + CONTINUOUS_MACHINES + FLUID_TANKS + CHEM_TANKS + list(FACTORIES)
@@ -479,7 +482,7 @@ def copy_gui(rel, name):
     return f'{NS}:gui/{name}'
 
 # what each machine uses a tick while it works (the mod's `MACHINES` table; `MekanismConfig.usage`)
-MACHINE_USAGE = {**{f: {'crushing': 8, 'enriching': 5, 'smelting': 5}[k] for f, (t, k) in FACTORIES.items()}, 'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
+MACHINE_USAGE = {**{f: {'crushing': 8, 'enriching': 5, 'smelting': 5, 'combining': 5, 'sawing': 5}[k] for f, (t, k) in FACTORIES.items()}, 'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
                  'metallurgic_infuser': 5, 'purification_chamber': 10, 'chemical_injection_chamber': 15, 'osmium_compressor': 15,
                  'chemical_oxidizer': 15, 'chemical_dissolution_chamber': 16, 'chemical_crystallizer': 15,
                  'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2,
@@ -1179,7 +1182,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.54', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.55', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1278,7 +1281,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.54', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.55', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1299,67 +1302,90 @@ def factory_geometry(tier):
     """Where the lines' slots are (TileEntityItemToItemFactory.addSlots): the first one's x and the distance between two."""
     return {'basic': (55, 38), 'advanced': (35, 26), 'elite': (29, 19), 'ultimate': (27, 19)}[tier]
 
-def factory_panel(name, tier):
-    """GuiFactory: 176 by 166 (34 wider for the ultimate one) with the lines' input and output slots, the charge slot, the empty
-    arrows going down between them, the energy bar's frame and the player's inventory in the middle."""
+def factory_dims(tier, form):
+    """GuiFactory's size and where its player inventory starts: 176 by 166 (34 wider for the ultimate one, 21 higher for sawing)."""
     width = 210 if tier == 'ultimate' else 176
-    ox = (width - 176) // 2
+    height = 187 if form == 2 else 166
+    inv_y = 105 if form == 2 else 85
+    inv_x = 26 if tier == 'ultimate' else 8
+    return width, height, inv_x, inv_y
+
+def factory_panel(name, tier, form):
+    """GuiFactory: the lines' input and output slots, the charge slot, the empty arrows going down between them, the energy bar's
+    frame and the player's inventory in the middle."""
+    width, height, inv_x, inv_y = factory_dims(tier, form)
     lines = FACTORY_LINES[tier]
     base_x, mult = factory_geometry(tier)
-    panel = nine_slice(gui_sprite('base'), width, 166, 4)
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + ox + 18 * col, 83 + 18 * row))
+            panel.paste(slot, (inv_x - 1 + 18 * col, inv_y - 1 + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + ox + 18 * col, 141))
+        panel.paste(slot, (inv_x - 1 + 18 * col, inv_y + 57))
     panel.alpha_composite(gui_sprite('slot/power'), (6, 12))
+    if form == 1:
+        panel.alpha_composite(gui_sprite('slot/extra'), (6, 56))
     for i in range(lines):
         x = base_x + i * mult
         panel.alpha_composite(gui_sprite('slot/input'), (x - 1, 12))
         panel.alpha_composite(gui_sprite('slot/output'), (x - 1, 56))
+        if form == 2:
+            panel.alpha_composite(gui_sprite('slot/output'), (x - 1, 76))
         panel.alpha_composite(gui_sprite('progress/down/empty'), (4 + x, 33))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (width - 12, 16))
+    bar = 73 if form == 2 else 52
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, bar + 2, 1), (width - 12, 16))
     return save_gui(panel, name), width
 
 progress_down_full = copy_gui('progress/down/full', 'progress_down_full')
 
 def factory_menu(m):
     tier, kind = FACTORIES[m]
+    form = FACTORY_FORM[kind]
     lines = FACTORY_LINES[tier]
     base_x, mult = factory_geometry(tier)
-    texture, width = factory_panel(m, tier)
+    texture, width = factory_panel(m, tier, form)
+    _w, height, inv_x, inv_y = factory_dims(tier, form)
     ox = (width - 176) // 2
     title = MACHINE_NAMES[m]
-    slots = []
+    slots, results = [], []
     for i in range(lines):
         x = base_x + i * mult
+        results.append(len(slots) + 1)
         slots += [[x, 13], [x, 57]]
+        if form == 2:
+            results.append(len(slots))
+            slots.append([x, 77])
+    if form == 1:
+        slots.append([7, 57])
+    charge_at = len(slots)
     slots.append([7, 13])
-    widgets = [{'type': 'sprite', 'texture': power_fill, 'x': width - 11, 'y': 17, 'w': 4, 'h': 52,
+    bar = 73 if form == 2 else 52
+    widgets = [{'type': 'sprite', 'texture': power_fill, 'x': width - 11, 'y': 17, 'w': 4, 'h': bar,
                 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'direction': 'up', 'tooltip': 'Energy: {value} / {max}'}]
     for i in range(lines):
         # ProgressType.DOWN of each line: its progress is the screen's number after the upgrade window's, its length the ticks
         widgets.append({'type': 'sprite', 'texture': progress_down_full, 'x': 4 + base_x + i * mult, 'y': 33, 'w': 8, 'h': 20,
                         'value': {'data': 32 + i}, 'max': {'data': 19}, 'direction': 'down', 'tooltip': 'Progress: {percent}%'})
+    label_y = height - 94 + (2 if form == 2 else 3)
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8 + (18 if tier == 'ultimate' else 0), 'y': 75, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 48, 'y': 75, 'text': 'v0.1.54', 'color': '#808080'},
+        {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': width - 48, 'y': label_y, 'text': 'v0.1.55', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
     window = {'id': 'side_config', 'x': WIN_X + ox, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
               'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 31)}
     menu = with_upgrades({
-        'slots': 2 * lines + 1, 'data_slots': 32 + lines, 'results': [2 * i + 1 for i in range(lines)],
-        'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'inventory_x': 8 + ox,
-                   'widgets': widgets, 'windows': [window]}}, m, 2 * lines + 1, 16)
+        'slots': len(slots), 'data_slots': 32 + lines, 'results': results,
+        'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
+                   'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets, 'windows': [window]}}, m, len(slots), 16)
     menu['data_slots'] = 32 + lines
     # the upgrade tab and window go with the wider screen, and the charge slot takes what turns into energy
     menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), width - 176)
     menu['screen']['windows'][-1]['x'] += ox
-    menu['accepts'] = menu.get('accepts', []) + [{'slot': 2 * lines, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}]
+    menu['accepts'] = menu.get('accepts', []) + [{'slot': charge_at, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}]
     return menu
 
 for m in MACHINES:
@@ -1389,7 +1415,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.54', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.55', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1656,7 +1682,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.54', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.55', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

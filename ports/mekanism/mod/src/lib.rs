@@ -94,35 +94,37 @@ struct Def {
     /// A `Kind::Factory`'s lines, and the machine (`base`) whose recipes it works.
     lines: usize,
     base: &'static str,
+    /// The slot form of a factory (`config::factory_slots_per_line`): 0 items, 1 combining, 2 sawing.
+    form: u8,
 }
 
 const fn electric(block: &'static str, source: Source, usage: u64) -> Def {
-    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "" }
+    Def { block, source, usage, kind: Kind::Electric, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 }
 }
 
 /// A machine that works an item and a chemical (`process`): its recipes are of type `source`.
 const fn chemical(block: &'static str, source: &'static str, layout: Layout, spec: process::Spec) -> Def {
-    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec), cont: None, tank: None, generator: None, lines: 0, base: "" }
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Process, layout, proc: Some(spec), cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 }
 }
 
 /// A machine of `continuous`.
 const fn continuous_machine(block: &'static str, source: &'static str, layout: Layout, spec: continuous::Spec) -> Def {
-    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Continuous, layout, proc: None, cont: Some(spec), tank: None, generator: None, lines: 0, base: "" }
+    Def { block, source: Source::Files(source), usage: spec.usage, kind: Kind::Continuous, layout, proc: None, cont: Some(spec), tank: None, generator: None, lines: 0, base: "", form: 0 }
 }
 
 /// A generator of MekanismGenerators.
 const fn generator(block: &'static str, kind: GenKind) -> Def {
-    Def { block, source: Source::Files(""), usage: 0, kind: Kind::Generator, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: Some(kind), lines: 0, base: "" }
+    Def { block, source: Source::Files(""), usage: 0, kind: Kind::Generator, layout: Layout::Electric, proc: None, cont: None, tank: None, generator: Some(kind), lines: 0, base: "", form: 0 }
 }
 
 /// The pressurized reaction chamber.
 const fn reaction_machine(block: &'static str) -> Def {
-    Def { block, source: Source::Files(""), usage: reaction::USAGE, kind: Kind::Reaction, layout: Layout::Reaction, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "" }
+    Def { block, source: Source::Files(""), usage: reaction::USAGE, kind: Kind::Reaction, layout: Layout::Reaction, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 }
 }
 
 /// A factory of `lines` lines that works the recipes of `base`'s machine (`source`), using `usage` a tick for each line.
-const fn factory(block: &'static str, base: &'static str, source: Source, usage: u64, lines: usize) -> Def {
-    Def { block, source, usage, kind: Kind::Factory, layout: Layout::Factory(lines as u8), proc: None, cont: None, tank: None, generator: None, lines, base }
+const fn factory(block: &'static str, base: &'static str, source: Source, usage: u64, lines: usize, form: u8) -> Def {
+    Def { block, source, usage, kind: Kind::Factory, layout: Layout::Factory(lines as u8, form), proc: None, cont: None, tank: None, generator: None, lines, base, form }
 }
 
 /// A storage tank block of a tier.
@@ -139,6 +141,7 @@ const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, 
         generator: None,
         lines: 0,
         base: "",
+        form: 0,
     }
 }
 
@@ -148,12 +151,12 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, mean: 1.0 }
 }
 
-const MACHINES: [Def; 46] = [
+const MACHINES: [Def; 54] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
-    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "" },
-    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "" },
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
     chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, 5, 200, 1000, 0, false)),
     // The purification and injection chambers use their chemical by chance (the config's randomized consumption).
     chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, 10, 200, 210, 0, true)),
@@ -186,18 +189,27 @@ const MACHINES: [Def; 46] = [
     generator("mekanism:solar_generator", GenKind::Solar),
     generator("mekanism:gas_burning_generator", GenKind::Gas),
     // The factories of the electric machines: `FactoryTier` gives 3, 5, 7 and 9 lines.
-    factory("mekanism:basic_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 3),
-    factory("mekanism:advanced_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 5),
-    factory("mekanism:elite_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 7),
-    factory("mekanism:ultimate_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 9),
-    factory("mekanism:basic_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 3),
-    factory("mekanism:advanced_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 5),
-    factory("mekanism:elite_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 7),
-    factory("mekanism:ultimate_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 9),
-    factory("mekanism:basic_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 3),
-    factory("mekanism:advanced_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 5),
-    factory("mekanism:elite_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 7),
-    factory("mekanism:ultimate_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 9),
+    factory("mekanism:basic_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 3, 0),
+    factory("mekanism:advanced_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 5, 0),
+    factory("mekanism:elite_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 7, 0),
+    factory("mekanism:ultimate_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 9, 0),
+    factory("mekanism:basic_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 3, 0),
+    factory("mekanism:advanced_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 5, 0),
+    factory("mekanism:elite_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 7, 0),
+    factory("mekanism:ultimate_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 9, 0),
+    factory("mekanism:basic_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 3, 0),
+    factory("mekanism:advanced_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 5, 0),
+    factory("mekanism:elite_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 7, 0),
+    factory("mekanism:ultimate_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 9, 0),
+    // The factories of the combiner and the sawmill: the combiner's extra input is one for all the lines, the sawmill's lines have two outputs.
+    factory("mekanism:basic_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 3, 1),
+    factory("mekanism:advanced_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 5, 1),
+    factory("mekanism:elite_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 7, 1),
+    factory("mekanism:ultimate_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 9, 1),
+    factory("mekanism:basic_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 3, 2),
+    factory("mekanism:advanced_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 5, 2),
+    factory("mekanism:elite_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 7, 2),
+    factory("mekanism:ultimate_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 9, 2),
     // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
     tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
     tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
@@ -958,10 +970,14 @@ impl ServerMod for Mekanism {
                 },
                 // A line's input and output slots one after the other, then the charge slot, on the default configuration's faces.
                 Kind::Factory => ContainerSpec {
-                    slots: def.lines as u32 * 2 + 1,
+                    slots: config::factory_slot_count(def.lines, def.form) as u32,
                     faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
-                    inputs: (0..def.lines as u32).map(|i| i * 2).collect(),
-                    outputs: (0..def.lines as u32).map(|i| i * 2 + 1).collect(),
+                    inputs: {
+                        let mut v = config::slots_vec(def.layout, Data::Input);
+                        v.extend(config::slots_vec(def.layout, Data::Extra));
+                        v
+                    },
+                    outputs: config::slots_vec(def.layout, Data::Output),
                     menu: true,
                 },
                 // The input, the main and the secondary output; the faces are the default configuration's, the

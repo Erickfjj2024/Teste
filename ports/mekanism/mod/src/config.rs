@@ -137,7 +137,7 @@ pub enum Layout {
     ChemInfuser,
     /// A factory of that many lines (`FactoryTier.processes`): the input and output slots of each line one after the other
     /// (line `i` has input slot `2i` and output slot `2i + 1`), then the charge slot.
-    Factory(u8),
+    Factory(u8, u8),
     /// The pigment mixer: the infuser's shape, but its top side is disabled (`addDisabledSides(TOP)`).
     Mixer,
     /// The chemical washer: the fluid slot (0), the slurry output slot (1) and the fluid output slot (2); tanks: fluid,
@@ -158,7 +158,7 @@ impl Layout {
     pub fn transmissions(self) -> &'static [Transmission] {
         use Transmission::{Chemicals as C, Energy as E, Fluids as F, Items as I};
         match self {
-            Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(_) => &[I, E],
+            Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(..) => &[I, E],
             Layout::ChemTank => &[C, I],
             Layout::ChemInfuser | Layout::Mixer => &[C, I, E],
             Layout::Washer => &[C, F, I, E],
@@ -221,7 +221,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         // No other machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
         (_, Transmission::Fluids | Transmission::Chemicals | Transmission::Heat) => &[],
         (_, Transmission::Energy) => &[Data::None, Data::Input],
-        (l, Transmission::Items) if l == Layout::Combiner || l.extra_slot() => {
+        (l, Transmission::Items) if l == Layout::Combiner || l.extra_slot() || matches!(l, Layout::Factory(_, 1)) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy, Data::Extra]
         }
         (_, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy],
@@ -253,7 +253,7 @@ pub fn default_config(layout: Layout) -> Config {
     let mut items = [Data::Input; 6];
     items[RIGHT] = Data::Output;
     items[BACK] = Data::Energy;
-    if layout == Layout::Combiner || layout.extra_slot() {
+    if layout == Layout::Combiner || layout.extra_slot() || matches!(layout, Layout::Factory(_, 1)) {
         items[BOTTOM] = Data::Extra;
     }
     match layout {
@@ -346,7 +346,7 @@ pub fn default_config(layout: Layout) -> Config {
             *chem = [Data::InputOutput; 6];
             eject[Transmission::Chemicals as usize] = true;
         }
-        Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(_) => {}
+        Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(..) => {}
     }
     let mut cfg = Config { sides, eject };
     enforce(layout, &mut cfg);
@@ -430,8 +430,8 @@ impl Config {
 
 /// The slots of a machine a data type reaches.
 pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
-    if let Layout::Factory(lines) = layout {
-        return factory_slots(lines, data);
+    if matches!(layout, Layout::Factory(..)) {
+        return &[];
     }
     match (layout, data) {
         (Layout::Rotary, Data::Energy) => &[4],
@@ -484,30 +484,37 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
     }
 }
 
-/// The slots of a factory of `lines` lines a data type reaches: its inputs (even slots), its outputs (odd slots), its charge slot
-/// (after them).
-fn factory_slots(lines: u8, data: Data) -> &'static [u32] {
-    const INPUTS: [&[u32]; 4] = [&[0, 2, 4], &[0, 2, 4, 6, 8], &[0, 2, 4, 6, 8, 10, 12], &[0, 2, 4, 6, 8, 10, 12, 14, 16]];
-    const OUTPUTS: [&[u32]; 4] = [&[1, 3, 5], &[1, 3, 5, 7, 9], &[1, 3, 5, 7, 9, 11, 13], &[1, 3, 5, 7, 9, 11, 13, 15, 17]];
-    const BOTH: [&[u32]; 4] = [
-        &[0, 1, 2, 3, 4, 5],
-        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
-    ];
-    const CHARGE: [&[u32]; 4] = [&[6], &[10], &[14], &[18]];
-    let at = match lines {
-        3 => 0,
-        5 => 1,
-        7 => 2,
-        _ => 3,
-    };
+/// How a factory lays its slots out: `form` 0 is an input and an output a line, 1 adds an extra input all the lines share (after the
+/// lines, before the charge slot), 2 has a main and a secondary output for each line. The slots of each line come one after the other.
+pub fn factory_slots_per_line(form: u8) -> usize {
+    if form == 2 { 3 } else { 2 }
+}
+
+/// The slots of a factory of `lines` lines in all, the charge slot last.
+pub fn factory_slot_count(lines: usize, form: u8) -> usize {
+    lines * factory_slots_per_line(form) + usize::from(form == 1) + 1
+}
+
+/// The slots of a factory a data type reaches: its inputs, its outputs, its extra input and its charge slot.
+fn factory_slots(lines: u8, form: u8, data: Data) -> Vec<u32> {
+    let (n, per) = (usize::from(lines), factory_slots_per_line(form));
+    let at = |line: usize, k: usize| (line * per + k) as u32;
+    let outs = |line: usize| (1..per).map(move |k| at(line, k));
     match data {
-        Data::Input => INPUTS[at],
-        Data::Output => OUTPUTS[at],
-        Data::InputOutput => BOTH[at],
-        Data::Energy => CHARGE[at],
-        _ => &[],
+        Data::Input => (0..n).map(|i| at(i, 0)).collect(),
+        Data::Output => (0..n).flat_map(outs).collect(),
+        Data::InputOutput => (0..n * per).map(|i| i as u32).collect(),
+        Data::Extra if form == 1 => vec![(n * per) as u32],
+        Data::Energy => vec![(factory_slot_count(n, form) - 1) as u32],
+        _ => Vec::new(),
+    }
+}
+
+/// The slots of a machine a data type reaches, one list for each face (`slots_of`'s answer, for a factory built from its lines).
+pub fn slots_vec(layout: Layout, data: Data) -> Vec<u32> {
+    match layout {
+        Layout::Factory(lines, form) => factory_slots(lines, form, data),
+        _ => slots_of(layout, data).to_vec(),
     }
 }
 
@@ -557,7 +564,7 @@ pub fn side_of(facing: &str, face: usize) -> usize {
 pub fn item_faces(layout: Layout, facing: &str, items: &[Data; 6]) -> Vec<Vec<u32>> {
     let mut faces = vec![Vec::new(); 6];
     for (side, data) in items.iter().enumerate() {
-        faces[face_of(facing, side)] = slots_of(layout, *data).to_vec();
+        faces[face_of(facing, side)] = slots_vec(layout, *data);
     }
     faces
 }

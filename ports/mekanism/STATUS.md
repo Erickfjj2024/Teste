@@ -433,6 +433,16 @@ carga convertendo redstone) e em 83 testes unitários.
   mesma entrada em todas as linhas (`inputProducesOutput`), o instalador de nível, e as fábricas de combining, sawing, compressing,
   injecting, purifying e infusing.
 
+## 2q. Fábricas de Combining e Sawing (mod 0.1.55, o mesmo APK v48, **não testadas no jogo**)
+
+8 blocos (4 níveis × combining e sawing), no mesmo motor das outras fábricas, passando a guardar a forma dos slots de cada tipo:
+- **Combining:** cada linha tem entrada e saída; o slot de entrada extra é **um só para todas as linhas** (como no original, em 7, 57) e vem
+  depois das linhas; o de carga é o último. O lado "Extra" da configuração chega nele.
+- **Sawing:** cada linha tem entrada, saída principal e secundária (com o sorteio da chance); a tela é 21 mais alta e a barra de energia mais
+  comprida (73), com o inventário em 105.
+- Corrigi também o deslocamento do inventário das fábricas (o original o põe em y 85 e, no Ultimate, em x 26, 1 ponto mais para baixo/direita do que eu tinha).
+- Teste simulado novo (`factory.toml`, 3 passos) e 85 testes unitários. Faltam as 12 fábricas que usam químico (compressing, injecting, purifying, infusing).
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:

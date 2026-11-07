@@ -1,6 +1,6 @@
 # A basic crushing factory works three lines at once from one energy store: each line has its own input, output and progress.
 
-items = ["minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold"]
+items = ["minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:cobblestone", "minecraft:gravel"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -29,3 +29,30 @@ expect.block-items = [
     { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", "", "", "mekanism:dust_gold*1", "minecraft:redstone*2", "", ""] },
 ]
 expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=true]" }]
+
+# A basic combining factory: its three lines share the extra input (the seventh slot).
+[[recipe]]
+id = "mekanism:combining/gravel"
+json = '''{"type":"mekanism:combining","main_input":{"count":1,"ingredient":"minecraft:iron_ingot"},"extra_input":{"count":1,"ingredient":"minecraft:cobblestone"},"output":{"id":"minecraft:gravel"}}'''
+
+[[recipe]]
+id = "mekanism:sawing/oak"
+json = '''{"type":"mekanism:sawing","input":{"count":1,"ingredient":"minecraft:gold_ingot"},"main_output":{"count":2,"id":"minecraft:redstone"},"secondary_chance":1.0,"secondary_output":{"id":"mekanism:dust_iron"}}'''
+
+[[step]]
+blocks = [
+    { x = 10, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 10, y = 64, z = -1, state = "mekanism:basic_combining_factory[facing=north,lit=false]" },
+    { x = 20, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 20, y = 64, z = -1, state = "mekanism:basic_sawing_factory[facing=north,lit=false]" },
+]
+set-items = [
+    { x = 10, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "minecraft:iron_ingot*1", "", "", "", "minecraft:cobblestone*3", "", "", ""] },
+    { x = 20, y = 64, z = -1, slots = ["minecraft:gold_ingot*2", "", "", "", "", "", "minecraft:gold_ingot*1", "", "", "", "", ""] },
+]
+ticks = 220
+# The first two lines each used one cobblestone of the shared stack; the first and last sawing lines each made their main and secondary output.
+expect.block-items = [
+    { x = 10, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "minecraft:gravel*1", "", "minecraft:gravel*1", "", "", "minecraft:cobblestone*1", "", "", ""] },
+    { x = 20, y = 64, z = -1, slots = ["minecraft:gold_ingot*1", "minecraft:redstone*2", "mekanism:dust_iron*1", "", "", "", "", "minecraft:redstone*2", "mekanism:dust_iron*1", "", "", ""] },
+]

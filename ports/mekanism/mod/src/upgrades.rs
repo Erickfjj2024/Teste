@@ -56,7 +56,7 @@ pub fn base_slots(def: &Def) -> usize {
         (Kind::Continuous, Layout::Rotary) => 5,
         (Kind::Continuous, _) => 3,
         (Kind::Reaction, _) => 3,
-        (Kind::Factory, _) => def.lines * 2 + 1,
+        (Kind::Factory, _) => config::factory_slot_count(def.lines, def.form),
         (Kind::Generator, _) => match def.generator {
             Some(GenKind::Solar) => 1,
             _ => 2,
