@@ -162,3 +162,4 @@ ticks = 2
 set-items = [{ x = 110, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "mekanism:upgrade_speed*8", ""] }]
 ticks = 330
 expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", ""] }]
+
