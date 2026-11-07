@@ -541,3 +541,8 @@ original; (7) rotores, partículas e o resto conforme as máquinas chegarem.
 Causa: as tabelas de loot das 51 máquinas/cubos/tanques/geradores/cabos que o conversor gera usavam `{"condition": "minecraft:survives_explosion"}`
 (a chave certa é `type`); o jogo lia a condição como inválida e nunca dropava nada. Minérios e blocos de metal usam as tabelas originais do
 Mekanism e já dropavam. Agora todas usam `type`. O cubo/máquina dropado leva a energia, os itens e os tanques (`keep_data`).
+
+## 2p (correção). Fábricas sem modelo (mod 0.1.49)
+
+Os 12 blocos apareciam em branco na aba criativa (só o nome ao passar o dedo): o modelo das fábricas usa o carregador `neoforge:composite`
+(corpo + LED), que o Horizon não tem. O conversor agora junta os filhos de qualquer modelo composto em um só (como já fazia nos geradores).
