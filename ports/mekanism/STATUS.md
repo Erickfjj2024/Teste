@@ -553,3 +553,7 @@ As fábricas usavam a fornalha como base (um cubo cheio, que esconde as faces do
 usam a base sem oclusão (a mesma das máquinas abertas: infuser, oxidizer, tanques...) e declaram `facing` e `lit` elas mesmas; a nova olha para
 quem a coloca. Conferido por script: todas as outras máquinas de base fornalha (crusher, enrichment chamber, smelter, sawmill, combiner,
 purification, injection e compressor) têm um único cubo cheio no modelo, então não escondem nada indevidamente.
+
+## 2p (correção 3). Seta de progresso das fábricas (mod 0.1.51)
+
+A seta branca que enche tinha 14 de altura e a escura 20 (`ProgressType.DOWN` é 8 por 20): agora as duas medem 20.
