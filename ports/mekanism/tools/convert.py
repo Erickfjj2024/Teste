@@ -213,7 +213,7 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
     # loot: ores and storage as Mekanism has them; machines drop themselves (keeping their data)
     if kind == 'machine':
         loot = {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [{'type': 'minecraft:item', 'name': f'{NS}:{n}'}],
-                'conditions': [{'condition': 'minecraft:survives_explosion'}]}]}
+                'conditions': [{'type': 'minecraft:survives_explosion'}]}]}
         put(f'{OUT}/data/{NS}/loot_table/blocks/{n}.json', loot)
     else:
         lp = find(f'loot_table/blocks/{n}.json', DATA_DIRS)
@@ -226,7 +226,7 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
 # these get plain JSON models of their own, from Mekanism's textures.
 def self_drop(n):
     return {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [{'type': 'minecraft:item', 'name': f'{NS}:{n}'}],
-            'conditions': [{'condition': 'minecraft:survives_explosion'}]}]}
+            'conditions': [{'type': 'minecraft:survives_explosion'}]}]}
 
 def add_block(n, template, props, extra=None):
     block = {'template': template, 'properties': props, 'item': True}
@@ -1148,7 +1148,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.46', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.47', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1247,7 +1247,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.46', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.47', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1276,7 +1276,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.46', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.47', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1543,7 +1543,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.46', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.47', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1567,7 +1567,7 @@ for g in GENERATORS:
         'item': True, 'state_properties': state})
     put(f'{OUT}/assets/{GNS}/items/{g}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:block/generators/{g}'}})
     put(f'{OUT}/data/{GNS}/loot_table/blocks/{g}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
-        {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'condition': 'minecraft:survives_explosion'}]}]})
+        {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'type': 'minecraft:survives_explosion'}]}]})
     put(f'{OUT}/data/{GNS}/horizon/menu/{g}.json', gen_menu(g))
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
