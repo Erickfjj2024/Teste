@@ -1,6 +1,6 @@
 # A basic crushing factory works three lines at once from one energy store: each line has its own input, output and progress.
 
-items = ["minecraft:bread", "minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:cobblestone", "minecraft:gravel", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian"]
+items = ["mekanism:upgrade_speed", "minecraft:bread", "minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:iron_ore", "minecraft:cobblestone", "minecraft:gravel", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -113,3 +113,52 @@ ticks = 2
 set-items = [{ x = 70, y = 64, z = -1, slots = ["minecraft:bread*2", "", "", ""] }]
 ticks = 110
 expect.block-tanks = [{ x = 70, y = 64, z = -1, tanks = ["mekanism:nutritional_paste*250"] }]
+
+# Speed upgrades shorten a factory's recipes: eight make them ten times faster (200 ticks to 20).
+[[recipe]]
+id = "mekanism:crushing/iron_dust_test"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[step]]
+blocks = [
+    { x = 90, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 90, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+# the upgrade slot is the eighth (after 3 lines, the charge slot)
+set-items = [{ x = 90, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "", "", "", "", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 400
+expect.block-items = [{ x = 90, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", "", "", "", "", "", ""] }]
+
+# The same with an advanced smelting factory (five lines): eight speed upgrades make iron ore smelt ten times faster.
+[[cooking]]
+inputs = ["minecraft:iron_ore"]
+output = "minecraft:iron_ingot"
+
+[[step]]
+blocks = [
+    { x = 100, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 100, y = 64, z = -1, state = "mekanism:advanced_smelting_factory[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+# five lines: ten slots, the charge slot (10) and the upgrade slot (11)
+set-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:iron_ore*4", "", "", "", "", "", "", "", "", "", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 400
+expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["", "minecraft:iron_ingot*4", "", "", "", "", "", "", "", "", "", "", ""] }]
+
+# A plain crusher with eight speed upgrades too.
+[[step]]
+blocks = [
+    { x = 110, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 110, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-items = [{ x = 110, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 330
+expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", ""] }]
