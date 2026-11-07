@@ -1,6 +1,6 @@
-# Testes da atualização: APK v43 (o mod continua o 0.1.47)
+# Testes da atualização: APK v44 (o mod continua o 0.1.47)
 
-Instale o APK `horizon-android-v43.apk`. Responda: **ok**, **parcial** ou **falhou**.
+Instale o APK `horizon-android-v44.apk`. Responda: **ok**, **parcial** ou **falhou**.
 
 | # | O que fazer | Esperado |
 |---|---|---|
