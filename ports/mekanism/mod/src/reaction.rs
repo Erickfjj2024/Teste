@@ -231,7 +231,7 @@ impl Mekanism {
         let mut saved = machine_data(next.progress, &cfg);
         saved.extend([0, 0]);
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
-        redstone::stamp(def.kind, control, capacity.saturating_sub(next.energy), (ticks, self.install.get(&key).copied().unwrap_or(0), counts, usage), &mut saved, &mut data);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(next.energy), (ticks, self.install.get(&key).copied().unwrap_or(0), counts, usage), &facing, &mut saved, &mut data);
         let tanks_now = [io.fluid.clone(), io.gas_in.clone(), io.gas_out.clone()];
         let tanks_next = [next.fluid.clone(), next.gas_in.clone(), next.gas_out.clone()];
         let tanks_changed = tanks_now != tanks_next || e.tanks.len() != 3;

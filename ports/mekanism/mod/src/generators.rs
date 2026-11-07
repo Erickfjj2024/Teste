@@ -392,7 +392,7 @@ impl Mekanism {
         let mut saved = heat.to_le_bytes().to_vec();
         saved.push(1);
         let control = Control::from_byte(e.data.get(redstone::offset(Kind::Generator)).copied().unwrap_or(0));
-        redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), (0, self.install.get(&key).copied().unwrap_or(0), upgrades::counts_of(def, e), 0), &mut saved, &mut data);
+        redstone::stamp(Kind::Generator, control, capacity.saturating_sub(energy), (0, self.install.get(&key).copied().unwrap_or(0), upgrades::counts_of(def, e), 0), &facing, &mut saved, &mut data);
         let tanks_changed = kind != GenKind::Solar && (tank != held(e, 0) || e.tanks.len() != 1);
         if !items_changed && !dirty && !tanks_changed && energy == e.energy && data == e.menu_data && saved == e.data && !self.force {
             return None;

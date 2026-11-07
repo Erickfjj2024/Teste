@@ -790,7 +790,7 @@ impl Mekanism {
         let mut saved = machine_data(next_progress, &cfg);
         let base_ticks = def.proc.map_or(machine::TICKS, |s| s.ticks);
         let shown = (upgrades::ticks(base_ticks, speed), self.install.get(&(e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)).copied().unwrap_or(0), counts, usage_now);
-        redstone::stamp(def.kind, control, capacity.saturating_sub(energy), shown, &mut saved, &mut data);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(energy), shown, &facing, &mut saved, &mut data);
         if !changed && !dirty && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }

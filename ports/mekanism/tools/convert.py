@@ -583,7 +583,7 @@ NO_EJECT = {(m, 3) for m in ('metallurgic_infuser', 'purification_chamber', 'che
     | {(m, 0) for m in CHEM_TANKS}
 TAB_SPRITES = {n: tab_sprite(f'tab_{info[0].lower()}', info[1], info[2]) for n, info in TRANSMISSION_INFO.items()}
 
-def side_config_widgets(transmissions, machine=None):
+def side_config_widgets(transmissions, machine=None, facing_slot=None):
     """The window's widgets: for each transmission of the machine its title, the six side buttons coloured by their data type,
     the eject state and the clear button; its tabs outside the window, four at the left then the rest at the right
     (GuiSideConfiguration); the transmission chosen is the screen's variable `type` (the transmission's number). The sides of
@@ -603,7 +603,8 @@ def side_config_widgets(transmissions, machine=None):
                           'colors': SWATCH_COLORS, 'labels': [DATA_LABELS[i] for i in range(10)],
                           'tooltip': ['Front', 'Left', 'Right', 'Back', 'Top', 'Bottom'][side] + '\n{label}'})
             # the block beside that side, drawn over the colour (as the original's side buttons do)
-            group.append({'type': 'neighbor', 'x': x + 3, 'y': y + 3, 'side': side})
+            group.append({'type': 'neighbor', 'x': x + 3, 'y': y + 3, 'side': side,
+                          **({'facing': {'data': facing_slot}} if facing_slot is not None else {})})
             group.append({'type': 'button', 'x': x, 'y': y, 'w': 22, 'h': 22, 'id': 1000 + ty * 100 + side * 10,
                           'alt_id': 1000 + ty * 100 + side * 10 + 1})
         group.append({'type': 'button', 'x': 136, 'y': 95, 'w': 14, 'h': 14, 'id': 3000 + ty * 10, 'alt_id': 3000 + ty * 10 + 1,
@@ -1063,7 +1064,7 @@ def with_upgrades(menu, machine, base, c):
     menu['slots'] = base + 2
     menu['results'] = list(menu.get('results', [])) + [base + 1]
     menu['accepts'] = [{'slot': base, 'items': [f'{NS}:upgrade_{UPGRADES[k]}' for k in upgrade_support(machine)]}]
-    menu['data_slots'] = c + 15
+    menu['data_slots'] = c + 16
     screen = menu['screen']
     screen['slots'] = list(screen['slots']) + [None, None]
     screen['widgets'] = list(screen['widgets']) + upgrade_tab_widgets()
@@ -1178,7 +1179,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.51', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.52', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1189,7 +1190,7 @@ def process_menu(m):
             'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
                        'height': L.get('height', 166), 'inventory_y': 84 + L.get('inv_shift', 0),
                        'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                    'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}}, m, len(L['slots']), ctl0)
+                                    'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, ctl + 15)}]}}, m, len(L['slots']), ctl0)
 
 # ---- the storage tanks (GuiFluidTank, GuiChemicalTank): the player's armor in a holder at the left, as the original
 ARMOR_LEFT = {'x': -20, 'y': 67, 'offhand': 0}
@@ -1277,7 +1278,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.51', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.52', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1340,21 +1341,21 @@ def factory_menu(m):
     for i in range(lines):
         # ProgressType.DOWN of each line: its progress is the screen's number after the upgrade window's, its length the ticks
         widgets.append({'type': 'sprite', 'texture': progress_down_full, 'x': 4 + base_x + i * mult, 'y': 33, 'w': 8, 'h': 20,
-                        'value': {'data': 31 + i}, 'max': {'data': 19}, 'direction': 'down', 'tooltip': 'Progress: {percent}%'})
+                        'value': {'data': 32 + i}, 'max': {'data': 19}, 'direction': 'down', 'tooltip': 'Progress: {percent}%'})
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8 + (18 if tier == 'ultimate' else 0), 'y': 75, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 48, 'y': 75, 'text': 'v0.1.51', 'color': '#808080'},
+        {'type': 'text', 'x': width - 48, 'y': 75, 'text': 'v0.1.52', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
     window = {'id': 'side_config', 'x': WIN_X + ox, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-              'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}
+              'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 31)}
     menu = with_upgrades({
-        'slots': 2 * lines + 1, 'data_slots': 31 + lines, 'results': [2 * i + 1 for i in range(lines)],
+        'slots': 2 * lines + 1, 'data_slots': 32 + lines, 'results': [2 * i + 1 for i in range(lines)],
         'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'inventory_x': 8 + ox,
                    'widgets': widgets, 'windows': [window]}}, m, 2 * lines + 1, 16)
-    menu['data_slots'] = 31 + lines
+    menu['data_slots'] = 32 + lines
     # the upgrade tab and window go with the wider screen, and the charge slot takes what turns into energy
     menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), width - 176)
     menu['screen']['windows'][-1]['x'] += ox
@@ -1388,13 +1389,13 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.51', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.52', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
                    + redstone_widgets(16) + energy_tab_widgets(16, MACHINE_USAGE[m]),
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]}}, m, len(layout['slots']), 16))
+                                'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 31)}]}}, m, len(layout['slots']), 16))
 
 
 
@@ -1655,7 +1656,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.51', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.52', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,

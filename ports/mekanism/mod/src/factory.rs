@@ -120,7 +120,7 @@ impl Mekanism {
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
         let mut saved = machine_data(next[0].progress, &cfg);
         let shown = (ticks, self.install.get(&key).copied().unwrap_or(0), counts, used);
-        redstone::stamp(def.kind, control, capacity.saturating_sub(left), shown, &mut saved, &mut data);
+        redstone::stamp(def.kind, control, capacity.saturating_sub(left), shown, &facing, &mut saved, &mut data);
         // The lines' progress: all in the screen's numbers, the ones after the first in the saved bytes' tail.
         data.extend(next.iter().map(|l| l.progress as i32));
         saved.resize(TAIL, 0);

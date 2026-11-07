@@ -63,7 +63,7 @@ pub fn menu_slot(kind: Kind) -> usize {
 
 /// Puts the control and the upgrades into a machine's saved bytes and its screen's numbers: the control, the energy it needs to be
 /// full (two halves), then the upgrade window's (the ticks a recipe takes, the install progress, the eight counts, the mask).
-pub fn stamp(kind: Kind, control: Control, needed: u64, upgrades: (u32, u32, [u8; 8], u64), saved: &mut Vec<u8>, data: &mut Vec<i32>) {
+pub fn stamp(kind: Kind, control: Control, needed: u64, upgrades: (u32, u32, [u8; 8], u64), facing: &str, saved: &mut Vec<u8>, data: &mut Vec<i32>) {
     let at = offset(kind);
     if saved.len() <= at {
         saved.resize(at + 1, 0);
@@ -73,6 +73,19 @@ pub fn stamp(kind: Kind, control: Control, needed: u64, upgrades: (u32, u32, [u8
     data.resize(menu_slot(kind), 0);
     data.extend([control as i32, (needed & 0xFFFF) as i32, ((needed >> 16) & 0xFFFF) as i32]);
     data.extend(upgrades::window_numbers(upgrades.0, upgrades.1, &upgrades.2, upgrades.3));
+    // Where the machine's front looks (north 0, east 1, south 2, west 3): its side configuration window draws the blocks beside each
+    // side from it, so it shows the way the machine itself works them out.
+    data.push(facing_number(facing));
+}
+
+/// The number of a horizontal facing.
+pub fn facing_number(facing: &str) -> i32 {
+    match facing {
+        "east" => 1,
+        "south" => 2,
+        "west" => 3,
+        _ => 0,
+    }
 }
 
 impl Mekanism {
@@ -147,10 +160,10 @@ mod tests {
         let mut data = vec![7; 5];
         let mut counts = [0u8; 8];
         counts[1] = 3;
-        stamp(Kind::Electric, Control::Low, 70_000, (200, 4, counts, 26), &mut saved, &mut data);
+        stamp(Kind::Electric, Control::Low, 70_000, (200, 4, counts, 26), "east", &mut saved, &mut data);
         assert_eq!(saved.len(), 46);
         assert_eq!((saved[37], saved[39]), (2, 3));
-        assert_eq!(data.len(), 31);
+        assert_eq!((data.len(), data[31]), (32, 1));
         assert_eq!((data[16], data[17], data[18], data[19], data[20]), (2, 4464, 1, 200, 4));
     }
 }

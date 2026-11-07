@@ -454,7 +454,7 @@ index e82b6ca..1c31d7b 100644
          let time = self.world.game_time;
          let waiting = {
 diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
-index 609127a..1c8945f 100644
+index 609127a..8cee4c9 100644
 --- a/crates/horizon-client/src/game/menu_screens.rs
 +++ b/crates/horizon-client/src/game/menu_screens.rs
 @@ -4,16 +4,77 @@
@@ -587,7 +587,7 @@ index 609127a..1c8945f 100644
                      let Some([sw, sh]) = self.native_sprite_size(texture) else {
                          continue;
                      };
-@@ -88,22 +131,243 @@ impl Game<'_> {
+@@ -88,22 +131,252 @@ impl Game<'_> {
                          }
                          _ => (src, dst),
                      };
@@ -639,8 +639,14 @@ index 609127a..1c8945f 100644
 +                        }
 +                    }
 +                }
-+                Widget::Neighbor { x, y, side } => {
-+                    if let Ok(icon) = self.neighbor_icon(*side) {
++                Widget::Neighbor { x, y, side, facing } => {
++                    let named = facing.as_ref().map(|v| match read(v, data) {
++                        1 => "east",
++                        2 => "south",
++                        3 => "west",
++                        _ => "north",
++                    });
++                    if let Ok(icon) = self.neighbor_icon(*side, named) {
 +                        self.native_item(batch, &icon, [ox + *x as f32, oy + *y as f32], 16.0);
 +                    }
 +                }
@@ -654,8 +660,8 @@ index 609127a..1c8945f 100644
 +                    }
 +                }
 +                Widget::Button { .. } | Widget::Show { .. } => {}
-             }
-         }
++            }
++        }
 +    }
 +
 +    /// Fills the bottom `frac` of rectangle `rect` with `texture` tiled from its bottom left corner and tinted (a tank's
@@ -755,9 +761,9 @@ index 609127a..1c8945f 100644
 +                    [0.0, 0.0, sw, sh],
 +                    [at[0], at[1], window.width as f32, window.height as f32],
 +                );
-+            }
+             }
 +            self.draw_widgets(&window.widgets, data, &locals, batch, at, cursor);
-+        }
+         }
          true
      }
  
@@ -775,9 +781,12 @@ index 609127a..1c8945f 100644
 +
 +    /// The item of the block beside the machine whose screen is open, on its relative `side`; None for air or a
 +    /// block without an item.
-+    fn neighbor_icon(&self, side: u8) -> Result<String, char> {
++    fn neighbor_icon(&self, side: u8, named: Option<&str>) -> Result<String, char> {
 +        let [x, y, z] = self.native_screen_pos().ok_or('P')?;
-+        let facing = self.native_block_property([x, y, z], "facing").unwrap_or_default();
++        let facing = match named {
++            Some(f) => f.to_owned(),
++            None => self.native_block_property([x, y, z], "facing").unwrap_or_default(),
++        };
 +        let [dx, dy, dz] = neighbor_step(&facing, side);
 +        let id = self.native_block([x + dx, y + dy, z + dz]);
 +        if id == "minecraft:air" || id.is_empty() { Err('B') } else { Ok(id) }
@@ -838,7 +847,7 @@ index 609127a..1c8945f 100644
      }
  
      /// The tooltip under `at` on block `block`'s declared screen.
-@@ -114,8 +378,7 @@ impl Game<'_> {
+@@ -114,8 +387,7 @@ impl Game<'_> {
          at: [f32; 2],
      ) -> Vec<String> {
          screen_of(block)
@@ -2262,7 +2271,7 @@ index 6eafee2..e0b33ae 100644
          assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
          assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
 diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
-index e2ee6c7..943874f 100644
+index e2ee6c7..031137c 100644
 --- a/crates/horizon-mods/src/content.rs
 +++ b/crates/horizon-mods/src/content.rs
 @@ -295,12 +295,63 @@ pub struct MenuType {
@@ -2430,7 +2439,7 @@ index e2ee6c7..943874f 100644
      },
      /// A line of text; `{0}`, `{1}`... are data slots.
      Text {
-@@ -407,17 +525,73 @@ pub enum Widget {
+@@ -407,17 +525,81 @@ pub enum Widget {
          text: String,
          #[serde(default)]
          color: Option<String>,
@@ -2456,11 +2465,11 @@ index e2ee6c7..943874f 100644
 +        #[serde(default)]
 +        local: Option<LocalAction>,
 +        #[serde(default)]
-         tooltip: Option<String>,
++        tooltip: Option<String>,
 +        /// A colour (`#AARRGGBB`, usually translucent) drawn over the button while the cursor is on it.
 +        #[serde(default)]
 +        hover: Option<String>,
-     },
++    },
 +    /// A rectangle filled with `colors[value]` (`#RRGGBB`), the last when `value` is past the list; its tooltip fills
 +    /// `{label}` with `labels[value]`.
 +    Swatch {
@@ -2473,8 +2482,8 @@ index e2ee6c7..943874f 100644
 +        #[serde(default)]
 +        labels: Vec<String>,
 +        #[serde(default)]
-+        tooltip: Option<String>,
-+    },
+         tooltip: Option<String>,
+     },
 +    /// A tank: a rectangle filled from the bottom up to `value` of `max` with the chemical (or fluid) that `kind` says, a
 +    /// number from 1 into `types` (0 is an empty tank): the type's sprite tiled over it and tinted with its colour. Its
 +    /// tooltip fills `{label}` (the type's), `{value}` and `{max}`; `empty` is shown instead while `kind` is 0.
@@ -2499,13 +2508,21 @@ index e2ee6c7..943874f 100644
 +    Show { when: When, widgets: Vec<Widget> },
 +    /// The icon of the block that stands beside the machine on one of its `side`s (0 front, 1 left, 2 right, 3 back, 4 top,
 +    /// 5 bottom, as the machine faces), drawn 16 by 16 at `x`, `y`: what Mekanism's side buttons show.
-+    Neighbor { x: i32, y: i32, side: u8 },
++    /// `facing` is a number the mod gives (north 0, east 1, south 2, west 3) to take the machine's front from instead of the
++    /// block's own `facing` property.
++    Neighbor {
++        x: i32,
++        y: i32,
++        side: u8,
++        #[serde(default)]
++        facing: Option<Value>,
++    },
 +    /// The icon of item `item` (`minecraft:iron_ingot`), drawn 16 by 16 at `x`, `y`; nothing when the item is unknown.
 +    Item { x: i32, y: i32, item: String },
  }
  
  /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
-@@ -461,81 +635,200 @@ impl MenuScreen {
+@@ -461,81 +643,203 @@ impl MenuScreen {
          if let Some(t) = &self.texture {
              sprite(t)?;
          }
@@ -2739,8 +2756,11 @@ index e2ee6c7..943874f 100644
 +                }
 +            }
 +        }
-+        Widget::Neighbor { x, y, side } => {
++        Widget::Neighbor { x, y, side, facing } => {
 +            rect(*x, *y, 16, 16)?;
++            if let Some(v) = facing {
++                data(v)?;
++            }
 +            if *side > 5 {
 +                return Err(format!("{name}: a neighbour's side is 0 to 5"));
 +            }
@@ -2772,7 +2792,7 @@ index e2ee6c7..943874f 100644
  }
  
  /// the most container or data slots a mod menu type has, as many as a mod
-@@ -583,6 +876,42 @@ pub enum RenderElement {
+@@ -583,6 +887,42 @@ pub enum RenderElement {
          #[serde(default)]
          tints: std::collections::BTreeMap<String, String>,
      },
@@ -2815,7 +2835,7 @@ index e2ee6c7..943874f 100644
      /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
      /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
      Spin {
-@@ -596,6 +925,50 @@ pub enum RenderElement {
+@@ -596,6 +936,50 @@ pub enum RenderElement {
      },
  }
  
@@ -2866,7 +2886,7 @@ index e2ee6c7..943874f 100644
  impl BlockRenderer {
      fn check(&self, name: &str) -> Result<(), String> {
          let sprite = |s: &str| {
-@@ -643,6 +1016,48 @@ impl BlockRenderer {
+@@ -643,6 +1027,48 @@ impl BlockRenderer {
                          colour(c)?;
                      }
                  }
@@ -2915,7 +2935,7 @@ index e2ee6c7..943874f 100644
                  RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
                      boxed(from, to)?;
                      sprite(s)?;
-@@ -1011,6 +1426,9 @@ impl Content {
+@@ -1011,6 +1437,9 @@ impl Content {
                      "{name}: slots is 1 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
                  ));
              }
@@ -2925,7 +2945,7 @@ index e2ee6c7..943874f 100644
              let mut seen = BTreeSet::new();
              for &r in &file.results {
                  if r >= file.slots {
-@@ -1023,6 +1441,15 @@ impl Content {
+@@ -1023,6 +1452,15 @@ impl Content {
                      return Err(format!("{name}: result {r} is listed twice"));
                  }
              }
@@ -2941,7 +2961,7 @@ index e2ee6c7..943874f 100644
              if let Some(screen) = &file.screen {
                  screen.check(&name, file.slots, file.data_slots)?;
              }
-@@ -1208,6 +1635,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
+@@ -1208,6 +1646,16 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<(), Str
  
  #[cfg(test)]
  mod tests {
