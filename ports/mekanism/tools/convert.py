@@ -122,7 +122,7 @@ STORAGE = ['block_osmium', 'block_tin', 'block_lead', 'block_uranium', 'block_st
            'block_raw_uranium', 'block_bio_fuel']
 PROCESS_MACHINES = ['metallurgic_infuser', 'purification_chamber', 'chemical_injection_chamber', 'osmium_compressor',
                     'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer', 'pigment_extractor',
-                    'painting_machine']
+                    'painting_machine', 'nutritional_liquifier', 'antiprotonic_nucleosynthesizer']
 CONTINUOUS_MACHINES = ['chemical_infuser', 'chemical_washer', 'electrolytic_separator', 'rotary_condensentrator',
                        'pressurized_reaction_chamber', 'pigment_mixer']
 # MekanismGenerators' namespace and the generators the port has (their assets come from tools/generators-assets)
@@ -159,7 +159,7 @@ for m in MACHINES:
 # shape that does not occlude, and the facing and lit states the furnace had it declares itself (the mod turns it to face
 # the player that places it, as the furnace does).
 OPEN_MACHINES = {'metallurgic_infuser', 'chemical_oxidizer', 'chemical_dissolution_chamber', 'chemical_crystallizer',
-                 'pigment_extractor', 'painting_machine',
+                 'pigment_extractor', 'painting_machine', 'nutritional_liquifier', 'antiprotonic_nucleosynthesizer',
                  *CONTINUOUS_MACHINES, *FLUID_TANKS, *CHEM_TANKS, *FACTORIES, 'electric_pump', 'fluidic_plenisher'}
 for m in OPEN_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', BLOCKS[m][1], 'machine')
@@ -486,12 +486,12 @@ def copy_gui(rel, name):
     return f'{NS}:gui/{name}'
 
 # what each machine uses a tick while it works (the mod's `MACHINES` table; `MekanismConfig.usage`)
-MACHINE_USAGE = {'electric_pump': 100, 'fluidic_plenisher': 100, **{f: {'crushing': 8, 'enriching': 5, 'smelting': 5, 'combining': 5, 'sawing': 5, 'compressing': 15, 'infusing': 5, 'injecting': 15, 'purifying': 10}[k] for f, (t, k) in FACTORIES.items()}, 'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
+MACHINE_USAGE = {'antiprotonic_nucleosynthesizer': 15, 'electric_pump': 2, 'fluidic_plenisher': 2, 'nutritional_liquifier': 8, **{f: {'crushing': 8, 'enriching': 5, 'smelting': 5, 'combining': 5, 'sawing': 5, 'compressing': 15, 'infusing': 5, 'injecting': 15, 'purifying': 10}[k] for f, (t, k) in FACTORIES.items()}, 'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
                  'metallurgic_infuser': 5, 'purification_chamber': 10, 'chemical_injection_chamber': 15, 'osmium_compressor': 15,
                  'chemical_oxidizer': 15, 'chemical_dissolution_chamber': 16, 'chemical_crystallizer': 15,
                  'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2,
                  'pressurized_reaction_chamber': 2, 'pigment_extractor': 5, 'painting_machine': 5, 'pigment_mixer': 5}
-MACHINE_NAMES = {'electric_pump': 'Electric Pump', 'fluidic_plenisher': 'Fluidic Plenisher', **{f: f'{t.title()} {k.title()} Factory' for f, (t, k) in FACTORIES.items()}, 'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
+MACHINE_NAMES = {'antiprotonic_nucleosynthesizer': 'Antiprotonic Nucleosynthesizer', 'nutritional_liquifier': 'Nutritional Liquifier', 'electric_pump': 'Electric Pump', 'fluidic_plenisher': 'Fluidic Plenisher', **{f: f'{t.title()} {k.title()} Factory' for f, (t, k) in FACTORIES.items()}, 'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
                  'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator', 'pressurized_reaction_chamber': 'Pressurized Reaction Chamber', 'pigment_extractor': 'Pigment Extractor',
                  'painting_machine': 'Painting Machine', 'pigment_mixer': 'Pigment Mixer',
                  **{f'{t}_fluid_tank': f'{t.title()} Fluid Tank' for t in TIERS + ['creative']},
@@ -644,11 +644,11 @@ def side_config_widgets(transmissions, machine=None, facing_slot=None):
 # screens draw, written to the mod's chem_table.rs (a chemical's number is its place in the list, from 1)
 CHEM_RECIPE_TYPES = ['purifying', 'injecting', 'compressing', 'oxidizing', 'dissolution', 'crystallizing',
                      'metallurgic_infusing', 'chemical_conversion', 'chemical_infusing', 'washing', 'separating', 'rotary', 'reaction',
-                     'pigment_extracting', 'pigment_mixing', 'painting']
+                     'pigment_extracting', 'pigment_mixing', 'painting', 'nucleosynthesizing']
 # the fluids the screens draw (the same table as the chemicals): their colour
 FLUIDS = {'minecraft:water': '#3F76E4', 'minecraft:lava': '#FF6A00', 'mekanism:brine': '#FEEF9C', 'mekanism:lithium': '#EBA400',
           'mekanismgenerators:bioethanol': '#CEEB3D', 'mekanism:heavy_water': '#0D1455', 'mekanism:nutritional_paste': '#EB6CA3'}
-CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing', 'painting'}
+CHEM_ITEM_INPUT_TYPES = {'purifying', 'injecting', 'compressing', 'dissolution', 'crystallizing', 'metallurgic_infusing', 'painting', 'nucleosynthesizing'}
 
 def chemical_ids():
     ids = []
@@ -820,6 +820,8 @@ PROCESS_LAYOUTS['pressurized_reaction_chamber'] = {
     'gauges': [('standard', 5, 15, 16, 58, 't0', 10000), ('standard', 28, 15, 16, 58, 't1', 10000),
                ('small', 140, 45, 16, 28, 't2', 10000)]}
 # the pigment machines: the extractor is the oxidizer's screen with a 20 bucket tank, the painting machine and the mixer have their own
+PROCESS_LAYOUTS['antiprotonic_nucleosynthesizer'] = {**PROCESS_LAYOUTS['purification_chamber'], 'ticks': 400}
+PROCESS_LAYOUTS['nutritional_liquifier'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100}
 PROCESS_LAYOUTS['pigment_extractor'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100,
                                        'tint_arrow': 'out', 'gauges': [('standard', 131, 13, 16, 58, 'out', 20000)]}
 PROCESS_LAYOUTS['painting_machine'] = {
@@ -1186,7 +1188,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.58', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.60', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1285,7 +1287,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.58', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.60', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1387,7 +1389,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 48, 'y': label_y, 'text': 'v0.1.58', 'color': '#808080'},
+        {'type': 'text', 'x': width - 48, 'y': label_y, 'text': 'v0.1.60', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1430,7 +1432,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.58', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.60', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1472,7 +1474,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.58', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.60', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1739,7 +1741,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.58', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.60', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1798,7 +1800,7 @@ nrec = 0
 MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining', f'{NS}:metallurgic_infusing',
                  f'{NS}:chemical_conversion', f'{NS}:purifying', f'{NS}:injecting', f'{NS}:compressing', f'{NS}:oxidizing',
                  f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating', f'{NS}:rotary', f'{NS}:reaction',
-                 f'{NS}:pigment_extracting', f'{NS}:pigment_mixing', f'{NS}:painting'}
+                 f'{NS}:pigment_extracting', f'{NS}:pigment_mixing', f'{NS}:painting', f'{NS}:nucleosynthesizing'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)

@@ -156,10 +156,10 @@ const fn tank_block(block: &'static str, fluid: bool, capacity: u64, rate: u64, 
 use process::Shape;
 
 const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, random_use: bool) -> process::Spec {
-    process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, mean: 1.0 }
+    process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, speed: 0, mean: 1.0 }
 }
 
-const MACHINES: [Def; 72] = [
+const MACHINES: [Def; 74] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -184,6 +184,10 @@ const MACHINES: [Def; 72] = [
     // The rotary condensentrator turns a gas into a fluid or a fluid into a gas, by its mode (10 buckets in each tank).
     continuous_machine("mekanism:rotary_condensentrator", "mekanism:rotary", Layout::Rotary,
         continuous::Spec { shape: continuous::Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] }),
+    // The antiprotonic nucleosynthesizer: an item and antimatter make an item, each recipe taking its own time (`duration`).
+    chemical("mekanism:antiprotonic_nucleosynthesizer", "mekanism:nucleosynthesizing", Layout::Adv, spec(Shape::ItemChemToItem, 15, 400, 10_000, 0, false)),
+    // The nutritional liquifier turns food into nutritional paste (a fluid).
+    chemical("mekanism:nutritional_liquifier", "mekanism:liquifying", Layout::Oxidizer, spec(Shape::ItemToChem, 8, 100, 0, 10_000, false)),
     // Pigments: an item gives a pigment, a pigment paints an item, two pigments mix into a third.
     chemical("mekanism:pigment_extractor", "mekanism:pigment_extracting", Layout::Oxidizer, spec(Shape::ItemToChem, 5, 100, 0, 20_000, false)),
     chemical("mekanism:painting_machine", "mekanism:painting", Layout::Adv, spec(Shape::ItemChemToItem, 5, 200, 15_000, 0, false)),
@@ -468,9 +472,31 @@ fn chemicals_of(ingredient: &serde_json::Value) -> Vec<String> {
 
 /// The recipes of a machine of `process` and the conversions its filling slot does (the chemical items of
 /// `mekanism:chemical_conversion`, whose chemicals the tank takes only where some recipe uses them).
+/// What the nutritional liquifier makes of a food (`createDynamicRecipe`: 50 mB of paste for each point of nutrition), for the foods of
+/// the game (the API does not tell a food's nutrition, so this is their table).
+const FOODS: [(&str, u64); 44] = [
+    ("minecraft:apple", 4), ("minecraft:baked_potato", 5), ("minecraft:beetroot", 1), ("minecraft:beetroot_soup", 6), ("minecraft:bread", 5),
+    ("minecraft:carrot", 3), ("minecraft:chicken", 2), ("minecraft:chorus_fruit", 4), ("minecraft:cod", 2), ("minecraft:cooked_beef", 8),
+    ("minecraft:cooked_chicken", 6), ("minecraft:cooked_cod", 5), ("minecraft:cooked_mutton", 6), ("minecraft:cooked_porkchop", 8),
+    ("minecraft:cooked_rabbit", 5), ("minecraft:cooked_salmon", 6), ("minecraft:cookie", 2), ("minecraft:dried_kelp", 1),
+    ("minecraft:enchanted_golden_apple", 4), ("minecraft:glow_berries", 2), ("minecraft:golden_apple", 4), ("minecraft:golden_carrot", 6),
+    ("minecraft:honey_bottle", 6), ("minecraft:melon_slice", 2), ("minecraft:mushroom_stew", 6), ("minecraft:mutton", 2),
+    ("minecraft:poisonous_potato", 2), ("minecraft:porkchop", 3), ("minecraft:potato", 1), ("minecraft:pufferfish", 1),
+    ("minecraft:pumpkin_pie", 8), ("minecraft:rabbit", 3), ("minecraft:rabbit_stew", 10), ("minecraft:beef", 3),
+    ("minecraft:rotten_flesh", 4), ("minecraft:salmon", 2), ("minecraft:spider_eye", 2), ("minecraft:suspicious_stew", 6),
+    ("minecraft:sweet_berries", 2), ("minecraft:tropical_fish", 1), ("minecraft:cake", 2), ("minecraft:ominous_bottle", 0),
+    ("minecraft:milk_bucket", 0), ("minecraft:potion", 0),
+];
+
 fn load_proc_book(source: Source, shape: process::Shape) -> process::Book {
     use process::{Out, Recipe, Shape};
     let mut book = process::Book::default();
+    if let Source::Files("mekanism:liquifying") = source {
+        for (food, nutrition) in FOODS.iter().filter(|(_, n)| *n > 0) {
+            book.add(&[(*food).to_owned()], &[], Recipe { item_count: 1, amount: 0, per_tick: false, out: Out::Chem { id: "mekanism:nutritional_paste".into(), amount: nutrition * 50 }, duration: None });
+        }
+        return book;
+    }
     let Source::Files(kind) = source else { return book };
     for r in recipe_types::recipes_of_type(kind) {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
@@ -504,6 +530,7 @@ fn load_proc_book(source: Source, shape: process::Shape) -> process::Book {
                 amount: chem_in["amount"].as_u64().unwrap_or(0),
                 per_tick: json["per_tick_usage"].as_bool().unwrap_or(false),
                 out,
+                duration: json["duration"].as_u64().map(|d| d as u32),
             },
         );
     }
@@ -774,6 +801,7 @@ impl Mekanism {
                 let mut spec = spec;
                 spec.usage = usage_now;
                 spec.ticks = upgrades::ticks(spec.ticks, speed);
+                spec.speed = speed;
                 spec.mean = upgrades::gas_mean(speed, chem_up);
                 let (next, status) = process::step(&spec, book, &io, dice);
                 tank_next = [next.tank_in.clone(), next.tank_out.clone()];
@@ -1191,7 +1219,11 @@ impl ServerMod for Mekanism {
                     k.tanks.push(tank(spec.cap_in, 0));
                 }
                 if spec.cap_out > 0 {
-                    k.tanks.push(tank(spec.cap_out, usize::from(spec.cap_in > 0)));
+                    let mut t = tank(spec.cap_out, usize::from(spec.cap_in > 0));
+                    if def.block == "mekanism:nutritional_liquifier" {
+                        t.kind = "fluid".into();
+                    }
+                    k.tanks.push(t);
                 }
             }
             r = r.block_entity_kind(k);

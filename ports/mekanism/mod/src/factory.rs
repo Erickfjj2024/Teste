@@ -215,6 +215,7 @@ impl Mekanism {
                 spec.cap_in *= n as u64;
                 spec.usage = usage;
                 spec.ticks = upgrades::ticks(spec.ticks, speed);
+                spec.speed = speed;
                 spec.mean = upgrades::gas_mean(speed, counts[upgrades::CHEMICAL]);
                 let book = self.procs.entry(def.base).or_default();
                 let (l, conv, tank, left, st, used) = step_chem_lines(&spec, book, &lines, extra.clone(), tank_now.clone(), energy, &mut dice);

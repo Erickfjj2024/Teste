@@ -1,6 +1,6 @@
 # A basic crushing factory works three lines at once from one energy store: each line has its own input, output and progress.
 
-items = ["minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:cobblestone", "minecraft:gravel", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian"]
+items = ["minecraft:bread", "minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:cobblestone", "minecraft:gravel", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian"]
 
 [[recipe]]
 id = "mekanism:crushing/iron"
@@ -100,3 +100,16 @@ ticks = 2
 set-tanks = [{ x = 60, y = 64, z = -1, tanks = ["minecraft:water*5000"] }]
 ticks = 70
 expect.blocks = [{ x = 60, y = 63, z = -1, state = "minecraft:water[level=0]" }]
+
+# A nutritional liquifier turns food into nutritional paste: 50 mB for each point of nutrition (a bread is 5).
+[[step]]
+blocks = [
+    { x = 70, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 70, y = 64, z = -1, state = "mekanism:nutritional_liquifier[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-items = [{ x = 70, y = 64, z = -1, slots = ["minecraft:bread*2", "", "", ""] }]
+ticks = 110
+expect.block-tanks = [{ x = 70, y = 64, z = -1, tanks = ["mekanism:nutritional_paste*250"] }]

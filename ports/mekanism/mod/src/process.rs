@@ -30,6 +30,8 @@ pub struct Spec {
     /// A per-tick recipe uses the chemical by chance (the "randomized consumption" of the config), a mean of one a tick;
     /// otherwise one a tick.
     pub random_use: bool,
+    /// The speed upgrades installed, which shorten a recipe's own duration.
+    pub speed: u8,
     /// The mean of that chance (1, or what the speed and chemical upgrades make it).
     pub mean: f64,
 }
@@ -50,6 +52,8 @@ pub struct Recipe {
     pub amount: u64,
     pub per_tick: bool,
     pub out: Out,
+    /// The ticks this recipe takes where it says (the antiprotonic nucleosynthesizer's), before the speed upgrades; else the machine's.
+    pub duration: Option<u32>,
 }
 
 /// The recipes by their item and chemical (`""` where a shape has none); the first of two alike wins.
@@ -225,7 +229,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
     next.energy -= spec.usage;
     next.progress += 1;
     next.tank_in.amount -= u64::from(uses);
-    if next.progress >= spec.ticks {
+    if next.progress >= recipe.duration.map_or(spec.ticks, |d| crate::upgrades::ticks(d, spec.speed)) {
         next.progress = 0;
         if let Some(input) = input {
             let left = input.count - recipe.item_count;
@@ -254,11 +258,11 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
 mod tests {
     use super::*;
 
-    const INFUSER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 5, ticks: 200, cap_in: 1000, cap_out: 0, random_use: false, mean: 1.0 };
-    const PURIFIER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 10, ticks: 200, cap_in: 210, cap_out: 0, random_use: false, mean: 1.0 };
-    const OXIDIZER: Spec = Spec { shape: Shape::ItemToChem, usage: 15, ticks: 100, cap_in: 0, cap_out: 10_000, random_use: false, mean: 1.0 };
-    const DISSOLVER: Spec = Spec { shape: Shape::ItemChemToChem, usage: 16, ticks: 100, cap_in: 10_000, cap_out: 10_000, random_use: false, mean: 1.0 };
-    const CRYSTALLIZER: Spec = Spec { shape: Shape::ChemToItem, usage: 15, ticks: 200, cap_in: 10_000, cap_out: 0, random_use: false, mean: 1.0 };
+    const INFUSER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 5, ticks: 200, cap_in: 1000, cap_out: 0, random_use: false, speed: 0, mean: 1.0 };
+    const PURIFIER: Spec = Spec { shape: Shape::ItemChemToItem, usage: 10, ticks: 200, cap_in: 210, cap_out: 0, random_use: false, speed: 0, mean: 1.0 };
+    const OXIDIZER: Spec = Spec { shape: Shape::ItemToChem, usage: 15, ticks: 100, cap_in: 0, cap_out: 10_000, random_use: false, speed: 0, mean: 1.0 };
+    const DISSOLVER: Spec = Spec { shape: Shape::ItemChemToChem, usage: 16, ticks: 100, cap_in: 10_000, cap_out: 10_000, random_use: false, speed: 0, mean: 1.0 };
+    const CRYSTALLIZER: Spec = Spec { shape: Shape::ChemToItem, usage: 15, ticks: 200, cap_in: 10_000, cap_out: 0, random_use: false, speed: 0, mean: 1.0 };
 
     fn stack(item: &str, count: u32) -> Option<Stack> {
         Some(Stack { item: item.into(), count, components: String::new() })
@@ -274,11 +278,11 @@ mod tests {
     }
     fn book() -> Book {
         let mut b = Book::default();
-        b.add(&s("minecraft:iron_ingot"), &s("mekanism:redstone"), Recipe { item_count: 1, amount: 10, per_tick: false, out: item("mekanism:alloy_infused") });
-        b.add(&s("minecraft:gold_ore"), &s("mekanism:oxygen"), Recipe { item_count: 1, amount: 1, per_tick: true, out: Out::Item { id: "mekanism:clump_gold".into(), count: 3 } });
-        b.add(&s("mekanism:dust_salt"), &[], Recipe { item_count: 1, amount: 0, per_tick: false, out: Out::Chem { id: "mekanism:brine".into(), amount: 15 } });
-        b.add(&s("minecraft:gold_ore"), &s("mekanism:sulfuric_acid"), Recipe { item_count: 1, amount: 1, per_tick: true, out: Out::Chem { id: "mekanism:dirty_gold".into(), amount: 1000 } });
-        b.add(&[], &s("mekanism:clean_gold"), Recipe { item_count: 0, amount: 200, per_tick: false, out: item("mekanism:crystal_gold") });
+        b.add(&s("minecraft:iron_ingot"), &s("mekanism:redstone"), Recipe { item_count: 1, amount: 10, per_tick: false, out: item("mekanism:alloy_infused"), duration: None });
+        b.add(&s("minecraft:gold_ore"), &s("mekanism:oxygen"), Recipe { item_count: 1, amount: 1, per_tick: true, out: Out::Item { id: "mekanism:clump_gold".into(), count: 3 }, duration: None });
+        b.add(&s("mekanism:dust_salt"), &[], Recipe { item_count: 1, amount: 0, per_tick: false, out: Out::Chem { id: "mekanism:brine".into(), amount: 15 }, duration: None });
+        b.add(&s("minecraft:gold_ore"), &s("mekanism:sulfuric_acid"), Recipe { item_count: 1, amount: 1, per_tick: true, out: Out::Chem { id: "mekanism:dirty_gold".into(), amount: 1000 }, duration: None });
+        b.add(&[], &s("mekanism:clean_gold"), Recipe { item_count: 0, amount: 200, per_tick: false, out: item("mekanism:crystal_gold"), duration: None });
         b.add_conversion(&s("minecraft:redstone"), "mekanism:redstone", 10);
         b.add_conversion(&s("minecraft:coal"), "mekanism:carbon", 10);
         b

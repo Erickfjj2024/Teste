@@ -5,7 +5,7 @@ use super::*;
 use crate::tank::EditMode;
 
 /// `MekanismConfig.usage.electricPump`.
-pub const USAGE: u64 = 100;
+pub const USAGE: u64 = 2;
 /// `BASE_TICKS_REQUIRED`.
 pub const BASE_TICKS: u32 = 19;
 /// `MAX_FLUID`: ten buckets.
