@@ -188,9 +188,19 @@ const MACHINES: [Def; 34] = [
 /// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
 /// still to be written upstream).
 const STORED_TICKS: u64 = 2500;
-const BASIC_CUBE: u64 = 4_000_000;
-const BASIC_CUBE_RATE: u64 = 4_000;
 const CREATIVE_CUBE: u64 = 1_000_000_000_000;
+/// `EnergyCubeTier`: what each cube holds and moves a tick (the creative one: everything, refilled).
+const CUBE_TIERS: [(&str, u64, u64); 4] = [
+    ("mekanism:basic_energy_cube", 4_000_000, 4_000),
+    ("mekanism:advanced_energy_cube", 16_000_000, 16_000),
+    ("mekanism:elite_energy_cube", 64_000_000, 64_000),
+    ("mekanism:ultimate_energy_cube", 256_000_000, 256_000),
+];
+
+/// What a cube of this block holds, whether it is the creative one.
+fn cube_capacity(block: &str) -> (u64, bool) {
+    CUBE_TIERS.iter().find(|(b, _, _)| *b == block).map_or((CREATIVE_CUBE, true), |(_, c, _)| (*c, false))
+}
 /// What a cable, a tube and a pipe of each tier carry a tick.
 const CABLE_RATES: [u64; 4] = [8_000, 128_000, 1_024_000, 8_192_000];
 const TUBE_RATES: [u64; 4] = [750, 2_000, 64_000, 256_000];
@@ -782,7 +792,8 @@ fn machine_data(progress: u32, cfg: &Config) -> Vec<u8> {
 impl Mekanism {
     /// An energy cube's tick: a configurator click changes the mode of the side it met, the block shows the
     /// modes (the bytes of its data, which the clients draw its ports from), and the game's energy flow follows them.
-    fn cube(&mut self, e: &BlockEntity, creative: bool) -> Option<BlockEntityUpdate> {
+    fn cube(&mut self, e: &BlockEntity, block: &str) -> Option<BlockEntityUpdate> {
+        let (capacity, creative) = cube_capacity(block);
         let stored = sides::decode(&e.data);
         let mut changed = stored.is_none() || e.data.len() < 7;
         // A new cube's front looks at the nearest player, as one placed in front of them does.
@@ -811,7 +822,6 @@ impl Mekanism {
             }
         }
         changed |= self.take_button(e, &mut modes, front);
-        let capacity = if creative { CREATIVE_CUBE } else { BASIC_CUBE };
         let mut energy = e.energy;
         // The discharge slot turns what it holds into energy when it fits (`fillContainerOrConvert`).
         let mut items: Option<Vec<Option<ItemStack>>> = None;
@@ -1063,13 +1073,16 @@ impl ServerMod for Mekanism {
         }
         // The discharge and charge slots of its screen; no face reaches them (the cube's item sides are still to do).
         let slots = || ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true };
-        let mut basic = kind("mekanism:basic_energy_cube", true);
-        basic.container = Some(slots());
-        basic.energy = Some(energy(BASIC_CUBE, BASIC_CUBE_RATE, FlowSide::Both));
+        for (block, capacity, rate) in CUBE_TIERS {
+            let mut tier = kind(block, true);
+            tier.container = Some(slots());
+            tier.energy = Some(energy(capacity, rate, FlowSide::Both));
+            r = r.block_entity_kind(tier);
+        }
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
-        r = r.block_entity_kind(basic).block_entity_kind(creative);
+        r = r.block_entity_kind(creative);
         // Cables, tubes and pipes of the four tiers (`CableTier`, `TubeTier`, `PipeTier`): what each carries a tick.
         for (i, tier) in ["basic", "advanced", "elite", "ultimate"].iter().enumerate() {
             for (name, medium, rates) in [
@@ -1321,7 +1334,7 @@ impl ServerMod for Mekanism {
                     _ => self.run(def, e, tick),
                 });
             } else if block.ends_with("_energy_cube") {
-                out.extend(self.cube(e, block == "mekanism:creative_energy_cube"));
+                out.extend(self.cube(e, block));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.

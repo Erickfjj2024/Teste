@@ -129,7 +129,8 @@ for m in OPEN_MACHINES:
 
 TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid')]
 TRANSMITTER_BLOCKS = [f'{tier}_{kind}' for kind, _ in TRANSMITTERS for tier in ('basic', 'advanced', 'elite', 'ultimate')]
-CUSTOM_BLOCKS = [*TRANSMITTER_BLOCKS, 'basic_energy_cube', 'creative_energy_cube']
+CUBE_TIERS = ['basic', 'advanced', 'elite', 'ultimate', 'creative']
+CUSTOM_BLOCKS = [*TRANSMITTER_BLOCKS, *[f'{t}_energy_cube' for t in CUBE_TIERS]]
 # ---------------------------------------------------------------- items: every plain one
 items = {}
 for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
@@ -287,7 +288,7 @@ def tinted_core(tier):
     core.save(path)
     return f'{NS}:block/energy_core_{tier}'
 
-for tier in ('basic', 'creative'):
+for tier in CUBE_TIERS:
     textures = dict(base['textures'])
     textures['corner'] = f'{NS}:block/models/energy_cube_{tier}_corner'
     textures['core'] = tinted_core(tier)
@@ -364,7 +365,7 @@ CHEMICAL_BLOCKS = [m for m in PROCESS_MACHINES + CONTINUOUS_MACHINES + CHEM_TANK
 FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', 'pressurized_reaction_chamber', *FLUID_TANKS]
 put(f'{OUT}/data/{NS}/tags/block/energy_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_universal_cable')],
-    f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube', *[f'{NS}:{m}' for m in ELECTRIC], *[f'{GNS}:{g}' for g in GENERATORS]]})
+    *[f'{NS}:{t}_energy_cube' for t in CUBE_TIERS], *[f'{NS}:{m}' for m in ELECTRIC], *[f'{GNS}:{g}' for g in GENERATORS]]})
 put(f'{OUT}/data/{NS}/tags/block/chemical_connectable.json', {'values': [
     *[f'{NS}:{n}' for n in TRANSMITTER_BLOCKS if n.endswith('_pressurized_tube')], *[f'{NS}:{m}' for m in CHEMICAL_BLOCKS],
     f'{GNS}:gas_burning_generator']})
@@ -1109,7 +1110,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.42', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.43', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1208,7 +1209,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.42', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.43', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1237,7 +1238,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.42', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.43', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -1310,7 +1311,9 @@ def armor_holder():
     return save_gui(holder, 'armor_holder')
 
 armor_holder_tex = armor_holder()
-CUBES = {'basic_energy_cube': ('Basic Energy Cube', 4000), 'creative_energy_cube': ('Creative Energy Cube', 1000000000)}
+CUBES = {'basic_energy_cube': ('Basic Energy Cube', 4000), 'advanced_energy_cube': ('Advanced Energy Cube', 16000),
+         'elite_energy_cube': ('Elite Energy Cube', 64000), 'ultimate_energy_cube': ('Ultimate Energy Cube', 256000),
+         'creative_energy_cube': ('Creative Energy Cube', 1000000000)}
 for cube_name, (cube_title, rate) in CUBES.items():
     put(f'{OUT}/data/{NS}/horizon/menu/{cube_name}.json', {
         'slots': 2, 'data_slots': 16, 'results': [],
@@ -1502,7 +1505,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.42', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.43', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -1601,6 +1604,14 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/*.json')):
         if ok:
             put(f'{OUT}/data/{NS}/recipe/{os.path.basename(p)}', r)
             nrec += 1
+# the energy cubes' recipes (`mekanism:mek_data`: the cube below keeps its energy in the cube it makes), as plain shaped ones
+for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/energy_cube/*.json')):
+    r = read_json(p)
+    rid = r.get('result', {}).get('id', '')
+    if rid.split(':')[-1] in have and all(not s.startswith(NS + ':') or s.split(':')[1] in have for s in refs(r.get('key', {}))):
+        r['type'] = 'minecraft:crafting_shaped'
+        put(f'{OUT}/data/{NS}/recipe/energy_cube_{os.path.basename(p)}', r)
+        nrec += 1
 
 # ---------------------------------------------------------------- tags
 def filtered_tag(v):
@@ -1702,7 +1713,7 @@ for tag in sorted(asked):
         ntags += 1
 
 # mining: pickaxe for ores, storage, casings and machines; ores need a stone or iron tool
-pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:basic_energy_cube', f'{NS}:creative_energy_cube'] + [f'{GNS}:{g}' for g in GENERATORS]
+pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:{t}_energy_cube' for t in CUBE_TIERS] + [f'{GNS}:{g}' for g in GENERATORS]
 put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe.json', {'values': pick})
 need_iron = [f'{NS}:{n}' for n in BLOCKS if n.endswith('_ore') or n.startswith('block_') or n == 'steel_casing']
 put(f'{OUT}/data/minecraft/tags/block/needs_iron_tool.json', {'values': need_iron})

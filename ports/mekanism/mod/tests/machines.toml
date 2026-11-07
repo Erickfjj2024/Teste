@@ -1076,3 +1076,9 @@ expect.blocks = [
     { x = 969, y = 40, z = 967, state = "mekanism:block_salt" },
     { x = 960, y = 40, z = 960, state = "minecraft:dirt" },
 ]
+
+[[step]]
+# The energy cubes of the other tiers hold their tier's energy: an elite cube takes redstone (10000 a dust) up to 64 million.
+blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]
+ticks = 5
+expect.blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]

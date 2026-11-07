@@ -381,6 +381,14 @@ Passou no teste simulado (62 passos: um balde de salmoura esvazia num tanque de 
   parava na grama marinha e nas algas (que não são o chão); agora essas seções são puladas e só um bloco com colisão conta como chão.
 - **Diferença:** os baldes não colocam o fluido no mundo (o porte não tem fluidos de mod no mundo); servem para encher tanques e máquinas.
 
+## 2m. Energy Cubes Advanced, Elite e Ultimate (mod 0.1.43, o mesmo APK v40, **não testados no jogo**)
+
+Passou no teste simulado (67 passos) e em 77 testes unitários. Os três níveis têm o modelo do original (a moldura com os cantos na cor do
+nível, o núcleo girando tingido na cor do nível, portas e LEDs por face), a tela, a configuração de lados, o configurador e os slots de armadura do
+cubo básico; capacidade e taxa por tick de `EnergyCubeTier`: Advanced 16 milhões e 16 000, Elite 64 milhões e 64 000, Ultimate 256 milhões e
+256 000 (o Basic, 4 milhões e 4 000). As receitas são as originais (o cubo do nível de baixo, tabletes de energia, ligas infusas e lingotes de
+osmio), feitas como receitas comuns: o cubo de baixo **não passa a energia** que guarda para o novo (no original passa). Falta o instalador de nível.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
