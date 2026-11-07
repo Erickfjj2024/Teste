@@ -158,6 +158,7 @@ impl Layout {
     pub fn transmissions(self) -> &'static [Transmission] {
         use Transmission::{Chemicals as C, Energy as E, Fluids as F, Items as I};
         match self {
+            Layout::Factory(_, form) if form >= 3 => &[I, C, E],
             Layout::Electric | Layout::Sawmill | Layout::Combiner | Layout::Factory(..) => &[I, E],
             Layout::ChemTank => &[C, I],
             Layout::ChemInfuser | Layout::Mixer => &[C, I, E],
@@ -199,6 +200,8 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         }
         // `setupInputConfig`: a tank that only takes in, and `setupOutputConfig`: one that only gives.
         (Layout::Adv | Layout::Crystallizer, Transmission::Chemicals) => &[Data::None, Data::Input],
+        (Layout::Factory(_, 3), Transmission::Chemicals) => &[Data::None, Data::Input],
+        (Layout::Factory(_, 4), Transmission::Chemicals) => &[Data::None, Data::Input, Data::Output, Data::InputOutput],
         (Layout::Oxidizer, Transmission::Chemicals) => &[Data::None, Data::Output],
         (Layout::ChemTank | Layout::Washer | Layout::Rotary | Layout::Reaction, Transmission::Chemicals) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput]
@@ -221,7 +224,7 @@ pub fn supported(layout: Layout, t: Transmission) -> &'static [Data] {
         // No other machine has fluid, chemical or heat tanks yet: the machines that do will list their data types here.
         (_, Transmission::Fluids | Transmission::Chemicals | Transmission::Heat) => &[],
         (_, Transmission::Energy) => &[Data::None, Data::Input],
-        (l, Transmission::Items) if l == Layout::Combiner || l.extra_slot() || matches!(l, Layout::Factory(_, 1)) => {
+        (l, Transmission::Items) if l == Layout::Combiner || l.extra_slot() || matches!(l, Layout::Factory(_, f) if factory_has_extra(f)) => {
             &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy, Data::Extra]
         }
         (_, Transmission::Items) => &[Data::None, Data::Input, Data::Output, Data::InputOutput, Data::Energy],
@@ -253,7 +256,7 @@ pub fn default_config(layout: Layout) -> Config {
     let mut items = [Data::Input; 6];
     items[RIGHT] = Data::Output;
     items[BACK] = Data::Energy;
-    if layout == Layout::Combiner || layout.extra_slot() || matches!(layout, Layout::Factory(_, 1)) {
+    if layout == Layout::Combiner || layout.extra_slot() || matches!(layout, Layout::Factory(_, f) if factory_has_extra(f)) {
         items[BOTTOM] = Data::Extra;
     }
     match layout {
@@ -340,6 +343,13 @@ pub fn default_config(layout: Layout) -> Config {
             chem[RIGHT] = Data::Output2;
             eject[Transmission::Chemicals as usize] = true;
             sides[Transmission::Fluids as usize] = [Data::Input; 6];
+        }
+        // The factories' tank: only in (injecting, purifying), or in everywhere and out on the right (compressing, infusing).
+        Layout::Factory(_, form) if form >= 3 => {
+            *chem = [Data::Input; 6];
+            if form == 4 {
+                chem[RIGHT] = Data::Output;
+            }
         }
         // A tank gives and takes on every side.
         Layout::ChemTank => {
@@ -486,13 +496,17 @@ pub fn slots_of(layout: Layout, data: Data) -> &'static [u32] {
 
 /// How a factory lays its slots out: `form` 0 is an input and an output a line, 1 adds an extra input all the lines share (after the
 /// lines, before the charge slot), 2 has a main and a secondary output for each line. The slots of each line come one after the other.
+pub fn factory_has_extra(form: u8) -> bool {
+    form == 1 || form >= 3
+}
+
 pub fn factory_slots_per_line(form: u8) -> usize {
     if form == 2 { 3 } else { 2 }
 }
 
 /// The slots of a factory of `lines` lines in all, the charge slot last.
 pub fn factory_slot_count(lines: usize, form: u8) -> usize {
-    lines * factory_slots_per_line(form) + usize::from(form == 1) + 1
+    lines * factory_slots_per_line(form) + usize::from(factory_has_extra(form)) + 1
 }
 
 /// The slots of a factory a data type reaches: its inputs, its outputs, its extra input and its charge slot.
@@ -504,7 +518,7 @@ fn factory_slots(lines: u8, form: u8, data: Data) -> Vec<u32> {
         Data::Input => (0..n).map(|i| at(i, 0)).collect(),
         Data::Output => (0..n).flat_map(outs).collect(),
         Data::InputOutput => (0..n * per).map(|i| i as u32).collect(),
-        Data::Extra if form == 1 => vec![(n * per) as u32],
+        Data::Extra if factory_has_extra(form) => vec![(n * per) as u32],
         Data::Energy => vec![(factory_slot_count(n, form) - 1) as u32],
         _ => Vec::new(),
     }

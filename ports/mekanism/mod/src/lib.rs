@@ -151,7 +151,7 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, mean: 1.0 }
 }
 
-const MACHINES: [Def; 54] = [
+const MACHINES: [Def; 70] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -210,6 +210,23 @@ const MACHINES: [Def; 54] = [
     factory("mekanism:advanced_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 5, 2),
     factory("mekanism:elite_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 7, 2),
     factory("mekanism:ultimate_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 9, 2),
+    // The factories that work a chemical: one tank for all the lines (a compressing or infusing one can be emptied by the right side).
+    factory("mekanism:basic_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 3, 4),
+    factory("mekanism:advanced_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 5, 4),
+    factory("mekanism:elite_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 7, 4),
+    factory("mekanism:ultimate_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 9, 4),
+    factory("mekanism:basic_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 3, 4),
+    factory("mekanism:advanced_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 5, 4),
+    factory("mekanism:elite_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 7, 4),
+    factory("mekanism:ultimate_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 9, 4),
+    factory("mekanism:basic_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 3, 3),
+    factory("mekanism:advanced_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 5, 3),
+    factory("mekanism:elite_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 7, 3),
+    factory("mekanism:ultimate_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 9, 3),
+    factory("mekanism:basic_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 3, 3),
+    factory("mekanism:advanced_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 5, 3),
+    factory("mekanism:elite_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 7, 3),
+    factory("mekanism:ultimate_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 9, 3),
     // The storage tanks: `FluidTankTier` and `ChemicalTankTier` (a bucket is 1000).
     tank_block("mekanism:basic_fluid_tank", true, 32_000, 1_000, false),
     tank_block("mekanism:advanced_fluid_tank", true, 64_000, 4_000, false),
@@ -1091,6 +1108,17 @@ impl ServerMod for Mekanism {
                     faces: flow,
                 });
             }
+            if def.kind == Kind::Factory && def.form >= 3 {
+                // One chemical tank for all the lines, as big as the machine's for each of them.
+                let cap = MACHINES.iter().find(|d| d.block == def.base).and_then(|d| d.proc).map_or(0, |s| s.cap_in) * def.lines as u64;
+                let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
+                k.tanks.push(TankSpec {
+                    kind: "chemical".into(),
+                    capacity: cap,
+                    max_rate: cap.min(1000),
+                    faces: flow.first().map_or_else(|| vec![FlowSide::None; 6], |f| f.iter().map(|x| flow_side(*x)).collect()),
+                });
+            }
             if def.kind == Kind::Reaction {
                 // Its fluid tank, then the gas it takes in and the gas it makes, on the default configuration's faces.
                 let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
@@ -1336,6 +1364,21 @@ impl ServerMod for Mekanism {
         let layout = def.layout;
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
+        if id == chem::DUMP && def.kind == Kind::Factory && def.form >= 3 {
+            // GuiDumpButton: the factory's tank is emptied; its next tick draws the screen again.
+            return Some(BlockEntityUpdate {
+                dimension: e.dimension.clone(),
+                pos: e.pos,
+                data: e.data.clone(),
+                items: None,
+                energy: None,
+                energy_faces: None,
+                tanks: Some(vec![Tank { substance: String::new(), amount: 0 }]),
+                tank_faces: None,
+                menu_data: None,
+                transmitter_faces: None,
+            });
+        }
         if id == chem::DUMP && def.block == "mekanism:metallurgic_infuser" {
             // GuiDumpButton: the tank is emptied (`dump`).
             let tail: Vec<i32> = e.menu_data.get(20..).map(<[i32]>::to_vec).unwrap_or_default();

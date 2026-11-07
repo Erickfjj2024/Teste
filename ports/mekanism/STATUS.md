@@ -443,6 +443,17 @@ carga convertendo redstone) e em 83 testes unitários.
 - Corrigi também o deslocamento do inventário das fábricas (o original o põe em y 85 e, no Ultimate, em x 26, 1 ponto mais para baixo/direita do que eu tinha).
 - Teste simulado novo (`factory.toml`, 3 passos) e 85 testes unitários. Faltam as 12 fábricas que usam químico (compressing, injecting, purifying, infusing).
 
+## 2r. Fábricas de Compressing, Injecting, Purifying e Infusing (mod 0.1.56, o mesmo APK v48, **não testadas no jogo**)
+
+16 blocos (4 níveis × 4 tipos): **todas as 36 fábricas** estão no porte. Cada uma tem as linhas (3/5/7/9) com entrada e saída, o slot do químico
+(com o "+", em 7, 57, que enche o tanque), o slot de carga e **um tanque de químico só para todas as linhas** (grande como o da máquina vezes as
+linhas: 210 por linha no Compressing, Injecting e Purifying; 1000 no Infusing), a barra do tanque embaixo das linhas e o botão Dump.
+Passou no teste simulado (3 linhas do Compressing tirando do mesmo tanque de ósmio) e em 85 testes unitários.
+- Compressing e Infusing deixam a lateral direita tirar o químico do tanque; Injecting e Purifying só aceitam (como `allowExtractingChemical`).
+- Os químicos de Injecting e Purifying são gastos por sorteio (o consumo aleatório do Mekanism), com os upgrades de velocidade e químico.
+- Diferenças que ficam em todas as fábricas: aba de ordenação (Sorting), entrada só aceitar o que tem receita, e a receita de subir de
+  nível não carrega o que a fábrica guarda.
+
 ## 3. NÃO testado no jogo (o usuário não viu)
 
 Tudo isto existe no mod 0.1.2/0.1.3, mas **ninguém viu funcionar**:
