@@ -114,8 +114,14 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 4.7.8 | Hohlraum só entra pelo slot do controlador (não por automação) | ABERTA |
 | 4.7.9 | O formato (grade 5×5, 12 faltando por face) foi lido do código; posições de borda usam o primeiro eixo de borda (a grade é simétrica, deve ser equivalente) | SUPOSIÇÃO |
 
-### 4.8 SPS
-Ainda **não construído** (tarefa #4).
+### 4.8 SPS (mod 0.1.73)
+| # | Diferença | Estado |
+|---|---|---|
+| 4.8.1 | Portas **sem modo** entrada/saída (o original alterna com Shift+clique): todas aceitam polônio e energia e entregam antimatéria | ABERTA |
+| 4.8.2 | Não fere nem mata entidades dentro (`kill`), sem relâmpago nos "experimentos" de mobs, sem advancements | ABERTA |
+| 4.8.3 | Sem animação das bobinas (`SyncableCoilData`) nem efeito visual | LIMITE API |
+| 4.8.4 | Tela simplificada; a energia que as portas recebem é gasta toda no mesmo tick | ABERTA |
+| 4.8.5 | A bobina é virada para a sua porta quando a estrutura se forma (o original usa a orientação ao colocar) | SUPOSIÇÃO |
 
 ## 6. Lasers (mod 0.1.72)
 | # | Diferença | Estado |

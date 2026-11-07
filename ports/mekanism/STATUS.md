@@ -673,3 +673,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ac. Laser e Laser Amplifier (mod 0.1.72)
 `laser.rs`: laser (20 FE/t, energia por trás) e amplificador (limites mín/máx e atraso, botões na tela) disparam em linha até 64 blocos; o amplificador e a Laser Focus Matrix recebem a energia (a matriz esquenta o plasma do Fusion). Diferenças em DIFERENCAS.md seção 6.
+
+### 2ad. SPS (mod 0.1.73)
+`sps.rs`: cubo 7x7x7 arredondado de casing, portas onde a grade permite, bobinas só atrás de portas; a energia das portas transforma polônio em antimatéria (1 000 000 FE por mB de polônio, 1000 mB por mB de antimatéria). Diferenças em DIFERENCAS.md 4.8.

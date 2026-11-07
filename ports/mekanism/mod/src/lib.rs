@@ -26,6 +26,7 @@ mod generators;
 mod laser;
 mod machine;
 mod sawmill;
+mod sps;
 mod sides;
 mod tank;
 mod turbine;
@@ -352,6 +353,7 @@ struct Mekanism {
     fusions: HashMap<(String, [i32; 3]), fusion::Shared>,
     /// The energy lasers delivered to the blocks they hit, until those take it.
     beams: HashMap<(String, [i32; 3]), u64>,
+    spses: HashMap<(String, [i32; 3]), sps::Shared>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
@@ -1395,6 +1397,22 @@ impl ServerMod for Mekanism {
         amp.energy = Some(EnergySpec { capacity: laser::AMPLIFIER_CAPACITY, max_receive: laser::AMPLIFIER_CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
         amp.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(amp);
+        // The SPS: casing and coils only join the structure; the ports take the energy and hold the polonium and the antimatter.
+        for part in [sps::CASING, sps::COIL] {
+            let mut k = kind(part, false);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: sps::GROUP.into() });
+            r = r.block_entity_kind(k);
+        }
+        let mut sport = kind(sps::PORT, true);
+        sport.keep_data = false;
+        sport.multiblock = Some(MultiblockSpec { group: sps::GROUP.into() });
+        sport.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        sport.energy = Some(EnergySpec { capacity: sps::PORT_ENERGY, max_receive: sps::PORT_ENERGY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
+        for (kind_name, side) in [("chemical", FlowSide::Input), ("chemical", FlowSide::Output)] {
+            sport.tanks.push(TankSpec { kind: kind_name.into(), capacity: sps::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
+        }
+        r = r.block_entity_kind(sport);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1444,6 +1462,7 @@ impl ServerMod for Mekanism {
             reactors: HashMap::new(),
             fusions: HashMap::new(),
             beams: HashMap::new(),
+            spses: HashMap::new(),
             laser_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
@@ -1711,6 +1730,8 @@ impl ServerMod for Mekanism {
             self.dynamic_structures(dimension, structures)
         } else if group == induction::GROUP {
             self.matrix_structures(dimension, structures)
+        } else if group == sps::GROUP {
+            self.sps_structures(dimension, structures)
         } else if group == fusion::GROUP {
             self.fusion_structures(dimension, structures)
         } else if group == fission::GROUP {
@@ -1732,6 +1753,10 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let sps_ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(sps::PORT)).collect();
+        if !sps_ports.is_empty() {
+            out.extend(self.run_sps(&sps_ports, tick));
         }
         let laser_parts: Vec<&BlockEntity> = entities
             .iter()
