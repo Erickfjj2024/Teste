@@ -2264,7 +2264,7 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..1b87a8e 100644
+index 783da48..31c0b68 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
 @@ -686,6 +686,33 @@ interface %world {
@@ -2337,7 +2337,15 @@ index 783da48..1b87a8e 100644
      /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
      /// distance reset. `yaw` and `pitch` stay as they are when none. The
      /// move is made after this call returns, before the next tick. An error
-@@ -1081,6 +1130,10 @@ interface server-events {
+@@ -1061,6 +1110,7 @@ interface server-events {
+     /// slots, energy and tanks of the member blocks it chooses.
+     record multiblock-spec {
+         /// The group's name (`mymod:turbine`); the mod's own.
++        /// A block of several groups names them separated by commas.
+         group: string,
+     }
+     record multiblock-member {
+@@ -1081,6 +1131,10 @@ interface server-events {
          /// Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside
          /// the network with a tank of that kind.
          tank(string),
@@ -2348,7 +2356,7 @@ index 783da48..1b87a8e 100644
      }
      /// A cable or a pipe. Transmitters of one medium that touch through faces
      /// both connect through make one network. Every tick, after the mods'
-@@ -1254,7 +1307,7 @@ interface server-events {
+@@ -1254,7 +1308,7 @@ interface server-events {
      /// the use: the hand swings and neither the item's own use nor the
      /// block's runs after it; false leaves it to the game. It is asked at the
      /// moment of the click, so what it asks for through imports is made at the
@@ -3345,7 +3353,7 @@ index 02de080..c5f4b38 100644
          let d = data();
          assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
-index d3024e4..01a3cb5 100644
+index d3024e4..0105c16 100644
 --- a/crates/horizon-mods/src/runtime.rs
 +++ b/crates/horizon-mods/src/runtime.rs
 @@ -58,7 +58,7 @@ pub use server_bindings::{
@@ -3413,7 +3421,32 @@ index d3024e4..01a3cb5 100644
      /// The collision boxes of the block at a position, relative to the
      /// block's corner; `None` where no chunk of that dimension is loaded.
      fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>>;
-@@ -2152,6 +2187,71 @@ impl mod_world::Host for State {
+@@ -1285,9 +1320,12 @@ impl Mods {
+             .flat_map(|r| r.block_entities.iter())
+         {
+             let Some(spec) = &k.multiblock else { continue };
+-            match out.iter_mut().find(|(g, _)| *g == spec.group) {
+-                Some((_, blocks)) => blocks.push(k.block.clone()),
+-                None => out.push((spec.group.clone(), vec![k.block.clone()])),
++            // A block of several groups (a pressure disperser is part of boilers and of turbines) names them separated by commas.
++            for group in spec.group.split(',').map(str::trim).filter(|g| !g.is_empty()) {
++                match out.iter_mut().find(|(g, _)| g == group) {
++                    Some((_, blocks)) => blocks.push(k.block.clone()),
++                    None => out.push((group.to_owned(), vec![k.block.clone()])),
++                }
+             }
+         }
+         out
+@@ -1308,7 +1346,7 @@ impl Mods {
+                 .is_some_and(|r| {
+                     r.block_entities
+                         .iter()
+-                        .any(|k| k.multiblock.as_ref().is_some_and(|m| m.group == group))
++                        .any(|k| k.multiblock.as_ref().is_some_and(|m| m.group.split(',').any(|g| g.trim() == group)))
+                 })
+         }) else {
+             return Vec::new();
+@@ -2152,6 +2190,71 @@ impl mod_world::Host for State {
          });
          Ok(())
      }
@@ -3485,7 +3518,7 @@ index d3024e4..01a3cb5 100644
      fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.block(&dimension, x, y, z)
-@@ -2160,6 +2260,14 @@ impl mod_world::Host for State {
+@@ -2160,6 +2263,14 @@ impl mod_world::Host for State {
          let view = self.world.lock().ok()?;
          view.as_ref()?.biome(&dimension, x, y, z)
      }
@@ -3500,7 +3533,7 @@ index d3024e4..01a3cb5 100644
      fn get_collision(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.collision(&dimension, x, y, z)
-@@ -2589,6 +2697,13 @@ impl player_control::Host for State {
+@@ -2589,6 +2700,13 @@ impl player_control::Host for State {
              .find(|(id, _)| *id == player)
              .map(|(_, m)| m.clone())
      }
@@ -4195,7 +4228,7 @@ index 151d098..e390609 100644
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..f563ecd 100644
+index 57a0edc..19f2ec4 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -4243,6 +4276,15 @@ index 57a0edc..f563ecd 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+@@ -977,7 +998,7 @@ A block of a multiblock group. The loaded blocks of one group that touch through
+ 
+ | Field | Type | |
+ | --- | --- | --- |
+-| `group` | `string` | The group's name (`mymod:turbine`); the mod's own. |
++| `group` | `string` | The group's name (`mymod:turbine`); the mod's own. A block of several groups names them separated by commas. |
+ 
+ ### record `multiblock-member`
+ 
 @@ -1004,6 +1025,7 @@ What a transmitter block carries.
  | --- | --- | --- |
  | `energy` |  | Energy: the blocks beside the network with an `energy-spec`. |

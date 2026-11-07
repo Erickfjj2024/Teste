@@ -998,7 +998,7 @@ A block of a multiblock group. The loaded blocks of one group that touch through
 
 | Field | Type | |
 | --- | --- | --- |
-| `group` | `string` | The group's name (`mymod:turbine`); the mod's own. |
+| `group` | `string` | The group's name (`mymod:turbine`); the mod's own. A block of several groups names them separated by commas. |
 
 ### record `multiblock-member`
 

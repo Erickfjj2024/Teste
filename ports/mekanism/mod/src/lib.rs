@@ -25,6 +25,7 @@ mod machine;
 mod sawmill;
 mod sides;
 mod tank;
+mod turbine;
 mod upgrades;
 mod worldgen;
 
@@ -343,6 +344,9 @@ struct Mekanism {
     /// The thermal evaporation plants, and the recipes they run.
     plants: HashMap<(String, [i32; 3]), evaporation::Plant>,
     boilers: HashMap<(String, [i32; 3]), boiler::Boiler>,
+    turbines: HashMap<(String, [i32; 3]), turbine::Turbine>,
+    /// The blades players are putting on or taking off rotors.
+    blades: Vec<turbine::BladeRequest>,
     evaporating: HashMap<String, (u64, String, u64)>,
     matrix_given: HashMap<(String, [i32; 3]), u64>,
     /// What each fluidic plenisher knows of its work.
@@ -1299,7 +1303,9 @@ impl ServerMod for Mekanism {
         for part in [boiler::CASING, boiler::DISPERSER, boiler::ELEMENT] {
             let mut k = kind(part, false);
             k.keep_data = false;
-            k.multiblock = Some(MultiblockSpec { group: boiler::GROUP.into() });
+            // The pressure disperser is part of boilers and of turbines.
+            let group = if part == boiler::DISPERSER { format!("{},{}", boiler::GROUP, turbine::GROUP) } else { boiler::GROUP.to_owned() };
+            k.multiblock = Some(MultiblockSpec { group });
             r = r.block_entity_kind(k);
         }
         let mut bv = kind(boiler::VALVE, true);
@@ -1310,6 +1316,29 @@ impl ServerMod for Mekanism {
             bv.tanks.push(TankSpec { kind: kind_name.into(), capacity: boiler::SPEC_CAPACITY, max_rate: boiler::VALVE_RATE, faces: vec![side; 6] });
         }
         r = r.block_entity_kind(bv);
+        // The industrial turbine: casing, dispersers (also the boiler's), the complex, the coils and the condensers only join the structure; the rotors
+        // hold their blades in a slot; the valves hold the steam and the energy, the vents the water.
+        for (part, ticks) in [(turbine::CASING, false), (turbine::COMPLEX, false), (turbine::COIL, false), (turbine::CONDENSER, false), (turbine::ROTOR, true)] {
+            let mut k = kind(part, ticks);
+            k.keep_data = false;
+            k.multiblock = Some(MultiblockSpec { group: turbine::GROUP.into() });
+            if part == turbine::ROTOR {
+                k.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: false });
+            }
+            r = r.block_entity_kind(k);
+        }
+        let mut tv = kind(turbine::VALVE, true);
+        tv.keep_data = false;
+        tv.multiblock = Some(MultiblockSpec { group: turbine::GROUP.into() });
+        tv.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        tv.energy = Some(EnergySpec { capacity: 1 << 40, max_receive: 0, max_extract: 1 << 40, faces: vec![FlowSide::Output; 6] });
+        tv.tanks.push(TankSpec { kind: "chemical".into(), capacity: turbine::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![FlowSide::Input; 6] });
+        r = r.block_entity_kind(tv);
+        let mut tvent = kind(turbine::VENT, true);
+        tvent.keep_data = false;
+        tvent.multiblock = Some(MultiblockSpec { group: turbine::GROUP.into() });
+        tvent.tanks.push(TankSpec { kind: "fluid".into(), capacity: turbine::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![FlowSide::Output; 6] });
+        r = r.block_entity_kind(tvent);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1355,6 +1384,8 @@ impl ServerMod for Mekanism {
             matrices: HashMap::new(),
             plants: HashMap::new(),
             boilers: HashMap::new(),
+            turbines: HashMap::new(),
+            blades: Vec::new(),
             evaporating: HashMap::new(),
             matrix_given: HashMap::new(),
             plenishers: HashMap::new(),
@@ -1439,6 +1470,20 @@ impl ServerMod for Mekanism {
                 .entry((player.dimension.clone(), pos.x, pos.y, pos.z))
                 .or_default()
                 .push((player.id.clone(), k, stack.count, slot));
+            return true;
+        }
+        if stack.item == turbine::BLADE {
+            // `BlockTurbineRotor.useItemOn`: a blade on a rotor puts it on (sneaking: takes one off, into the stack).
+            let Some(pos) = pos else { return false };
+            let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
+            if !block.starts_with(turbine::ROTOR) {
+                return false;
+            }
+            let add = !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+            let slot = player_items::get_inventory(&player.id)
+                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
+                .map_or(0, |s| s as u32);
+            self.blades.push(turbine::BladeRequest { dimension: player.dimension.clone(), pos, player: player.id.clone(), slot, add });
             return true;
         }
         if stack.item != CONFIGURATOR {
@@ -1592,6 +1637,8 @@ impl ServerMod for Mekanism {
             self.dynamic_structures(dimension, structures)
         } else if group == induction::GROUP {
             self.matrix_structures(dimension, structures)
+        } else if group == turbine::GROUP {
+            self.turbine_structures(dimension, structures)
         } else if group == boiler::GROUP {
             self.boiler_structures(dimension, structures)
         } else if group == evaporation::GROUP {
@@ -1607,6 +1654,13 @@ impl ServerMod for Mekanism {
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
+        }
+        let turbine_parts: Vec<&BlockEntity> = entities
+            .iter()
+            .filter(|e| matches!(e.state.split('[').next(), Some(turbine::VALVE | turbine::VENT | turbine::ROTOR)))
+            .collect();
+        if !turbine_parts.is_empty() || !self.blades.is_empty() {
+            out.extend(self.run_turbine(&turbine_parts, tick));
         }
         let boiler_valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(boiler::VALVE)).collect();
         if !boiler_valves.is_empty() {
