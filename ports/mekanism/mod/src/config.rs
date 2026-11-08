@@ -162,20 +162,243 @@ impl ToolMode {
 /// The data component the mode is kept in, as SNBT (`{"mekanism:configurator_mode":3}`).
 pub const MODE_COMPONENT: &str = "mekanism:configurator_mode";
 
+/// Skips whitespace in `text` from `i`.
+fn skip_ws(text: &str, i: &mut usize) {
+    while text[*i..].starts_with(|c: char| c.is_whitespace()) {
+        *i += text[*i..].chars().next().map_or(0, |c| c.len_utf8());
+    }
+}
+
+/// Skips a string starting at `i` (either quote), honouring backslash escapes; whether it closed. The string's
+/// content is not decoded here: skipping only needs its end.
+fn skip_string(text: &str, i: &mut usize) -> bool {
+    let Some(quote) = text[*i..].chars().next() else { return false };
+    if quote != '"' && quote != '\'' {
+        return false;
+    }
+    *i += 1;
+    let mut chars = text[*i..].char_indices();
+    while let Some((at, c)) = chars.next() {
+        if c == '\\' {
+            chars.next();
+            continue;
+        }
+        if c == quote {
+            *i += at + 1;
+            return true;
+        }
+    }
+    false
+}
+
+/// The unescaped content of a string's raw inner text (no quotes).
+fn unescape(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('u') => {
+                let hex: String = chars.by_ref().take(4).collect();
+                u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).map_or_else(|| out.push_str(&hex), |c| out.push(c));
+            }
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Parses a key at `i` (quoted or bare); `i` ends past it.
+fn parse_key(text: &str, i: &mut usize) -> Option<String> {
+    skip_ws(text, i);
+    match text[*i..].chars().next()? {
+        '"' | '\'' => {
+            let start = *i + 1;
+            if !skip_string(text, i) {
+                return None;
+            }
+            Some(unescape(&text[start..*i - 1]))
+        }
+        _ => {
+            let start = *i;
+            while let Some(c) = text[*i..].chars().next() {
+                if c.is_alphanumeric() || matches!(c, '_' | '.' | '-' | ':' | '+') {
+                    *i += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if *i == start { None } else { Some(text[start..*i].to_owned()) }
+        }
+    }
+}
+
+/// Skips one SNBT value at `i`: a string, a compound or list (nesting honoured, typed arrays like `[I;1,2]` included)
+/// or a bare value up to the next comma or closing brace.
+fn skip_value(text: &str, i: &mut usize) -> bool {
+    skip_ws(text, i);
+    match text[*i..].chars().next() {
+        Some('"') | Some('\'') => skip_string(text, i),
+        Some('{') | Some('[') => {
+            let open = text[*i..].chars().next().unwrap_or('{');
+            let close = if open == '{' { '}' } else { ']' };
+            let mut depth = 0;
+            while let Some(c) = text[*i..].chars().next() {
+                if c == '"' || c == '\'' {
+                    if !skip_string(text, i) {
+                        return false;
+                    }
+                } else {
+                    *i += c.len_utf8();
+                    if c == open {
+                        depth += 1;
+                    } else if c == close {
+                        depth -= 1;
+                        if depth == 0 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+        Some(_) => {
+            while let Some(c) = text[*i..].chars().next() {
+                if c == ',' || c == '}' || c == ']' {
+                    break;
+                }
+                *i += c.len_utf8();
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// A component map split into its top-level entries: each key (unquoted) and the byte range of its value, so values
+/// the mode does not touch round-trip byte-for-byte. The split is structural — strings, escapes and nesting are
+/// honoured — so a key named inside another component's string value is never mistaken for the component itself, as
+/// a substring search could. `None` when the text is not a compound.
+fn split_components(components: &str) -> Option<Vec<(String, std::ops::Range<usize>)>> {
+    let mut i = 0;
+    let mut entries = Vec::new();
+    skip_ws(components, &mut i);
+    if components[i..].chars().next() != Some('{') {
+        return None;
+    }
+    i += 1;
+    loop {
+        skip_ws(components, &mut i);
+        match components[i..].chars().next() {
+            Some('}') => {
+                i += 1;
+                skip_ws(components, &mut i);
+                return if i == components.len() { Some(entries) } else { None };
+            }
+            None => return None,
+            _ => {}
+        }
+        let key = parse_key(components, &mut i)?;
+        skip_ws(components, &mut i);
+        if components[i..].chars().next() != Some(':') {
+            return None;
+        }
+        i += 1;
+        skip_ws(components, &mut i);
+        let start = i;
+        if !skip_value(components, &mut i) {
+            return None;
+        }
+        let mut end = i;
+        while end > start && components.as_bytes()[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        entries.push((key, start..end));
+        skip_ws(components, &mut i);
+        match components[i..].chars().next() {
+            Some(',') => i += 1,
+            Some('}') => {}
+            _ => return None,
+        }
+    }
+}
+
+/// Whether two component strings are the same stack's: equal once the mode component is set aside (the game may
+/// already have written a mode into the copy in the inventory). "" and "{}" both mean no components.
+pub fn same_components(a: &str, b: &str) -> bool {
+    let bare = |c: &str| c.trim().is_empty() || c.trim() == "{}";
+    match (split_components(a), split_components(b)) {
+        (Some(ea), Some(eb)) => {
+            let mut ka: Vec<(&str, &str)> = ea.iter().filter(|(k, _)| k != MODE_COMPONENT).map(|(k, r)| (k.as_str(), a[r.clone()].trim())).collect();
+            let mut kb: Vec<(&str, &str)> = eb.iter().filter(|(k, _)| k != MODE_COMPONENT).map(|(k, r)| (k.as_str(), b[r.clone()].trim())).collect();
+            ka.sort_unstable();
+            kb.sort_unstable();
+            ka == kb
+        }
+        _ => bare(a) && bare(b) || a.trim() == b.trim(),
+    }
+}
+
 /// The mode a stack's components hold; items when none is written (a fresh configurator).
 pub fn mode_of(components: &str) -> ToolMode {
+    let Some(entries) = split_components(components) else {
+        return mode_of_unparsed(components);
+    };
+    for (key, range) in entries {
+        if key == MODE_COMPONENT {
+            return components[range].trim().parse().map_or(ToolMode::Items, ToolMode::from_number);
+        }
+    }
+    ToolMode::Items
+}
+
+/// The old substring read, kept only for components the structural parser rejects (malformed text the game should not
+/// produce): the mode is a bare integer after the key.
+fn mode_of_unparsed(components: &str) -> ToolMode {
     let Some(at) = components.find(MODE_COMPONENT) else { return ToolMode::Items };
     let rest = &components[at + MODE_COMPONENT.len()..];
     let digits: String = rest.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().map_or(ToolMode::Items, ToolMode::from_number)
 }
 
-/// The components of a stack whose mode is `mode`, keeping the other components it has.
+/// The components of a stack whose mode is `mode`, keeping the other components it has, byte-for-byte.
 pub fn with_mode(components: &str, mode: ToolMode) -> String {
     let pair = format!("\"{MODE_COMPONENT}\":{}", mode as u8);
     if components.trim().is_empty() || components.trim() == "{}" {
         return format!("{{{pair}}}");
     }
+    if let Some(entries) = split_components(components) {
+        for (key, range) in &entries {
+            if key == MODE_COMPONENT {
+                let mut out = components.to_owned();
+                out.replace_range(range.clone(), &(mode as u8).to_string());
+                return out;
+            }
+        }
+        // No such component: add it before the closing brace.
+        let at = components.rfind('}').unwrap_or(components.len());
+        let mut out = components.to_owned();
+        if entries.is_empty() {
+            out.insert_str(at, &pair);
+        } else {
+            out.insert_str(at, &format!(",{pair}"));
+        }
+        return out;
+    }
+    with_mode_unparsed(components, mode)
+}
+
+/// The old substring write, kept only for components the structural parser rejects: replace the mode's digits when
+/// the key is there, else add the pair before the closing brace.
+fn with_mode_unparsed(components: &str, mode: ToolMode) -> String {
+    let pair = format!("\"{MODE_COMPONENT}\":{}", mode as u8);
     if let Some(key) = components.find(MODE_COMPONENT) {
         let rest = &components[key + MODE_COMPONENT.len()..];
         if let Some(colon) = rest.find(':') {
@@ -190,7 +413,6 @@ pub fn with_mode(components: &str, mode: ToolMode) -> String {
             }
         }
     }
-    // No such component: add it before the closing brace.
     match components.rfind('}') {
         Some(at) => {
             let mut out = components.to_owned();
@@ -895,6 +1117,21 @@ mod tests {
             "{\"mekanism:configurator_mode\":7,\"minecraft:damage\":3}"
         );
         assert_eq!(mode_of(&with_mode("{\"minecraft:damage\":3}", ToolMode::Heat)), ToolMode::Heat);
+        // The split is structural, not a substring search: the mode's name inside another component's string value
+        // is not a mode, and nested compounds, lists and single quotes survive a write byte-for-byte.
+        assert_eq!(mode_of("{\"minecraft:lore\":\"mekanism:configurator_mode 5\"}"), ToolMode::Items);
+        assert_eq!(mode_of("{\"minecraft:lore\":[\"mekanism:configurator_mode: 7\"]}"), ToolMode::Items);
+        assert_eq!(
+            with_mode("{'minecraft:enchantments':[{id:\"minecraft:sharpness\",lvl:3s}],\"minecraft:damage\":3}", ToolMode::Heat),
+            "{'minecraft:enchantments':[{id:\"minecraft:sharpness\",lvl:3s}],\"minecraft:damage\":3,\"mekanism:configurator_mode\":4}"
+        );
+        assert_eq!(mode_of("{mekanism:configurator_mode:5}"), ToolMode::Empty);
+        // Two component strings are the same stack's when they only differ in the mode (or in nothing at all).
+        assert!(same_components("{\"mekanism:configurator_mode\":3}", "{\"mekanism:configurator_mode\":5}"));
+        assert!(same_components("{\"minecraft:damage\":3}", "{\"minecraft:damage\":3,\"mekanism:configurator_mode\":1}"));
+        assert!(same_components("", "{}"));
+        assert!(!same_components("{\"minecraft:damage\":3}", "{\"minecraft:damage\":4}"));
+        assert!(!same_components("{\"minecraft:damage\":3}", "{\"minecraft:unbreaking\":1}"));
     }
 
     #[test]

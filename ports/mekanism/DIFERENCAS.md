@@ -256,11 +256,12 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 18.1 | Sem indicador de modo por modelo/tooltip/HUD: o motor desenha um modelo por item (o original troca por predicado `mekanism:mode`) e o `hud` só existe no mundo cliente, não no do mod servidor; a troca de modo é anunciada no chat | LIMITE API |
 | 18.2 | A chave inglesa desmonta com `mine-block` e os drops caem onde o bloco estava (o original põe o bloco no inventário do jogador); sem API para pôr itens no inventário do jogador | LIMITE API |
 | 18.3 | A sensibilidade a redstone dos transmissores e a cor do Logistical Transporter são guardadas mas não têm efeito no jogo (as redes movem pelas faces dos vizinhos; sem representação de cor na API) | LIMITE API |
-| 18.4 | O modo de porta/válvula de multibloco zera quando a estrutura é encontrada de novo (o byte de modo vive nos dados da porta, que a validação reescreve) | ABERTA |
+| 18.4 | O modo de porta/válvula de multibloco zerava quando a estrutura era encontrada de novo (o byte de modo vive nos dados da porta, que a validação reescreve, e `multiblock-changed` não entrega os dados do membro): corrigido — o port lembra o modo de cada porta/válvula no tick e o reaplica na revalidação; o porto da fusão também passa a dizer as faces nos dois modos (antes só no modo output, então voltar para input deixava as faces presas em output) e nasce em input, como os outros portos | CORRIGIDO no código (sem teste no jogo) |
 | 18.5 | A troca de modo é agachar+usar no ar (o original usa menu radial N / Shift+scroll, que não existe no Android) | LIMITE API |
 | 18.6 | A receita do configurator (ferro/ósmio/aço) existe no datagen 1.21.x, mas não foi confirmada no mod construído (o `convert.py` não roda até o fim contra o checkout 1.21.x; precisa do 26.3 + fork + cargo-horizon-mod) | ABERTA |
 | 18.7 | O truque criativo da Laser Focus Matrix (plasma a 1 bilhão) só funciona com o configurator; com a mão vazia, como no original, não há uso no port | ABERTA |
 | 18.8 | Não existem no port: Thermodynamic Conductor, Restrictive Transporter e Diversion Transporter (sem modo de desvio) | ABERTA |
+| 18.9 | O Empty invoca cada stack como `minecraft:item` (`entities::summon`) e só esvazia os slots quando o jogo confirma o drop (`entity-spawned`); um drop que o jogo não consegue criar fica na máquina em vez de ser destruído, como o truque antigo dos slots extras fazia. Os drops levam só item e quantidade, não os componentes do stack; se `minecraft:item` não invocar com esse NBT no jogo, nada se perde, mas nada sai da máquina — confirmar no jogo antes de usar com itens de valor | ABERTA |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

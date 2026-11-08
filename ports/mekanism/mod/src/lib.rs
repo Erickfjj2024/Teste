@@ -44,8 +44,8 @@ mod worldgen;
 
 use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, GameMode, ItemStack, Tank, TankSpec,
-    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, player_items, players,
-    recipe_types, serde_json, world,
+    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, entities, player_control, player_items,
+    players, recipe_types, serde_json, world,
 };
 use config::{Config, Data, Layout, ToolMode, Transmission};
 use generators::GenKind;
@@ -328,9 +328,23 @@ struct Mekanism {
     conts: HashMap<&'static str, continuous::Book>,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
+    /// Empties waiting for the game to confirm their drops exist, by block and by summon ticket, and empties whose
+    /// drops all spawned, waiting for the block's next tick to clear the slots they came from (see `empty_block`).
+    empty: HashMap<EmptyKey, EmptyPending>,
+    empty_tickets: HashMap<u64, EmptyTicket>,
+    empty_ready: HashMap<EmptyKey, (Vec<(usize, String, u32)>, u64)>,
+    /// The mode of each multiblock port and valve, by position: the mode byte (false/0 takes in) the port's own tick
+    /// last saw. `multiblock-changed` delivers members without their data, so the structures functions cannot read
+    /// the mode from the member they are rewriting — without this memory every revalidation reset the mode to input
+    /// (the mode byte lives after the port's data, which the validation rewrites). Refreshed every tick from the
+    /// port's own data, so a port placed where another stood does not keep the old mode for long.
+    port_modes: HashMap<(String, i32, i32, i32), u8>,
     /// The mode each player's configurator was last in: a fallback for a stack the game has not written the mode back
-    /// into yet. The mode lives in the item's components (Mekanism keeps it in the item); this map is only a cache.
+    /// into yet. The mode lives in the item's components (Mekanism keeps it in the item); this map is only a cache,
+    /// never saved: a mode only survives a restart when the component write landed (see `write_tool_mode`).
     tool: HashMap<String, ToolMode>,
+    /// Mode writes waiting to be checked on a later tick (see `check_tool_writes`).
+    tool_writes: Vec<ToolWrite>,
     /// The machines whose item faces and eject were given to the game since the mod started: a machine loaded from the
     /// world or from an item gives them again once.
     applied: HashSet<(String, i32, i32, i32)>,
@@ -417,6 +431,47 @@ struct Click {
     /// The configurator's mode when clicked, as its item's components said.
     mode: ToolMode,
     tick: u64,
+}
+
+/// A block an EMPTY is emptying: its dimension and position.
+type EmptyKey = (String, i32, i32, i32);
+
+/// An EMPTY waiting for the game to say its drops exist: the player to tell, the summon tickets still unanswered,
+/// the slots whose drops were confirmed, and how many stacks never got summoned or never spawned (they stay in the
+/// machine instead of being destroyed).
+struct EmptyPending {
+    player: String,
+    tickets: HashSet<u64>,
+    confirmed: Vec<(usize, String, u32)>,
+    failed: u32,
+    unsummoned: u32,
+}
+
+/// One summoned drop of an EMPTY: the block it came from and the slot, item and count it holds.
+struct EmptyTicket {
+    key: EmptyKey,
+    slot: usize,
+    item: String,
+    count: u32,
+}
+
+/// A mode write waiting to be checked: the player, the hotbar slot it went to, the mode, the stack's components
+/// before the write (to find the configurator again if it moved), the tick it may be checked from, and how many
+/// times it was already retried.
+struct ToolWrite {
+    player: String,
+    slot: u32,
+    mode: ToolMode,
+    components: String,
+    due: u64,
+    attempts: u8,
+}
+
+/// The SNBT of a `minecraft:item` holding `stack`: what `/summon` takes, `{Item:{id:"...",Count:Nb}}`. Only the item
+/// and the count: the stack's data components do not survive the drop (see `empty_block`).
+fn drop_nbt(stack: &ItemStack) -> String {
+    let id = stack.item.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("{{Item:{{id:\"{id}\",Count:{}b}}}}", stack.count)
 }
 
 const CONFIGURATOR: &str = "mekanism:configurator";
@@ -788,7 +843,7 @@ impl Mekanism {
             match c.mode {
                 ToolMode::Empty => {
                     if let Some(e) = entity_at(entities, &c) {
-                        out.extend(self.empty_block(e));
+                        self.empty_block(e, &c.player);
                     }
                 }
                 ToolMode::Rotate => {
@@ -825,29 +880,119 @@ impl Mekanism {
     }
 
     /// Empties a block's item slots into the world (`ItemConfigurator` empty): the original drops every non-empty slot
-    /// and leaves energy, tanks and chemicals alone. The extra slots past the container's are dropped by the game, so
-    /// the emptied slots go out with the old stacks after them; the tick's copy is emptied too, so the machine does
-    /// not work from its full slots this tick.
-    fn empty_block(&mut self, e: &mut BlockEntity) -> Option<BlockEntityUpdate> {
-        let kept: Vec<Option<ItemStack>> = e.items.iter().filter(|s| s.is_some()).cloned().collect();
-        if kept.is_empty() {
-            return None;
+    /// and leaves energy, tanks and chemicals alone.
+    ///
+    /// Each stack is summoned as a `minecraft:item` at the block, one `entities::summon` per stack, and the machine's
+    /// slots are only cleared once the game answers every ticket with an entity id (`entity_spawned`, the tick after;
+    /// see `apply_empty_ready`). That wait is what makes the summon safe: the old trick — extra slots past the
+    /// container's in the `BlockEntityUpdate`, which the WIT calls "dropped" — does not drop them at all, the game
+    /// truncates the slots and the items are destroyed (fork patch 0002, `resize`). A drop the game cannot spawn
+    /// stays in the machine instead, and the player is told. The drops carry only the item and the count, not the
+    /// stack's data components; a stack the game has not confirmed is never cleared.
+    ///
+    /// Whether `minecraft:item` really spawns with this NBT is NOT verified by reading: the WIT says `summon`
+    /// spawns "any entity of `kind`", the host only checks the kind's shape and the NBT's size, and the game's own
+    /// SNBT parser reads the compound — but the native spawn itself is outside the patches. If it does not spawn,
+    /// the tickets answer with no id and nothing is lost, only left in the machine: confirm in the game before
+    /// trusting EMPTY with anything valuable.
+    fn empty_block(&mut self, e: &BlockEntity, player: &str) {
+        let key: EmptyKey = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        if self.empty.contains_key(&key) {
+            return; // An empty is already on its way for this block: summoning again would drop the stacks twice.
         }
-        let mut items = vec![None; e.items.len()];
-        items.extend(kept);
-        e.items = vec![None; e.items.len()];
-        Some(BlockEntityUpdate {
-            dimension: e.dimension.clone(),
-            pos: e.pos,
-            data: e.data.clone(),
-            items: Some(items),
-            energy: None,
-            energy_faces: None,
-            tanks: None,
-            tank_faces: None,
-            menu_data: None,
-            transmitter_faces: None,
-        })
+        let kept: Vec<(usize, ItemStack)> = e
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_ref().filter(|s| s.count > 0).map(|s| (i, s.clone())))
+            .collect();
+        if kept.is_empty() {
+            return;
+        }
+        // The host allows at most 64 entity requests in a call and 8192 bytes of NBT per summon: check both before
+        // summoning anything, so a failure cannot leave half the stacks dropped and the other half in the machine.
+        // A machine holds at most 27 stacks (the miner), so this is not expected to trigger.
+        if kept.len() > 64 || kept.iter().any(|(_, s)| drop_nbt(s).len() > 8192) {
+            let _ = players::tell(player, "Could not empty: too many item stacks");
+            return;
+        }
+        let mut tickets: Vec<(u64, usize, String, u32)> = Vec::new();
+        let mut unsummoned = 0;
+        for (slot, stack) in &kept {
+            match entities::summon(
+                &e.dimension,
+                "minecraft:item",
+                e.pos.x as f64 + 0.5,
+                e.pos.y as f64 + 0.5,
+                e.pos.z as f64 + 0.5,
+                &drop_nbt(stack),
+            ) {
+                Ok(ticket) => tickets.push((ticket, *slot, stack.item.clone(), stack.count)),
+                Err(_) => {
+                    // The checks above rule out every failure the host documents, so this is not expected; the stacks
+                    // summoned so far still drop (they are registered below), the rest stay in the machine.
+                    unsummoned = kept.len() as u32 - tickets.len() as u32;
+                    break;
+                }
+            }
+        }
+        if tickets.is_empty() {
+            if unsummoned > 0 {
+                let _ = players::tell(player, "Could not empty: the drops could not be summoned");
+            }
+            return;
+        }
+        for (ticket, slot, item, count) in &tickets {
+            self.empty_tickets.insert(*ticket, EmptyTicket { key: key.clone(), slot: *slot, item: item.clone(), count: *count });
+        }
+        self.empty.insert(
+            key,
+            EmptyPending { player: player.to_owned(), tickets: tickets.iter().map(|(t, _, _, _)| *t).collect(), confirmed: Vec::new(), failed: 0, unsummoned },
+        );
+    }
+
+    /// Clears the slots of empties whose drops the game confirmed, on the blocks' next tick: only a slot that still
+    /// holds the stack that was dropped is cleared (the machine may have worked on in the meantime, and what is there
+    /// now must not be destroyed). The tick's copy is cleared too, so the machine's own update this tick is computed
+    /// from the emptied slots instead of resurrecting them. Empties of blocks that are gone are forgotten after a
+    /// while.
+    fn apply_empty_ready(&mut self, entities: &mut [BlockEntity]) -> Vec<BlockEntityUpdate> {
+        let mut out = Vec::new();
+        let mut done: Vec<EmptyKey> = Vec::new();
+        for (key, (slots, at)) in &self.empty_ready {
+            let Some(e) = entities.iter_mut().find(|e| e.dimension == key.0 && (e.pos.x, e.pos.y, e.pos.z) == (key.1, key.2, key.3)) else {
+                if self.now.saturating_sub(*at) > 100 {
+                    done.push(key.clone());
+                }
+                continue;
+            };
+            let mut changed = false;
+            for (slot, item, count) in slots {
+                if e.items.get(*slot).and_then(|s| s.as_ref()).is_some_and(|s| s.item == *item && s.count == *count) {
+                    e.items[*slot] = None;
+                    changed = true;
+                }
+            }
+            if changed {
+                out.push(BlockEntityUpdate {
+                    dimension: e.dimension.clone(),
+                    pos: e.pos,
+                    data: e.data.clone(),
+                    items: Some(e.items.clone()),
+                    energy: None,
+                    energy_faces: None,
+                    tanks: None,
+                    tank_faces: None,
+                    menu_data: None,
+                    transmitter_faces: None,
+                });
+            }
+            done.push(key.clone());
+        }
+        for key in done {
+            self.empty_ready.remove(&key);
+        }
+        out
     }
 
     /// Turns a cube's front to `target` (a face of the world), keeping its energy and item modes.
@@ -1226,6 +1371,103 @@ impl Mekanism {
         }
         changed
     }
+
+    /// The mode of the configurator in `stack`: its components first; the remembered one for the player when the stack
+    /// carries none (a stack the game has not written the mode back into yet).
+    fn tool_mode(&self, player: &str, stack: &ItemStack) -> ToolMode {
+        if stack.components.contains(config::MODE_COMPONENT) {
+            config::mode_of(&stack.components)
+        } else {
+            self.tool.get(player).copied().unwrap_or(ToolMode::Items)
+        }
+    }
+
+    /// The hotbar slot holding `stack`: the first with the same item and count whose components are the same stack's
+    /// (the mode aside — the game may already have written a mode into it), and the components the inventory holds
+    /// for it. The held slot is not told, so two identical fresh configurators cannot be told apart and the first is
+    /// taken. None when the stack is not in the hotbar: the caller must not write anywhere else — writing to slot 0
+    /// by default destroyed whatever was there and duplicated the tool.
+    fn find_hotbar_slot(player: &str, stack: &ItemStack) -> Option<(u32, String)> {
+        let inv = player_items::get_inventory(player)?;
+        inv.iter().take(9).enumerate().find_map(|(i, s)| {
+            s.as_ref()
+                .filter(|s| s.item == stack.item && s.count == stack.count && config::same_components(&stack.components, &s.components))
+                .map(|s| (i as u32, s.components.clone()))
+        })
+    }
+
+    /// Writes the mode into the configurator the player holds, so it survives a restart and travels with the item.
+    /// The write is checked on a later tick (`check_tool_writes`): the inventory is read as of the last server tick
+    /// and `set-slot` writes a whole stack blind, so a write to a slot the player has just changed would destroy
+    /// what is there now and duplicate the tool. The mode also lives in `tool`, the per-player cache, for the stack
+    /// the game has not written back yet.
+    fn write_tool_mode(&mut self, player: &Player, stack: &ItemStack, mode: ToolMode) {
+        let Some((slot, components)) = Self::find_hotbar_slot(&player.id, stack) else {
+            return; // Not in the hotbar (an off-hand configurator, say): never guess a slot.
+        };
+        let _ = player_items::set_slot(
+            &player.id,
+            slot,
+            Some(&ItemStack { item: stack.item.clone(), count: stack.count, components: config::with_mode(&components, mode) }),
+        );
+        self.tool_writes.push(ToolWrite {
+            player: player.id.clone(),
+            slot,
+            mode,
+            components: stack.components.clone(),
+            due: self.now + 2,
+            attempts: 0,
+        });
+    }
+
+    /// Checks the mode writes of `write_tool_mode` once their tick has come: the write lands after the call returns,
+    /// before the next tick, so a re-read then says whether the configurator in the slot carries the mode. A write
+    /// that did not land is tried once more where the configurator now is, if it is still in the inventory; otherwise
+    /// the player is told the mode was not saved (it still holds for this session, in the per-player cache).
+    fn check_tool_writes(&mut self, tick: u64) {
+        let mut i = 0;
+        while i < self.tool_writes.len() {
+            if tick < self.tool_writes[i].due {
+                i += 1;
+                continue;
+            }
+            let w = self.tool_writes.remove(i);
+            let inv = player_items::get_inventory(&w.player);
+            let landed = inv
+                .as_ref()
+                .and_then(|inv| inv.get(w.slot as usize))
+                .and_then(|s| s.as_ref())
+                .is_some_and(|s| s.item == CONFIGURATOR && s.components.contains(config::MODE_COMPONENT) && config::mode_of(&s.components) == w.mode);
+            if landed {
+                continue;
+            }
+            // The configurator moved, or the write never landed: find it anywhere in the inventory and write the
+            // mode there — once. The slot it was in may hold something else now, and that must not be touched.
+            let found = inv.as_ref().and_then(|inv| {
+                inv.iter().enumerate().find_map(|(i, s)| {
+                    s.as_ref()
+                        .filter(|s| s.item == CONFIGURATOR && config::same_components(&w.components, &s.components))
+                        .map(|s| (i as u32, s.components.clone(), s.count))
+                })
+            });
+            let Some((slot, components, count)) = found else {
+                let _ = players::tell(&w.player, "Configure State was not saved to the configurator; it may not survive a restart");
+                continue;
+            };
+            if w.attempts > 0 {
+                // Already retried once: do not chase the item around the inventory. The per-player cache still
+                // holds the mode for this session.
+                let _ = players::tell(&w.player, "Configure State was not saved to the configurator; it may not survive a restart");
+                continue;
+            }
+            let _ = player_items::set_slot(
+                &w.player,
+                slot,
+                Some(&ItemStack { item: CONFIGURATOR.to_owned(), count, components: config::with_mode(&components, w.mode) }),
+            );
+            self.tool_writes.push(ToolWrite { player: w.player, slot, mode: w.mode, components: w.components, due: tick + 2, attempts: w.attempts + 1 });
+        }
+    }
 }
 
 /// The face a new cube at `e` takes as its front: it looks at the nearest player (within 12 blocks, in its
@@ -1595,8 +1837,9 @@ impl ServerMod for Mekanism {
             fp.tanks.push(TankSpec { kind: kind_name.into(), capacity: fission::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
         }
         r = r.block_entity_kind(fp);
-        // The fusion reactor: frames, adapters, focus matrices and glass only join the structure; the ports hold its five tanks and give the
-        // energy; the controller holds the hohlraum slot and the screen.
+        // The fusion reactor: frames, adapters, focus matrices and glass only join the structure; the ports hold its five tanks; the
+        // controller holds the hohlraum slot and the screen. A fresh port takes in (its mode byte defaults to input), as the SPS and
+        // fission ports do: energy and steam only leave in output mode (`run_fusion` says so on every tick).
         for part in [fusion::FRAME, fusion::ADAPTER, fusion::MATRIX, fusion::GLASS] {
             // The focus matrix ticks to take the energy lasers deliver.
             let mut k = kind(part, part == fusion::MATRIX);
@@ -1607,8 +1850,8 @@ impl ServerMod for Mekanism {
         let mut fport = kind(fusion::PORT, true);
         fport.keep_data = false;
         fport.multiblock = Some(MultiblockSpec { group: fusion::GROUP.into() });
-        fport.energy = Some(EnergySpec { capacity: 1 << 40, max_receive: 0, max_extract: 1 << 40, faces: vec![FlowSide::Output; 6] });
-        for (kind_name, side) in [("fluid", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Output)] {
+        fport.energy = Some(EnergySpec { capacity: 1 << 40, max_receive: 0, max_extract: 1 << 40, faces: vec![FlowSide::Input; 6] });
+        for (kind_name, side) in [("fluid", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::Input), ("chemical", FlowSide::None)] {
             fport.tanks.push(TankSpec { kind: kind_name.into(), capacity: fusion::SPEC_CAPACITY, max_rate: 1 << 30, faces: vec![side; 6] });
         }
         r = r.block_entity_kind(fport);
@@ -1716,7 +1959,12 @@ impl ServerMod for Mekanism {
             conts: HashMap::new(),
             filtered: HashSet::new(),
             pending: Vec::new(),
+            empty: HashMap::new(),
+            empty_tickets: HashMap::new(),
+            empty_ready: HashMap::new(),
+            port_modes: HashMap::new(),
             tool: HashMap::new(),
+            tool_writes: Vec::new(),
             applied: HashSet::new(),
             rng: 0,
             now: 0,
@@ -1826,29 +2074,32 @@ impl ServerMod for Mekanism {
 
     fn tick(&mut self, tick: u64) {
         self.run_radiation(tick);
+        self.check_tool_writes(tick);
     }
 
-    /// The mode of the configurator in `stack`: its components first; the remembered one for the player when the stack
-    /// carries none (a stack the game has not written the mode back into yet).
-    fn tool_mode(&self, player: &str, stack: &ItemStack) -> ToolMode {
-        if stack.components.contains(config::MODE_COMPONENT) {
-            config::mode_of(&stack.components)
+    /// The answer to an EMPTY's `summon`: the drop exists (`Some` id) or it could not be made (`None`). A confirmed
+    /// drop's slot is cleared on the block's next tick (`apply_empty_ready`); a failed one stays in the machine, and
+    /// the player is told when the empty is complete but not every stack dropped.
+    fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {
+        let Some(t) = self.empty_tickets.remove(&ticket) else { return };
+        let Some(mut pending) = self.empty.remove(&t.key) else { return };
+        pending.tickets.remove(&ticket);
+        if id.is_some() {
+            pending.confirmed.push((t.slot, t.item, t.count));
         } else {
-            self.tool.get(player).copied().unwrap_or(ToolMode::Items)
+            pending.failed += 1;
         }
-    }
-
-    /// Writes the mode into the configurator the player holds, so it survives a restart and travels with the item.
-    /// The held slot is not told: the first hotbar slot with the same stack, as the upgrades and the blades do.
-    fn write_tool_mode(&self, player: &Player, stack: &ItemStack, mode: ToolMode) {
-        let slot = player_items::get_inventory(&player.id)
-            .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
-            .map_or(0, |s| s as u32);
-        let _ = player_items::set_slot(
-            &player.id,
-            slot,
-            Some(&ItemStack { item: stack.item.clone(), count: stack.count, components: config::with_mode(&stack.components, mode) }),
-        );
+        if !pending.tickets.is_empty() {
+            self.empty.insert(t.key, pending);
+            return;
+        }
+        if !pending.confirmed.is_empty() {
+            self.empty_ready.insert(t.key, (pending.confirmed, self.now));
+        }
+        if pending.failed > 0 || pending.unsummoned > 0 {
+            let stayed = pending.failed + pending.unsummoned;
+            let _ = players::tell(&pending.player, &format!("Empty could not drop every stack: {stayed} stayed in the machine"));
+        }
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
@@ -1864,10 +2115,9 @@ impl ServerMod for Mekanism {
             if !upgrades::supported(def).contains(&k) {
                 return false;
             }
-            // The hotbar slot the stack is in (the held slot is not told: the first of the same stack).
-            let slot = player_items::get_inventory(&player.id)
-                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
-                .map_or(0, |s| s as u32);
+            // The hotbar slot the stack is in (the held slot is not told: the first of the same stack). The click
+            // is not claimed when the stack is not in the hotbar, rather than installing from slot 0 by default.
+            let Some((slot, _)) = Self::find_hotbar_slot(&player.id, &stack) else { return false };
             self.installs
                 .entry((player.dimension.clone(), pos.x, pos.y, pos.z))
                 .or_default()
@@ -1878,10 +2128,9 @@ impl ServerMod for Mekanism {
             && !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)
             && world::get_block(&player.dimension, pos.x, pos.y, pos.z).is_some_and(|b| bin::capacity_of(b.split('[').next().unwrap_or("")).is_some())
         {
-            // Using an item on a bin puts the whole stack in (an empty hand opens the screen).
-            let slot = player_items::get_inventory(&player.id)
-                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
-                .map_or(0, |s| s as u32);
+            // Using an item on a bin puts the whole stack in (an empty hand opens the screen). The click is not
+            // claimed when the stack is not in the hotbar, rather than taking from slot 0 by default.
+            let Some((slot, _)) = Self::find_hotbar_slot(&player.id, &stack) else { return false };
             self.bin_inserts.entry((player.dimension.clone(), pos.x, pos.y, pos.z)).or_default().push((player.id.clone(), slot));
             return true;
         }
@@ -1893,9 +2142,9 @@ impl ServerMod for Mekanism {
                 return false;
             }
             let add = !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
-            let slot = player_items::get_inventory(&player.id)
-                .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
-                .map_or(0, |s| s as u32);
+            // The hotbar slot the blade is in; the click is not claimed when it is not in the hotbar, rather than
+            // taking from slot 0 by default.
+            let Some((slot, _)) = Self::find_hotbar_slot(&player.id, &stack) else { return false };
             self.blades.push(turbine::BladeRequest { dimension: player.dimension.clone(), pos, player: player.id.clone(), slot, add });
             return true;
         }
@@ -2162,6 +2411,8 @@ impl ServerMod for Mekanism {
         let mut out = Vec::new();
         // The configurator clicks that act on the block itself go first, before the machines' own ticks.
         out.extend(self.tool_clicks(&mut entities));
+        // Empties whose drops the game confirmed clear their slots now.
+        out.extend(self.apply_empty_ready(&mut entities));
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));

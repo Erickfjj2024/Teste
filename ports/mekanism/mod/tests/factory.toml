@@ -267,3 +267,41 @@ blocks = [
 ]
 ticks = 60
 expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [8000, 0, 8000, 0, 256, 0, 1, 1] }]
+
+[[step]]
+# A sneak click with the configurator on the matrix's port toggles it to output (Alex's tool is fresh in this run,
+# so it is on Items, a configurate mode).
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 301.5, y = 63.88, z = 304.5, yaw = 180.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [301, 65, 303] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Toggled Induction Port transfer mode to Output."]
+
+[[step]]
+# The port's mode survives revalidation: break a corner casing (the structure goes invalid) and put it back (valid
+# again). Each change revalidates the structure and rewrites every member's data; before the fix the mode byte was
+# lost in the rewrite and the port fell back to input.
+blocks = [{ x = 300, y = 64, z = 300, state = "minecraft:air" }]
+ticks = 1
+
+[[step]]
+blocks = [{ x = 300, y = 64, z = 300, state = "mekanism:induction_casing" }]
+ticks = 1
+
+[[step]]
+# A plain click on the port says which mode it is: still output after both revalidations.
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 301.5, y = 63.88, z = 304.5, yaw = 180.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [301, 65, 303] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Induction Port mode: Output"]

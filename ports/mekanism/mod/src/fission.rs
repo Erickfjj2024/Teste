@@ -399,10 +399,19 @@ impl Mekanism {
             });
             let keep = self.reactors.get(&(dimension.to_owned(), found.min)).map(|s| s.reactor.clone()).unwrap_or_default();
             for m in &s.members {
+                // A port keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites every
+                // member's data, and a member carries no data of its own in `multiblock-changed`. Other members have
+                // no mode byte and keep the plain encoding.
+                let data = if part_of(&m.state) == Some(Part::Port) {
+                    let mode = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0);
+                    with_mode(encode(&found, &keep), mode)
+                } else {
+                    encode(&found, &keep)
+                };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
-                    data: encode(&found, &keep),
+                    data,
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -566,6 +575,9 @@ impl Mekanism {
                         let _ = players::tell(&click.player, &format!("Reactor Port mode: {}", mode_name(mode)));
                     }
                 }
+                // Remember the mode for the structures function: it rewrites the port's data on every revalidation
+                // and cannot read the mode from the member it is given.
+                self.port_modes.insert((p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z), mode);
                 let keep = if mode_changed || tick % 20 == 0 { with_mode(encode(&found, &r), mode) } else { p.data.clone() };
                 // What each face does with the tanks, in the order water, coolant, fuel, heated coolant, waste.
                 let tank_faces = match mode {

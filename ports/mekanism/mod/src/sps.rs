@@ -265,10 +265,19 @@ impl Mekanism {
             }
             let keep = self.spses.get(&(dimension.to_owned(), found.min)).map(|s| s.sps.clone()).unwrap_or_default();
             for m in &s.members {
+                // A port keeps the mode its tick last saw: the validation rewrites every member's data, and a member
+                // carries no data of its own in `multiblock-changed`, so without this the mode reset to input on
+                // every revalidation. Other members have no mode byte and keep the plain encoding.
+                let data = if part_of(&m.state) == Some(Part::Port) {
+                    let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                    with_mode(encode(&found, &keep), output)
+                } else {
+                    encode(&found, &keep)
+                };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
-                    data: encode(&found, &keep),
+                    data,
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -368,6 +377,9 @@ impl Mekanism {
                         let _ = players::tell(&click.player, &format!("SPS Port mode: {}", if output { "Output" } else { "Input" }));
                     }
                 }
+                // Remember the mode for the structures function: it rewrites the port's data on every revalidation
+                // and cannot read the mode from the member it is given.
+                self.port_modes.insert((p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z), u8::from(output));
                 let keep = if mode_changed || tick_no % 20 == 0 { with_mode(encode(&found, &st), output) } else { p.data.clone() };
                 // What each face does with the tanks, and with energy: a port that takes in feeds polonium and energy
                 // to the coils, one that gives out lets antimatter out and takes no energy.

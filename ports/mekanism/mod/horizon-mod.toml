@@ -5,5 +5,5 @@ description = "Mekanism for Horizon, one file: ores, resources, steel casing, th
 authors = ["The Mekanism team (Mekanism, MIT)", "Rust port"]
 api = "0.3"
 side = "server"
-capabilities = ["registries", "players", "world", "recipe-types", "chunks", "storage", "player-control", "player-items"]
-experimental = ["recipe-types", "chunks", "player-control", "player-items"]
+capabilities = ["registries", "players", "world", "recipe-types", "chunks", "storage", "player-control", "player-items", "entities"]
+experimental = ["recipe-types", "chunks", "player-control", "player-items", "entities"]

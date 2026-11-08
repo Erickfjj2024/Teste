@@ -342,10 +342,19 @@ impl Mekanism {
             });
             let keep = self.fusions.get(&(dimension.to_owned(), found.min)).map(|s| s.reactor.clone()).unwrap_or(Reactor { injection: DEFAULT_INJECTION, ..Reactor::default() });
             for m in &s.members {
+                // A port keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites every
+                // member's data, and a member carries no data of its own in `multiblock-changed`. Other members have
+                // no mode byte and keep the plain encoding.
+                let data = if part_of(&m.state) == Some(Part::Port) {
+                    let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                    with_mode(encode(&found, &keep), output)
+                } else {
+                    encode(&found, &keep)
+                };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
-                    data: encode(&found, &keep),
+                    data,
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -499,11 +508,15 @@ impl Mekanism {
                             let _ = players::tell(&click.player, &format!("Reactor Port mode: {}", if output { "Output" } else { "Input" }));
                         }
                     }
+                    // Remember the mode for the structures function: it rewrites the port's data on every revalidation
+                    // and cannot read the mode from the member it is given.
+                    self.port_modes.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z), u8::from(output));
                     if mode_changed || tick_no % 20 == 0 {
                         update.data = with_mode(encode(&Found { valid: true, min: key.1 }, &r), output);
                     }
-                    // A port that gives out lets steam and energy out and takes nothing in; one that takes in keeps
-                    // the faces the registration gives it.
+                    // A port that gives out lets steam and energy out and takes nothing in; one that takes in takes
+                    // water and fuel in on every face and lets nothing out. The faces are said on every tick in both
+                    // modes: leaving them out in input mode left them at whatever the output mode had set.
                     if output {
                         update.tank_faces = Some(vec![
                             vec![FlowSide::None; 6],
@@ -513,6 +526,15 @@ impl Mekanism {
                             vec![FlowSide::Output; 6],
                         ]);
                         update.energy_faces = Some(vec![FlowSide::Output; 6]);
+                    } else {
+                        update.tank_faces = Some(vec![
+                            vec![FlowSide::Input; 6],
+                            vec![FlowSide::Input; 6],
+                            vec![FlowSide::Input; 6],
+                            vec![FlowSide::Input; 6],
+                            vec![FlowSide::None; 6],
+                        ]);
+                        update.energy_faces = Some(vec![FlowSide::Input; 6]);
                     }
                     let share = r.energy / n + u64::from(index < r.energy % n);
                     index += 1;

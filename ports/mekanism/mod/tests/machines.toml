@@ -1113,7 +1113,9 @@ expect.claimed = true
 expect.told = ["Alex: Configure State: Empty"]
 
 [[step]]
-# Empty drops every non-empty item slot into the world and leaves the rest alone: the crusher's ingots are gone.
+# Empty drops every non-empty item slot into the world and leaves the rest alone: each stack is summoned as a
+# `minecraft:item` at the block, and the slots are only cleared once the game says the drop exists (the old extra
+# slots trick destroyed the items instead: the game truncates them).
 as = "Alex"
 motion = { sneaking = false }
 player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
@@ -1122,7 +1124,19 @@ ticks = 1
 expect.claimed = true
 
 [[step]]
+# The click is taken up on this tick: one summon for the crusher's two ingots (the first summon of the run, so
+# ticket 1), and the slots are still full — they only empty once the drop is confirmed, in the steps below.
 ticks = 2
+expect.entity-commands = ["summon minecraft:item 500.5 64.5 0.5 #1 {Item:{id:\"minecraft:iron_ingot\",Count:2b}}"]
+
+[[step]]
+# The game answers the ticket: the drop exists.
+spawned = { ticket = 1, id = 77 }
+ticks = 1
+
+[[step]]
+# Now the slots empty; a drop the game had refused would have stayed in the machine instead.
+ticks = 1
 expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["", "", "", ""] }]
 
 [[step]]
@@ -1326,3 +1340,22 @@ expect.claimed = true
 [[step]]
 ticks = 2
 expect.told = ["Alex: Reset Electric Pump calculation"]
+
+[[step]]
+# A configurator outside the hotbar: cycling its mode in the air must not write anywhere — the old code wrote a
+# configurator into slot 0 by default, destroying whatever was there and duplicating the tool. Alex's diamond sits
+# in slot 0 and the configurator in slot 9 (the main inventory, not the hotbar).
+as = "Alex"
+inventory = ["minecraft:diamond*1", "", "", "", "", "", "", "", "", "mekanism:configurator*1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+ticks = 1
+
+[[step]]
+# Heat goes to empty, as usual — but no set-slot is issued anywhere (the mode lives in the per-player cache for this
+# session, and is only written to the item when the configurator is in the hotbar).
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Empty"]
+expect.player-items = []

@@ -162,10 +162,19 @@ impl Mekanism {
                     let _ = world::set_energy_capacity(dimension, m.pos.x, m.pos.y, m.pos.z, if found.valid { found.rate.max(1) } else { 1 });
                 }
                 let total = self.matrices.get(&(dimension.to_owned(), found.min)).copied().unwrap_or(0).min(found.capacity);
+                // A port keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites every
+                // member's data, and a member carries no data of its own in `multiblock-changed`. Other members have
+                // no mode byte and keep the plain encoding.
+                let data = if part_of(&m.state) == Some(Part::Port) {
+                    let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                    with_mode(encode(&found, total), output)
+                } else {
+                    encode(&found, total)
+                };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
-                    data: encode(&found, total),
+                    data,
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -230,6 +239,9 @@ impl Mekanism {
                         let _ = players::tell(&click.player, &format!("Induction Port mode: {}", if output { "Output" } else { "Input" }));
                     }
                 }
+                // Remember the mode for the structures function: it rewrites the port's data on every revalidation
+                // and cannot read the mode from the member it is given.
+                self.port_modes.insert((p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z), u8::from(output));
                 let changed = next != stored || p.energy != mirror;
                 let energy_faces = if output { vec![FlowSide::Output; 6] } else { vec![FlowSide::Input; 6] };
                 out.push(BlockEntityUpdate {
