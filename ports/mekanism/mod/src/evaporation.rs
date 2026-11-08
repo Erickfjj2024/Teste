@@ -33,7 +33,7 @@ pub enum Part {
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        BLOCK => Some(Part::Block),
+        BLOCK | "mekanism:structural_glass" => Some(Part::Block),
         VALVE => Some(Part::Valve),
         CONTROLLER => Some(Part::Controller),
         _ => None,

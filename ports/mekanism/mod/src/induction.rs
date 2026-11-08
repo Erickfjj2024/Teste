@@ -49,7 +49,7 @@ pub enum Part {
 
 pub fn part_of(state: &str) -> Option<Part> {
     let name = state.split('[').next().unwrap_or("");
-    if name == CASING {
+    if name == CASING || name == "mekanism:structural_glass" {
         return Some(Part::Casing);
     }
     if name == PORT {

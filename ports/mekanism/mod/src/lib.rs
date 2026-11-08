@@ -13,6 +13,7 @@ mod chem_table;
 mod plus;
 mod process;
 mod bin;
+mod alarm;
 mod boiler;
 mod bounding;
 mod dynamic;
@@ -368,6 +369,7 @@ struct Mekanism {
     entangled: HashMap<u8, entangloporter::Shared>,
     qe_buttons: Vec<(String, BlockPos, i32)>,
     bin_buttons: Vec<(String, BlockPos, i32)>,
+    alarm_set: HashSet<(String, i32, i32, i32)>,
     bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
     bin_shown: HashMap<(String, i32, i32, i32), u64>,
     bin_set: HashSet<(String, i32, i32, i32)>,
@@ -1463,6 +1465,14 @@ impl ServerMod for Mekanism {
             b.container = Some(ContainerSpec { slots: 2, faces: vec![vec![0, 1]; 6], inputs: vec![1], outputs: vec![0], menu: true });
             r = r.block_entity_kind(b);
         }
+        // The industrial alarm lights up with redstone; the structural glass takes the place of a casing in the multiblocks that have one.
+        r = r.block_entity_kind(kind(alarm::ALARM, true));
+        let mut glass = kind("mekanism:structural_glass", false);
+        glass.keep_data = false;
+        glass.multiblock = Some(MultiblockSpec {
+            group: [dynamic::GROUP, boiler::GROUP, induction::GROUP, sps::GROUP, evaporation::GROUP, turbine::GROUP].join(","),
+        });
+        r = r.block_entity_kind(glass);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1518,6 +1528,7 @@ impl ServerMod for Mekanism {
             entangled: HashMap::new(),
             qe_buttons: Vec::new(),
             bin_buttons: Vec::new(),
+            alarm_set: HashSet::new(),
             bin_inserts: HashMap::new(),
             bin_shown: HashMap::new(),
             bin_set: HashSet::new(),
@@ -1850,6 +1861,10 @@ impl ServerMod for Mekanism {
         let bins: Vec<&BlockEntity> = entities.iter().filter(|e| bin::capacity_of(e.state.split('[').next().unwrap_or("")).is_some()).collect();
         if !bins.is_empty() || !self.bin_buttons.is_empty() {
             out.extend(self.run_bins(&bins, tick));
+        }
+        let alarms: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(alarm::ALARM)).collect();
+        if !alarms.is_empty() {
+            out.extend(self.run_alarms(&alarms));
         }
         let qes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(entangloporter::BLOCK)).collect();
         if !qes.is_empty() || !self.qe_buttons.is_empty() {

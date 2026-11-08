@@ -188,6 +188,13 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 11.7 | Travar item por botão (o original usa o Configurator); sem receita de upgrade de nível que carrega o conteúdo | ABERTA |
 | 11.8 | Bin criativo guarda 2^63 (não é infinito de verdade, mas nunca esvazia na prática) | SUPOSIÇÃO |
 
+## 12. Structural Glass e Industrial Alarm (mod 0.1.79)
+| # | Diferença | Estado |
+|---|---|---|
+| 12.1 | Structural Glass substitui o casing no Dynamic Tank, Boiler, Induction Matrix, SPS, Thermal Evaporation e Turbine; **não** no Fission nem no Fusion (que têm o Reactor Glass). O original aceita em mais posições (qualquer posição de moldura, também em arestas) e em outros multiblocos futuros | SUPOSIÇÃO |
+| 12.2 | Industrial Alarm só acende (modelo aceso) com redstone; **sem sirene**, sem o feixe de luz que gira e sem luz de ambiente | LIMITE API |
+| 12.3 | A face em que o alarme fica é a do jogador mais próximo ao colocar (não a face clicada) | LIMITE API |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

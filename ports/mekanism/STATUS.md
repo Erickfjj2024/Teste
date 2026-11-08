@@ -691,3 +691,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ai. Bins (mod 0.1.78)
 `bin.rs`: bins de 4096 a 262144 (e criativo): a contagem fica nos dados do bloco, dois slots (saída e entrada) fazem a ponte; usar um item no bin guarda a pilha; tela com ejetar e travar. Diferenças em DIFERENCAS.md seção 11.
+
+### 2aj. Structural Glass e Industrial Alarm (mod 0.1.79)
+`alarm.rs`: alarme que acende com redstone. `structural_glass`: bloco de vários grupos que vale como casing em Dynamic Tank, Boiler, Induction, SPS, Evaporation e Turbine. Diferenças em DIFERENCAS.md seção 12.

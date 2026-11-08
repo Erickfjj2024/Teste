@@ -49,7 +49,7 @@ pub enum Part {
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        CASING => Some(Part::Casing),
+        CASING | "mekanism:structural_glass" => Some(Part::Casing),
         VALVE => Some(Part::Valve),
         VENT => Some(Part::Vent),
         ROTOR => Some(Part::Rotor),
