@@ -706,3 +706,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2an. MekanismTools (mod 0.1.83)
 60 ferramentas e armaduras (6 materiais) e 6 paxels de materiais do jogo, como itens de dados com os números do 26.3; texturas do jar 1.21.1 (`tools/tools-assets`). Diferenças em DIFERENCAS.md seção 16.
+
+### 2ao. MekanismAdditions (mod 0.1.84)
+252 blocos de plástico e glow panels em 18 cores, gerados por `convert.py` com texturas pintadas por cor (jar 1.21.1 em `tools/additions-assets`) e as receitas do 26.3. Diferenças em DIFERENCAS.md seção 17.

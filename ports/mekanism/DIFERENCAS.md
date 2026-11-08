@@ -238,6 +238,17 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 16.6 | Materiais "queimam no fogo" (netherite não): não foi aplicado (os itens de refined obsidian não têm `fire_resistant`) | ABERTA |
 | 16.7 | Nugget das ferramentas fundidas (cozinhar ferramenta em pepita) não foi portado | ABERTA |
 
+## 17. MekanismAdditions (mod 0.1.84)
+| # | Diferença | Estado |
+|---|---|---|
+| 17.1 | Plásticos (comum, slick, glow, reforçado, estrada, transparente, degraus, lajes, cerca, portão) e glow panels nas 18 cores: **cada cor tem textura pintada própria** (o original pinta uma textura cinza com uma cor de bloco, que o port não tem); a cor vem de `EnumColor` | LIMITE API |
+| 17.2 | **Estrada** não acelera quem anda, **slick** usa o gelo compactado (atrito 0,98 do gelo), reforçado não tem a resistência exata de explosão (1200, valor copiado) | ABERTA |
+| 17.3 | **Cercas** conectam só entre cercas e portões de plástico (tag `plastic_fences`), não com blocos sólidos como as cercas do jogo; a forma é a do template da planta de chorus | LIMITE API |
+| 17.4 | **Glow panel** sempre nasce virado para o norte (não conhece a face clicada); com um bloco inteiro como colisão | LIMITE API |
+| 17.5 | Lajes soltam 1 item mesmo duplas; fluido (waterlogged) nas lajes/degraus/cercas não é o `ExtendedFluidLogType` do original | ABERTA |
+| 17.6 | **Não existem**: balões (item e entidade), Obsidian TNT, Walkie-Talkie, os mobs bebês e o recolorir por receita (balões/glow panels), a extração de pigmento dos plásticos | LIMITE API |
+| 17.7 | As luzes dos glow (nível 10) existem; o brilho "emissivo" do original (sem escurecer) não | LIMITE API |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

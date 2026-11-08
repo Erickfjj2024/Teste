@@ -1236,7 +1236,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.83', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.84', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1335,7 +1335,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.83', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1437,7 +1437,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.83', 'color': '#808080'},
+        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.84', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1472,7 +1472,7 @@ def dynamic_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 7, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
@@ -1503,7 +1503,7 @@ def evaporation_menu(m):
         {'type': 'text', 'x': 76, 'y': 30, 'text': 'Height {11}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 40, 'text': 'Sun {9}/4', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 50, 'text': 'Rate {10}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 4, 'data_slots': 12, 'results': [1, 3],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[54, 19], [54, 51], [118, 19], [118, 51]], 'widgets': widgets}}
 
@@ -1533,7 +1533,7 @@ def boiler_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 74, 'y': 39, 'text': '', 'color': '#00CD00'},
         {'type': 'text', 'x': 34, 'y': 70, 'text': 'T {20}  Boil {21}/{22}  SH {23}', 'color': '#00CD00', 'scale': 70},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 25, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[73, 19], [73, 51]], 'widgets': widgets}}
 
@@ -1563,7 +1563,7 @@ def turbine_valve_menu(m):
         {'type': 'text', 'x': 10, 'y': 51, 'text': 'Blades {17}  Coils {18}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 60, 'text': 'Vents {16}  Condensers {19}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 69, 'text': 'Dispersers {15}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 21,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1598,7 +1598,7 @@ def fission_port_menu(m):
         {'type': 'text', 'x': 66, 'y': 48, 'text': 'Burn {23}/100  Max {24}', 'color': '#00CD00', 'scale': 75},
         {'type': 'text', 'x': 66, 'y': 57, 'text': 'Boil {25}  Eff {28}%', 'color': '#00CD00', 'scale': 75},
         {'type': 'text', 'x': 66, 'y': 66, 'text': 'Assemblies {27}', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     # the buttons: on/off and the burn rate
     for k, (bid, label, x) in enumerate([(7101, '-1', 8), (7102, '-.1', 34), (7103, '+.1', 118), (7104, '+1', 144)]):
         widgets.append({'type': 'text', 'x': x + 3, 'y': 71, 'text': label, 'color': '#404040'})
@@ -1639,7 +1639,7 @@ def fusion_controller_menu(m):
         {'type': 'text', 'x': 86, 'y': 21, 'text': 'Hohlraum', 'color': '#404040', 'scale': 70},
         {'type': 'text', 'x': 62, 'y': 59, 'text': 'Plasma {21} kK  Case {22}/10 K', 'color': '#00CD00', 'scale': 60},
         {'type': 'text', 'x': 62, 'y': 67, 'text': 'Inject {23}  Burned {27}  +{28} FE/t', 'color': '#00CD00', 'scale': 60},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 24}, 'eq': 1}}, 'widgets': [
         {'type': 'text', 'x': 86, 'y': 58, 'text': 'BURNING', 'color': '#CD0000', 'scale': 70}]})
     for bid, label, x in ((7200, '-2', 88), (7201, '+2', 108)):
@@ -1668,7 +1668,7 @@ def laser_amplifier_menu(m):
         {'type': 'text', 'x': 10, 'y': 33, 'text': 'Min {4+5}', 'color': '#00CD00', 'scale': 90},
         {'type': 'text', 'x': 10, 'y': 47, 'text': 'Max {6+7}', 'color': '#00CD00', 'scale': 90},
         {'type': 'text', 'x': 10, 'y': 61, 'text': 'Delay {8}  Firing {9}', 'color': '#00CD00', 'scale': 90},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     for row, (y, ids) in enumerate(((31, (7300, 7301, 7302, 7303)), (45, (7304, 7305, 7306, 7307)))):
         for k, (bid, label) in enumerate(zip(ids, ('-100k', '-1k', '+1k', '+100k'))):
             x = 86 + 21 * k
@@ -1703,7 +1703,7 @@ def sps_port_menu(m):
         {'type': 'text', 'x': 40, 'y': 25, 'text': 'Progress {10}%', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 40, 'y': 37, 'text': 'Energy {11+12} FE/t', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 40, 'y': 49, 'text': 'Coils {13}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 15,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1727,7 +1727,7 @@ def sorter_menu(m):
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 27, 'text': 'Filters', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     for bid, x, label, data in ((7400, 8, 'Auto-eject', 0), (7401, 98, 'Single item', 1)):
         widgets.append({'type': 'text', 'x': x + 4, 'y': 53, 'text': label, 'color': '#404040'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
@@ -1763,7 +1763,7 @@ def entangloporter_menu(m):
         {'type': 'text', 'x': 12, 'y': 50, 'text': 'Fluid {3+4} mB', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 12, 'y': 60, 'text': 'Chemical {5+6} mB', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 12, 'y': 70, 'text': 'Entangloporters {9}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     widgets.append({'type': 'button', 'x': 8, 'y': 17, 'w': 20, 'h': 14, 'id': 7500, 'tooltip': 'Previous frequency'})
     widgets.append({'type': 'button', 'x': 74, 'y': 17, 'w': 20, 'h': 14, 'id': 7501, 'tooltip': 'Next frequency'})
     return {'slots': 1, 'data_slots': 11,
@@ -1793,7 +1793,7 @@ def teleporter_menu(m):
         {'type': 'text', 'x': 80, 'y': 37, 'text': '+', 'color': '#404040'},
         {'type': 'text', 'x': 34, 'y': 37, 'text': 'Frequency {0}', 'color': '#404040'},
         {'type': 'text', 'x': 12, 'y': 66, 'text': 'Teleporters on it: {6}', 'color': '#404040', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     for st, text, color in ((0, 'No frequency', '#CD0000'), (1, 'No frame', '#CD0000'), (2, 'No link found', '#CD0000'),
                             (3, 'Not enough energy', '#CD0000'), (4, 'Ready', '#00CD00')):
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [
@@ -1826,7 +1826,7 @@ def bin_menu(m):
         {'type': 'text', 'x': 112, 'y': 22, 'text': 'Out', 'color': '#404040', 'scale': 80},
         {'type': 'text', 'x': 62, 'y': 38, 'text': '{0+1}', 'color': '#00CD00'},
         {'type': 'text', 'x': 62, 'y': 48, 'text': 'of {2+3}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.84', 'color': '#808080'}]
     for bid, x, label, data in ((7700, 8, 'Eject down', 4), (7701, 98, 'Lock item', 5)):
         widgets.append({'type': 'text', 'x': x + 4, 'y': 59, 'text': label, 'color': '#404040'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
@@ -1860,7 +1860,7 @@ def miner_menu(m):
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 100, 'y': 24, 'text': 'Filters', 'color': '#404040', 'scale': 90},
         {'type': 'text', 'x': 8, 'y': 145, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 145, 'text': 'v0.1.83', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 145, 'text': 'v0.1.84', 'color': '#808080'},
         {'type': 'text', 'x': 66, 'y': 113, 'text': 'Radius {5}', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 66, 'y': 125, 'text': 'Min Y {6}', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 134, 'y': 125, 'text': 'Max Y {7}', 'color': '#00CD00', 'scale': 85},
@@ -1912,7 +1912,7 @@ def induction_port_menu(m):
         {'type': 'text', 'x': 11, 'y': 48, 'text': 'Capacity: {2+3} MFE', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 59, 'text': 'Transfer: {4+5} kFE/t', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 70, 'text': 'Cells {6}  Providers {7}', 'color': '#00CD00'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.84', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 8,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1942,7 +1942,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.83', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.84', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1999,7 +1999,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.84', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -2268,7 +2268,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.83', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.84', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -2438,6 +2438,127 @@ for p in sorted(glob.glob(f'{TGEN}/data/mekanismtools/recipe/**/*.json', recursi
     put(f'{OUT}/data/{NS}/recipe/tools_{result}.json', r)
 tools_lang = read_json(f'{TJ}/lang/en_us.json')
 
+# ---------------------------------------------------------------- MekanismAdditions: plastic blocks (18 colors) and glow panels
+# Their colors are a tint the Java client paints on gray textures; the port has no block tint for a mod's blocks, so each color gets its own painted
+# texture and its own copy of the models (tools/additions-assets, from the 1.21.1 jar).
+AJ = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'additions-assets/assets/mekanismadditions')
+AGEN = f'{SRC}/src/datagen/generated/mekanismadditions'
+PLASTIC_COLORS = {
+    'aqua': 0x30FFF9, 'black': 0x404040, 'blue': 0x366BD0, 'brown': 0xA17649, 'cyan': 0x00F3D0, 'dark_red': 0xC9071F, 'gray': 0x7A7A7A,
+    'green': 0x59C15F, 'light_blue': 0x559EFF, 'light_gray': 0xCFCFCF, 'lime': 0x75FF89, 'magenta': 0xD55ECB, 'orange': 0xFFA160,
+    'pink': 0xFFBCC4, 'purple': 0xA460D9, 'red': 0xFF383C, 'white': 0xFFFFFF, 'yellow': 0xFFDD4F}
+# kind (the block's name after the color): template, properties
+PLASTIC_KINDS = {
+    '_plastic': ('minecraft:stone', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_slick_plastic': ('minecraft:packed_ice', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_glow': ('minecraft:stone', {'hardness': 5.0, 'explosion_resistance': 6.0, 'light': 10}),
+    '_reinforced_plastic': ('minecraft:stone', {'hardness': 50.0, 'explosion_resistance': 1200.0}),
+    '_plastic_road': ('minecraft:stone', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_transparent': ('minecraft:glass', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_slab': ('minecraft:stone_slab', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_glow_slab': ('minecraft:stone_slab', {'hardness': 5.0, 'explosion_resistance': 6.0, 'light': 10}),
+    '_plastic_transparent_slab': ('minecraft:stone_slab', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_stairs': ('minecraft:stone_stairs', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_glow_stairs': ('minecraft:stone_stairs', {'hardness': 5.0, 'explosion_resistance': 6.0, 'light': 10}),
+    '_plastic_transparent_stairs': ('minecraft:stone_stairs', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_fence': ('minecraft:chorus_plant', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_plastic_fence_gate': ('minecraft:oak_fence_gate', {'hardness': 5.0, 'explosion_resistance': 6.0}),
+    '_glow_panel': ('minecraft:stone', {'hardness': 1.0, 'explosion_resistance': 6.0, 'light': 10}),
+}
+
+def tinted_texture(name, color, rgb):
+    """The gray texture `name` painted with a color (each channel scaled by the color's), kept with its animation."""
+    from PIL import Image
+    src = f'{AJ}/textures/block/{name}.png'
+    dst = f'{OUT}/assets/{NS}/textures/block/additions/{color}/{name}.png'
+    if os.path.exists(dst):
+        return
+    img = Image.open(src).convert('RGBA')
+    r, g, b = (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            pr, pg, pb, pa = px[x, y]
+            px[x, y] = (pr * r // 255, pg * g // 255, pb * b // 255, pa)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    img.save(dst)
+    if os.path.exists(src + '.mcmeta'):
+        shutil.copyfile(src + '.mcmeta', dst + '.mcmeta')
+
+def untint(model):
+    """A model with its `tintindex` removed (the colors are in the textures)."""
+    if isinstance(model, dict):
+        return {k: untint(v) for k, v in model.items() if k != 'tintindex'}
+    if isinstance(model, list):
+        return [untint(v) for v in model]
+    return model
+
+# the colored parents, once, without the tint
+colored_dir = f'{AJ}/models/block/colored'
+for fn in os.listdir(colored_dir):
+    put(f'{OUT}/assets/{NS}/models/block/additions/colored/{fn}', json.dumps(untint(json.loads(open(f'{colored_dir}/{fn}').read().replace('mekanismadditions:block/colored/', f'{NS}:block/additions/colored/')))))
+_cc = untint(read_json(find('models/block/colored_cube.json', ASSET_DIRS)))
+put(f'{OUT}/assets/{NS}/models/block/additions/colored_cube.json', json.dumps(_cc))
+_plastic_models = {fn[:-5]: read_json(f'{AJ}/models/block/plastic/{fn}') for fn in os.listdir(f'{AJ}/models/block/plastic')}
+_glow_panel = read_json(f'{AJ}/models/block/glow_panel.json')
+_additions_lang = read_json(f'{AJ}/lang/en_us.json')
+plastic_blocks = []
+for bs_path in sorted(glob.glob(f'{AJ}/blockstates/*.json')):
+    name = os.path.basename(bs_path)[:-5]
+    color = next((cn for cn in sorted(PLASTIC_COLORS, key=len, reverse=True) if name.startswith(cn + '_')), None)
+    kind = name[len(color):] if color else None
+    if color is None or kind not in PLASTIC_KINDS:
+        continue
+    rgb = PLASTIC_COLORS[color]
+    # the models of this color: the plastic ones with painted textures, once per color
+    if color not in globals().setdefault('_additions_done', set()):
+        _additions_done.add(color)
+        for mname, m in _plastic_models.items():
+            m = json.loads(json.dumps(m))
+            m['parent'] = m['parent'].replace('mekanismadditions:block/colored/', f'{NS}:block/additions/colored/').replace('mekanism:block/colored_cube', f'{NS}:block/additions/colored_cube')
+            for k, v in list(m.get('textures', {}).items()):
+                tex = v.split('/')[-1]
+                tinted_texture(tex, color, rgb)
+                m['textures'][k] = f'{NS}:block/additions/{color}/{tex}'
+            put(f'{OUT}/assets/{NS}/models/block/additions/{color}/{mname}.json', json.dumps(m))
+        # the glow panel: the center glows in the color, the rest keeps the gray
+        tinted_texture('glow_panel', color, rgb)
+        gp = json.loads(json.dumps(_glow_panel))
+        gp['textures']['tinted'] = f'{NS}:block/additions/{color}/glow_panel'
+        gp['textures']['all'] = f'{NS}:block/additions/gray_glow_panel'
+        for el in gp.get('elements', []):
+            for face in el['faces'].values():
+                if 'tintindex' in face:
+                    face['texture'] = '#tinted'
+                    del face['tintindex']
+        put(f'{OUT}/assets/{NS}/models/block/additions/{color}/glow_panel.json', json.dumps(gp))
+    bs = json.loads(open(bs_path).read().replace('mekanismadditions:block/plastic/', f'{NS}:block/additions/{color}/').replace('mekanismadditions:block/glow_panel', f'{NS}:block/additions/{color}/glow_panel'))
+    put(f'{OUT}/assets/{NS}/blockstates/{name}.json', bs)
+    template, props = PLASTIC_KINDS[kind]
+    block = {'template': template, 'properties': props, 'item': True}
+    if kind == '_plastic_fence':
+        block['connects_to'] = f'#{NS}:plastic_fences'
+    if kind == '_glow_panel':
+        block['state_properties'] = {'facing': {'type': 'enum', 'values': ['down', 'up', 'north', 'south', 'west', 'east']}}
+    put(f'{OUT}/data/{GNS}/horizon/block/{name}.json', block)
+    item_model = read_json(f'{AJ}/models/item/{name}.json') if os.path.exists(f'{AJ}/models/item/{name}.json') else {'parent': f'mekanismadditions:block/plastic/block'}
+    target = item_model['parent'].replace('mekanismadditions:block/plastic/', f'{NS}:block/additions/{color}/').replace('mekanismadditions:block/glow_panel', f'{NS}:block/additions/{color}/glow_panel')
+    put(f'{OUT}/assets/{NS}/items/{name}.json', {'model': {'type': 'minecraft:model', 'model': target}})
+    put(f'{OUT}/data/{GNS}/loot_table/blocks/{name}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
+        {'type': 'minecraft:item', 'name': f'{GNS}:{name}'}], 'conditions': [{'type': 'minecraft:survives_explosion'}]}]})
+    kept_blocks.append(name)
+    plastic_blocks.append(name)
+# the gray glow panel's base is the gray color's painted texture (the white panel would be the original's untinted one)
+tinted_texture('glow_panel', 'gray', PLASTIC_COLORS['gray'])
+put(f'{OUT}/data/{NS}/tags/block/plastic_fences.json', {'values': [f'{NS}:{n}' for n in plastic_blocks if n.endswith('_plastic_fence') or n.endswith('_plastic_fence_gate')]})
+put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe_plastic.json', {'values': []}) if False else None
+for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', recursive=True)):
+    if 'pigment_extracting' in p or 'balloon' in p or 'recolor' in p:
+        continue
+    r = json.loads(open(p).read().replace('mekanismadditions:', f'{NS}:'))
+    result = r.get('result', {}).get('id', '').split(':')[-1]
+    if result in plastic_blocks:
+        put(f'{OUT}/data/{NS}/recipe/additions_{result}.json', r)
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
@@ -2629,7 +2750,7 @@ for tag in sorted(asked):
         ntags += 1
 
 # mining: pickaxe for ores, storage, casings and machines; ores need a stone or iron tool
-pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:{t}_energy_cube' for t in CUBE_TIERS] + [f'{GNS}:{g}' for g in GENERATORS] + [f'{GNS}:{g}' for g in TURBINE + FISSION + FUSION]
+pick = [f'{NS}:{n}' for n in sorted(BLOCKS)] + [f'{NS}:{t}_energy_cube' for t in CUBE_TIERS] + [f'{GNS}:{g}' for g in GENERATORS] + [f'{GNS}:{g}' for g in TURBINE + FISSION + FUSION] + [f'{GNS}:{n}' for n in plastic_blocks]
 put(f'{OUT}/data/minecraft/tags/block/mineable/pickaxe.json', {'values': pick})
 need_iron = [f'{NS}:{n}' for n in BLOCKS if n.endswith('_ore') or n.startswith('block_') or n == 'steel_casing']
 put(f'{OUT}/data/minecraft/tags/block/needs_iron_tool.json', {'values': need_iron})
@@ -2644,6 +2765,9 @@ out = {k: v for k, v in lang.items() if k in keep}
 for g in GENERATORS + TURBINE + FISSION + FUSION:
     out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 out[f'block.{NS}.bounding_block'] = 'Bounding Block'
+for _k, _v in _additions_lang.items():
+    if _k.startswith('block.mekanismadditions.') and _k.split('.')[-1] in plastic_blocks:
+        out[f'block.{NS}.' + _k.split('.')[-1]] = _v
 for _k, _v in tools_lang.items():
     if _k.startswith('item.mekanismtools.') and _k.split('.')[-1] in kept_items:
         out[f'item.{NS}.' + _k.split('.')[-1]] = _v
