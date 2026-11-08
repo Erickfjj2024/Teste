@@ -12,7 +12,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 
 | # | Diferença | Estado | Onde |
 |---|---|---|---|
-| 1.1 | Todos os itens "normais" são itens comuns (graveto renomeado com textura). Ferramentas, jetpack, tablet, MekaSuit, Meka-Tool, Robit, módulos etc. **não existem** | ABERTA | tarefa #6 |
+| 1.1 | Itens "normais" são itens comuns (graveto renomeado com textura). Jetpack, tablet, MekaSuit, Meka-Tool, Robit, módulos etc. **sem o comportamento** (ferramentas e armaduras do MekanismTools: seção 16) | ABERTA | tarefa #6 |
 | 1.2 | Os upgrades são **8 itens** (`upgrade_speed`…) em vez de um item `mekanism:upgrade` com o tipo num componente | LIMITE API | mod 0.1.3x |
 | 1.3 | Capacidade de energia das máquinas = uso por tick × 2500 (o 26.3 tem `TODO` nesses valores); cabo básico 1024/tick | SUPOSIÇÃO | config.rs |
 | 1.4 | Dureza e resistência dos blocos são aproximadas (minérios 3, deepslate 4,5, armazenamento 5, casing 3,5) | SUPOSIÇÃO | convert.py |
@@ -226,6 +226,17 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 15.4 | **Fontes só do Fission** (vazamento e meltdown): tanques quebrados com químico radioativo, itens radioativos, Chemical Tank/Dissolution etc. não irradiam | ABERTA |
 | 15.5 | Geiger Counter e Dosimeter: clicar mostra o nível/dose no chat (sem a tela, o som e o painel de radiação; Dosimeter sem limpar a dose) | LIMITE API |
 | 15.6 | O nível é lido uma vez por segundo por jogador, espalhado pelos ticks | — |
+
+## 16. MekanismTools (mod 0.1.83)
+| # | Diferença | Estado |
+|---|---|---|
+| 16.1 | Ferramentas (espada, picareta, machado, pá, enxada, paxel) e armaduras (4 peças) dos 6 materiais (bronze, lazulita, ósmio, glowstone refinado, obsidiana refinada, aço) e os paxels dos materiais do jogo: são itens de dados com os números do `*MaterialDefaults` do 26.3 | — |
+| 16.2 | **Escudos, armadura de cavalo, armadura de nautilus e lanças não existem** (o jar 1.21.1 não traz as texturas; os escudos precisam de um renderizador próprio) | LIMITE API |
+| 16.3 | Sem o **acabamento (trims)** nas armaduras; sem a configuração dos materiais (os números são os padrões) | ABERTA |
+| 16.4 | O paxel usa a espada de ataque do machado (dano = machado + 1, velocidade do machado) e minera como machado + picareta + pá + enxada; o recipe do paxel virou crafting comum | SUPOSIÇÃO |
+| 16.5 | A armadura usa a textura vestida (camada 1 e 2 do jar) pelo asset de equipamento do jogo: **não testado se o Horizon desenha** | — |
+| 16.6 | Materiais "queimam no fogo" (netherite não): não foi aplicado (os itens de refined obsidian não têm `fire_resistant`) | ABERTA |
+| 16.7 | Nugget das ferramentas fundidas (cozinhar ferramenta em pepita) não foi portado | ABERTA |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

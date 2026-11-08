@@ -703,3 +703,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2am. Radiação (mod 0.1.82)
 `radiation.rs`: fontes com decaimento, dose por jogador, proteção do hazmat, dano por dose alta, Geiger Counter e Dosimeter; o Fission vaza e o meltdown irradia. Diferenças em DIFERENCAS.md seção 15. O mod passou a usar o hook `tick`.
+
+### 2an. MekanismTools (mod 0.1.83)
+60 ferramentas e armaduras (6 materiais) e 6 paxels de materiais do jogo, como itens de dados com os números do 26.3; texturas do jar 1.21.1 (`tools/tools-assets`). Diferenças em DIFERENCAS.md seção 16.

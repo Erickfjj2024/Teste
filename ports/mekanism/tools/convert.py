@@ -1236,7 +1236,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     # a development line: the machine's status number and the mod's version
     dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.82', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.83', 'color': '#808080'})
     ctl = 24 if continuous else 20
     widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
@@ -1335,7 +1335,7 @@ def tank_menu(m):
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                 {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
                 # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.82', 'color': '#808080'}]
+                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1437,7 +1437,7 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.82', 'color': '#808080'},
+        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.83', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1472,7 +1472,7 @@ def dynamic_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 7, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
@@ -1503,7 +1503,7 @@ def evaporation_menu(m):
         {'type': 'text', 'x': 76, 'y': 30, 'text': 'Height {11}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 40, 'text': 'Sun {9}/4', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 76, 'y': 50, 'text': 'Rate {10}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 4, 'data_slots': 12, 'results': [1, 3],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[54, 19], [54, 51], [118, 19], [118, 51]], 'widgets': widgets}}
 
@@ -1533,7 +1533,7 @@ def boiler_valve_menu(m):
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 74, 'y': 39, 'text': '', 'color': '#00CD00'},
         {'type': 'text', 'x': 34, 'y': 70, 'text': 'T {20}  Boil {21}/{22}  SH {23}', 'color': '#00CD00', 'scale': 70},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 2, 'data_slots': 25, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[73, 19], [73, 51]], 'widgets': widgets}}
 
@@ -1563,7 +1563,7 @@ def turbine_valve_menu(m):
         {'type': 'text', 'x': 10, 'y': 51, 'text': 'Blades {17}  Coils {18}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 60, 'text': 'Vents {16}  Condensers {19}', 'color': '#00CD00', 'scale': 80},
         {'type': 'text', 'x': 10, 'y': 69, 'text': 'Dispersers {15}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 21,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1598,7 +1598,7 @@ def fission_port_menu(m):
         {'type': 'text', 'x': 66, 'y': 48, 'text': 'Burn {23}/100  Max {24}', 'color': '#00CD00', 'scale': 75},
         {'type': 'text', 'x': 66, 'y': 57, 'text': 'Boil {25}  Eff {28}%', 'color': '#00CD00', 'scale': 75},
         {'type': 'text', 'x': 66, 'y': 66, 'text': 'Assemblies {27}', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     # the buttons: on/off and the burn rate
     for k, (bid, label, x) in enumerate([(7101, '-1', 8), (7102, '-.1', 34), (7103, '+.1', 118), (7104, '+1', 144)]):
         widgets.append({'type': 'text', 'x': x + 3, 'y': 71, 'text': label, 'color': '#404040'})
@@ -1639,7 +1639,7 @@ def fusion_controller_menu(m):
         {'type': 'text', 'x': 86, 'y': 21, 'text': 'Hohlraum', 'color': '#404040', 'scale': 70},
         {'type': 'text', 'x': 62, 'y': 59, 'text': 'Plasma {21} kK  Case {22}/10 K', 'color': '#00CD00', 'scale': 60},
         {'type': 'text', 'x': 62, 'y': 67, 'text': 'Inject {23}  Burned {27}  +{28} FE/t', 'color': '#00CD00', 'scale': 60},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 24}, 'eq': 1}}, 'widgets': [
         {'type': 'text', 'x': 86, 'y': 58, 'text': 'BURNING', 'color': '#CD0000', 'scale': 70}]})
     for bid, label, x in ((7200, '-2', 88), (7201, '+2', 108)):
@@ -1668,7 +1668,7 @@ def laser_amplifier_menu(m):
         {'type': 'text', 'x': 10, 'y': 33, 'text': 'Min {4+5}', 'color': '#00CD00', 'scale': 90},
         {'type': 'text', 'x': 10, 'y': 47, 'text': 'Max {6+7}', 'color': '#00CD00', 'scale': 90},
         {'type': 'text', 'x': 10, 'y': 61, 'text': 'Delay {8}  Firing {9}', 'color': '#00CD00', 'scale': 90},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     for row, (y, ids) in enumerate(((31, (7300, 7301, 7302, 7303)), (45, (7304, 7305, 7306, 7307)))):
         for k, (bid, label) in enumerate(zip(ids, ('-100k', '-1k', '+1k', '+100k'))):
             x = 86 + 21 * k
@@ -1703,7 +1703,7 @@ def sps_port_menu(m):
         {'type': 'text', 'x': 40, 'y': 25, 'text': 'Progress {10}%', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 40, 'y': 37, 'text': 'Energy {11+12} FE/t', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 40, 'y': 49, 'text': 'Coils {13}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 15,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1727,7 +1727,7 @@ def sorter_menu(m):
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 27, 'text': 'Filters', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     for bid, x, label, data in ((7400, 8, 'Auto-eject', 0), (7401, 98, 'Single item', 1)):
         widgets.append({'type': 'text', 'x': x + 4, 'y': 53, 'text': label, 'color': '#404040'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
@@ -1763,7 +1763,7 @@ def entangloporter_menu(m):
         {'type': 'text', 'x': 12, 'y': 50, 'text': 'Fluid {3+4} mB', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 12, 'y': 60, 'text': 'Chemical {5+6} mB', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 12, 'y': 70, 'text': 'Entangloporters {9}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     widgets.append({'type': 'button', 'x': 8, 'y': 17, 'w': 20, 'h': 14, 'id': 7500, 'tooltip': 'Previous frequency'})
     widgets.append({'type': 'button', 'x': 74, 'y': 17, 'w': 20, 'h': 14, 'id': 7501, 'tooltip': 'Next frequency'})
     return {'slots': 1, 'data_slots': 11,
@@ -1793,7 +1793,7 @@ def teleporter_menu(m):
         {'type': 'text', 'x': 80, 'y': 37, 'text': '+', 'color': '#404040'},
         {'type': 'text', 'x': 34, 'y': 37, 'text': 'Frequency {0}', 'color': '#404040'},
         {'type': 'text', 'x': 12, 'y': 66, 'text': 'Teleporters on it: {6}', 'color': '#404040', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     for st, text, color in ((0, 'No frequency', '#CD0000'), (1, 'No frame', '#CD0000'), (2, 'No link found', '#CD0000'),
                             (3, 'Not enough energy', '#CD0000'), (4, 'Ready', '#00CD00')):
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [
@@ -1826,7 +1826,7 @@ def bin_menu(m):
         {'type': 'text', 'x': 112, 'y': 22, 'text': 'Out', 'color': '#404040', 'scale': 80},
         {'type': 'text', 'x': 62, 'y': 38, 'text': '{0+1}', 'color': '#00CD00'},
         {'type': 'text', 'x': 62, 'y': 48, 'text': 'of {2+3}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.83', 'color': '#808080'}]
     for bid, x, label, data in ((7700, 8, 'Eject down', 4), (7701, 98, 'Lock item', 5)):
         widgets.append({'type': 'text', 'x': x + 4, 'y': 59, 'text': label, 'color': '#404040'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
@@ -1860,7 +1860,7 @@ def miner_menu(m):
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 100, 'y': 24, 'text': 'Filters', 'color': '#404040', 'scale': 90},
         {'type': 'text', 'x': 8, 'y': 145, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 145, 'text': 'v0.1.82', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 145, 'text': 'v0.1.83', 'color': '#808080'},
         {'type': 'text', 'x': 66, 'y': 113, 'text': 'Radius {5}', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 66, 'y': 125, 'text': 'Min Y {6}', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 134, 'y': 125, 'text': 'Max Y {7}', 'color': '#00CD00', 'scale': 85},
@@ -1912,7 +1912,7 @@ def induction_port_menu(m):
         {'type': 'text', 'x': 11, 'y': 48, 'text': 'Capacity: {2+3} MFE', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 59, 'text': 'Transfer: {4+5} kFE/t', 'color': '#00CD00'},
         {'type': 'text', 'x': 11, 'y': 70, 'text': 'Cells {6}  Providers {7}', 'color': '#00CD00'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.82', 'color': '#808080'}]
+        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'}]
     return {'slots': 1, 'data_slots': 8,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
@@ -1942,7 +1942,7 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.82', 'color': '#808080'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.83', 'color': '#808080'},
         {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
         {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1999,7 +1999,7 @@ for m in MACHINES:
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
             {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.82', 'color': '#808080'},
+            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.83', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -2268,7 +2268,7 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.82', 'color': '#808080'})
+    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.83', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
@@ -2345,6 +2345,99 @@ for p in sorted(glob.glob(f'{GGEN}/data/{GNS_SRC}/recipe/turbine/*.json') + glob
     ing = [s for s in refs(r.get('key', r.get('ingredients', []))) if s.startswith(NS + ':')]
     if all(s.split(':')[1] in (set(kept_items) | set(kept_blocks) | set(TURBINE)) for s in ing):
         put(f'{OUT}/data/{NS}/recipe/turbine_{name}.json', r)
+# ---------------------------------------------------------------- MekanismTools: bronze, lapis lazuli, osmium, refined glowstone/obsidian and steel
+# tools and armor, and the paxels of the vanilla materials. Items are data (a vanilla item's components, changed); textures come from the 1.21.1 jar
+# (tools/tools-assets). The numbers are the `*MaterialDefaults` of the 26.3 code.
+TJ = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools-assets/assets/mekanismtools')
+TGEN = f'{SRC}/src/datagen/generated/mekanismtools'
+# name: axe damage, axe speed, durability, mining speed, damage bonus, enchantability, armor enchantability, toughness, knockback resistance,
+# armor durability (boots, leggings, chestplate, helmet), armor defense (same), the vanilla tier whose incorrect-for-drops tag it uses
+TOOL_MATERIALS = {
+    'bronze': (7, -3.0, 375, 7, 2, 10, 5, 1, 0.0, (234, 270, 288, 198), (2, 6, 7, 3), 'iron'),
+    'lapis_lazuli': (4, -2.9, 128, 9, 1, 32, 35, 0, 0.0, (130, 150, 160, 110), (1, 3, 4, 1), 'stone'),
+    'osmium': (8, -3.3, 1024, 4, 4, 14, 9, 3, 0.1, (390, 450, 480, 330), (3, 6, 8, 4), 'iron'),
+    'refined_glowstone': (6, -2.9, 384, 15, 2, 20, 23, 0, 0.0, (221, 255, 272, 187), (3, 6, 8, 3), 'diamond'),
+    'refined_obsidian': (7, -2.9, 4096, 12, 8, 18, 13, 5, 0.2, (975, 1125, 1200, 825), (5, 8, 12, 6), 'netherite'),
+    'steel': (7, -3.0, 500, 8, 3, 16, 11, 2, 0.0, (260, 300, 320, 220), (3, 6, 8, 3), 'diamond'),
+}
+# the vanilla materials' paxels: durability, speed, damage bonus, enchantability, axe damage, axe speed, the tier
+PAXEL_MATERIALS = {
+    'wood': (59, 2, 0, 15, 6, -3.2, 'wooden'), 'stone': (131, 4, 1, 5, 7, -3.2, 'stone'), 'iron': (250, 6, 2, 14, 6, -3.1, 'iron'),
+    'diamond': (1561, 8, 3, 10, 5, -3.0, 'diamond'), 'gold': (32, 12, 0, 22, 6, -3.0, 'gold'), 'netherite': (2031, 9, 4, 15, 5, -3.0, 'netherite'),
+}
+ARMOR_PIECES = [('boots', 'feet', 'iron_boots'), ('leggings', 'legs', 'iron_leggings'), ('chestplate', 'chest', 'iron_chestplate'), ('helmet', 'head', 'iron_helmet')]
+
+def tool_rules(tier, mineable, speed):
+    rules = [{'blocks': f'#minecraft:incorrect_for_{tier}_tool', 'correct_for_drops': False}]
+    rules += [{'blocks': f'#minecraft:mineable/{m}', 'correct_for_drops': True, 'speed': speed} for m in mineable]
+    return {'rules': rules, 'default_mining_speed': 1.0, 'damage_per_block': 1}
+
+def tool_item(template, durability, damage, attack_speed, enchant, tool=None, repair=None):
+    comp = {
+        'minecraft:max_damage': durability,
+        'minecraft:enchantable': {'value': enchant},
+        'minecraft:attribute_modifiers': [
+            {'type': 'minecraft:attack_damage', 'id': 'minecraft:base_attack_damage', 'amount': damage, 'operation': 'add_value', 'slot': 'mainhand'},
+            {'type': 'minecraft:attack_speed', 'id': 'minecraft:base_attack_speed', 'amount': attack_speed, 'operation': 'add_value', 'slot': 'mainhand'}]}
+    if tool:
+        comp['minecraft:tool'] = tool
+    comp['minecraft:repairable'] = {'items': repair} if repair else {}
+    if not repair:
+        comp['!minecraft:repairable'] = {}
+        del comp['minecraft:repairable']
+    return {'template': template, 'components': comp}
+
+def tools_item(name, data, texture_src, model_parent, texture_ref):
+    put(f'{OUT}/data/{NS}/horizon/item/{name}.json', data)
+    tex = f'assets/{NS}/textures/item/tools/{name}.png'
+    put(f'{OUT}/{tex}', src=texture_src)
+    put(f'{OUT}/assets/{NS}/models/item/tools/{name}.json', {'parent': model_parent, 'textures': {'layer0': f'{NS}:item/tools/{name}'}})
+    put(f'{OUT}/assets/{NS}/items/{name}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/tools/{name}'}})
+    kept_items.append(name)
+
+for mat, (axe_d, axe_s, dur, speed, bonus, ench, arm_ench, tough, kb, arm_dur, arm_def, tier) in TOOL_MATERIALS.items():
+    ingots = f'#c:ingots/{mat}'
+    texture = lambda piece: f'{TJ}/textures/item/{mat}/{piece}.png'
+    tools_item(f'{mat}_sword', tool_item('minecraft:iron_sword', dur, 3 + bonus, -2.4, ench, repair=ingots), texture('sword'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_pickaxe', tool_item('minecraft:iron_pickaxe', dur, 1 + bonus, -2.8, ench, tool_rules(tier, ['pickaxe'], speed), ingots), texture('pickaxe'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_axe', tool_item('minecraft:iron_axe', dur, axe_d + bonus, axe_s, ench, tool_rules(tier, ['axe'], speed), ingots), texture('axe'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_shovel', tool_item('minecraft:iron_shovel', dur, 1.5 + bonus, -3.0, ench, tool_rules(tier, ['shovel'], speed), ingots), texture('shovel'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_hoe', tool_item('minecraft:iron_hoe', dur, 0.0, bonus - 3.0, ench, tool_rules(tier, ['hoe'], speed), ingots), texture('hoe'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_paxel', tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, axe_s, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed), ingots), texture('paxel'), 'minecraft:item/handheld', None)
+    for k, (piece, slot, template) in enumerate(ARMOR_PIECES):
+        mods = [{'type': 'minecraft:armor', 'id': f'minecraft:armor.{piece}', 'amount': arm_def[k], 'operation': 'add_value', 'slot': slot},
+                {'type': 'minecraft:armor_toughness', 'id': f'minecraft:armor.{piece}', 'amount': tough, 'operation': 'add_value', 'slot': slot}]
+        if kb:
+            mods.append({'type': 'minecraft:knockback_resistance', 'id': f'minecraft:armor.{piece}', 'amount': kb, 'operation': 'add_value', 'slot': slot})
+        data = {'template': f'minecraft:{template}', 'components': {
+            'minecraft:max_damage': arm_dur[k], 'minecraft:enchantable': {'value': arm_ench},
+            'minecraft:equippable': {'slot': slot, 'asset_id': f'{NS}:{mat}'},
+            'minecraft:attribute_modifiers': mods, 'minecraft:repairable': {'items': ingots}}}
+        tools_item(f'{mat}_{piece}', data, texture(piece), 'minecraft:item/generated', None)
+    # the worn model: layer 1 on the body, layer 2 on the legs
+    put(f'{OUT}/assets/{NS}/equipment/{mat}.json', {'layers': {'humanoid': [{'texture': f'{NS}:{mat}'}], 'humanoid_leggings': [{'texture': f'{NS}:{mat}'}]}})
+    put(f'{OUT}/assets/{NS}/textures/entity/equipment/humanoid/{mat}.png', src=f'{TJ}/textures/models/armor/{mat}_layer_1.png')
+    put(f'{OUT}/assets/{NS}/textures/entity/equipment/humanoid_leggings/{mat}.png', src=f'{TJ}/textures/models/armor/{mat}_layer_2.png')
+
+for mat, (dur, speed, bonus, ench, axe_d, axe_s, tier) in PAXEL_MATERIALS.items():
+    name = f'{mat}_paxel'
+    tools_item(name, tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, axe_s, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed)),
+               f'{TJ}/textures/item/{name}.png', 'minecraft:item/handheld', None)
+
+# the recipes (the ids of the module turned into the port's, the paxel's own recipe type into a shaped one)
+_tool_names = {n for n in kept_items}
+for p in sorted(glob.glob(f'{TGEN}/data/mekanismtools/recipe/**/*.json', recursive=True)):
+    if 'nugget' in p or p.endswith('shield.json'):
+        continue
+    r = json.loads(open(p).read().replace('mekanismtools:', f'{NS}:'))
+    if r.get('type') == f'{NS}:paxel':
+        r['type'] = 'minecraft:crafting_shaped'
+    result = r.get('result', {}).get('id', '').split(':')[-1]
+    if result not in _tool_names:
+        continue
+    put(f'{OUT}/data/{NS}/recipe/tools_{result}.json', r)
+tools_lang = read_json(f'{TJ}/lang/en_us.json')
+
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
@@ -2551,6 +2644,9 @@ out = {k: v for k, v in lang.items() if k in keep}
 for g in GENERATORS + TURBINE + FISSION + FUSION:
     out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 out[f'block.{NS}.bounding_block'] = 'Bounding Block'
+for _k, _v in tools_lang.items():
+    if _k.startswith('item.mekanismtools.') and _k.split('.')[-1] in kept_items:
+        out[f'item.{NS}.' + _k.split('.')[-1]] = _v
 out[f'item.{NS}.turbine_blade'] = glang[f'item.{GSRC}.turbine_blade']
 out[f'item.{NS}.hohlraum'] = glang[f'item.{GSRC}.hohlraum']
 for k, u in enumerate(UPGRADES):
