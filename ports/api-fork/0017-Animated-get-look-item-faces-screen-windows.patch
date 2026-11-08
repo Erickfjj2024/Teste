@@ -4461,3 +4461,44 @@ index 57a0edc..02827b7 100644
 -| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick. |
 +| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick; `world.get-block` reads the blocks as they are now. |
  | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+diff --git a/packaging/android/build.gradle b/packaging/android/build.gradle
+index 5a02a0e..762098d 100644
+--- a/packaging/android/build.gradle
++++ b/packaging/android/build.gradle
+@@ -26,7 +26,7 @@ android {
+             if (!providers.gradleProperty('appId').isPresent()) { applicationIdSuffix '.dev' }
+         }
+         release {
+-            debuggable false
++            debuggable providers.gradleProperty('debuggable').getOrElse('false') == 'true'
+             jniDebuggable false
+             minifyEnabled false
+             // Retain the existing installation's signing identity for upgrades.
+diff --git a/tools/android_build.py b/tools/android_build.py
+index ed2d68c..3744435 100644
+--- a/tools/android_build.py
++++ b/tools/android_build.py
+@@ -106,6 +106,7 @@ def main():
+     parser.add_argument('--public', action='store_true', help='Distribution APK: generated tables only; original resources download from Mojang')
+     parser.add_argument('--dev-build', help='Public, non-debuggable dev channel label (separate .dev package)')
+     parser.add_argument('--dev-version-code', type=int, help='Monotonically increasing dev channel version code')
++    parser.add_argument('--debuggable', action='store_true', help='With --dev-build: mark the dev channel APK debuggable (for agent control); the release audit is skipped')
+     parser.add_argument('--profile', choices=['release', 'fast', 'dev'], help='Public/candidate builds default to release (ThinLTO); local builds default to optimized fast')
+     parser.add_argument('--gradle', type=Path, help='Gradle 8.14 executable (otherwise discover the cached distribution)')
+     parser.add_argument('--check', action='store_true', help='Only type-check the Android target')
+@@ -226,13 +227,13 @@ def main():
+     variant = 'release' if args.release_candidate else 'debug'
+     dev_properties = (['-PappId=dev.horizon.android.dev', '-PdevBuild=' + args.dev_build,
+                        '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else [])
+-    run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), *dev_properties, 'assemble' + variant.title()], cwd=ROOT, env=environment)
++    run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), *dev_properties, *(['-Pdebuggable=true'] if args.debuggable else []), 'assemble' + variant.title()], cwd=ROOT, env=environment)
+     apk = output / ('horizon-android-public.apk' if args.public else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
+     shutil.copyfile(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}/HorizonAndroid-{variant}.apk', apk)
+     # Invoke the signing JAR directly so Windows does not need a batch-file shell.
+     signer = [args.java_home / 'bin' / ('java' + suffix), '-jar', tools / 'lib/apksigner.jar']
+     run([*signer, 'verify', '--verbose', apk])
+-    if args.release_candidate:
++    if args.release_candidate and not args.debuggable:
+         import sys
+         run([sys.executable, ROOT / 'tools/check_android_release.py', apk, '--aapt2', tools / ('aapt2' + suffix), *(['--public'] if args.public else []), *(['--app-id', 'dev.horizon.android.dev'] if args.dev_build else [])], cwd=ROOT)
+     print(f'APK: {apk}', flush=True)
