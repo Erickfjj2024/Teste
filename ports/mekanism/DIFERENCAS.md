@@ -185,7 +185,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 11.4 | Itens com dados (encantamentos, nome, durabilidade...) **não são aceitos**; só itens comuns | LIMITE API |
 | 11.5 | O tamanho da pilha de cada item é adivinhado pelo nome (64 para materiais/blocos e itens do Mekanism, 1 para o resto); itens que empilham até 16 aparecem de 1 em 1 | SUPOSIÇÃO |
 | 11.6 | "Ejetar para baixo" (Shift+clique do original) é um botão na tela; com ele ligado só a face de baixo dá itens e as outras só recebem | ABERTA |
-| 11.7 | Travar item por botão (o original usa o Configurator); sem receita de upgrade de nível que carrega o conteúdo | ABERTA |
+| 11.7 | Travar item por botão (o original trava com a mão vazia, agachando, na face da frente — não com o Configurator); sem receita de upgrade de nível que carrega o conteúdo | ABERTA |
 | 11.8 | Bin criativo guarda 2^63 (não é infinito de verdade, mas nunca esvazia na prática) | SUPOSIÇÃO |
 
 ## 12. Structural Glass e Industrial Alarm (mod 0.1.79)
@@ -248,6 +248,19 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 17.5 | Lajes soltam 1 item mesmo duplas; fluido (waterlogged) nas lajes/degraus/cercas não é o `ExtendedFluidLogType` do original | ABERTA |
 | 17.6 | **Não existem**: balões (item e entidade), Obsidian TNT, Walkie-Talkie, os mobs bebês e o recolorir por receita (balões/glow panels), a extração de pigmento dos plásticos | LIMITE API |
 | 17.7 | As luzes dos glow (nível 10) existem; o brilho "emissivo" do original (sem escurecer) não | LIMITE API |
+
+## 18. Configurator (ramo `configurator-fixes`, **sem teste no jogo**)
+
+| # | Diferença | Estado |
+|---|---|---|
+| 18.1 | Sem indicador de modo por modelo/tooltip/HUD: o motor desenha um modelo por item (o original troca por predicado `mekanism:mode`) e o `hud` só existe no mundo cliente, não no do mod servidor; a troca de modo é anunciada no chat | LIMITE API |
+| 18.2 | A chave inglesa desmonta com `mine-block` e os drops caem onde o bloco estava (o original põe o bloco no inventário do jogador); sem API para pôr itens no inventário do jogador | LIMITE API |
+| 18.3 | A sensibilidade a redstone dos transmissores e a cor do Logistical Transporter são guardadas mas não têm efeito no jogo (as redes movem pelas faces dos vizinhos; sem representação de cor na API) | LIMITE API |
+| 18.4 | O modo de porta/válvula de multibloco zera quando a estrutura é encontrada de novo (o byte de modo vive nos dados da porta, que a validação reescreve) | ABERTA |
+| 18.5 | A troca de modo é agachar+usar no ar (o original usa menu radial N / Shift+scroll, que não existe no Android) | LIMITE API |
+| 18.6 | A receita do configurator (ferro/ósmio/aço) existe no datagen 1.21.x, mas não foi confirmada no mod construído (o `convert.py` não roda até o fim contra o checkout 1.21.x; precisa do 26.3 + fork + cargo-horizon-mod) | ABERTA |
+| 18.7 | O truque criativo da Laser Focus Matrix (plasma a 1 bilhão) só funciona com o configurator; com a mão vazia, como no original, não há uso no port | ABERTA |
+| 18.8 | Não existem no port: Thermodynamic Conductor, Restrictive Transporter e Diversion Transporter (sem modo de desvio) | ABERTA |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

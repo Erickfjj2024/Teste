@@ -123,6 +123,19 @@ pub fn decode(data: &[u8]) -> Option<(Found, u64)> {
     Some((found, data.get(33..41).map_or(0, |_| long(33))))
 }
 
+/// The mode of a port, kept in the byte after its data: false takes in, true gives out. A port saved before the
+/// configurator kept it has no byte and takes in.
+pub fn mode_of(data: &[u8]) -> bool {
+    data.get(41).copied().unwrap_or(0) == 1
+}
+
+/// The port's data with its mode byte after it.
+pub fn with_mode(mut data: Vec<u8>, output: bool) -> Vec<u8> {
+    data.truncate(41);
+    data.push(u8::from(output));
+    data
+}
+
 /// The energy after a tick: what the ports held before, changed by what each gained or lost against the mirror it was given.
 pub fn merge(total: u64, given: u64, now: &[u64], capacity: u64) -> u64 {
     let mut t = i128::from(total);
@@ -201,14 +214,31 @@ impl Mekanism {
             for p in &group {
                 // The room a port has is the most the providers move in a tick, less what it holds.
                 let _ = world::set_energy_capacity(&p.dimension, p.pos.x, p.pos.y, p.pos.z, found.rate.max(1));
+                // A sneak click with the configurator toggles whether the port takes energy in or gives it out
+                // (`TileEntityInductionPort.onSneakRightClick`); a plain click says which it is.
+                let mut output = mode_of(&p.data);
+                let mut mode_changed = false;
+                if let Some(click) = self.take_click(p) {
+                    if click.sneak && click.mode.is_configurating() {
+                        output = !output;
+                        mode_changed = true;
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Toggled Induction Port transfer mode to {}.", if output { "Output" } else { "Input" }),
+                        );
+                    } else if click.mode.is_configurating() {
+                        let _ = players::tell(&click.player, &format!("Induction Port mode: {}", if output { "Output" } else { "Input" }));
+                    }
+                }
                 let changed = next != stored || p.energy != mirror;
+                let energy_faces = if output { vec![FlowSide::Output; 6] } else { vec![FlowSide::Input; 6] };
                 out.push(BlockEntityUpdate {
                     dimension: p.dimension.clone(),
                     pos: p.pos,
-                    data: if changed { encode(&found, next) } else { p.data.clone() },
+                    data: if changed || mode_changed { with_mode(encode(&found, next), output) } else { p.data.clone() },
                     items: None,
                     energy: Some(mirror),
-                    energy_faces: None,
+                    energy_faces: Some(energy_faces),
                     tanks: None,
                     tank_faces: None,
                     menu_data: Some(data.clone()),

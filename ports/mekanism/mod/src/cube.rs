@@ -50,10 +50,20 @@ pub fn front_of(data: &[u8], modes: &[Mode; 6]) -> usize {
     (sides::NORTH..=sides::EAST).find(|f| modes[*f] == Mode::Output).unwrap_or(sides::NORTH)
 }
 
-/// The bytes a cube keeps: the mode of each face of the world and its front.
-pub fn encode(modes: &[Mode; 6], front: usize) -> Vec<u8> {
+/// The item modes a cube's data holds after its front (bytes 7..12); none for a cube saved before they existed.
+pub fn item_modes(data: &[u8]) -> [Mode; 6] {
+    let mut m = [Mode::None; 6];
+    for (i, b) in data.iter().skip(7).take(6).enumerate() {
+        m[i] = Mode::from_byte(*b);
+    }
+    m
+}
+
+/// The bytes a cube keeps: the mode of each face of the world, its front, then the item mode of each face.
+pub fn encode(modes: &[Mode; 6], front: usize, item_modes: &[Mode; 6]) -> Vec<u8> {
     let mut out = sides::encode(modes);
     out.push(front as u8);
+    out.extend(item_modes.iter().map(|m| *m as u8));
     out
 }
 
@@ -119,11 +129,17 @@ mod tests {
     #[test]
     fn the_front_is_kept_after_the_modes_and_found_in_an_old_cube() {
         let modes = sides::default_modes(EAST);
-        assert_eq!(encode(&modes, EAST).len(), 7);
-        assert_eq!(front_of(&encode(&modes, WEST), &modes), WEST);
+        assert_eq!(encode(&modes, EAST, &[Mode::None; 6]).len(), 13);
+        assert_eq!(front_of(&encode(&modes, WEST, &[Mode::None; 6]), &modes), WEST);
         // A cube kept with six bytes: its front is the side that outputs.
         assert_eq!(front_of(&sides::encode(&modes), &modes), EAST);
         assert_eq!(front_of(&[], &[Mode::None; 6]), NORTH);
+        // The item modes ride after the front, and an old cube has none.
+        let mut items = [Mode::None; 6];
+        items[DOWN] = Mode::Input;
+        items[EAST] = Mode::Both;
+        assert_eq!(item_modes(&encode(&modes, EAST, &items)), items);
+        assert_eq!(item_modes(&encode(&modes, EAST, &[Mode::None; 6])), [Mode::None; 6]);
     }
 
     #[test]

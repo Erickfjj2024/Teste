@@ -93,19 +93,111 @@ impl Transmission {
             Transmission::Heat => "Heat",
         }
     }
-    /// The mode a configurator goes to next when sneaking in the air: the original's order (`ConfiguratorMode`), items,
-    /// fluids, chemicals, energy, heat.
-    pub fn next_tool(self) -> Transmission {
-        match self {
-            Transmission::Items => Transmission::Fluids,
-            Transmission::Fluids => Transmission::Chemicals,
-            Transmission::Chemicals => Transmission::Energy,
-            Transmission::Energy => Transmission::Heat,
-            Transmission::Heat => Transmission::Items,
-        }
-    }
     pub fn from_number(n: i32) -> Option<Transmission> {
         TRANSMISSIONS.get(usize::try_from(n).ok()?).copied()
+    }
+}
+
+/// The configurator's mode (Mekanism's `ConfiguratorMode`, in its order): the five transmissions it configures, then
+/// emptying, rotating and the wrench. The numbers are the mode's ordinals, kept in the item's components.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolMode {
+    Items = 0,
+    Fluids = 1,
+    Chemicals = 2,
+    Energy = 3,
+    Heat = 4,
+    Empty = 5,
+    Rotate = 6,
+    Wrench = 7,
+}
+
+impl ToolMode {
+    /// The transmission a configurating mode configures; none for empty, rotate and the wrench.
+    pub fn transmission(self) -> Option<Transmission> {
+        match self {
+            ToolMode::Items => Some(Transmission::Items),
+            ToolMode::Fluids => Some(Transmission::Fluids),
+            ToolMode::Chemicals => Some(Transmission::Chemicals),
+            ToolMode::Energy => Some(Transmission::Energy),
+            ToolMode::Heat => Some(Transmission::Heat),
+            _ => None,
+        }
+    }
+    /// Whether the mode configures a transmission (the original's `isConfigurating`).
+    pub fn is_configurating(self) -> bool {
+        self.transmission().is_some()
+    }
+    /// The next mode, around, in the original's order.
+    pub fn next(self) -> ToolMode {
+        ToolMode::from_number(self as u8 + 1)
+    }
+    pub fn from_number(n: u8) -> ToolMode {
+        match n % 8 {
+            0 => ToolMode::Items,
+            1 => ToolMode::Fluids,
+            2 => ToolMode::Chemicals,
+            3 => ToolMode::Energy,
+            4 => ToolMode::Heat,
+            5 => ToolMode::Empty,
+            6 => ToolMode::Rotate,
+            _ => ToolMode::Wrench,
+        }
+    }
+    /// How the mode reads in messages (`Configure State: ...`): `Configurate (Items)` for the five, the plain name else.
+    pub fn label(self) -> &'static str {
+        match self {
+            ToolMode::Items => "Configurate (Items)",
+            ToolMode::Fluids => "Configurate (Fluids)",
+            ToolMode::Chemicals => "Configurate (Chemicals)",
+            ToolMode::Energy => "Configurate (Energy)",
+            ToolMode::Heat => "Configurate (Heat)",
+            ToolMode::Empty => "Empty",
+            ToolMode::Rotate => "Rotate",
+            ToolMode::Wrench => "Wrench",
+        }
+    }
+}
+
+/// The data component the mode is kept in, as SNBT (`{"mekanism:configurator_mode":3}`).
+pub const MODE_COMPONENT: &str = "mekanism:configurator_mode";
+
+/// The mode a stack's components hold; items when none is written (a fresh configurator).
+pub fn mode_of(components: &str) -> ToolMode {
+    let Some(at) = components.find(MODE_COMPONENT) else { return ToolMode::Items };
+    let rest = &components[at + MODE_COMPONENT.len()..];
+    let digits: String = rest.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().map_or(ToolMode::Items, ToolMode::from_number)
+}
+
+/// The components of a stack whose mode is `mode`, keeping the other components it has.
+pub fn with_mode(components: &str, mode: ToolMode) -> String {
+    let pair = format!("\"{MODE_COMPONENT}\":{}", mode as u8);
+    if components.trim().is_empty() || components.trim() == "{}" {
+        return format!("{{{pair}}}");
+    }
+    if let Some(key) = components.find(MODE_COMPONENT) {
+        let rest = &components[key + MODE_COMPONENT.len()..];
+        if let Some(colon) = rest.find(':') {
+            let after = &rest[colon + 1..];
+            let skip = after.len() - after.trim_start_matches(|c: char| !c.is_ascii_digit()).len();
+            let digits = after[skip..].chars().take_while(|c| c.is_ascii_digit()).count();
+            if digits > 0 {
+                let start = key + MODE_COMPONENT.len() + colon + 1 + skip;
+                let mut out = components.to_owned();
+                out.replace_range(start..start + digits, &(mode as u8).to_string());
+                return out;
+            }
+        }
+    }
+    // No such component: add it before the closing brace.
+    match components.rfind('}') {
+        Some(at) => {
+            let mut out = components.to_owned();
+            out.insert_str(at, &format!(",{pair}"));
+            out
+        }
+        None => format!("{{{pair}}}"),
     }
 }
 
@@ -773,6 +865,36 @@ mod tests {
         // Energy only takes or does not.
         assert_eq!(cycle(Layout::Sawmill, Transmission::Energy, Data::Input, false), Data::None);
         assert_eq!(cycle(Layout::Sawmill, Transmission::Energy, Data::None, true), Data::Input);
+    }
+
+    #[test]
+    fn the_tool_goes_through_the_originals_eight_modes() {
+        let mut m = ToolMode::Items;
+        let mut seen = vec![m];
+        for _ in 0..8 {
+            m = m.next();
+            seen.push(m);
+        }
+        assert_eq!(
+            seen,
+            [ToolMode::Items, ToolMode::Fluids, ToolMode::Chemicals, ToolMode::Energy, ToolMode::Heat, ToolMode::Empty, ToolMode::Rotate, ToolMode::Wrench, ToolMode::Items]
+        );
+        assert_eq!(ToolMode::Empty.transmission(), None);
+        assert_eq!(ToolMode::Energy.transmission(), Some(Transmission::Energy));
+        assert_eq!(ToolMode::Wrench.label(), "Wrench");
+        assert_eq!(ToolMode::Fluids.label(), "Configurate (Fluids)");
+        // The mode round-trips through the item's components, keeping the others.
+        assert_eq!(mode_of(""), ToolMode::Items);
+        assert_eq!(mode_of("{}"), ToolMode::Items);
+        assert_eq!(mode_of("{\"mekanism:configurator_mode\":5}"), ToolMode::Empty);
+        assert_eq!(mode_of("{\"minecraft:damage\":3,\"mekanism:configurator_mode\":7}"), ToolMode::Wrench);
+        assert_eq!(with_mode("", ToolMode::Rotate), "{\"mekanism:configurator_mode\":6}");
+        assert_eq!(with_mode("{\"minecraft:damage\":3}", ToolMode::Energy), "{\"minecraft:damage\":3,\"mekanism:configurator_mode\":3}");
+        assert_eq!(
+            with_mode("{\"mekanism:configurator_mode\":1,\"minecraft:damage\":3}", ToolMode::Wrench),
+            "{\"mekanism:configurator_mode\":7,\"minecraft:damage\":3}"
+        );
+        assert_eq!(mode_of(&with_mode("{\"minecraft:damage\":3}", ToolMode::Heat)), ToolMode::Heat);
     }
 
     #[test]

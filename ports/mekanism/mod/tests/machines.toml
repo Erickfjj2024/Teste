@@ -111,8 +111,9 @@ expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
-# As the original's configurator does: sneaking in the air goes to the next mode (items, fluids, chemicals, energy, heat),
-# items to start with; a plain click on a side only tells what it is; sneaking, the click bumps the side to the next type.
+# As the original's configurator does: sneaking in the air goes to the next mode (items, fluids, chemicals, energy, heat,
+# empty, rotate, wrench), items to start with; a plain click on a side only tells what it is; sneaking, the click bumps
+# the side to the next type.
 as = "Alex"
 motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
@@ -1082,3 +1083,246 @@ expect.blocks = [
 blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]
 ticks = 5
 expect.blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]
+
+# --- The configurator's other modes (Alex's tool is on heat from the steps above) ---
+
+[[step]]
+# The crusher does not configure heat: the click is not claimed, so it falls through to the block (a plain click opens
+# its screen, as in the original) instead of vanishing into the tool. A fresh crusher holds two ingots for the empty
+# test below.
+blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" }]
+set-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
+ticks = 1
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = false
+
+[[step]]
+# Heat goes to empty.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Empty"]
+
+[[step]]
+# Empty drops every non-empty item slot into the world and leaves the rest alone: the crusher's ingots are gone.
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["", "", "", ""] }]
+
+[[step]]
+# Empty goes to rotate.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Rotate"]
+
+[[step]]
+# Rotate turns the crusher to the face clicked (east, from beside it).
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=east,lit=false]" }]
+
+[[step]]
+# Sneaking, rotate turns it to the opposite face instead (west).
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=west,lit=false]" }]
+
+[[step]]
+# Rotate goes to wrench.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Wrench"]
+
+[[step]]
+# The wrench without sneak turns the crusher one step clockwise (west to north).
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" }]
+
+[[step]]
+# Sneaking, the wrench takes the crusher apart.
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "minecraft:air" }]
+
+[[step]]
+# Wrench goes to items, and the cycle is whole again.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Items)"]
+
+[[step]]
+# A generator has no side configuration: the click is not claimed, so a plain click opens its screen instead of
+# vanishing into the tool.
+blocks = [{ x = 510, y = 64, z = 0, state = "mekanism:heat_generator" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 511.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [510, 64, 0] }
+ticks = 1
+expect.claimed = false
+
+[[step]]
+# The energy cube configures item sides too: sneaking on its east face, with no item mode yet, takes it to input.
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 1.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Item behavior bumped to: Input (Dark Red)"]
+
+[[step]]
+# Items, fluids, chemicals, energy: the transmitter test needs energy.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Fluids)"]
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Configure State: Configurate (Energy)"]
+
+[[step]]
+# A sneak click on a cable cycles the connection of the face clicked (normal to push).
+blocks = [{ x = 520, y = 64, z = 0, state = "mekanism:basic_universal_cable" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 521.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [520, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Connection type changed to: Push"]
+
+[[step]]
+# A plain click on a cable that is not a logistical transporter toggles whether it answers redstone.
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 521.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [520, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Redstone sensitivity turned: on"]
+
+[[step]]
+# A sneak click with the configurator on a bin toggles whether it ejects.
+blocks = [{ x = 530, y = 64, z = 0, state = "mekanism:basic_bin" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 531.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [530, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Bin auto-eject: on"]
+
+[[step]]
+# A sneak click on a pump resets its calculation even in a configurate mode the pump does not configure.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+blocks = [{ x = 540, y = 64, z = 0, state = "mekanism:electric_pump" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 541.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [540, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Reset Electric Pump calculation"]

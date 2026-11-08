@@ -215,6 +215,28 @@ pub fn decode(data: &[u8]) -> Option<(Found, Reactor)> {
     Some((found, reactor))
 }
 
+/// The mode of a port (`FissionPortMode`), kept in the byte after its data: 0 takes everything in, 1 gives waste out,
+/// 2 gives heated coolant out. A port saved before the configurator kept it has no byte and takes in.
+pub fn mode_of(data: &[u8]) -> u8 {
+    data.get(53).copied().unwrap_or(0).min(2)
+}
+
+/// The name of a port mode, as the original shows it.
+pub fn mode_name(mode: u8) -> &'static str {
+    match mode {
+        1 => "output waste",
+        2 => "output coolant",
+        _ => "input only",
+    }
+}
+
+/// The port's data with its mode byte after it.
+pub fn with_mode(mut data: Vec<u8>, mode: u8) -> Vec<u8> {
+    data.truncate(53);
+    data.push(mode);
+    data
+}
+
 pub fn max_burn(f: &Found) -> f64 {
     f64::from(f.assemblies) * BURN_PER_ASSEMBLY
 }
@@ -531,7 +553,26 @@ impl Mekanism {
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 0, &full(r.water.amount, caps[0], WATER, r.coolant.amount > 0));
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 1, &full(r.coolant.amount, caps[1], SODIUM, r.water.amount > 0));
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 2, &full(r.fuel.amount, caps[2], FISSILE, false));
-                let keep = if tick % 20 == 0 { encode(&found, &r) } else { p.data.clone() };
+                // A sneak click with the configurator cycles what the port does (`TileEntityFissionReactorPort`
+                // on sneak right click): take in, give waste out, give heated coolant out. A plain click says which.
+                let mut mode = mode_of(&p.data);
+                let mut mode_changed = false;
+                if let Some(click) = self.take_click(p) {
+                    if click.sneak && click.mode.is_configurating() {
+                        mode = (mode + 1) % 3;
+                        mode_changed = true;
+                        let _ = players::tell(&click.player, &format!("Valve mode changed to: {}", mode_name(mode)));
+                    } else if click.mode.is_configurating() {
+                        let _ = players::tell(&click.player, &format!("Reactor Port mode: {}", mode_name(mode)));
+                    }
+                }
+                let keep = if mode_changed || tick % 20 == 0 { with_mode(encode(&found, &r), mode) } else { p.data.clone() };
+                // What each face does with the tanks, in the order water, coolant, fuel, heated coolant, waste.
+                let tank_faces = match mode {
+                    1 => vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::Output; 6]],
+                    2 => vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::Output; 6], vec![FlowSide::None; 6]],
+                    _ => vec![vec![FlowSide::Input; 6], vec![FlowSide::Input; 6], vec![FlowSide::Input; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6]],
+                };
                 out.push(BlockEntityUpdate {
                     dimension: p.dimension.clone(),
                     pos: p.pos,
@@ -540,7 +581,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: Some(tanks_now.iter().map(plus::as_tank).collect()),
-                    tank_faces: None,
+                    tank_faces: Some(tank_faces),
                     menu_data: Some(data.clone()),
                     transmitter_faces: None,
                 });

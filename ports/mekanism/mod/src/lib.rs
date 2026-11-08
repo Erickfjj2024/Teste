@@ -37,16 +37,17 @@ mod sides;
 mod sorter;
 mod tank;
 mod teleporter;
+mod transmitter;
 mod turbine;
 mod upgrades;
 mod worldgen;
 
 use horizon_mod_sdk::server::{
-    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, ItemStack, Tank, TankSpec,
+    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, GameMode, ItemStack, Tank, TankSpec,
     BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, player_control, player_items, players,
     recipe_types, serde_json, world,
 };
-use config::{Config, Data, Layout, Transmission};
+use config::{Config, Data, Layout, ToolMode, Transmission};
 use generators::GenKind;
 use redstone::Control;
 use sides::Mode;
@@ -327,8 +328,9 @@ struct Mekanism {
     conts: HashMap<&'static str, continuous::Book>,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
-    /// What each player's configurator is set to configure (Mekanism keeps it in the item).
-    tool: HashMap<String, Transmission>,
+    /// The mode each player's configurator was last in: a fallback for a stack the game has not written the mode back
+    /// into yet. The mode lives in the item's components (Mekanism keeps it in the item); this map is only a cache.
+    tool: HashMap<String, ToolMode>,
     /// The machines whose item faces and eject were given to the game since the mod started: a machine loaded from the
     /// world or from an item gives them again once.
     applied: HashSet<(String, i32, i32, i32)>,
@@ -412,6 +414,8 @@ struct Click {
     face: usize,
     /// Sneaking: the click changes the side; otherwise it only tells what it is.
     sneak: bool,
+    /// The configurator's mode when clicked, as its item's components said.
+    mode: ToolMode,
     tick: u64,
 }
 
@@ -702,7 +706,7 @@ impl Mekanism {
     /// What a tool click on a machine does: it tells the side's behaviour, and while sneaking bumps it to the next
     /// (`ItemConfigurator.useOn`). Whether the configuration changed.
     fn configure(&mut self, cfg: &mut Config, facing: &str, layout: Layout, click: &Click) -> bool {
-        let t = self.tool.get(&click.player).copied().unwrap_or(Transmission::Items);
+        let Some(t) = click.mode.transmission() else { return false };
         // A configurator set to a transmission the machine does not have has nothing to do there.
         if !layout.transmissions().contains(&t) {
             return false;
@@ -720,6 +724,15 @@ impl Mekanism {
             return false;
         }
         let next = config::cycle(layout, t, now, false);
+        if next == now {
+            // The transmission has no side type to move to (its supported list is empty): say what the side is, rather
+            // than announcing a change that did not happen.
+            let _ = players::tell(
+                &click.player,
+                &format!("Current {} behavior: {} ({})", t.label(), now.label(), now.color_name()),
+            );
+            return false;
+        }
         cfg.side_mut(t)[side] = next;
         let _ = players::tell(
             &click.player,
@@ -756,6 +769,129 @@ impl Mekanism {
             .iter()
             .position(|c| c.dimension == e.dimension && (c.pos.x, c.pos.y, c.pos.z) == (e.pos.x, e.pos.y, e.pos.z))?;
         Some(self.pending.remove(i))
+    }
+
+    /// The configurator clicks that act on the block itself — empty, rotate and the wrench — taken up at the start of
+    /// the tick, before the machines' own ticks, so a machine emptied here does not work from its full slots. A block
+    /// a wrench took apart is gone from the tick's list. Returns the updates emptying and rotating cubes write.
+    fn tool_clicks(&mut self, entities: &mut Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.pending.len() {
+            if self.pending[i].mode.is_configurating() {
+                i += 1;
+                continue;
+            }
+            let c = self.pending.remove(i);
+            let Some(block) = world::get_block(&c.dimension, c.pos.x, c.pos.y, c.pos.z) else { continue };
+            let name = block.split('[').next().unwrap_or("").to_owned();
+            match c.mode {
+                ToolMode::Empty => {
+                    if let Some(e) = entity_at(entities, &c) {
+                        out.extend(self.empty_block(e));
+                    }
+                }
+                ToolMode::Rotate => {
+                    if let Some(target) = rotate_target(c.face, c.sneak) {
+                        if name.ends_with("_energy_cube") {
+                            if let Some(e) = entity_at(entities, &c) {
+                                out.extend(self.rotate_cube(e, target));
+                            }
+                        } else if let Some(e) = entity_at(entities, &c) {
+                            self.rotate_facing(e, target);
+                        }
+                    }
+                }
+                ToolMode::Wrench => {
+                    if c.sneak {
+                        if self.dismantle(&c) {
+                            entities.retain(|e| !(e.dimension == c.dimension && (e.pos.x, e.pos.y, e.pos.z) == (c.pos.x, c.pos.y, c.pos.z)));
+                        }
+                    } else if name.ends_with("_energy_cube") {
+                        if let Some(e) = entity_at(entities, &c) {
+                            let modes = sides::decode(&e.data).unwrap_or([sides::Mode::None; 6]);
+                            let front = rotate_step(cube::front_of(&e.data, &modes));
+                            out.extend(self.rotate_cube(e, front));
+                        }
+                    } else if let Some(e) = entity_at(entities, &c) {
+                        let current = sides::property(&e.state, "facing").map_or(sides::NORTH, laser::face_of);
+                        self.rotate_facing(e, rotate_step(current));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Empties a block's item slots into the world (`ItemConfigurator` empty): the original drops every non-empty slot
+    /// and leaves energy, tanks and chemicals alone. The extra slots past the container's are dropped by the game, so
+    /// the emptied slots go out with the old stacks after them; the tick's copy is emptied too, so the machine does
+    /// not work from its full slots this tick.
+    fn empty_block(&mut self, e: &mut BlockEntity) -> Option<BlockEntityUpdate> {
+        let kept: Vec<Option<ItemStack>> = e.items.iter().filter(|s| s.is_some()).cloned().collect();
+        if kept.is_empty() {
+            return None;
+        }
+        let mut items = vec![None; e.items.len()];
+        items.extend(kept);
+        e.items = vec![None; e.items.len()];
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: e.data.clone(),
+            items: Some(items),
+            energy: None,
+            energy_faces: None,
+            tanks: None,
+            tank_faces: None,
+            menu_data: None,
+            transmitter_faces: None,
+        })
+    }
+
+    /// Turns a cube's front to `target` (a face of the world), keeping its energy and item modes.
+    fn rotate_cube(&mut self, e: &mut BlockEntity, target: usize) -> Option<BlockEntityUpdate> {
+        let modes = sides::decode(&e.data).unwrap_or_else(|| sides::default_modes(target));
+        let item_modes = cube::item_modes(&e.data);
+        let data = cube::encode(&modes, target, &item_modes);
+        e.data = data.clone();
+        let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "facing", cube::facing_name(target));
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data,
+            items: None,
+            energy: None,
+            energy_faces: None,
+            tanks: None,
+            tank_faces: None,
+            menu_data: None,
+            transmitter_faces: None,
+        })
+    }
+
+    /// Turns a block's `facing` property to `target`, in the world and in the tick's copy of the entity.
+    fn rotate_facing(&self, e: &mut BlockEntity, target: usize) {
+        let facing = laser::facing_name(target);
+        let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "facing", facing);
+        if let Some(old) = sides::property(&e.state, "facing").map(str::to_owned) {
+            e.state = e.state.replacen(&format!("facing={old}"), &format!("facing={facing}"), 1);
+        }
+    }
+
+    /// Takes a block apart with the wrench (`TileEntityMekanism.tryWrenchDismantle`): the block breaks as the player
+    /// with the configurator would break it, its drops falling where it was (mine-block has no way to put them in the
+    /// player's inventory). A block in radiation cannot be taken apart: the original blocks it when the tile itself is
+    /// radioactive, and the port has no per-tile scale, so the ambient level at the block stands in. Whether it was
+    /// taken apart.
+    fn dismantle(&mut self, c: &Click) -> bool {
+        if radiation::severity(radiation::level_at(&self.radiation.sources, &c.dimension, [c.pos.x, c.pos.y, c.pos.z])) > 0.0 {
+            let _ = players::tell(&c.player, "Cannot dismantle: the block is radioactive");
+            return false;
+        }
+        let _ = world::mine_block(&c.dimension, c.pos.x, c.pos.y, c.pos.z, CONFIGURATOR, false, c.pos.x, c.pos.y, c.pos.z, c.face as u32);
+        true
     }
 
     /// A machine's tick: what it holds after, if that differs from before.
@@ -974,30 +1110,64 @@ impl Mekanism {
     fn cube(&mut self, e: &BlockEntity, block: &str) -> Option<BlockEntityUpdate> {
         let (capacity, creative) = cube_capacity(block);
         let stored = sides::decode(&e.data);
-        let mut changed = stored.is_none() || e.data.len() < 7;
+        let mut changed = stored.is_none() || e.data.len() < 13;
         // A new cube's front looks at the nearest player, as one placed in front of them does.
         let front_new = front_for(e);
         let mut modes = stored.unwrap_or_else(|| sides::default_modes(front_new));
         let front = if stored.is_some() { cube::front_of(&e.data, &modes) } else { front_new };
+        // The cube's item sides (the original configures energy and items on a cube): the charge slot takes in
+        // where a face is an input, the discharge slot gives where it is an output.
+        let mut item_modes = cube::item_modes(&e.data);
         if let Some(click) = self.take_click(e) {
-            // The cube configures energy only: a configurator set to items has nothing to do here.
-            if self.tool.get(&click.player).copied().unwrap_or(Transmission::Items) == Transmission::Energy {
-                let now = modes[click.face];
-                let d = cube::data_of;
-                if click.sneak {
-                    modes[click.face] = now.step(false);
-                    changed = true;
-                    let next = d(modes[click.face]);
-                    let _ = players::tell(
-                        &click.player,
-                        &format!("Energy behavior bumped to: {} ({})", next.label(), next.color_name()),
-                    );
-                } else {
-                    let _ = players::tell(
-                        &click.player,
-                        &format!("Current Energy behavior: {} ({})", d(now).label(), d(now).color_name()),
-                    );
+            match click.mode {
+                ToolMode::Energy => {
+                    let now = modes[click.face];
+                    let d = cube::data_of;
+                    if click.sneak {
+                        modes[click.face] = now.step(false);
+                        changed = true;
+                        let next = d(modes[click.face]);
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Energy behavior bumped to: {} ({})", next.label(), next.color_name()),
+                        );
+                    } else {
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Current Energy behavior: {} ({})", d(now).label(), d(now).color_name()),
+                        );
+                    }
                 }
+                ToolMode::Items => {
+                    let now = item_modes[click.face];
+                    let d = cube::data_of;
+                    if click.sneak {
+                        item_modes[click.face] = now.step(false);
+                        changed = true;
+                        let next = d(item_modes[click.face]);
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Item behavior bumped to: {} ({})", next.label(), next.color_name()),
+                        );
+                        let faces: Vec<Vec<u32>> = item_modes
+                            .iter()
+                            .map(|m| match m {
+                                Mode::Input => vec![cube::CHARGE as u32],
+                                Mode::Output => vec![cube::DISCHARGE as u32],
+                                Mode::Both => vec![cube::CHARGE as u32, cube::DISCHARGE as u32],
+                                Mode::None => Vec::new(),
+                            })
+                            .collect();
+                        let _ = world::set_item_faces(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &faces);
+                    } else {
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Current Item behavior: {} ({})", d(now).label(), d(now).color_name()),
+                        );
+                    }
+                }
+                // Empty, rotate and the wrench act on the block itself, not its sides (handled before the tick).
+                _ => {}
             }
         }
         changed |= self.take_button(e, &mut modes, front);
@@ -1033,7 +1203,7 @@ impl Mekanism {
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: cube::encode(&modes, front),
+            data: cube::encode(&modes, front, &item_modes),
             items,
             energy: (energy != e.energy).then_some(energy),
             energy_faces: Some(faces),
@@ -1070,6 +1240,28 @@ fn front_for(e: &BlockEntity) -> usize {
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .and_then(|(_, p)| player_control::get_look(&p.id))
         .map_or(sides::NORTH, |(yaw, _)| sides::front_toward(yaw))
+}
+
+/// The entity at a click's block, in the tick's list.
+fn entity_at<'a>(entities: &'a mut [BlockEntity], c: &Click) -> Option<&'a mut BlockEntity> {
+    entities.iter_mut().find(|e| e.dimension == c.dimension && (e.pos.x, e.pos.y, e.pos.z) == (c.pos.x, c.pos.y, c.pos.z))
+}
+
+/// The face a rotate click turns a block to: the face clicked, or its opposite when sneaking. A block only faces
+/// sideways, so a click on its top or bottom turns nothing (the original only sets a horizontal facing).
+fn rotate_target(face: usize, sneak: bool) -> Option<usize> {
+    let face = if sneak { face ^ 1 } else { face };
+    (2..=5).contains(&face).then_some(face)
+}
+
+/// The next face clockwise (north, east, south, west), for a wrench turn without sneak (`MekanismUtils.rotate`).
+fn rotate_step(face: usize) -> usize {
+    match face {
+        sides::NORTH => sides::EAST,
+        sides::EAST => sides::SOUTH,
+        sides::SOUTH => sides::WEST,
+        _ => sides::NORTH,
+    }
 }
 
 fn flow_side(f: u8) -> FlowSide {
@@ -1296,8 +1488,9 @@ impl ServerMod for Mekanism {
             }
             r = r.block_entity_kind(k);
         }
-        // The discharge and charge slots of its screen; no face reaches them (the cube's item sides are still to do).
-        let slots = || ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true };
+        // The discharge and charge slots of its screen; a face reaches the charge slot where the cube's item side
+        // says input, the discharge slot where it says output (set by the configurator, `cube()`).
+        let slots = || ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: vec![1], outputs: vec![0], menu: true };
         for (block, capacity, rate) in CUBE_TIERS {
             let mut tier = kind(block, true);
             tier.container = Some(slots());
@@ -1500,6 +1693,7 @@ impl ServerMod for Mekanism {
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
         r = r.block_entity_kind(creative);
         // Cables, tubes and pipes of the four tiers (`CableTier`, `TubeTier`, `PipeTier`): what each carries a tick.
+        // They tick so the configurator can reach them (`run_transmitters`): the game moves the contents itself.
         for (i, tier) in ["basic", "advanced", "elite", "ultimate"].iter().enumerate() {
             for (name, medium, rates) in [
                 ("universal_cable", TransmitterMedium::Energy, CABLE_RATES),
@@ -1507,7 +1701,7 @@ impl ServerMod for Mekanism {
                 ("mechanical_pipe", TransmitterMedium::Tank("fluid".into()), PIPE_RATES),
                 ("logistical_transporter", TransmitterMedium::Items, TRANSPORTER_RATES),
             ] {
-                let mut k = kind(&format!("mekanism:{tier}_{name}"), false);
+                let mut k = kind(&format!("mekanism:{tier}_{name}"), true);
                 k.keep_data = false;
                 k.transmitter = Some(TransmitterSpec { medium, throughput: rates[i] });
                 r = r.block_entity_kind(k);
@@ -1634,6 +1828,29 @@ impl ServerMod for Mekanism {
         self.run_radiation(tick);
     }
 
+    /// The mode of the configurator in `stack`: its components first; the remembered one for the player when the stack
+    /// carries none (a stack the game has not written the mode back into yet).
+    fn tool_mode(&self, player: &str, stack: &ItemStack) -> ToolMode {
+        if stack.components.contains(config::MODE_COMPONENT) {
+            config::mode_of(&stack.components)
+        } else {
+            self.tool.get(player).copied().unwrap_or(ToolMode::Items)
+        }
+    }
+
+    /// Writes the mode into the configurator the player holds, so it survives a restart and travels with the item.
+    /// The held slot is not told: the first hotbar slot with the same stack, as the upgrades and the blades do.
+    fn write_tool_mode(&self, player: &Player, stack: &ItemStack, mode: ToolMode) {
+        let slot = player_items::get_inventory(&player.id)
+            .and_then(|inv| inv.iter().take(9).position(|s| s.as_ref().is_some_and(|s| s.item == stack.item && s.count == stack.count)))
+            .map_or(0, |s| s as u32);
+        let _ = player_items::set_slot(
+            &player.id,
+            slot,
+            Some(&ItemStack { item: stack.item.clone(), count: stack.count, components: config::with_mode(&stack.components, mode) }),
+        );
+    }
+
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if self.read_radiation(player, &stack.item) {
             return true;
@@ -1686,9 +1903,12 @@ impl ServerMod for Mekanism {
             return false;
         }
         let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+        let mode = self.tool_mode(&player.id, &stack);
         let Some(pos) = pos else {
-            // Sneaking in the air changes what the tool configures (`ItemConfigurator.use`), unless this is the use in
+            // Sneaking in the air changes the tool's mode (`ItemConfigurator.use`), unless this is the use in
             // the air that follows a click the tool just took on a machine: that click is one, and does nothing more.
+            // The gesture is the port's own: the original cycles by radial menu (N) or shift-scroll, neither of which
+            // the Android client has.
             if sneaking
                 && self
                     .last_block_use
@@ -1698,17 +1918,71 @@ impl ServerMod for Mekanism {
                 return true;
             }
             if sneaking {
-                let t = self.tool.entry(player.id.clone()).or_insert(Transmission::Items);
-                *t = t.next_tool();
-                let _ = players::tell(&player.id, &format!("Configure State: Configurate ({})", t.label()));
+                let mode = mode.next();
+                self.tool.insert(player.id.clone(), mode);
+                self.write_tool_mode(player, &stack, mode);
+                let _ = players::tell(&player.id, &format!("Configure State: {}", mode.label()));
                 return true;
             }
             return false;
         };
         let Some(block) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return false };
         let name = block.split('[').next().unwrap_or("");
-        if !name.ends_with("_energy_cube") && !MACHINES.iter().any(|d| d.block == name) {
-            return false;
+        if mode.is_configurating() {
+            // Generators and fluid tanks have no side configuration to change, and a machine is only claimed for a
+            // transmission it configures: the original leaves the click alone in both cases (a plain click opens the
+            // block's screen), so the click is not claimed here either, instead of being swallowed.
+            if let Some(def) = MACHINES.iter().find(|d| d.block == name) {
+                if def.generator.is_some() || matches!(def.kind, Kind::Tank) && def.tank.is_some_and(|t| t.fluid) {
+                    return false;
+                }
+                // A sneak click on a pump resets its calculation in any configurate mode (the original has no side
+                // configuration on a pump); otherwise only a transmission the machine configures is claimed.
+                if !(sneaking && matches!(def.kind, Kind::Pump)) {
+                    if let Some(t) = mode.transmission() {
+                        if !def.layout.transmissions().contains(&t) {
+                            return false;
+                        }
+                    }
+                }
+            } else if name.ends_with("_energy_cube") {
+                // The cube configures energy and items only.
+                if !matches!(mode.transmission(), Some(Transmission::Energy | Transmission::Items)) {
+                    return false;
+                }
+            } else if bin::capacity_of(name).is_some() {
+                // A sneak click with the configurator toggles whether the bin ejects (`run_bins`); a plain click is
+                // left alone, so it opens the bin's screen as it does without the tool.
+                if !sneaking {
+                    return false;
+                }
+            } else if !transmitter::is_transmitter(name)
+                && !matches!(name, sps::PORT | induction::PORT | fusion::PORT | fission::PORT | boiler::VALVE | fusion::MATRIX)
+            {
+                return false;
+            }
+        } else {
+            // Empty, rotate and the wrench act on the block itself: what each of them reaches. The wrench takes apart
+            // any of the mod's blocks but a bounding block (a part of a multiblock, not a block of its own).
+            let ok = match mode {
+                ToolMode::Empty => {
+                    MACHINES.iter().any(|d| d.block == name)
+                        || name.ends_with("_energy_cube")
+                        || name == sorter::SORTER
+                        || name == miner::MINER
+                }
+                ToolMode::Rotate => {
+                    MACHINES.iter().any(|d| d.block == name)
+                        || name.ends_with("_energy_cube")
+                        || bin::capacity_of(name).is_some()
+                        || name == sorter::SORTER
+                }
+                ToolMode::Wrench => name.starts_with("mekanism:") && name != bounding::BLOCK,
+                _ => false,
+            };
+            if !ok {
+                return false;
+            }
         }
         let eye = [player.x, player.y + if sneaking { EYE_SNEAKING } else { EYE }, player.z];
         let block = [pos.x, pos.y, pos.z];
@@ -1722,6 +1996,7 @@ impl ServerMod for Mekanism {
             pos,
             face,
             sneak: sneaking,
+            mode,
             tick: 0,
         });
         self.last_block_use.insert(player.id.clone(), self.now);
@@ -1882,9 +2157,11 @@ impl ServerMod for Mekanism {
         }
     }
 
-    fn block_entities_tick(&mut self, tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
+    fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
         self.now = tick;
         let mut out = Vec::new();
+        // The configurator clicks that act on the block itself go first, before the machines' own ticks.
+        out.extend(self.tool_clicks(&mut entities));
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
@@ -1897,6 +2174,11 @@ impl ServerMod for Mekanism {
         let bins: Vec<&BlockEntity> = entities.iter().filter(|e| bin::capacity_of(e.state.split('[').next().unwrap_or("")).is_some()).collect();
         if !bins.is_empty() || !self.bin_buttons.is_empty() {
             out.extend(self.run_bins(&bins, tick));
+        }
+        let transmitters: Vec<&BlockEntity> =
+            entities.iter().filter(|e| transmitter::is_transmitter(e.state.split('[').next().unwrap_or(""))).collect();
+        if !transmitters.is_empty() {
+            out.extend(self.run_transmitters(&transmitters));
         }
         let miners: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(miner::MINER)).collect();
         if !miners.is_empty() || !self.miner_buttons.is_empty() {

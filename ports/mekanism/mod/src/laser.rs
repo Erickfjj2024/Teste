@@ -170,6 +170,24 @@ impl Mekanism {
                         }
                     }
                 }
+                // A plain click with the configurator sets the plasma to a billion degrees, but only in creative and
+                // only while the reactor is formed (`TileEntityLaserFocusMatrix.onRightClick`). The port has no
+                // empty-hand use, so with the configurator is the only way it works here.
+                if let Some(click) = self.take_click(e) {
+                    if !click.sneak && click.mode.is_configurating() {
+                        let creative = players::online()
+                            .into_iter()
+                            .find(|p| p.id == click.player)
+                            .is_some_and(|p| p.game_mode == GameMode::Creative);
+                        if creative {
+                            if let Some((found, _)) = fusion::decode(&e.data).filter(|(f, _)| f.valid) {
+                                if let Some(s) = self.fusions.get_mut(&(e.dimension.clone(), found.min)) {
+                                    s.reactor.plasma = 1_000_000_000.0;
+                                }
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             let is_amp = block == AMPLIFIER;

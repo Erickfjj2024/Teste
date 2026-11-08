@@ -185,6 +185,19 @@ pub fn decode(data: &[u8]) -> Option<(Found, Reactor)> {
     ))
 }
 
+/// The mode of a port, kept in the byte after its data: false takes in, true gives out. A port saved before the
+/// configurator kept it has no byte and takes in.
+pub fn mode_of(data: &[u8]) -> bool {
+    data.get(31).copied().unwrap_or(0) == 1
+}
+
+/// The port's data with its mode byte after it.
+pub fn with_mode(mut data: Vec<u8>, output: bool) -> Vec<u8> {
+    data.truncate(31);
+    data.push(u8::from(output));
+    data
+}
+
 pub fn water_capacity(injection: u64) -> u64 {
     injection * WATER_PER_INJECTION
 }
@@ -470,6 +483,37 @@ impl Mekanism {
                     transmitter_faces: None,
                 };
                 if e.state.starts_with(PORT) {
+                    // A sneak click with the configurator toggles whether the port takes in or gives out
+                    // (`TileEntityFusionReactorPort.onSneakRightClick`); a plain click says which it is.
+                    let mut output = mode_of(&e.data);
+                    let mut mode_changed = false;
+                    if let Some(click) = self.take_click(e) {
+                        if click.sneak && click.mode.is_configurating() {
+                            output = !output;
+                            mode_changed = true;
+                            let _ = players::tell(
+                                &click.player,
+                                &format!("Toggled Reactor Port eject mode to: {}.", if output { "Output" } else { "Input" }),
+                            );
+                        } else if click.mode.is_configurating() {
+                            let _ = players::tell(&click.player, &format!("Reactor Port mode: {}", if output { "Output" } else { "Input" }));
+                        }
+                    }
+                    if mode_changed || tick_no % 20 == 0 {
+                        update.data = with_mode(encode(&Found { valid: true, min: key.1 }, &r), output);
+                    }
+                    // A port that gives out lets steam and energy out and takes nothing in; one that takes in keeps
+                    // the faces the registration gives it.
+                    if output {
+                        update.tank_faces = Some(vec![
+                            vec![FlowSide::None; 6],
+                            vec![FlowSide::None; 6],
+                            vec![FlowSide::None; 6],
+                            vec![FlowSide::None; 6],
+                            vec![FlowSide::Output; 6],
+                        ]);
+                        update.energy_faces = Some(vec![FlowSide::Output; 6]);
+                    }
                     let share = r.energy / n + u64::from(index < r.energy % n);
                     index += 1;
                     update.energy = Some(share);

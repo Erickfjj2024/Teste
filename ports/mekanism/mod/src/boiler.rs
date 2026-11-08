@@ -4,8 +4,8 @@
 //! below the dispersers into steam, and the coolant that gave its heat comes out cooled.
 //!
 //! Heat is one temperature for the whole structure (`CASING_HEAT_CAPACITY` 50 for each block of it); the valves hold mirrors of the four tanks
-//! (water, steam, superheated coolant, cooled coolant) as the dynamic tank's do. Unlike the original, a valve has no mode: every valve takes
-//! water and heated coolant in and gives steam and cooled coolant out.
+//! (water, steam, superheated coolant, cooled coolant) as the dynamic tank's do. A sneak click with the configurator cycles what a valve does:
+//! take in, give steam out, give cooled coolant out; a valve saved before that has no mode byte and takes in.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -185,6 +185,28 @@ pub fn decode(data: &[u8]) -> Option<(Found, f32)> {
     let uint = |at: usize| int(at) as u32;
     let t = f32::from_le_bytes([data[29], data[30], data[31], data[32]]);
     Some((Found { valid: data[0] == 1, min: [int(1), int(5), int(9)], blocks: uint(13), water_volume: uint(17), steam_volume: uint(21), elements: uint(25) }, t))
+}
+
+/// The mode of a valve (`BoilerValveMode`), kept in the byte after its data: 0 takes in, 1 gives steam out, 2 gives
+/// cooled coolant out. A valve saved before the configurator kept it has no byte and takes in.
+pub fn mode_of(data: &[u8]) -> u8 {
+    data.get(33).copied().unwrap_or(0).min(2)
+}
+
+/// The name of a valve mode, as the original shows it.
+pub fn mode_name(mode: u8) -> &'static str {
+    match mode {
+        1 => "output steam",
+        2 => "output coolant",
+        _ => "input only",
+    }
+}
+
+/// The valve's data with its mode byte after it.
+pub fn with_mode(mut data: Vec<u8>, mode: u8) -> Vec<u8> {
+    data.truncate(33);
+    data.push(mode);
+    data
 }
 
 /// The shared state of one boiler.
@@ -384,7 +406,26 @@ impl Mekanism {
                 let _ = world::set_tank_filter(&v.dimension, x, y, z, 0, &if tanks_now[0].amount >= cap_of[0] { vec![NOTHING.to_owned()] } else { vec![WATER.to_owned()] });
                 let _ = world::set_tank_filter(&v.dimension, x, y, z, 2, &if tanks_now[2].amount >= cap_of[2] { vec![NOTHING.to_owned()] } else { vec![HOT.to_owned()] });
                 let _ = full;
-                let keep = if self.now % 20 == 0 { encode(&found, temperature as f32) } else { v.data.clone() };
+                // A sneak click with the configurator cycles what the valve does (`TileEntityBoilerValve` on sneak
+                // right click): take in, give steam out, give cooled coolant out. A plain click says which.
+                let mut mode = mode_of(&v.data);
+                let mut mode_changed = false;
+                if let Some(click) = self.take_click(v) {
+                    if click.sneak && click.mode.is_configurating() {
+                        mode = (mode + 1) % 3;
+                        mode_changed = true;
+                        let _ = players::tell(&click.player, &format!("Valve mode changed to: {}", mode_name(mode)));
+                    } else if click.mode.is_configurating() {
+                        let _ = players::tell(&click.player, &format!("Boiler Valve mode: {}", mode_name(mode)));
+                    }
+                }
+                let keep = if mode_changed || self.now % 20 == 0 { with_mode(encode(&found, temperature as f32), mode) } else { v.data.clone() };
+                // What each face does with the tanks, in the order water, steam, heated coolant, cooled coolant.
+                let tank_faces = match mode {
+                    1 => vec![vec![FlowSide::None; 6], vec![FlowSide::Output; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6]],
+                    2 => vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::None; 6], vec![FlowSide::Output; 6]],
+                    _ => vec![vec![FlowSide::Input; 6], vec![FlowSide::None; 6], vec![FlowSide::Input; 6], vec![FlowSide::None; 6]],
+                };
                 out.push(BlockEntityUpdate {
                     dimension: v.dimension.clone(),
                     pos: v.pos,
@@ -393,7 +434,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: Some(tanks_now.iter().map(plus::as_tank).collect()),
-                    tank_faces: None,
+                    tank_faces: Some(tank_faces),
                     menu_data: Some(data.clone()),
                     transmitter_faces: None,
                 });

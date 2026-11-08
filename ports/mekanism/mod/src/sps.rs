@@ -3,8 +3,8 @@
 //! Ports give the energy they get to the coils behind them; the energy turns polonium into antimatter: a million FE for each mB of polonium,
 //! a thousand mB of polonium for each mB of antimatter.
 //!
-//! The ports hold mirrors of the polonium and antimatter tanks, as the boiler's valves do. Unlike the original, a port has no input/output mode
-//! (the original toggles it by sneak-clicking): every port takes polonium and energy in and gives antimatter out.
+//! The ports hold mirrors of the polonium and antimatter tanks, as the boiler's valves do. A sneak click with the configurator toggles
+//! whether a port takes in (polonium and energy) or gives out (antimatter); a port saved before that has no mode byte and takes in.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -164,6 +164,19 @@ pub fn decode(data: &[u8]) -> Option<(Found, Sps)> {
             ..Sps::default()
         },
     ))
+}
+
+/// The mode of a port, kept in the byte after its data: false takes in, true gives out. A port saved before the
+/// configurator kept it has no byte and takes in.
+pub fn mode_of(data: &[u8]) -> bool {
+    data.get(25).copied().unwrap_or(0) == 1
+}
+
+/// The port's data with its mode byte after it.
+pub fn with_mode(mut data: Vec<u8>, output: bool) -> Vec<u8> {
+    data.truncate(25);
+    data.push(u8::from(output));
+    data
 }
 
 /// `process`: spends `operations` mB of polonium; every thousand makes an mB of antimatter (all of it has to fit, or nothing is spent).
@@ -339,7 +352,30 @@ impl Mekanism {
             for p in &group {
                 let (x, y, z) = (p.pos.x, p.pos.y, p.pos.z);
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 0, &if st.input.amount >= caps[0] { vec![NOTHING.to_owned()] } else { vec![POLONIUM.to_owned()] });
-                let keep = if tick_no % 20 == 0 { encode(&found, &st) } else { p.data.clone() };
+                // A sneak click with the configurator toggles whether the port takes in or gives out
+                // (`TileEntitySPSPort.onSneakRightClick`); a plain click says which it is.
+                let mut output = mode_of(&p.data);
+                let mut mode_changed = false;
+                if let Some(click) = self.take_click(p) {
+                    if click.sneak && click.mode.is_configurating() {
+                        output = !output;
+                        mode_changed = true;
+                        let _ = players::tell(
+                            &click.player,
+                            &format!("Toggled SPS Port mode to: {}.", if output { "Output" } else { "Input" }),
+                        );
+                    } else if click.mode.is_configurating() {
+                        let _ = players::tell(&click.player, &format!("SPS Port mode: {}", if output { "Output" } else { "Input" }));
+                    }
+                }
+                let keep = if mode_changed || tick_no % 20 == 0 { with_mode(encode(&found, &st), output) } else { p.data.clone() };
+                // What each face does with the tanks, and with energy: a port that takes in feeds polonium and energy
+                // to the coils, one that gives out lets antimatter out and takes no energy.
+                let (tank_faces, energy_faces) = if output {
+                    (vec![vec![FlowSide::None; 6], vec![FlowSide::Output; 6]], vec![FlowSide::None; 6])
+                } else {
+                    (vec![vec![FlowSide::Input; 6], vec![FlowSide::None; 6]], vec![FlowSide::Input; 6])
+                };
                 out.push(BlockEntityUpdate {
                     dimension: p.dimension.clone(),
                     pos: p.pos,
@@ -347,9 +383,9 @@ impl Mekanism {
                     items: None,
                     // The energy was spent on the coils.
                     energy: Some(0),
-                    energy_faces: None,
+                    energy_faces: Some(energy_faces),
                     tanks: Some(tanks_now.iter().map(plus::as_tank).collect()),
-                    tank_faces: None,
+                    tank_faces: Some(tank_faces),
                     menu_data: Some(data.clone()),
                     transmitter_faces: None,
                 });

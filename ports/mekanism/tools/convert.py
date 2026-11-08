@@ -200,7 +200,10 @@ for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
     d = read_json(p)
     model = d.get('model', {})
     if n == 'configurator':
-        # Its model picks by a component of Mekanism's own (the tool's mode); the port has the one mode, configuring.
+        # Its model picks by a component of Mekanism's own (the tool's mode): the original's models/item/configurator.json
+        # has overrides on the `mekanism:mode` predicate, one model each for configuring, empty, rotate and wrench. The
+        # engine draws one model per item and there is no way to register a component-based model selector, so the port
+        # keeps the one configuring model; the mode itself lives in the item's components and the cycle message says it.
         model = {'type': 'minecraft:model', 'model': f'{NS}:item/configurator'}
     if model.get('type') != 'minecraft:model':
         continue  # a special item model the engine can't draw (jetpack, tablet...)

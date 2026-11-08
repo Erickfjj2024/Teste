@@ -2,9 +2,10 @@
 //! runs out). The items sit in the bin's own count; two slots show them: an output (what a hopper, pipe or hand takes, a stack at most) and
 //! an input (what is put in is absorbed into the count). Using an item on the bin puts the whole stack in; an empty hand opens its screen.
 //!
-//! A bin that is "active" (sneak-click in the original; the switch in the screen here) pushes a stack out of its bottom every half second.
+//! A bin that is "active" (sneak-click with the configurator in the original; the switch in the screen here) pushes a stack out of its bottom
+//! every half second.
 //! Not here: taking by punching (a stack, or one when sneaking), putting everything of the same item in by clicking twice, items with data
-//! (enchantments, names...: they lose it), the lock by the configurator.
+//! (enchantments, names...: they lose it), the lock (an empty hand, sneaking, on the front face in the original — not the configurator).
 use super::*;
 
 pub const BINS: [(&str, u64); 5] = [
@@ -127,6 +128,14 @@ impl Mekanism {
                     TOGGLE_ACTIVE => bin.active = !bin.active,
                     TOGGLE_LOCK => bin.locked = !bin.locked && !bin.item.is_empty(),
                     _ => {}
+                }
+            }
+            // A sneak click with the configurator toggles whether the bin pushes a stack out of its bottom
+            // (`TileEntityBin.onSneakRightClick`); the original only plays a sound, the port also says so.
+            if let Some(click) = self.take_click(e) {
+                if click.sneak && click.mode.is_configurating() {
+                    bin.active = !bin.active;
+                    let _ = players::tell(&click.player, &format!("Bin auto-eject: {}", if bin.active { "on" } else { "off" }));
                 }
             }
             // The stacks players used on the bin go in.

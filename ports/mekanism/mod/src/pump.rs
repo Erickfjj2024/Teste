@@ -207,7 +207,20 @@ impl Mekanism {
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         let mut dirty = stored.is_none() || !self.applied.contains(&key);
         if let Some(click) = self.take_click(e) {
-            dirty |= self.configure(&mut cfg, &facing, layout, &click);
+            // A sneak click with the configurator resets the pump's calculation (`TileEntityElectricPump` /
+            // `TileEntityFluidicPlenisher` on sneak right click), instead of changing a side; the original has no
+            // side configuration on a pump.
+            if click.sneak && click.mode.is_configurating() {
+                if def.form == 1 {
+                    self.plenishers.remove(&key);
+                    let _ = players::tell(&click.player, "Reset Fluidic Plenisher calculation");
+                } else {
+                    self.pump_nodes.remove(&key);
+                    let _ = players::tell(&click.player, "Reset Electric Pump calculation");
+                }
+            } else {
+                dirty |= self.configure(&mut cfg, &facing, layout, &click);
+            }
         }
         let counts = upgrades::counts_of(def, e);
         let usage = upgrades::energy_per_tick(def.usage, counts[upgrades::SPEED], counts[upgrades::ENERGY]);
