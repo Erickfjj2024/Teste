@@ -20,7 +20,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 1.6 | Minérios entram **depois** da geração do chunk (passada própria), não no worldgen original | LIMITE API | worldgen.rs |
 | 1.7 | Receitas: só as cujos ingredientes existem no port (solar pede painel + tablet, gás pede núcleo eletrolítico etc.) | ABERTA | convert.py |
 | 1.8 | Silenciamento (Muffling) e contenção de XP são só guardados nos upgrades: o port não tem som de máquina nem XP de máquina | LIMITE API | upgrades.rs |
-| 1.9 | Sem radiação (`RadiationManager`), sem dano por radiação, sem Geiger/dosímetro | ABERTA | — |
+| 1.9 | Radiação: seção 15 | — | — |
 | 1.10 | Sem sons de máquina, partículas e animações de bloco (rotação da turbina, LEDs) | LIMITE API | — |
 
 ## 2. Máquinas e fábricas
@@ -94,7 +94,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 |---|---|---|
 | 4.6.1 | Portas **sem modo** (Input / Output Waste / Output Coolant) | ABERTA |
 | 4.6.2 | Logic Adapter é só um bloco de parede (sem saída de redstone nem modos) | ABERTA |
-| 4.6.3 | Sem radiação (nem na queima, nem no meltdown, nem em entidades dentro da zona quente) | ABERTA |
+| 4.6.3 | Radiação do Fission: só o vazamento do lixo que não cabe no tanque e a liberação do meltdown (50×); não irradia entidades dentro da zona quente | ABERTA |
 | 4.6.4 | Meltdown: remove blocos num raio de 8 (exceto bedrock/obsidiana/barreira/portais), sem a explosão real, sem dano a entidades, sem a cadeia de explosões do original | ABERTA |
 | 4.6.5 | Sem cache/restauração do reator ao reconstruir (o original guarda por UUID); aqui o estado volta pelo menor canto da estrutura | ABERTA |
 | 4.6.6 | Taxa de queima por botões (−1, −0,1, +0,1, +1), sem campo de texto/slider | ABERTA |
@@ -216,6 +216,16 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 14.6 | Alturas absolutas (padrão 0 a 60; mundo −64 a 319); ejeta só pelas costas | ABERTA |
 | 14.7 | Itens que não cabem nos 27 slots caem no chão onde o bloco estava; o original para de minerar quando o buffer enche | ABERTA |
 | 14.8 | Sem XP, sem chunk loading; blocos com entidade (baús...) são quebrados e os conteúdos podem se perder | ABERTA |
+
+## 15. Radiação (mod 0.1.82)
+| # | Diferença | Estado |
+|---|---|---|
+| 15.1 | Fontes de radiação (posição, Sv/h, decaimento 0,9995 por segundo), dose do jogador (cresce com o nível onde está, menos a proteção do hazmat; decai) e dano por dose alta, como o original | — |
+| 15.2 | O dano é do tipo "magic" (o tipo `mekanism:radiation` não existe no port); sem exaustão extra | LIMITE API |
+| 15.3 | Só **jogadores** têm dose (mobs não); só o hazmat protege (sem cinto/Curios, sem a unidade de blindagem) | ABERTA |
+| 15.4 | **Fontes só do Fission** (vazamento e meltdown): tanques quebrados com químico radioativo, itens radioativos, Chemical Tank/Dissolution etc. não irradiam | ABERTA |
+| 15.5 | Geiger Counter e Dosimeter: clicar mostra o nível/dose no chat (sem a tela, o som e o painel de radiação; Dosimeter sem limpar a dose) | LIMITE API |
+| 15.6 | O nível é lido uma vez por segundo por jogador, espalhado pelos ticks | — |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

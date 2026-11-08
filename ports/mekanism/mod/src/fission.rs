@@ -167,6 +167,8 @@ pub struct Reactor {
     pub waste: process::Tank,
     pub last_burn: f64,
     pub last_boil: u64,
+    /// Radiation (Sv/h) the reactor leaked this tick: waste that did not fit in its tank.
+    pub leak: f64,
 }
 
 pub fn encode(f: &Found, r: &Reactor) -> Vec<u8> {
@@ -242,6 +244,7 @@ pub fn tick(r: &mut Reactor, f: &Found, ambient: f64, roll: f64) -> bool {
     let capacity = CASING_HEAT * f64::from(f.blocks).max(1.0);
     // The fuel burns.
     r.last_burn = 0.0;
+    r.leak = 0.0;
     if r.active && r.fuel.amount > 0 && r.fuel.chemical == FISSILE {
         let stored = r.fuel.amount as f64 + r.burn_remaining;
         let burn = r.rate_limit.min(stored).min(max_burn(f));
@@ -256,11 +259,15 @@ pub fn tick(r: &mut Reactor, f: &Found, ambient: f64, roll: f64) -> bool {
         let new_waste = r.partial_waste.floor() as u64;
         if new_waste > 0 {
             r.partial_waste %= 1.0;
+            let mut kept = 0;
             if r.waste.amount == 0 || r.waste.chemical == WASTE {
                 let room = fuel_capacity(f).saturating_sub(r.waste.amount);
                 r.waste.chemical = WASTE.to_owned();
-                r.waste.amount += new_waste.min(room);
+                kept = new_waste.min(room);
+                r.waste.amount += kept;
             }
+            // What does not fit leaks as radiation.
+            r.leak += (new_waste - kept) as f64 * radiation::radioactivity(WASTE);
         }
         r.last_burn = burn;
     }
@@ -462,12 +469,23 @@ impl Mekanism {
             if melted {
                 let (dim, min) = (key.0.clone(), key.1);
                 let size = found.size.map(i32::from);
-                after_meltdown(&mut s.reactor, ambient);
                 let centre = [min[0] + size[0] / 2, min[1] + size[1] / 2, min[2] + size[2] / 2];
+                // `meltdownHappened`: the radioactive substances in its tanks are released, fifty times over.
+                let released = (s.reactor.waste.amount as f64 + s.reactor.partial_waste) * radiation::radioactivity(&s.reactor.waste.chemical)
+                    + s.reactor.fuel.amount as f64 * radiation::radioactivity(&s.reactor.fuel.chemical)
+                    + s.reactor.heated.amount as f64 * radiation::radioactivity(&s.reactor.heated.chemical);
+                after_meltdown(&mut s.reactor, ambient);
+                self.radiation.radiate(&dim, centre, released * 50.0);
                 self.meltdown(&dim, centre);
             }
             let s = self.reactors.get_mut(&key).expect("the reactor is there");
             let r = s.reactor.clone();
+            if r.leak > 0.0 {
+                let size = found.size.map(i32::from);
+                let centre = [key.1[0] + size[0] / 2, key.1[1] + size[1] / 2, key.1[2] + size[2] / 2];
+                self.radiation.radiate(&key.0, centre, r.leak);
+            }
+            let s = self.reactors.get_mut(&key).expect("the reactor is there");
             let tanks_now = [r.water.clone(), r.coolant.clone(), r.fuel.clone(), r.heated.clone(), r.waste.clone()];
             for p in &group {
                 s.given.insert([p.pos.x, p.pos.y, p.pos.z], [tanks_now[0].amount, tanks_now[1].amount, tanks_now[2].amount, tanks_now[3].amount, tanks_now[4].amount]);

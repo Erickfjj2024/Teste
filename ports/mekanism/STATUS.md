@@ -700,3 +700,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2al. Digital Miner (mod 0.1.81; fork: API 23 `world.mine-block`)
 `miner.rs`: o miner (bloco 3x3x2 com bounding blocks) varre a área em volta, enfileira os blocos dos filtros (ou todos, no inverso) e quebra um a cada 80 ticks gastando 40 FE/t; os drops vão para os 27 slots (ejeta pelas costas se ligado). Fork: `world.mine-block`. Diferenças em DIFERENCAS.md seção 14.
+
+### 2am. Radiação (mod 0.1.82)
+`radiation.rs`: fontes com decaimento, dose por jogador, proteção do hazmat, dano por dose alta, Geiger Counter e Dosimeter; o Fission vaza e o meltdown irradia. Diferenças em DIFERENCAS.md seção 15. O mod passou a usar o hook `tick`.

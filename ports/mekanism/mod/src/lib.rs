@@ -24,6 +24,7 @@ mod fusion;
 mod induction;
 mod factory;
 mod pump;
+mod radiation;
 mod reaction;
 mod redstone;
 mod generators;
@@ -378,6 +379,7 @@ struct Mekanism {
     bin_buttons: Vec<(String, BlockPos, i32)>,
     alarm_set: HashSet<(String, i32, i32, i32)>,
     miner_buttons: Vec<(String, BlockPos, i32)>,
+    radiation: radiation::Manager,
     miner_work: HashMap<(String, i32, i32, i32), miner::Work>,
     bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
     bin_shown: HashMap<(String, i32, i32, i32), u64>,
@@ -1550,6 +1552,7 @@ impl ServerMod for Mekanism {
             bin_buttons: Vec::new(),
             alarm_set: HashSet::new(),
             miner_buttons: Vec::new(),
+            radiation: radiation::Manager::default(),
             miner_work: HashMap::new(),
             bin_inserts: HashMap::new(),
             bin_shown: HashMap::new(),
@@ -1567,7 +1570,7 @@ impl ServerMod for Mekanism {
             capacity: HashMap::new(),
             force: false,
             reactions: reaction::Book::default(),
-        }, r.on_chunks().on_items()))
+        }, r.on_chunks().on_items().on_tick()))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -1627,7 +1630,14 @@ impl ServerMod for Mekanism {
         }
     }
 
+    fn tick(&mut self, tick: u64) {
+        self.run_radiation(tick);
+    }
+
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        if self.read_radiation(player, &stack.item) {
+            return true;
+        }
         if let Some(k) = upgrades::type_of(&stack.item) {
             // `ItemUpgrade.useOn`: sneaking on a machine that takes the type puts the whole stack in, as far as it fits.
             let (Some(pos), true) = (pos, player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)) else { return false };
