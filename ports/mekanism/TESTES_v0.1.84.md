@@ -1,6 +1,6 @@
-# Testes — mod 0.1.65 a 0.1.79 (tudo que foi construído desde o último teste)
+# Testes — mod 0.1.65 a 0.1.84 (tudo que foi construído desde o último teste)
 
-**Precisa de APK novo** (v51 ou maior): o fork ganhou blocos em vários grupos de multibloco e `world.pull-items` (API 22). Sem o APK novo, o Boiler/Turbine com o disperser, o Sorter e o que depender disso não funcionam. Tudo o mais abaixo foi só testado por testes unitários.
+**Use o APK v51** (já inclui o fork novo): o fork ganhou blocos em vários grupos de multibloco e `world.pull-items` (API 22). Sem o APK novo, o Boiler/Turbine com o disperser, o Sorter e o que depender disso não funcionam. Tudo o mais abaixo foi só testado por testes unitários.
 
 Use o modo criativo para pegar os blocos. Marque cada item: ok / não funcionou (e o que viu).
 
@@ -39,3 +39,10 @@ Advanced Solar (modelo grande, 9 blocos em cima), Wind Generator (mastro de 4 bl
 Structural Glass no lugar de um casing de Dynamic Tank. Industrial Alarm com redstone: o modelo acende.
 
 Diferenças conhecidas (não são bugs): ver `DIFERENCAS.md`.
+
+## 0.1.80 a 0.1.84
+- Cadeia nuclear: Isotopic Centrifuge (hexafluoreto de urânio → fissile fuel) e Solar Neutron Activator (lixo nuclear → polônio, só de dia com céu aberto).
+- Digital Miner: coloque energia, coloque o bloco que quer minerar num dos 5 slots de filtro, ajuste o raio e aperte Start/Stop; os itens vão para os 27 slots.
+- Radiação: com um Geiger Counter na mão, clique para ver o nível; um Fission cheio de lixo ou um meltdown irradia; o hazmat protege.
+- MekanismTools: ferramentas e armaduras (osmium, steel, bronze, lapis, refined glowstone e obsidian): confira a textura da armadura vestida.
+- MekanismAdditions: plásticos e glow panels nas 18 cores.
