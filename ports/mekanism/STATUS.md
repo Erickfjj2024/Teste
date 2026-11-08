@@ -694,3 +694,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2aj. Structural Glass e Industrial Alarm (mod 0.1.79)
 `alarm.rs`: alarme que acende com redstone. `structural_glass`: bloco de vários grupos que vale como casing em Dynamic Tank, Boiler, Induction, SPS, Evaporation e Turbine. Diferenças em DIFERENCAS.md seção 12.
+
+### 2ak. Cadeia nuclear: Isotopic Centrifuge e Solar Neutron Activator (mod 0.1.80)
+`continuous::Shape::Converter` (um químico entra, outro sai): centrifuging (UF6 → fissile fuel, lixo → plutônio) e activating (lixo → polônio, só com sol, sem energia). Diferenças em DIFERENCAS.md seção 13.

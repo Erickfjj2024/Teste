@@ -39,7 +39,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 2.10 | Geradores: slots de energia (item que recarrega) sem efeito, pois não há itens de energia (tablet) | ABERTA | — |
 | 2.11 | Ícone de sol do Solar Generator desenhado à mão (sprites `sees_sun`/`no_sun` ausentes das fontes) | ABERTA | convert.py |
 | 2.12 | Perda de calor por face mostrada arredondada | ABERTA | generators.rs |
-| 2.13 | Advanced Solar, Wind Generator, Digital Miner, Isotopic Centrifuge, Neutron Activator: **não existem** (blocos grandes / cadeia nuclear) | ABERTA | tarefas #1/#3 |
+| 2.13 | Digital Miner **não existe** (Advanced Solar e Wind: seção 7; Isotopic Centrifuge e Neutron Activator: seção 13) | ABERTA | tarefa #3 |
 
 ## 3. Transmissão e logística
 
@@ -194,6 +194,16 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 12.1 | Structural Glass substitui o casing no Dynamic Tank, Boiler, Induction Matrix, SPS, Thermal Evaporation e Turbine; **não** no Fission nem no Fusion (que têm o Reactor Glass). O original aceita em mais posições (qualquer posição de moldura, também em arestas) e em outros multiblocos futuros | SUPOSIÇÃO |
 | 12.2 | Industrial Alarm só acende (modelo aceso) com redstone; **sem sirene**, sem o feixe de luz que gira e sem luz de ambiente | LIMITE API |
 | 12.3 | A face em que o alarme fica é a do jogador mais próximo ao colocar (não a face clicada) | LIMITE API |
+
+## 13. Cadeia nuclear (mod 0.1.80)
+| # | Diferença | Estado |
+|---|---|---|
+| 13.1 | Isotopic Centrifuge e Solar Neutron Activator usam a **tela e a configuração de lados do Chemical Infuser** (entrada à esquerda, saída à direita), com um slot central sem uso; a tela original deles é diferente | ABERTA |
+| 13.2 | Solar Neutron Activator: taxa = 64 × (1 + efeito de temperatura e umidade) × brilho do sol (operações por tick, inteiras); a barra de energia aparece vazia (não usa energia) | SUPOSIÇÃO |
+| 13.3 | O Activator só vê o céu pelo bloco de cima (como o original), mas conta bounding blocks acima como ar | — |
+| 13.4 | Upgrades de velocidade/energia agem no Centrifuge como numa máquina contínua; no Activator os upgrades de velocidade não somam à taxa do sol | SUPOSIÇÃO |
+| 13.5 | Sem radiação do lixo nuclear/plutônio/polônio | ABERTA |
+| 13.6 | A cadeia do urânio inteira (minério, oxidação, hexafluoreto) usa as máquinas já portadas; não foi testada de ponta a ponta | — |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

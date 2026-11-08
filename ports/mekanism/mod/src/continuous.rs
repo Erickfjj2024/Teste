@@ -15,6 +15,8 @@ pub enum Shape {
     Separator,
     /// The rotary condensentrator: tanks fluid, gas. One of them takes in and the other gives, by its mode.
     Rotary,
+    /// One chemical in (tank 0) and one out (tank 1): the isotopic centrifuge and the solar neutron activator.
+    Converter,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -101,7 +103,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
     // The tank the recipe reads (and, for the rotary, the one it writes).
     let in_tank = if spec.shape == Shape::Rotary && !io.mode { 1 } else { 0 };
     let (first, second) = match spec.shape {
-        Shape::Separator => (t0, None),
+        Shape::Separator | Shape::Converter => (t0, None),
         Shape::Rotary => (&io.tanks[in_tank], None),
         _ => (t0, Some(t1)),
     };
@@ -116,6 +118,7 @@ pub fn step(spec: &Spec, book: &Book, io: &Io) -> (Io, Status) {
     let out_tanks: Vec<usize> = match spec.shape {
         Shape::Separator => vec![1, 2],
         Shape::Rotary => vec![1 - in_tank],
+        Shape::Converter => vec![1],
         _ => vec![2],
     };
     let fits = recipe.outs.iter().zip(&out_tanks).all(|((id, n), t)| room(&io.tanks[*t], spec.caps[*t], id, *n));
@@ -162,6 +165,7 @@ mod tests {
     const INFUSER: Spec = Spec { shape: Shape::Infuser, usage: 15, caps: [10_000; 3] };
     const WASHER: Spec = Spec { shape: Shape::Washer, usage: 5, caps: [10_000; 3] };
     const SEPARATOR: Spec = Spec { shape: Shape::Separator, usage: 4, caps: [24_000, 2_400, 2_400] };
+    const CONVERTER: Spec = Spec { shape: Shape::Converter, usage: 8, caps: [10_000, 10_000, 0] };
     const ROTARY: Spec = Spec { shape: Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] };
 
     fn t(c: &str, n: u64) -> Tank {
@@ -176,6 +180,20 @@ mod tests {
         b.add(&s("minecraft:water"), &s("mekanism:dirty_gold"), Recipe { a: 5, b: 1, outs: vec![("mekanism:clean_gold".into(), 1)] }, false);
         b.add(&s("minecraft:water"), &[], Recipe { a: 2, b: 0, outs: vec![("mekanism:hydrogen".into(), 2), ("mekanism:oxygen".into(), 1)] }, false);
         b
+    }
+
+    #[test]
+    fn a_converter_turns_one_chemical_into_another() {
+        let mut b = Book::default();
+        b.add(&s("mekanism:uranium_hexafluoride"), &[], Recipe { a: 1, b: 0, outs: vec![("mekanism:fissile_fuel".into(), 1)] }, false);
+        let io = Io { tanks: [t("mekanism:uranium_hexafluoride", 100), Tank::default(), Tank::default()], energy: 100, mode: false, ops: 1 };
+        let (next, status) = step(&CONVERTER, &b, &io);
+        assert_eq!(status, Status::Running);
+        assert_eq!((next.tanks[0].amount, next.tanks[1].amount, next.energy), (99, 1, 92));
+        assert_eq!(next.tanks[1].chemical, "mekanism:fissile_fuel");
+        // Without energy, or with a full output, nothing happens.
+        let dry = Io { energy: 0, ..io.clone() };
+        assert_eq!(step(&CONVERTER, &b, &dry).1, Status::NoEnergy);
     }
 
     #[test]

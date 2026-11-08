@@ -37,6 +37,7 @@ pub fn load_cont_book(source: &str, shape: continuous::Shape) -> continuous::Boo
         Shape::Washer => "mekanism:washing",
         Shape::Separator => "mekanism:separating",
         Shape::Rotary => "mekanism:rotary",
+        Shape::Converter => source,
     };
     for r in recipe_types::recipes_of_type(kind) {
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&r.json) else { continue };
@@ -64,6 +65,11 @@ pub fn load_cont_book(source: &str, shape: continuous::Shape) -> continuous::Boo
             }
             // A rotary recipe goes both ways: gas to fluid in the first book, fluid to gas in the second (`load_rotary_books`).
             Shape::Rotary => {}
+            Shape::Converter => {
+                let i = &json["input"];
+                let Some(out) = json["output"]["id"].as_str() else { continue };
+                book.add(&chemicals_of(&i["ingredient"]), &[], Recipe { a: amount(i), b: 0, outs: vec![(out.to_owned(), amount(&json["output"]))] }, false);
+            }
             Shape::Separator => {
                 let f = &json["input"];
                 let (l, rt) = (&json["output"]["left"], &json["output"]["right"]);
@@ -143,7 +149,23 @@ impl Mekanism {
         let counts = upgrades::counts_of(def, e);
         let mut spec = spec;
         spec.usage = upgrades::energy_per_tick(spec.usage, counts[upgrades::SPEED], counts[upgrades::ENERGY]);
-        let ops = upgrades::operations(counts[upgrades::SPEED]);
+        let mut ops = upgrades::operations(counts[upgrades::SPEED]);
+        // The solar neutron activator works as fast as the sun lets it (peak rate in the biome by the sky's brightness), and not at night.
+        let mut sun_ok = true;
+        if def.block == "mekanism:solar_neutron_activator" {
+            sun_ok = false;
+            if let Some(env) = world::get_environment(&e.dimension, e.pos.x, e.pos.y, e.pos.z) {
+                let (brightness, darken) = generators::sky(env.day_time, env.rain, env.thunder);
+                let mut above = e.clone();
+                above.pos.y += 1;
+                let sees = env.has_skylight && darken < 4 && self.sky_clear(&above, tick);
+                let rate = 64.0 * f64::from(generators::peak(env.temperature, env.downfall, env.precipitation)) * f64::from(brightness);
+                if sees && rate >= 1.0 {
+                    ops = rate as u32;
+                    sun_ok = true;
+                }
+            }
+        }
         if spec.shape == continuous::Shape::Rotary {
             return self.run_rotary(def, e, spec, ops, counts);
         }
@@ -190,7 +212,7 @@ impl Mekanism {
         }
         let book = self.conts.entry(def.block).or_default();
         let io = continuous::Io { tanks: tanks.clone(), energy: e.energy, mode: false, ops };
-        let (next, status) = if self.can { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
+        let (next, status) = if self.can && sun_ok { continuous::step(&spec, book, &io) } else { (io.clone(), Status::Idle) };
         let mut tanks = next.tanks.clone();
         if def.layout == Layout::Separator {
             tank::dump(&mut tanks[1], spec.caps[1], modes[0], 8, 1024);
@@ -216,7 +238,10 @@ impl Mekanism {
             && let Some(book) = self.conts.get(def.block).filter(|b| !b.is_empty())
         {
             let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 0, &book.accepted(0));
-            if spec.shape != continuous::Shape::Separator {
+            if spec.shape == continuous::Shape::Converter {
+                // The second tank only gives.
+                let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 1, &["mekanism:nothing".to_owned()]);
+            } else if spec.shape != continuous::Shape::Separator {
                 let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 1, &book.accepted(1));
             }
             self.filtered.insert(key.clone());

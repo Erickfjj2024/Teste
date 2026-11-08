@@ -175,7 +175,7 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
     process::Spec { shape, usage, ticks, cap_in, cap_out, random_use, speed: 0, mean: 1.0 }
 }
 
-const MACHINES: [Def; 76] = [
+const MACHINES: [Def; 78] = [
     electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
     electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
     electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
@@ -209,6 +209,12 @@ const MACHINES: [Def; 76] = [
     chemical("mekanism:painting_machine", "mekanism:painting", Layout::Adv, spec(Shape::ItemChemToItem, 5, 200, 15_000, 0, false)),
     continuous_machine("mekanism:pigment_mixer", "mekanism:pigment_mixing", Layout::Mixer,
         continuous::Spec { shape: continuous::Shape::Infuser, usage: 5, caps: [1_000, 1_000, 2_000] }),
+    // The nuclear chain: the isotopic centrifuge turns uranium hexafluoride into fissile fuel and nuclear waste into plutonium, and the solar
+    // neutron activator nuclear waste into polonium (it needs no energy, only the sun).
+    continuous_machine("mekanism:isotopic_centrifuge", "mekanism:centrifuging", Layout::ChemInfuser,
+        continuous::Spec { shape: continuous::Shape::Converter, usage: 8, caps: [10_000, 10_000, 0] }),
+    continuous_machine("mekanism:solar_neutron_activator", "mekanism:activating", Layout::ChemInfuser,
+        continuous::Spec { shape: continuous::Shape::Converter, usage: 0, caps: [10_000, 10_000, 0] }),
     // An item, a fluid and a gas make an item and a gas (14 recipes: gasification and substrate).
     reaction_machine("mekanism:pressurized_reaction_chamber"),
     // The generators of MekanismGenerators: they make energy from bioethanol, lava and heat, the sun and gases.
@@ -1253,7 +1259,7 @@ impl ServerMod for Mekanism {
                 // Chemicals go through chemical tanks and fluids through fluid ones; the faces are the configuration's.
                 let flow = config::tank_flow(def.layout, "north", &config::default_config(def.layout), false);
                 for (i, cap) in spec.caps.iter().enumerate().filter(|(_, c)| **c > 0) {
-                    let fluid = i == 0 && spec.shape != continuous::Shape::Infuser;
+                    let fluid = i == 0 && !matches!(spec.shape, continuous::Shape::Infuser | continuous::Shape::Converter);
                     k.tanks.push(TankSpec {
                         kind: if fluid { "fluid" } else { "chemical" }.into(),
                         capacity: *cap,

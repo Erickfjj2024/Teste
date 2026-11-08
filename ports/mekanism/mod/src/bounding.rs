@@ -16,7 +16,7 @@ pub fn offsets(block: &str) -> Vec<[i32; 3]> {
 pub fn parts(block: &str) -> Vec<([i32; 3], &'static str)> {
     match block {
         // `ABOVE_ONLY`: the block over it.
-        "mekanism:pigment_mixer" => vec![([0, 1, 0], "none")],
+        "mekanism:pigment_mixer" | "mekanism:isotopic_centrifuge" | "mekanism:solar_neutron_activator" => vec![([0, 1, 0], "none")],
         // The block over it and a plane of nine two over it.
         "mekanism:advanced_solar_generator" => {
             let mut v = vec![([0, 1, 0], "none")];

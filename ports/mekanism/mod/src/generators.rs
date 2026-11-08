@@ -237,7 +237,7 @@ pub fn energy_faces(kind: GenKind, facing: &str) -> Vec<FlowSide> {
 /// How the generators tick: the world-dependent half (the sun, the lava beside, the items in the slots).
 impl Mekanism {
     /// Whether nothing but air is above `pos` (`level.canSeeSky`: the world-surface heightmap is under the position).
-    fn sky_clear(&mut self, e: &BlockEntity, tick: u64) -> bool {
+    pub(crate) fn sky_clear(&mut self, e: &BlockEntity, tick: u64) -> bool {
         let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         if let Some((at, clear)) = self.suns.get(&key)
             && tick.saturating_sub(*at) < 10
