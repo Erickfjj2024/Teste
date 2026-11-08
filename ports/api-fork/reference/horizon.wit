@@ -754,6 +754,14 @@ interface %world {
     /// through its side toward this block and this one lets in. Once, after
     /// this call returns; a Mekanism sorter calls it every few ticks. API 22.
     pull-items: func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>;
+    /// Breaks the block at a position as a player with `tool` (an item id, say
+    /// `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch)
+    /// would, rolls its drops, and puts them in the container at (`to-x`,
+    /// `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up,
+    /// north, south, west, east); what does not fit drops where the block
+    /// was. Nothing happens for air, liquids and unbreakable blocks.
+    /// Once, after this call returns; at most 64 a call. API 23.
+    mine-block: func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>;
     /// Turns on or off the block entity pushing items out: every 10 ticks, from
     /// the slots of the kind's `outputs` that a face reaches, into the
     /// container beside that face (a chest, a hopper, another machine), as

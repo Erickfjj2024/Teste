@@ -29,6 +29,7 @@ mod redstone;
 mod generators;
 mod laser;
 mod machine;
+mod miner;
 mod sawmill;
 mod sps;
 mod sides;
@@ -376,6 +377,8 @@ struct Mekanism {
     qe_buttons: Vec<(String, BlockPos, i32)>,
     bin_buttons: Vec<(String, BlockPos, i32)>,
     alarm_set: HashSet<(String, i32, i32, i32)>,
+    miner_buttons: Vec<(String, BlockPos, i32)>,
+    miner_work: HashMap<(String, i32, i32, i32), miner::Work>,
     bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
     bin_shown: HashMap<(String, i32, i32, i32), u64>,
     bin_set: HashSet<(String, i32, i32, i32)>,
@@ -1479,6 +1482,17 @@ impl ServerMod for Mekanism {
             group: [dynamic::GROUP, boiler::GROUP, induction::GROUP, sps::GROUP, evaporation::GROUP, turbine::GROUP].join(","),
         });
         r = r.block_entity_kind(glass);
+        // The digital miner: 27 slots for what it mines, five for its filters.
+        let mut dm = kind(miner::MINER, true);
+        dm.energy = Some(EnergySpec { capacity: miner::CAPACITY, max_receive: miner::CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
+        dm.container = Some(ContainerSpec {
+            slots: miner::SLOTS as u32,
+            faces: miner::item_faces(laser::NORTH),
+            inputs: (0..miner::BUFFER as u32).collect(),
+            outputs: (0..miner::BUFFER as u32).collect(),
+            menu: true,
+        });
+        r = r.block_entity_kind(dm);
         let mut creative = kind("mekanism:creative_energy_cube", true);
         creative.container = Some(slots());
         creative.energy = Some(energy(CREATIVE_CUBE, 1_000_000_000, FlowSide::Output));
@@ -1535,6 +1549,8 @@ impl ServerMod for Mekanism {
             qe_buttons: Vec::new(),
             bin_buttons: Vec::new(),
             alarm_set: HashSet::new(),
+            miner_buttons: Vec::new(),
+            miner_work: HashMap::new(),
             bin_inserts: HashMap::new(),
             bin_shown: HashMap::new(),
             bin_set: HashSet::new(),
@@ -1705,6 +1721,10 @@ impl ServerMod for Mekanism {
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
+        if block == miner::MINER {
+            self.miner_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
         if bin::capacity_of(block).is_some() {
             self.bin_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -1867,6 +1887,10 @@ impl ServerMod for Mekanism {
         let bins: Vec<&BlockEntity> = entities.iter().filter(|e| bin::capacity_of(e.state.split('[').next().unwrap_or("")).is_some()).collect();
         if !bins.is_empty() || !self.bin_buttons.is_empty() {
             out.extend(self.run_bins(&bins, tick));
+        }
+        let miners: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(miner::MINER)).collect();
+        if !miners.is_empty() || !self.miner_buttons.is_empty() {
+            out.extend(self.run_miners(&miners, tick));
         }
         let alarms: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(alarm::ALARM)).collect();
         if !alarms.is_empty() {

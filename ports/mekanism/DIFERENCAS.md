@@ -39,7 +39,7 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 2.10 | Geradores: slots de energia (item que recarrega) sem efeito, pois não há itens de energia (tablet) | ABERTA | — |
 | 2.11 | Ícone de sol do Solar Generator desenhado à mão (sprites `sees_sun`/`no_sun` ausentes das fontes) | ABERTA | convert.py |
 | 2.12 | Perda de calor por face mostrada arredondada | ABERTA | generators.rs |
-| 2.13 | Digital Miner **não existe** (Advanced Solar e Wind: seção 7; Isotopic Centrifuge e Neutron Activator: seção 13) | ABERTA | tarefa #3 |
+| 2.13 | Digital Miner: seção 14 (Advanced Solar e Wind: seção 7; Isotopic Centrifuge e Neutron Activator: seção 13) | — | — |
 
 ## 3. Transmissão e logística
 
@@ -205,11 +205,24 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 13.5 | Sem radiação do lixo nuclear/plutônio/polônio | ABERTA |
 | 13.6 | A cadeia do urânio inteira (minério, oxidação, hexafluoreto) usa as máquinas já portadas; não foi testada de ponta a ponta | — |
 
+## 14. Digital Miner (mod 0.1.81, exige APK novo: API 23 `world.mine-block`)
+| # | Diferença | Estado |
+|---|---|---|
+| 14.1 | Filtros: só por **item do bloco** (5 slots com um item cada); sem filtros de tag e de mod, sem "substituir por", sem puxar itens de trás | ABERTA |
+| 14.2 | A tela é simplificada (botões −/+ de raio e alturas, interruptores Eject/Silk/Inv, Start/Stop); sem a visualização da área, sem a lista de filtros do original, sem campos de texto | ABERTA |
+| 14.3 | Mina com uma picareta de netherita imaginária (Silk Touch opcional pelo interruptor); sem upgrades de velocidade/energia/silk | ABERTA |
+| 14.4 | O varrer da área é do alto para baixo, em linha (o original ordena por distância/chunk); 512 posições por tick; fila de até 4096 | SUPOSIÇÃO |
+| 14.5 | 40 FE/t enquanto há algo para minerar, um bloco a cada 80 ticks; buffer de 100.000 FE (suposição: uso × 2500) | SUPOSIÇÃO |
+| 14.6 | Alturas absolutas (padrão 0 a 60; mundo −64 a 319); ejeta só pelas costas | ABERTA |
+| 14.7 | Itens que não cabem nos 27 slots caem no chão onde o bloco estava; o original para de minerar quando o buffer enche | ABERTA |
+| 14.8 | Sem XP, sem chunk loading; blocos com entidade (baús...) são quebrados e os conteúdos podem se perder | ABERTA |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |
 |---|---|---|
 | 5.1 | Bloco com **vários grupos** de multibloco separados por vírgula (`a,b`) | pendente APK (ainda não gerado) |
+| 5.4 | `world.mine-block` (API 23): quebra o bloco como um jogador com uma ferramenta e leva os itens ao contêiner (Digital Miner) | pendente APK |
 | 5.3 | `world.pull-items` (API 22): puxa itens do contêiner ao lado para o bloco do mod (usado pelo Sorter) | pendente APK |
 | 5.2 | Itens `set-item-faces` até 32 slots, `transmitter-medium: items`, widgets `Item`, `shift_id`/`hover`, barra de energia nativa | APK v50 |
 

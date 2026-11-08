@@ -27,6 +27,20 @@ pub fn parts(block: &str) -> Vec<([i32; 3], &'static str)> {
             }
             v
         }
+        // Three by three and two high: the blocks around it, and over it and them.
+        "mekanism:digital_miner" => {
+            let mut v = Vec::new();
+            for x in -1..=1 {
+                for y in 0..=1 {
+                    for z in -1..=1 {
+                        if (x, y, z) != (0, 0, 0) {
+                            v.push(([x, y, z], "none"));
+                        }
+                    }
+                }
+            }
+            v
+        }
         // Four blocks up: three of pole and the top.
         "mekanism:wind_generator" => (1..=4).map(|y| ([0, y, 0], if y == 4 { "top" } else { "pole" })).collect(),
         _ => Vec::new(),

@@ -1,13 +1,14 @@
 diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
-index 47e9d18..f744e30 100644
+index 47e9d18..f4793f8 100644
 --- a/crates/cargo-horizon-mod/src/check.rs
 +++ b/crates/cargo-horizon-mod/src/check.rs
-@@ -281,6 +281,11 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+@@ -281,6 +281,12 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
              Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
              Output::PlaySound { sound, .. } => format!("played {sound}"),
              Output::SetBlockProperty { property, value, .. } => format!("set {property}={value}"),
 +            Output::SetItemFaces { faces, .. } => format!("item faces {faces:?}"),
 +            Output::SetItemEject { on, .. } => format!("item eject {on}"),
++            Output::MineBlock { tool, .. } => format!("mined a block with {tool}"),
 +            Output::PullItems { face, max, .. } => format!("pulled up to {max} item(s) through face {face}"),
 +            Output::SetTankFilter { tank, accepts, .. } => format!("tank {tank} takes {accepts:?}"),
 +            Output::SetEnergyCapacity { capacity, .. } => format!("energy capacity {capacity}"),
@@ -946,7 +947,7 @@ index 609127a..8cee4c9 100644
  }
 -
 diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
-index 003737e..c0c5e38 100644
+index 003737e..73e194f 100644
 --- a/crates/horizon-client/src/game/mods.rs
 +++ b/crates/horizon-client/src/game/mods.rs
 @@ -38,6 +38,9 @@ use {
@@ -1006,7 +1007,7 @@ index 003737e..c0c5e38 100644
              mobs: Vec::new(),
              mobs_dimension: String::new(),
              inventories: Vec::new(),
-@@ -854,7 +874,12 @@ impl Game<'_> {
+@@ -854,7 +874,13 @@ impl Game<'_> {
                  | Output::Entity { .. }
                  | Output::PlayerItems { .. }
                  | Output::Chunk { .. }
@@ -1015,6 +1016,7 @@ index 003737e..c0c5e38 100644
 +                | Output::SetItemFaces { .. }
 +                | Output::SetItemEject { .. }
 +                | Output::PullItems { .. }
++                | Output::MineBlock { .. }
 +                | Output::SetTankFilter { .. }
 +                | Output::SetEnergyCapacity { .. }) => {
                      self.route_server_output(host.as_deref_mut(), server);
@@ -1323,7 +1325,7 @@ index 8554dc2..863b3a0 100644
                  let kind = Self::remote_station_kind(m)?;
                  let inputs = kind.inputs();
 diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
-index fcc3158..7522818 100644
+index fcc3158..e48240d 100644
 --- a/crates/horizon-client/src/game/server_mods.rs
 +++ b/crates/horizon-client/src/game/server_mods.rs
 @@ -101,8 +101,36 @@ mod run {
@@ -1467,10 +1469,43 @@ index fcc3158..7522818 100644
          fn own_motion(&self) -> Motion {
              let p = self.player.as_ref();
              Motion {
-@@ -657,6 +740,97 @@ mod run {
+@@ -657,6 +740,130 @@ mod run {
          fn jname(s: &str) -> horizon_world::nbt::JavaString {
              horizon_world::nbt::JavaString::from(s)
          }
++        /// A mod's `world.mine-block`: the block broken as a player with the tool would, its drops into the container at `to`.
++        pub(in crate::game) fn native_mine_block(&mut self, pos: [i32; 3], tool: &str, silk_touch: bool, to: [i32; 3], face: u32) {
++            use horizon_core::geometry::Direction;
++            let state = self.world.block(pos[0], pos[1], pos[2]);
++            let name = self.data_block_name(pos);
++            let base = name.split('[').next().unwrap_or("");
++            if base.ends_with(":air") || matches!(base, "minecraft:water" | "minecraft:lava" | "minecraft:bedrock" | "minecraft:barrier" | "minecraft:end_portal_frame" | "minecraft:end_portal" | "minecraft:nether_portal" | "minecraft:command_block" | "minecraft:structure_block" | "minecraft:jigsaw") {
++                return;
++            }
++            let components = if silk_touch { "{\"minecraft:enchantments\":{\"minecraft:silk_touch\":1}}".to_owned() } else { String::new() };
++            let held = self.game_stack(&horizon_mods::ModItemStack { item: tool.to_owned(), count: 1, components });
++            let drops = self.block_loot_at(pos, state, held.as_ref());
++            let air = match crate::game::render_control::parse_state(self.pack.assets.registry, "minecraft:air") {
++                Ok(s) => s,
++                Err(_) => return,
++            };
++            if self.place_state(pos, air, false).is_err() {
++                return;
++            }
++            let dir = match face {
++                0 => Direction::Down,
++                1 => Direction::Up,
++                2 => Direction::North,
++                3 => Direction::South,
++                4 => Direction::West,
++                _ => Direction::East,
++            };
++            for stack in drops {
++                if let Some(rest) = self.give_to_container(to, dir, stack) {
++                    self.pop_resource(pos, rest);
++                }
++            }
++        }
 +        /// A mod's `world.set-item-faces`: the slots each face of the entity's container reaches, kept in it.
 +        pub(in crate::game) fn native_set_item_faces(&mut self, pos: [i32; 3], faces: &[Vec<u32>]) {
 +            let key = (pos[0], pos[1], pos[2]);
@@ -1565,7 +1600,7 @@ index fcc3158..7522818 100644
          /// The faces a transmitter connects through: what its mod last set
          /// (`transmitter_faces`), else all of them.
          fn transmitter_connect(
-@@ -719,6 +893,7 @@ mod run {
+@@ -719,6 +926,7 @@ mod run {
                          medium: match &spec.medium {
                              horizon_mods::TransmitterMedium::Energy => Medium::Energy,
                              horizon_mods::TransmitterMedium::Tank(kind) => Medium::Tank(kind.clone()),
@@ -1573,7 +1608,7 @@ index fcc3158..7522818 100644
                          },
                          throughput: spec.throughput,
                          connect: Self::transmitter_connect(m),
-@@ -990,7 +1165,7 @@ mod run {
+@@ -990,7 +1198,7 @@ mod run {
              let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
              let (energy, energy_faces) = match &kind.energy {
                  Some(spec) => (
@@ -1582,7 +1617,7 @@ index fcc3158..7522818 100644
                      Self::energy_faces(m, spec).to_vec(),
                  ),
                  None => (0, Vec::new()),
-@@ -1055,11 +1230,12 @@ mod run {
+@@ -1055,11 +1263,12 @@ mod run {
                      {
                          let name = |s: &str| horizon_world::nbt::JavaString::from(s);
                          if let Some(e) = u.energy {
@@ -1597,7 +1632,7 @@ index fcc3158..7522818 100644
                              );
                          }
                          if let Some(f) = &u.energy_faces {
-@@ -1173,8 +1349,8 @@ mod run {
+@@ -1173,8 +1382,8 @@ mod run {
                      let spec = kinds.iter().find(|k| k.block == m.id)?.energy.as_ref()?;
                      Some(horizon_mods::energy::EnergyNode {
                          pos: [pos.0, pos.1, pos.2],
@@ -1608,7 +1643,7 @@ index fcc3158..7522818 100644
                          max_receive: spec.max_receive,
                          max_extract: spec.max_extract,
                          faces: Self::energy_faces(m, spec),
-@@ -1208,6 +1384,72 @@ mod run {
+@@ -1208,6 +1417,72 @@ mod run {
              }
          }
  
@@ -1681,7 +1716,7 @@ index fcc3158..7522818 100644
          /// One tick of fluids and chemicals moving between neighbouring
          /// block entities' tanks of this level (`horizon_mods::flow`).
          fn transfer_mod_tanks(&mut self) {
-@@ -1230,17 +1472,20 @@ mod run {
+@@ -1230,17 +1505,20 @@ mod run {
                      }
                      let held = Self::stored_tanks(m, specs);
                      let sides = Self::tank_sides(m, specs);
@@ -1703,7 +1738,7 @@ index fcc3158..7522818 100644
                          })
                          .collect();
                      Some(horizon_mods::flow::TankNode {
-@@ -1350,7 +1595,13 @@ mod run {
+@@ -1350,7 +1628,13 @@ mod run {
                  return false;
              };
              let stack = Self::mod_stack(stack);
@@ -1718,7 +1753,7 @@ index fcc3158..7522818 100644
          }
  
          /// The acting player hit entity `entity` of `kind` holding `stack`.
-@@ -1402,9 +1653,15 @@ mod run {
+@@ -1402,9 +1686,15 @@ mod run {
          /// player acting now.
          pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
              if !self.hears_players() {
@@ -1735,7 +1770,7 @@ index fcc3158..7522818 100644
              self.mods.events.push(ModEvent::MenuButton { who, pos, id });
          }
  
-@@ -1418,7 +1675,7 @@ mod run {
+@@ -1418,7 +1708,7 @@ mod run {
              if !self.hears_players() {
                  return;
              }
@@ -1744,7 +1779,7 @@ index fcc3158..7522818 100644
              let state = self.state_string(state);
              self.mods.events.push(ModEvent::Block {
                  who,
-@@ -1660,6 +1917,41 @@ mod run {
+@@ -1660,6 +1950,48 @@ mod run {
                          log::debug!("Horizon: mod {name} set a property in another level");
                      }
                  }
@@ -1767,6 +1802,13 @@ index fcc3158..7522818 100644
 +                        self.native_set_tank_filter(pos, tank, &accepts);
 +                    } else {
 +                        log::debug!("Horizon: mod {name} set a tank filter in another level");
++                    }
++                }
++                Output::MineBlock { name, dimension, pos, tool, silk_touch, to, face } => {
++                    if dimension == self.dim.id() {
++                        self.native_mine_block(pos, &tool, silk_touch, to, face);
++                    } else {
++                        log::debug!("Horizon: mod {name} mined a block in another level");
 +                    }
 +                }
 +                Output::PullItems { name, dimension, pos, face, items, max } => {
@@ -2310,7 +2352,7 @@ index 667d135..e7f098f 100644
      let base = std::path::absolute(base)?;
      parts.push(
 diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
-index 783da48..e5f2126 100644
+index 783da48..a1d60e2 100644
 --- a/crates/horizon-mod-sdk/wit/horizon.wit
 +++ b/crates/horizon-mod-sdk/wit/horizon.wit
 @@ -686,6 +686,33 @@ interface %world {
@@ -2347,7 +2389,7 @@ index 783da48..e5f2126 100644
      /// One collision box of a block, in blocks, relative to the block's own
      /// corner (a full cube is `0,0,0` to `1,1,1`).
      record collision-box {
-@@ -713,6 +740,30 @@ interface %world {
+@@ -713,6 +740,38 @@ interface %world {
      /// happens for a block with no such property or value, or one already set.
      /// At most 4096 per call.
      set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
@@ -2365,6 +2407,14 @@ index 783da48..e5f2126 100644
 +    /// through its side toward this block and this one lets in. Once, after
 +    /// this call returns; a Mekanism sorter calls it every few ticks. API 22.
 +    pull-items: func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>;
++    /// Breaks the block at a position as a player with `tool` (an item id, say
++    /// `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch)
++    /// would, rolls its drops, and puts them in the container at (`to-x`,
++    /// `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up,
++    /// north, south, west, east); what does not fit drops where the block
++    /// was. Nothing happens for air, liquids and unbreakable blocks.
++    /// Once, after this call returns; at most 64 a call. API 23.
++    mine-block: func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>;
 +    /// Turns on or off the block entity pushing items out: every 10 ticks, from
 +    /// the slots of the kind's `outputs` that a face reaches, into the
 +    /// container beside that face (a chest, a hopper, another machine), as
@@ -2378,7 +2428,7 @@ index 783da48..e5f2126 100644
  }
  
  /// Capability `player-control`, server mods only (manifest `api = "0.3"`,
-@@ -736,6 +787,11 @@ interface player-control {
+@@ -736,6 +795,11 @@ interface player-control {
      }
      /// What the player with this id is doing; none for an id that is not online.
      get-motion: func(player: string) -> option<motion>;
@@ -2390,7 +2440,7 @@ index 783da48..e5f2126 100644
      /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
      /// distance reset. `yaw` and `pitch` stay as they are when none. The
      /// move is made after this call returns, before the next tick. An error
-@@ -1061,6 +1117,7 @@ interface server-events {
+@@ -1061,6 +1125,7 @@ interface server-events {
      /// slots, energy and tanks of the member blocks it chooses.
      record multiblock-spec {
          /// The group's name (`mymod:turbine`); the mod's own.
@@ -2398,7 +2448,7 @@ index 783da48..e5f2126 100644
          group: string,
      }
      record multiblock-member {
-@@ -1081,6 +1138,10 @@ interface server-events {
+@@ -1081,6 +1146,10 @@ interface server-events {
          /// Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside
          /// the network with a tank of that kind.
          tank(string),
@@ -2409,7 +2459,7 @@ index 783da48..e5f2126 100644
      }
      /// A cable or a pipe. Transmitters of one medium that touch through faces
      /// both connect through make one network. Every tick, after the mods'
-@@ -1254,7 +1315,7 @@ interface server-events {
+@@ -1254,7 +1323,7 @@ interface server-events {
      /// the use: the hand swings and neither the item's own use nor the
      /// block's runs after it; false leaves it to the game. It is asked at the
      /// moment of the click, so what it asks for through imports is made at the
@@ -2419,7 +2469,7 @@ index 783da48..e5f2126 100644
      /// A player hit the entity `entity` of `kind` holding `stack`
      /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
 diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
-index 7a52a62..2f4a98b 100644
+index 7a52a62..f6ca88a 100644
 --- a/crates/horizon-mods/src/api_level.rs
 +++ b/crates/horizon-mods/src/api_level.rs
 @@ -7,13 +7,13 @@
@@ -2427,18 +2477,18 @@ index 7a52a62..2f4a98b 100644
  
  /// The newest level this Horizon serves.
 -pub const LEVEL: u32 = 15;
-+pub const LEVEL: u32 = 22;
++pub const LEVEL: u32 = 23;
  
  /// Every function the game offers mods, as `interface.function`, with its
  /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
  /// function takes the next level and raises [`LEVEL`] (the `api_reference`
  /// test fails until it is listed here).
 -pub const FUNCTIONS: [(&str, u32); 73] = [
-+pub const FUNCTIONS: [(&str, u32); 81] = [
++pub const FUNCTIONS: [(&str, u32); 82] = [
      ("log.write", 0),
      ("game.get-player", 0),
      ("game.get-clock", 0),
-@@ -87,6 +87,14 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
+@@ -87,6 +87,15 @@ pub const FUNCTIONS: [(&str, u32); 73] = [
      ("chunks.set-forced", 13),
      ("world.set-block-property", 14),
      ("recipe-types.cooking-recipes", 15),
@@ -2450,6 +2500,7 @@ index 7a52a62..2f4a98b 100644
 +    ("world.get-redstone", 20),
 +    ("world.set-energy-capacity", 21),
 +    ("world.pull-items", 22),
++    ("world.mine-block", 23),
  ];
  
  /// What the game's program carries so the launcher can read its level
@@ -3407,7 +3458,7 @@ index 02de080..c5f4b38 100644
          let d = data();
          assert!(d.ingredient_items(r#""minecraft:nope""#).is_empty());
 diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
-index d3024e4..68a240f 100644
+index d3024e4..ff9fa3c 100644
 --- a/crates/horizon-mods/src/runtime.rs
 +++ b/crates/horizon-mods/src/runtime.rs
 @@ -58,7 +58,7 @@ pub use server_bindings::{
@@ -3428,7 +3479,7 @@ index d3024e4..68a240f 100644
      /// The living mobs of the level in place (`mobs_dimension`), for
      /// capability `entities`.
      pub mobs: Vec<MobInfo>,
-@@ -366,6 +368,44 @@ pub enum Output {
+@@ -366,6 +368,54 @@ pub enum Output {
          property: String,
          value: String,
      },
@@ -3438,6 +3489,16 @@ index d3024e4..68a240f 100644
 +        dimension: String,
 +        pos: [i32; 3],
 +        faces: Vec<Vec<u32>>,
++    },
++    /// `world.mine-block`: a block broken with a tool, its drops into a container.
++    MineBlock {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        tool: String,
++        silk_touch: bool,
++        to: [i32; 3],
++        face: u32,
 +    },
 +    /// `world.pull-items`: items from the container beside a face of a block entity into its own.
 +    PullItems {
@@ -3473,7 +3534,7 @@ index d3024e4..68a240f 100644
      /// `chunks.set-forced` of mod `id`.
      Chunk {
          name: String,
-@@ -426,6 +466,10 @@ pub trait WorldView: std::any::Any + Send {
+@@ -426,6 +476,10 @@ pub trait WorldView: std::any::Any + Send {
      fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
      /// The biome at a position, `minecraft:plains`; `None` as for blocks.
      fn biome(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
@@ -3484,7 +3545,7 @@ index d3024e4..68a240f 100644
      /// The collision boxes of the block at a position, relative to the
      /// block's corner; `None` where no chunk of that dimension is loaded.
      fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>>;
-@@ -1285,9 +1329,12 @@ impl Mods {
+@@ -1285,9 +1339,12 @@ impl Mods {
              .flat_map(|r| r.block_entities.iter())
          {
              let Some(spec) = &k.multiblock else { continue };
@@ -3500,7 +3561,7 @@ index d3024e4..68a240f 100644
              }
          }
          out
-@@ -1308,7 +1355,7 @@ impl Mods {
+@@ -1308,7 +1365,7 @@ impl Mods {
                  .is_some_and(|r| {
                      r.block_entities
                          .iter()
@@ -3509,7 +3570,7 @@ index d3024e4..68a240f 100644
                  })
          }) else {
              return Vec::new();
-@@ -2152,6 +2199,82 @@ impl mod_world::Host for State {
+@@ -2152,6 +2209,106 @@ impl mod_world::Host for State {
          });
          Ok(())
      }
@@ -3533,6 +3594,30 @@ index d3024e4..68a240f 100644
 +            return Err(format!("at most {BLOCKS_PER_CALL} container changes a call"));
 +        }
 +        self.out.push(Output::SetItemFaces { name: self.name.clone(), dimension, pos: [x, y, z], faces });
++        Ok(())
++    }
++    #[allow(clippy::too_many_arguments)]
++    fn mine_block(
++        &mut self,
++        dimension: String,
++        x: i32,
++        y: i32,
++        z: i32,
++        tool: String,
++        silk_touch: bool,
++        to_x: i32,
++        to_y: i32,
++        to_z: i32,
++        face: u32,
++    ) -> Result<(), String> {
++        if face > 5 || tool.len() > 100 {
++            return Err("a face 0 to 5 and a tool id".into());
++        }
++        let made = self.out.iter().filter(|o| matches!(o, Output::MineBlock { .. })).count();
++        if made >= 64 {
++            return Err("at most 64 blocks mined a call".into());
++        }
++        self.out.push(Output::MineBlock { name: self.name.clone(), dimension, pos: [x, y, z], tool, silk_touch, to: [to_x, to_y, to_z], face });
 +        Ok(())
 +    }
 +    fn pull_items(&mut self, dimension: String, x: i32, y: i32, z: i32, face: u32, items: Vec<String>, max: u32) -> Result<(), String> {
@@ -3592,7 +3677,7 @@ index d3024e4..68a240f 100644
      fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.block(&dimension, x, y, z)
-@@ -2160,6 +2283,14 @@ impl mod_world::Host for State {
+@@ -2160,6 +2317,14 @@ impl mod_world::Host for State {
          let view = self.world.lock().ok()?;
          view.as_ref()?.biome(&dimension, x, y, z)
      }
@@ -3607,7 +3692,7 @@ index d3024e4..68a240f 100644
      fn get_collision(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
          let view = self.world.lock().ok()?;
          view.as_ref()?.collision(&dimension, x, y, z)
-@@ -2589,6 +2720,13 @@ impl player_control::Host for State {
+@@ -2589,6 +2754,13 @@ impl player_control::Host for State {
              .find(|(id, _)| *id == player)
              .map(|(_, m)| m.clone())
      }
@@ -4286,7 +4371,7 @@ index feecac5..fb386a3 100644
              }
          }
 diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
-index 151d098..a59fcbb 100644
+index 151d098..26dfa83 100644
 --- a/crates/horizon-mods/tests/sandbox.rs
 +++ b/crates/horizon-mods/tests/sandbox.rs
 @@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
@@ -4294,15 +4379,15 @@ index 151d098..a59fcbb 100644
      // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
      // world's collision boxes and `player-control`, which the elevator example uses;
 -    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`.
-+    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`.
      assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
 -    assert_eq!(LEVEL, 15);
-+    assert_eq!(LEVEL, 22);
++    assert_eq!(LEVEL, 23);
  }
  
  #[test]
 diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
-index 57a0edc..02318c0 100644
+index 57a0edc..02827b7 100644
 --- a/docs/api/mods-reference.md
 +++ b/docs/api/mods-reference.md
 @@ -695,6 +695,20 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
@@ -4326,7 +4411,7 @@ index 57a0edc..02318c0 100644
  ### record `collision-box`
  
  One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
-@@ -712,9 +726,16 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+@@ -712,9 +726,17 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
  | --- | --- | --- |
  | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
  | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
@@ -4338,12 +4423,13 @@ index 57a0edc..02318c0 100644
  | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
 +| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
 +| `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
++| `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
 +| `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
 +| `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
  
  ## `player-control`
  
-@@ -737,6 +758,7 @@ What a player is doing as of the last server tick.
+@@ -737,6 +759,7 @@ What a player is doing as of the last server tick.
  | Function | Signature | What it does |
  | --- | --- | --- |
  | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
@@ -4351,7 +4437,7 @@ index 57a0edc..02318c0 100644
  | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
  | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
  | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
-@@ -977,7 +999,7 @@ A block of a multiblock group. The loaded blocks of one group that touch through
+@@ -977,7 +1000,7 @@ A block of a multiblock group. The loaded blocks of one group that touch through
  
  | Field | Type | |
  | --- | --- | --- |
@@ -4360,7 +4446,7 @@ index 57a0edc..02318c0 100644
  
  ### record `multiblock-member`
  
-@@ -1004,6 +1026,7 @@ What a transmitter block carries.
+@@ -1004,6 +1027,7 @@ What a transmitter block carries.
  | --- | --- | --- |
  | `energy` |  | Energy: the blocks beside the network with an `energy-spec`. |
  | `tank` | `string` | Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside the network with a tank of that kind. |
@@ -4368,7 +4454,7 @@ index 57a0edc..02318c0 100644
  
  ### record `transmitter-spec`
  
-@@ -1146,5 +1169,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+@@ -1146,5 +1170,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
  | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
  | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
  | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |

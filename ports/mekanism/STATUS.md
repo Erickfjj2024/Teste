@@ -697,3 +697,6 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ak. Cadeia nuclear: Isotopic Centrifuge e Solar Neutron Activator (mod 0.1.80)
 `continuous::Shape::Converter` (um químico entra, outro sai): centrifuging (UF6 → fissile fuel, lixo → plutônio) e activating (lixo → polônio, só com sol, sem energia). Diferenças em DIFERENCAS.md seção 13.
+
+### 2al. Digital Miner (mod 0.1.81; fork: API 23 `world.mine-block`)
+`miner.rs`: o miner (bloco 3x3x2 com bounding blocks) varre a área em volta, enfileira os blocos dos filtros (ou todos, no inverso) e quebra um a cada 80 ticks gastando 40 FE/t; os drops vão para os 27 slots (ejeta pelas costas se ligado). Fork: `world.mine-block`. Diferenças em DIFERENCAS.md seção 14.
