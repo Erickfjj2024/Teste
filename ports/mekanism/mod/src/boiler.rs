@@ -25,7 +25,7 @@ pub const VALVE_RATE: u64 = 1_000_000;
 pub const CASING_HEAT: f64 = 50.0;
 pub const INSULATION: f64 = 100_000.0;
 pub const CONDUCTION: f64 = 1.0;
-pub const AIR: f64 = 10.0;
+pub const AIR: f64 = 10_000.0;
 /// `BASE_BOIL_TEMP` (373.15 K), `maxEnergyPerSteam`, the steam's energy efficiency, `waterConductivity`, `superheatingHeatTransfer`.
 pub const BOIL: f64 = 373.15;
 pub const ENTHALPY: f64 = 10.0;
@@ -154,7 +154,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
     if reached.len() != cells.len() {
         return bad;
     }
-    let steam_height = (max[1] - 1 - plane).max(0);
+    let steam_height = (max[1] - plane).max(0);
     Found {
         valid: true,
         min,
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(f.elements, 1);
         // Air under the plane: 3x3 columns, floor row at y=1 and y=2 are inside, minus the element.
         assert_eq!(f.water_volume, 9 * 2 - 1);
-        assert_eq!(f.steam_volume, 5 * 5 * 0);
+        assert_eq!(f.steam_volume, 5 * 5 * 1);
     }
 
     #[test]
@@ -513,7 +513,7 @@ mod tests {
     fn the_steam_room_is_the_height_above_the_dispersers() {
         let f = validate(&boiler(6, 2), [0; 3], [5; 3], |_| true);
         assert!(f.valid);
-        assert_eq!(f.steam_volume, 6 * 6 * 2);
+        assert_eq!(f.steam_volume, 6 * 6 * 3);
     }
 
     #[test]
@@ -542,7 +542,7 @@ mod tests {
         let f = Found { valid: true, min: [0; 3], blocks: 100, water_volume: 1, steam_volume: 1, elements: 1 };
         let mut b = Boiler { temperature: 500.0, ..Boiler::default() };
         tick(&mut b, &f, 300.0);
-        assert!((b.temperature - (500.0 - 200.0 / 100_011.0)).abs() < 1e-9);
+        assert!((b.temperature - (500.0 - 200.0 / 110_001.0)).abs() < 1e-9);
     }
 
     #[test]

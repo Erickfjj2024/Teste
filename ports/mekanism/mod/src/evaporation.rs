@@ -19,7 +19,10 @@ pub const MAX_TEMP: f64 = 3_000.0;
 pub const TEMP_MULTIPLIER: f64 = 0.4;
 pub const SOLAR: f64 = 0.2;
 pub const DISSIPATION: f64 = 0.02;
-pub const PER_LEVEL: u64 = 64_000;
+/// `fluidPerTank`: 64 buckets (64,000 mB) for each inner block of volume (4 blocks per level).
+pub const FLUID_PER_TANK: u64 = 64_000;
+/// mB of input fluid capacity for each level of height (4 inner blocks * 64,000 mB = 256,000 mB).
+pub const PER_LEVEL: u64 = 4 * FLUID_PER_TANK;
 pub const OUTPUT_CAPACITY: u64 = 10_000;
 pub const SPEC_CAPACITY: u64 = 1 << 40;
 pub const NOTHING: &str = "mekanism:nothing";
@@ -230,7 +233,7 @@ impl Mekanism {
         let mut out = Vec::new();
         for (key, group) in by {
             let Some((found, stored_t)) = decode(&group[0].data) else { continue };
-            let in_cap = (u64::from(found.height) - 1) * PER_LEVEL;
+            let in_cap = u64::from(found.height) * PER_LEVEL;
             let plant = self.plants.entry(key.clone()).or_default();
             let held = |m: &BlockEntity, i: usize| m.tanks.get(i).cloned().unwrap_or(Tank { substance: String::new(), amount: 0 });
             if plant.given.is_empty() {
@@ -439,5 +442,11 @@ mod tests {
     fn a_member_remembers_its_plant() {
         let f = Found { valid: true, min: [-3, 70, 12], height: 9 };
         assert_eq!(decode(&encode(&f, 812.5)), Some((f, 812.5)));
+    }
+
+    #[test]
+    fn evaporation_input_capacity() {
+        assert_eq!(3 * PER_LEVEL, 768_000);
+        assert_eq!(18 * PER_LEVEL, 4_608_000);
     }
 }

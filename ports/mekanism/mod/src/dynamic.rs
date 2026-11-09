@@ -11,8 +11,12 @@ use std::collections::{HashMap, HashSet};
 pub const CASING: &str = "mekanism:dynamic_tank";
 pub const VALVE: &str = "mekanism:dynamic_valve";
 pub const GROUP: &str = "mekanism:dynamic_tank";
-/// `mBPerTank`: sixteen thousand buckets for each block of the inside.
-pub const PER_BLOCK: u64 = 16_000 * 1000;
+/// `fluidPerTank`: 350 buckets (350,000 mB) for each block of the inside.
+pub const FLUID_PER_BLOCK: u64 = 350 * 1000;
+/// `chemicalPerTank`: 16,000 buckets (16,000,000 mB) for each block of the inside.
+pub const CHEMICAL_PER_BLOCK: u64 = 16_000 * 1000;
+/// Backwards-compatible alias for chemical capacity per block.
+pub const PER_BLOCK: u64 = CHEMICAL_PER_BLOCK;
 /// What a valve's tanks are registered with (the real capacity is the structure's): far more than any structure holds.
 pub const SPEC_CAPACITY: u64 = 1 << 50;
 /// What a valve moves a tick at most.
@@ -144,13 +148,16 @@ impl Mekanism {
         }
         let mut out = Vec::new();
         for (key, group) in by {
-            let cap = decode(&group[0].data).map_or(0, |f| f.volume) * PER_BLOCK;
+            let volume = decode(&group[0].data).map_or(0, |f| f.volume);
+            let fluid_cap = volume * FLUID_PER_BLOCK;
+            let chem_cap = volume * CHEMICAL_PER_BLOCK;
             let shared = self.dynamic.entry(key.clone()).or_default();
             let fresh = shared.given.is_empty();
             let held = |v: &BlockEntity, i: usize| v.tanks.get(i).map_or(0, |t| t.amount);
             // After a load nothing was given yet: the structure holds what its valves do.
             if fresh {
                 for i in 0..2 {
+                    let cap = if i == 0 { fluid_cap } else { chem_cap };
                     if let Some(best) = group.iter().max_by_key(|v| held(v, i)) {
                         let t = best.tanks.get(i).cloned();
                         if let Some(t) = t.filter(|t| t.amount > 0) {
@@ -166,6 +173,7 @@ impl Mekanism {
             }
             // What the valves took in or gave since they were last written.
             for i in 0..2 {
+                let cap = if i == 0 { fluid_cap } else { chem_cap };
                 let (given, now): (Vec<u64>, Vec<u64>) =
                     group.iter().map(|v| (shared.given.get(&[v.pos.x, v.pos.y, v.pos.z]).map_or(0, |g| if i == 0 { g.0 } else { g.1 }), held(v, i))).unzip();
                 let total = if i == 0 { shared.fluid.amount } else { shared.chemical.amount };
@@ -201,15 +209,15 @@ impl Mekanism {
                 let slot = |i: usize| stack(v.items.get(i).unwrap_or(&None));
                 let (mut i0, mut o1) = (slot(0), slot(1));
                 let mut f = fluid.clone();
-                let used = tank::buckets(&mut i0, &mut o1, &mut f, cap, tank::EditMode::Both);
+                let used = tank::buckets(&mut i0, &mut o1, &mut f, fluid_cap, tank::EditMode::Both);
                 if used {
                     // A bucket moved fluid: it counts for this valve alone, the others follow next tick.
                     tanks[0] = plus::as_tank(&f);
                 }
-                let data = dynamic_menu(&v.data, &f_or(&tanks, 0), &tanks[1], cap);
-                let full = |t: &process::Tank, other: u64| t.amount >= cap || other > 0;
-                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 0, &if full(&fluid, chemical.amount) { vec![NOTHING.to_owned()] } else { Vec::new() });
-                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 1, &if full(&chemical, fluid.amount) { vec![NOTHING.to_owned()] } else { Vec::new() });
+                let shown_cap = if chemical.amount > 0 { chem_cap } else if fluid.amount > 0 { fluid_cap } else { chem_cap };
+                let data = dynamic_menu(&v.data, &f_or(&tanks, 0), &tanks[1], shown_cap);
+                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 0, &if fluid.amount >= fluid_cap || chemical.amount > 0 { vec![NOTHING.to_owned()] } else { Vec::new() });
+                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 1, &if chemical.amount >= chem_cap || fluid.amount > 0 { vec![NOTHING.to_owned()] } else { Vec::new() });
                 let items = used.then(|| vec![item(&i0), item(&o1)]);
                 if used {
                     shared.fluid = f;
@@ -317,5 +325,12 @@ mod tests {
         let f = Found { valid: true, volume: 27, min: [-5, 64, 300] };
         assert_eq!(decode(&encode(&f)), Some(f));
         assert_eq!(decode(&[1, 2]), None);
+    }
+
+    #[test]
+    fn tank_capacity_fluid_vs_chemical() {
+        let f = Found { valid: true, volume: 10, min: [0; 3] };
+        assert_eq!(f.volume * FLUID_PER_BLOCK, 3_500_000);
+        assert_eq!(f.volume * CHEMICAL_PER_BLOCK, 160_000_000);
     }
 }

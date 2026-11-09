@@ -281,6 +281,96 @@ A referência passou a ser o release `v1.21.1-10.7.19.85` (ver `BASE.md`). Núme
 | 19.10 | Itens novos sem função ainda: configuration card, crafting formula, electric bow, hdpe elytra, meka-tool, robit (modelos existem, comportamento não) | ABERTA |
 | 19.11 | Receitas agora do datagen 10.7 (normalizadas por `base_1211.py`); contagem e valores diferem da 26.3 (ex.: painting 32 vs 256) | CORRIGIDO |
 
+## 20. Auditoria de números, rodada 1 (mod 0.1.86, **sem compilar nem testar no jogo**) / Numbers audit, round 1
+
+Gerado das tarefas t1–t8 (ver `auditoria/`). Regra do projeto: **não existem limites do Horizon**; o que as contas marcaram LIMITE está aqui como **FORK** e detalhado em `API-REQUISITOS.md`. / Generated from tasks t1–t8 (see `auditoria/`). Project rule: **there are no Horizon limits**; what the accounts marked LIMITE is listed here as **FORK** and detailed in `API-REQUISITOS.md`.
+
+### 20.1 Máquinas Químicas, Tanques e Melhorias (1.21.1-10.7.19.85)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.1.1 | Tanque Químico Criativo: no Java usa `Long.MAX_VALUE` de capacidade e `Long.MAX_VALUE / 2` de taxa (`ChemicalTankTier.java:16`). No port (`tank.rs:41-42`), usa 1 trilhão (1 000 000 000 000) mB de capacidade e 1 bilhão (1 000 000 000) mB/t de taxa de saída para evitar overflow na serialização e renderização da GUI do Horizon; a pureza de abastecimento infinito é garantida por `creative()`, que restaura a capacidade total a cada tick se houver conteúdo | FORK |
+| 20.1.2 | Tanque de Fluido Criativo: no Java usa `Integer.MAX_VALUE` (2 147 483 647 mB) de capacidade e metade disso na taxa (`FluidTankTier.java:13`). No port (`tank.rs:45-46`), padronizou-se 1 trilhão mB e taxa de 1 bilhão mB/t com restauração contínua a cada tick | FORK |
+| 20.1.3 | Nutritional Liquifier: no Java lê dinamicamente a propriedade `nutrition` do componente de alimento do item (`TileEntityNutritionalLiquifier.java`). No port (`process.rs:37-38`), usa tabela estática `FOODS` com alimentos vanilla (maçã, pão, carne, etc.), pois o Horizon/WASM não expõe API para consultar propriedades alimentares dos itens em tempo de execução | FORK |
+| 20.1.4 | Separador Eletrolítico (despejo de excesso): no Java escala com a melhoria de velocidade (`BASE_DUMP_RATE * 2^speed`). No port (`plus.rs:218-219`), a taxa de despejo em excesso está fixada em 8 mB/t sem escalar com velocidade | FORK |
+| 20.1.5 | Consumo probabilístico de gás (Poisson inverso): no Java (`StatUtils.java:14-25`) usa aproximação de Stirling sobre `RandomSource`. No port (`process.rs:118-124`), foi implementado o algoritmo clássico de Knuth com LCG determinístico de 64 bits (`wrapping_mul(6364136223846793005)`), provendo a mesma média e distribuição sem acoplamento à engine do jogo | CORRIGIDO |
+
+### 20.2 Multiblocos: Dynamic Tank, Thermoelectric Boiler e Thermal Evaporation (mod 0.1.86)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.2.1 | Dynamic Tank: interface gráfica acessível exclusivamente nas válvulas (no original, blocos de carcaça também abrem a GUI quando a estrutura está formada); sem aba de alternância de modo de edição de baldes/contêineres (`ContainerEditMode` Both/Fill/Empty) | ABERTA |
+| 20.2.2 | Dynamic Tank e Boiler: aceitam `mekanism:structural_glass` em qualquer face ou aresta da carcaça no port (no Java original, o vidro estrutural é permitido apenas nas faces/paredes, exigindo bloco de casing nas 12 arestas da moldura) | SUPOSIÇÃO |
+| 20.2.3 | Thermoelectric Boiler: volume de água conta os blocos de ar contíguos sob o plano de dispersores (no Java original, a rotina `FormationProtocol.explore` inclui também os blocos de moldura do piso e paredes submersas) | SUPOSIÇÃO |
+| 20.2.4 | Thermoelectric Boiler: sem renderização visual 3D dos fluidos internos no mundo quando usado vidro estrutural; fluidos exibidos na tela da válvula por índices de substância sem animação | FORK API |
+| 20.2.5 | Thermal Evaporation Plant: aquecimento externo por condutores térmicos (`Thermodynamic Conductor`) ou aquecedor resistivo (`Resistive Heater`) acoplado às válvulas não suportado (rede de calor ainda não existe no port; aquecimento unicamente solar no topo) | FORK |
+| 20.2.6 | Thermal Evaporation Plant: sem suporte a sinal analógico de redstone nas válvulas para automação por nível; sem efeitos sonoros de funcionamento | ABERTA |
+
+### 20.3 Fission, Fusion e Turbine (tarefa t3) / Fission, Fusion and Turbine
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.3.1 | Fission: coeficiente inverso do ar 10 → 10 000 (`HeatAPI.AIR_INVERSE_COEFFICIENT`); condutividade do sódio refrigerante 0,4 → 1,0 (`MekanismDataMapsProvider:85`); radiação do meltdown com tanque de resíduo vazio usa a radioatividade do resíduo padrão / Fission: air inverse coefficient, sodium conductivity, meltdown waste radiation | CORRIGIDO (não compilado / not compiled) |
+| 20.3.2 | Turbine: tanque de água dos vents cheio não para mais a turbina, só deixa de receber água / a full vent water tank no longer stops the turbine | CORRIGIDO (não compilado / not compiled) |
+| 20.3.3 | Fusion: 15 constantes conferidas, todas iguais ao Java / 15 constants checked, all equal to Java | OK |
+
+### 20.4 Digital Miner, Quantum Entangloporter, Chargepad, Teleporter e Sorter (mod 0.1.86)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.4.1 | Digital Miner: slots e filtros usam 27 posições de saída + 5 slots de item-filtro no próprio contêiner (limite de 32 slots do Horizon); não há filtros por tag, material ou mod ID, nem substituição de bloco minerado ou renderização visual da área | FORK |
+| 20.4.2 | Digital Miner: varredura do terreno é feita de forma síncrona a 512 blocos por tick na thread do servidor com fila máxima de 4096 (o Java usa a thread assíncrona `ThreadMinerSearch`) | FORK |
+| 20.4.3 | Quantum Entangloporter: frequências são numéricas de 1 a 99 e públicas (o Java usa nomes em texto e controle de acesso público/privado por UUID); o buffer e transporte de calor não são suportados | FORK |
+| 20.4.4 | Chargepad: bloco e funcionalidade ainda não implementados no port (Java: 1 024 000 J/t = 409 600 FE/t, buffer 2 048 000 J = 819 200 FE, recarga de jogadores e Robits sobre a base) | FALTA |
+| 20.4.5 | Teleporter: apenas jogadores são teleportados; não há teletransporte de mobs, veículos (barcos/minecarts) ou cálculo dinâmico de passageiros com multiplicador de energia; não há efeitos sonoros nem partículas de portal | FORK |
+| 20.4.6 | Logistical Sorter: usa 2 slots de movimentação (0=intake, 1=outbox) e 5 slots de filtro físico no contêiner; não há suporte a coloração de canais de transporte, modo round-robin, contagem mínima/máxima por filtro nem controle por sinal de redstone | FORK |
+
+### 20.5 Worldgen e receitas (tarefa t5) / Worldgen and recipes
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.5.1 | Osmium (upper): Java Y 72…`belowTop(-24)` com platô 8; o port limita no topo e não tem platô / Java relative top with plateau 8, the port clamps at the top with no plateau | FORK-12 |
+| 20.5.2 | Urânio enterrado: Java Y `aboveBottom(-24)`…-8, platô 16, descarte por ar 0,75; o port fixa o mínimo em -64 sem platô nem descarte / buried uranium: relative bottom, plateau 16, air discard 0.75 | FORK-12 |
+| 20.5.3 | `base_1211.py` sem argumentos agora mostra o uso em vez de falhar / `base_1211.py` prints usage without arguments | CORRIGIDO |
+| 20.5.4 | Receitas: contagem e cobertura por tipo no relatório `auditoria/AUDITORIA_worldgen_receitas.md`; o inventário mecânico (`INVENTARIO.md`) acompanha a cobertura / recipe counts in the report; the mechanical inventory tracks coverage | ABERTA / OPEN |
+
+### 20.6 Auditoria MekanismGenerators, MekanismTools e MekanismAdditions (mod 0.1.86)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.6.1 | **Advanced Solar Generator**: no Java emite energia por baixo (BOTTOM) e pela frente (FRONT) (`TileEntityAdvancedSolarGenerator.java:18`). No port emitia somente para DOWN e ignorava a orientação frontal ao ser posicionado. Corrigido: agora emite para DOWN e FRONT (faces do facing) e orienta para o jogador ao ser colocado no mundo | CORRIGIDO |
+| 20.6.2 | **Geradores Solares (Solar e Advanced Solar)**: no Java sofrem penalidade de 80% na produção quando chove/troveja em biomas com precipitação (`peakMultiplier * 0.2F`, `TileEntitySolarGenerator.java:183`). No port aplicava apenas a redução de luminosidade solar do céu sem a penalidade de chuva. Corrigido em `generators.rs` | CORRIGIDO |
+| 20.6.3 | **Solar Neutron Activator**: taxa de operação em chuva/trovoada sofre penalidade de 80% (`* 0.2F`, `TileEntitySolarNeutronActivator.java:201`). No port `plus.rs` não aplicava o fator de chuva. Corrigido em `plus.rs` | CORRIGIDO |
+| 20.6.4 | **MekanismTools - Escudos**: escudos dos 6 materiais (durabilidade: Bronze 403, Lapis 224, Osmium 672, Refined Glowstone 381, Refined Obsidian 1 680, Steel 448) não existem no port por exigirem renderizador especial de escudo e banners do Horizon | FORK API |
+| 20.6.5 | **MekanismTools - Refined Obsidian resistente a fogo**: no Java os itens e armadura de obsidiana refinada têm `burnsInFire = false` (`fire_resistant`), resistindo a fogo e lava; no port não têm a propriedade | FORK |
+| 20.6.6 | **MekanismAdditions - Estrada de Plástico**: no Java dá aceleração de 1.6 (`boost = 1.6`, `BlockPlasticRoad.java:19`) a entidades que andam sobre ela; no port não acelera por ausência de evento de passo/movimento da entidade na API | FORK API |
+| 20.6.7 | **MekanismAdditions - Glow Panel**: no Java se apoia na face clicada (`AttributeStateFacing.FacePlacementType.SELECTED_FACE`) com nível de luz 15; no port nasce fixo virado para o norte | FORK API |
+| 20.6.8 | **MekanismAdditions - Conteúdo Ausente**: Obsidian TNT (delay 100 ticks, raio 12.0), Baby Mobs (6 variações, dano flecha ×0.25), Balões (entidades/física) e Walkie-Talkie (porta de voz 36123) não foram portados para o Horizon | FORK API |
+
+### 20.7 Transmissores e Armazenamento (mod 0.1.86, auditoria contra Mekanism 1.21.1-10.7.19.85)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.7.1 | Descarga de Redstone no Energy Cube (`cube.rs`): valores de conversão de redstone e bloco de redstone corrigidos de 10.000 / 90.000 Joules literais para 4.000 FE / 36.000 FE (`feConversionRate = 2.5`, `FE = J * 2 / 5`), eliminando ganho de 2.5x a mais de energia | CORRIGIDO |
+| 20.7.2 | Cores do Logistical Transporter (`transmitter.rs`): paleta do configurador alinhada com as 18 cores oficiais de `EnumColor` do Mekanism 1.21.1 (Black, Blue, Green, Cyan, Dark Red, Purple, Orange, Light Gray, Gray, Light Blue, Lime, Aqua, Red, Magenta, Yellow, White, Brown, Pink) + None (19 estados, antes 17) | CORRIGIDO |
+| 20.7.3 | Capacidade interna de Tubos e Canos: a API do Horizon no WASM só define `throughput` no `TransmitterSpec` (port usa a taxa de extração/pull do Java: 750/2.000/64.000/256.000 mB/t para tubos e 250/1.000/8.000/32.000 mB/t para canos). A capacidade por bloco (4.000–1.024.000 mB em tubos; 2.000–128.000 mB em canos) não é exposta na API do Horizon | FORK |
+| 20.7.4 | Logistical Transporter (velocidade e variantes): a velocidade de trânsito dos itens no tubo (5, 10, 20, 50 ticks) não é configurável no Horizon (apenas pull rate 1, 16, 32, 64). Restrictive Transporter (custo 1.000) e Diversion Transporter (modos redstone por face) não existem no port | FORK |
+| 20.7.5 | Thermodynamic Conductor: não implementado no port (o Horizon não possui sistema genérico de transferência de calor nem API de condutores térmicos) | FORK |
+| 20.7.6 | Creative Bin (`bin.rs`): no Java a capacidade nominal é `Integer.MAX_VALUE` (2.147.483.647) e a extração suprime a redução do stack (`!isCreative`); no port o `step` subtrai numericamente, então a capacidade é `u64::MAX / 2` para agir como infinito | FORK |
+| 20.7.7 | Creative Energy Cube: no Java capacidade e taxa de saída são `Long.MAX_VALUE`; no port são 1 trilhão de FE e saída de 1 bilhão de FE/t para evitar overflow na aritmética e permitir leitura no medidor de tela | FORK |
+
+### 20.8 Auditoria de Radiação, Laser, SPS, Pump/Plenisher, Redstone e Constantes (mod 0.1.86, **sem teste no jogo**)
+
+| # | Diferença / Difference | Estado / State |
+|---|---|---|
+| 20.8.1 | Fluidic Plenisher: `maxPlenisherNodes` no código do port era 4096; corrigido para 4000 conforme padrão do Java (`GeneralConfig.maxPlenisherNodes`) | CORRIGIDO |
+| 20.8.2 | Radiação: enum `RadiationScale` (NONE a EXTREME) e sons de contador Geiger não existem no WASM; severidade contínua 0.0..1.0 logarítmica via `RadiationScale.getScaledDoseSeverity`. Raio no Java é restrito a 5 chunks (80 blocos), no port soma todas as fontes ativas da dimensão por distância quadrática. `Radioactive Waste Barrel` (512k mB, decaimento 1 mB/20t) ainda não implementado | FORK / FALTA |
+| 20.8.3 | Laser: dano a entidades (`laserEnergyPerDamage` = 2 500 J / 1 000 FE por 1 HP), escavação de blocos (`laserEnergyPerHardness` = 100 000 J / 40 000 FE por dureza) e o Laser Tractor Beam (capacidade 5 000 000 000 J / 2 000 000 000 FE) não existem no port; modos de saída redstone do Laser Amplifier (OFF, ENTITY_DETECTION, ENERGY_CONTENTS) também não implementados | FORK / FALTA |
+| 20.8.4 | SPS: dano elétrico da death zone (`lastReceivedEnergy / 1000F` dano/tick) e relâmpago visual em entidades de experimentos válidos não implementados no port | FORK |
+| 20.8.5 | Electric Pump: extração de Heavy Water (10 mB por bloco de água) com Filter Upgrade não implementada | FORK |
+| 20.8.6 | Industrial Alarm: efeitos audiovisuais (som de sirene e feixe giratório de luz vermelha) não existem no WASM; bloco apenas atualiza o estado de bloco `lit=true`/`lit=false` quando energizado por redstone | FORK |
+
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

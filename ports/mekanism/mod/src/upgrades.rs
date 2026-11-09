@@ -34,12 +34,18 @@ pub fn type_of(item: &str) -> Option<usize> {
 /// The types a machine takes (`AttributeUpgradeSupport`): speed, energy and muffling for the ones that process
 /// things; the three chambers that use chemical by chance take the chemical upgrade too; a generator only muffling.
 pub fn supported(def: &Def) -> Vec<usize> {
+    if def.block == "mekanism:antiprotonic_nucleosynthesizer" {
+        return vec![MUFFLING];
+    }
     match def.kind {
         Kind::Generator => vec![MUFFLING],
         Kind::Tank => Vec::new(),
         _ => {
             let advanced = matches!(
                 def.block,
+                "mekanism:purification_chamber" | "mekanism:chemical_injection_chamber" | "mekanism:chemical_dissolution_chamber"
+            ) || matches!(
+                def.base,
                 "mekanism:purification_chamber" | "mekanism:chemical_injection_chamber" | "mekanism:chemical_dissolution_chamber"
             );
             if advanced { vec![SPEED, ENERGY, CHEMICAL, MUFFLING] } else { vec![SPEED, ENERGY, MUFFLING] }

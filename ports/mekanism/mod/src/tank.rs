@@ -37,30 +37,43 @@ impl EditMode {
     }
 }
 
+/// Chemical tank tier capacities (mB) and transfer rates (mB/t): Basic, Advanced, Elite, Ultimate, Creative.
+pub const CHEMICAL_TANK_CAPACITIES: [u64; 5] = [64_000, 256_000, 1_024_000, 8_192_000, 1_000_000_000_000];
+pub const CHEMICAL_TANK_RATES: [u64; 5] = [1_000, 16_000, 128_000, 512_000, 1_000_000_000];
+
+/// Fluid tank tier capacities (mB) and transfer rates (mB/t): Basic, Advanced, Elite, Ultimate, Creative.
+pub const FLUID_TANK_CAPACITIES: [u64; 5] = [32_000, 64_000, 128_000, 256_000, 1_000_000_000_000];
+pub const FLUID_TANK_RATES: [u64; 5] = [1_000, 4_000, 16_000, 64_000, 1_000_000_000];
+
 /// `GasMode`: what a tank does with its chemical besides holding it.
+/// In Java (`TileEntityChemicalTank.GasMode`), the enum ordinals and cycling order are:
+/// IDLE (0) -> DUMPING_EXCESS (1) -> DUMPING (2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DumpMode {
     Idle = 0,
-    Dumping = 1,
-    Excess = 2,
+    Excess = 1,
+    Dumping = 2,
 }
 
 impl DumpMode {
     pub fn from_byte(b: u8) -> DumpMode {
         match b {
-            1 => DumpMode::Dumping,
-            2 => DumpMode::Excess,
+            1 => DumpMode::Excess,
+            2 => DumpMode::Dumping,
             _ => DumpMode::Idle,
         }
     }
     pub fn next(self) -> DumpMode {
         DumpMode::from_byte((self as u8 + 1) % 3)
     }
+    pub fn previous(self) -> DumpMode {
+        DumpMode::from_byte((self as u8 + 2) % 3)
+    }
     pub fn label(self) -> &'static str {
         match self {
             DumpMode::Idle => "Idle",
-            DumpMode::Dumping => "Dumping",
             DumpMode::Excess => "Dumping excess",
+            DumpMode::Dumping => "Dumping",
         }
     }
 }
@@ -73,10 +86,11 @@ pub fn dump(tank: &mut Tank, cap: u64, mode: DumpMode, dumping: u64, excess_rate
     }
     let to_dump = match mode {
         DumpMode::Dumping => dumping,
-        _ => {
+        DumpMode::Excess => {
             let keep = (cap as f64 * 0.85) as u64;
             if keep < tank.amount { (tank.amount - keep).min(excess_rate) } else { 0 }
         }
+        DumpMode::Idle => return,
     };
     tank.amount = tank.amount.saturating_sub(to_dump);
     if tank.amount == 0 {
@@ -220,7 +234,10 @@ mod tests {
     fn modes_go_round() {
         assert_eq!(EditMode::Both.next(), EditMode::Fill);
         assert_eq!(EditMode::Both.previous(), EditMode::Empty);
-        assert_eq!(DumpMode::Excess.next(), DumpMode::Idle);
+        assert_eq!(DumpMode::Idle.next(), DumpMode::Excess);
+        assert_eq!(DumpMode::Excess.next(), DumpMode::Dumping);
+        assert_eq!(DumpMode::Dumping.next(), DumpMode::Idle);
+        assert_eq!(DumpMode::Idle.previous(), DumpMode::Dumping);
     }
 
     #[test]
