@@ -9,7 +9,6 @@ Usage: base_1211.py <mekanism checkout of the tag> <output base folder> [<26.3 c
 """
 import json, os, shutil, sys
 
-SRC, OUT = sys.argv[1], sys.argv[2]
 MOD_DATA = {'mekanism', 'mekanismgenerators', 'mekanismtools', 'mekanismadditions'}
 
 
@@ -101,6 +100,10 @@ def copy_tree(src, dst, convert_recipes):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        print(__doc__)
+        sys.exit(1)
+    SRC, OUT = sys.argv[1], sys.argv[2]
     shutil.rmtree(OUT, ignore_errors=True)
     copy_tree(f'{SRC}/src/datagen/generated', f'{OUT}/src/datagen/generated', True)
     copy_tree(f'{SRC}/src/main/resources', f'{OUT}/src/main/resources', False)

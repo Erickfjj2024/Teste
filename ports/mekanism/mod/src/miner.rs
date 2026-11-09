@@ -9,11 +9,13 @@
 use super::*;
 
 pub const MINER: &str = "mekanism:digital_miner";
-/// `DEFAULT_RADIUS`, the most the radius can be, `minerTicksPerMine`, `usage.digitalMiner` and the buffer (usage by 2500 ticks).
+/// `DEFAULT_RADIUS`, the min and max radius, `minerTicksPerMine`, `usage.digitalMiner`, `minerSilkMultiplier` and the buffer (`storage.digitalMiner`).
 pub const DEFAULT_RADIUS: u8 = 10;
+pub const MIN_RADIUS: u8 = 0;
 pub const MAX_RADIUS: u8 = 32;
 pub const TICKS_PER_MINE: u32 = 80;
 pub const USAGE: u64 = crate::fe(1_000);
+pub const SILK_MULTIPLIER: u64 = 12;
 pub const CAPACITY: u64 = crate::fe(50_000);
 pub const DEFAULT_MIN_Y: i32 = 0;
 pub const DEFAULT_MAX_Y: i32 = 60;
@@ -68,7 +70,7 @@ pub fn decode(data: &[u8]) -> Option<Settings> {
     }
     let int = |at: usize| i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
     Some(Settings {
-        radius: data[1].clamp(1, MAX_RADIUS),
+        radius: data[1].clamp(MIN_RADIUS, MAX_RADIUS),
         running: data[2] & 1 != 0,
         eject: data[2] & 2 != 0,
         silk: data[2] & 4 != 0,
@@ -83,7 +85,7 @@ impl Settings {
     pub fn press(&mut self, id: i32) -> bool {
         match id {
             TOGGLE_RUN => self.running = !self.running,
-            RADIUS_DOWN => self.radius = self.radius.saturating_sub(1).max(1),
+            RADIUS_DOWN => self.radius = self.radius.saturating_sub(1).max(MIN_RADIUS),
             RADIUS_UP => self.radius = (self.radius + 1).min(MAX_RADIUS),
             MIN_DOWN => self.min_y = (self.min_y - 1).max(-64),
             MIN_UP => self.min_y = (self.min_y + 1).min(self.max_y),
@@ -125,6 +127,25 @@ pub fn position(index: usize, radius: u8, min_y: i32, max_y: i32) -> Option<(i32
     let (layer, rest) = (index / (side * side), index % (side * side));
     let y = max_y - layer as i32;
     Some(((rest % side) as i32 - i32::from(radius), y, (rest / side) as i32 - i32::from(radius)))
+}
+
+/// The energy the miner uses a tick (`MinerEnergyContainer.updateMinerEnergyPerTick`):
+/// 1 000 J/t (400 FE/t) base, 12× with silk touch (`minerSilkMultiplier`), scaled up with radius above 10 and height above 60.
+pub fn energy_usage(s: &Settings) -> u64 {
+    let base = if s.silk { 1_000.0 * (SILK_MULTIPLIER as f64) } else { 1_000.0 };
+    let radius_cost = if s.radius > DEFAULT_RADIUS {
+        (f64::from(s.radius) - f64::from(DEFAULT_RADIUS)) / (f64::from(MAX_RADIUS) - f64::from(DEFAULT_RADIUS))
+    } else {
+        0.0
+    };
+    let height = (s.max_y - s.min_y).max(0) as f64;
+    let height_cost = if height > f64::from(DEFAULT_MAX_Y - DEFAULT_MIN_Y) {
+        (height - f64::from(DEFAULT_MAX_Y - DEFAULT_MIN_Y)) / 323.0
+    } else {
+        0.0
+    };
+    let total_joules = (base * (1.0 + radius_cost) * (1.0 + height_cost)).ceil() as u64;
+    crate::fe(total_joules)
 }
 
 /// What the miner is doing, between ticks.
@@ -200,8 +221,9 @@ impl Mekanism {
                 status = 1;
                 if !work.queue.is_empty() {
                     status = 2;
-                    if energy >= USAGE {
-                        energy -= USAGE;
+                    let usage = energy_usage(&s);
+                    if energy >= usage {
+                        energy -= usage;
                         if s.delay > 0 {
                             s.delay -= 1;
                         }
@@ -312,6 +334,10 @@ mod tests {
             s.press(RADIUS_UP);
         }
         assert_eq!(s.radius, MAX_RADIUS);
+        for _ in 0..40 {
+            s.press(RADIUS_DOWN);
+        }
+        assert_eq!(s.radius, MIN_RADIUS);
         s.press(MIN_UP);
         assert_eq!(s.min_y, 1);
         s.max_y = 5;
@@ -322,6 +348,15 @@ mod tests {
         assert!(!s.press(TOGGLE_RUN));
         assert!(s.running);
         assert!(s.press(TOGGLE_INVERSE) && s.inverse);
+    }
+
+    #[test]
+    fn energy_usage_scales_with_silk_radius_and_height() {
+        let s = Settings::default();
+        assert_eq!(energy_usage(&s), USAGE);
+        let silk = Settings { silk: true, ..Settings::default() };
+        assert_eq!(energy_usage(&silk), USAGE * SILK_MULTIPLIER);
+        assert_eq!(position(0, 0, 0, 1), Some((0, 1, 0)));
     }
 
     #[test]

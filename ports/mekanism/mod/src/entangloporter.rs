@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 pub const BLOCK: &str = "mekanism:quantum_entangloporter";
 /// `entangloporterEnergyBuffer`, `entangloporterFluidBuffer` and `entangloporterChemicalBuffer` (the ultimate tiers' capacities).
-pub const ENERGY_CAPACITY: u64 = 256_000_000;
+pub const ENERGY_CAPACITY: u64 = crate::fe(256_000_000);
 pub const FLUID_CAPACITY: u64 = 256_000;
 pub const CHEMICAL_CAPACITY: u64 = 8_192_000;
 pub const SPEC_CAPACITY: u64 = 1 << 50;

@@ -53,7 +53,7 @@ pub struct Plenish {
 }
 
 /// `MekanismConfig.general.maxPlenisherNodes`.
-pub const MAX_NODES: usize = 4096;
+pub const MAX_NODES: usize = 4000;
 
 /// The block a fluid makes when poured: its source.
 pub fn source_of(fluid: &str) -> Option<&'static str> {
@@ -348,5 +348,10 @@ mod tests {
         let full = process::Tank { chemical: "minecraft:lava".into(), amount: 9500 };
         assert!(take(&full, "minecraft:lava").is_none());
         assert!(infinite("minecraft:water") && !infinite("minecraft:lava"));
+    }
+
+    #[test]
+    fn max_nodes_matches_java_config() {
+        assert_eq!(MAX_NODES, 4000);
     }
 }

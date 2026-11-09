@@ -25,12 +25,12 @@ pub const SPEC_CAPACITY: u64 = 1 << 50;
 /// The constants of the reactor's heat and the config's defaults.
 pub const INSULATION: f64 = 10_000.0;
 pub const CONDUCTION: f64 = 10.0;
-pub const AIR: f64 = 10.0;
+pub const AIR: f64 = 10_000.0;
 pub const WATER_CONDUCTIVITY: f64 = 0.5;
 pub const BASE_BOIL: f64 = 373.15;
 pub const WATER_ENTHALPY: f64 = 10.0 / 0.2;
 pub const SODIUM_ENTHALPY: f64 = 5.0;
-pub const SODIUM_CONDUCTIVITY: f64 = 0.4;
+pub const SODIUM_CONDUCTIVITY: f64 = 1.0;
 pub const MIN_DAMAGE_TEMP: f64 = 1_200.0;
 pub const MAX_DAMAGE_TEMP: f64 = 1_800.0;
 pub const MAX_DAMAGE: f64 = 100.0;
@@ -502,7 +502,8 @@ impl Mekanism {
                 let size = found.size.map(i32::from);
                 let centre = [min[0] + size[0] / 2, min[1] + size[1] / 2, min[2] + size[2] / 2];
                 // `meltdownHappened`: the radioactive substances in its tanks are released, fifty times over.
-                let released = (s.reactor.waste.amount as f64 + s.reactor.partial_waste) * radiation::radioactivity(&s.reactor.waste.chemical)
+                let waste_chem = if s.reactor.waste.amount == 0 { WASTE } else { &s.reactor.waste.chemical };
+                let released = (s.reactor.waste.amount as f64 + s.reactor.partial_waste) * radiation::radioactivity(waste_chem)
                     + s.reactor.fuel.amount as f64 * radiation::radioactivity(&s.reactor.fuel.chemical)
                     + s.reactor.heated.amount as f64 * radiation::radioactivity(&s.reactor.heated.chemical);
                 after_meltdown(&mut s.reactor, ambient);

@@ -295,11 +295,8 @@ pub fn step(f: &Found, blades: u32, steam: u64, energy: u64, water: u64) -> Tick
         return Tick::default();
     }
     let flow = (rate as u64).min(steam);
-    let produced = flow.min(water_capacity(f));
-    if water + produced > water_capacity(f) {
-        // The vents' tank cannot take the water: nothing happens.
-        return Tick::default();
-    }
+    let room = water_capacity(f).saturating_sub(water);
+    let produced = flow.min(water_capacity(f)).min(room);
     Tick { flow, energy: generated.min(needed), water: produced, rotation: rate / orig }
 }
 
@@ -649,11 +646,13 @@ mod tests {
         let t = step(&f, 4, steam, 0, 0);
         assert!(t.flow > 0 && t.energy > 0, "{t:?}");
         assert_eq!(t.water, t.flow.min(water_capacity(&f)));
-        // No blades, no steam, a full buffer or a full water tank: nothing.
+        // No blades, no steam, or a full energy buffer: nothing.
         assert_eq!(step(&f, 0, steam, 0, 0), Tick::default());
         assert_eq!(step(&f, 4, 0, 0, 0), Tick::default());
         assert_eq!(step(&f, 4, steam, energy_capacity(&f), 0), Tick::default());
-        assert_eq!(step(&f, 4, steam, 0, water_capacity(&f)), Tick::default());
+        // A full water tank does not stop the turbine, but receives no new water.
+        let full_water = step(&f, 4, steam, 0, water_capacity(&f));
+        assert!(full_water.energy > 0 && full_water.water == 0);
         // More blades than the coils support add nothing.
         assert_eq!(energy_multiplier(&f, 40), energy_multiplier(&f, 4));
     }

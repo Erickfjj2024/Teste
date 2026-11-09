@@ -1,7 +1,7 @@
 //! The laser and the laser amplifier (`TileEntityLaser`, `TileEntityLaserAmplifier`, `TileEntityBasicLaser`): a block that fires energy in a
 //! line from its front, up to 64 blocks, until something solid. What it hits that receives lasers takes the energy: a laser amplifier fills its
-//! buffer with it, a laser focus matrix heats the fusion reactor's plasma. The laser fires 20 FE a tick while it has them; the amplifier fires
-//! as much as its threshold says (between its minimum and maximum; by default 20) every `delay` ticks.
+//! buffer with it, a laser focus matrix heats the fusion reactor's plasma. The laser fires 4,000 FE a tick while it has them; the amplifier fires
+//! as much as its threshold says (between its minimum and maximum; by default all it holds) every `delay` ticks.
 //!
 //! Not here: digging blocks, hurting or burning what the beam crosses, the visible beam, the tractor beam, and redstone modes.
 use super::*;
