@@ -206,7 +206,10 @@ fn unescape(raw: &str) -> String {
             Some('r') => out.push('\r'),
             Some('u') => {
                 let hex: String = chars.by_ref().take(4).collect();
-                u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).map_or_else(|| out.push_str(&hex), |c| out.push(c));
+                match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    Some(c) => out.push(c),
+                    None => out.push_str(&hex),
+                }
             }
             Some(other) => out.push(other),
             None => out.push('\\'),

@@ -4166,7 +4166,7 @@ index bb9b346..f712e01 100644
      }
  }
 diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
-index feecac5..fb386a3 100644
+index feecac5..4bab141 100644
 --- a/crates/horizon-mods/src/testing.rs
 +++ b/crates/horizon-mods/src/testing.rs
 @@ -30,6 +30,8 @@ pub struct TestGame {
@@ -4370,6 +4370,21 @@ index feecac5..fb386a3 100644
                  None => set.apply(game.player.get_or_insert_with(default_player)),
              }
          }
+@@ -1442,6 +1523,14 @@ impl Step {
+                 }
+             }
+         }
++        // A block mined is gone (its drops are not simulated).
++        for o in &out {
++            if let Output::MineBlock { dimension, pos, .. } = o
++                && dimension == "minecraft:overworld"
++            {
++                game.world.insert((pos[0], pos[1], pos[2]), "minecraft:air".to_owned());
++            }
++        }
+         // A property set keeps the block and changes the one property in its state.
+         for o in &out {
+             if let Output::SetBlockProperty { dimension, pos, property, value, .. } = o
 diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
 index 151d098..26dfa83 100644
 --- a/crates/horizon-mods/tests/sandbox.rs
