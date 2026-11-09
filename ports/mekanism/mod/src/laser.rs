@@ -9,10 +9,10 @@ use super::*;
 pub const LASER: &str = "mekanism:laser";
 pub const AMPLIFIER: &str = "mekanism:laser_amplifier";
 pub const RANGE: i32 = 64;
-/// `usage.laser`, `storage.laserAmplifier` and the laser's buffer (usage * 2500 as for the machines).
-pub const FIRE: u64 = 20;
-pub const AMPLIFIER_CAPACITY: u64 = 5_000_000;
-pub const LASER_CAPACITY: u64 = 50_000;
+/// `usage.laser` (what the laser fires a tick), `storage.laserAmplifier` and `storage.laser`, in Forge Energy.
+pub const FIRE: u64 = fe(10_000);
+pub const AMPLIFIER_CAPACITY: u64 = fe(5_000_000_000);
+pub const LASER_CAPACITY: u64 = fe(2_000_000);
 /// The buttons of the amplifier's screen.
 pub const MIN_DOWN_BIG: i32 = 7300;
 pub const MIN_DOWN: i32 = 7301;
@@ -112,10 +112,11 @@ pub fn decode_amp(data: &[u8]) -> Option<Amp> {
 }
 
 impl Amp {
-    /// How much the amplifier fires this tick (`toFire`): the laser's 20 held between the thresholds, once the delay has run.
-    pub fn to_fire(&self) -> u64 {
-        if self.ticks >= self.delay {
-            u64::from(FIRE.clamp(u64::from(self.min), u64::from(self.max.max(self.min))) as u32)
+    /// How much the amplifier fires this tick (`toFire`, extracted from what it holds): all of it up to the maximum threshold, once
+    /// the delay has run and it holds the minimum.
+    pub fn to_fire(&self, energy: u64) -> u64 {
+        if self.ticks >= self.delay && energy >= u64::from(self.min) {
+            energy.min(u64::from(self.max))
         } else {
             0
         }
@@ -217,9 +218,10 @@ impl Mekanism {
                     energy = (energy + inflow).min(cap);
                 }
             }
-            let to_fire = amp.as_ref().map_or(FIRE, Amp::to_fire);
+            // `energyContainer.extract(toFire(), SIMULATE)`: the laser fires what it has up to its usage, the amplifier what it holds.
+            let to_fire = amp.as_ref().map_or(FIRE.min(energy), |a| a.to_fire(energy));
             let mut fired = 0;
-            if to_fire > 0 && energy >= to_fire {
+            if to_fire > 0 {
                 energy -= to_fire;
                 fired = to_fire;
                 let dim = e.dimension.clone();
@@ -297,18 +299,21 @@ mod tests {
     }
 
     #[test]
-    fn the_amplifier_fires_between_its_thresholds() {
+    fn the_amplifier_fires_what_it_holds_between_its_thresholds() {
         let mut a = Amp::default();
-        assert_eq!(a.to_fire(), 20);
-        a.min = 1_000_000;
-        a.max = 1_000_000;
-        assert_eq!(a.to_fire(), 1_000_000);
+        // By default it fires all it holds, up to the capacity.
+        assert_eq!(a.to_fire(1_234), 1_234);
+        a.min = 1_000;
+        a.max = 5_000;
+        assert_eq!(a.to_fire(999), 0);
+        assert_eq!(a.to_fire(3_000), 3_000);
+        assert_eq!(a.to_fire(9_000), 5_000);
         a.delay = 2;
         a.ticks = 0;
-        assert_eq!(a.to_fire(), 0);
+        assert_eq!(a.to_fire(3_000), 0);
         a.advance();
         a.advance();
-        assert_eq!(a.to_fire(), 1_000_000);
+        assert_eq!(a.to_fire(3_000), 3_000);
         a.advance();
         assert_eq!(a.ticks, 0);
     }

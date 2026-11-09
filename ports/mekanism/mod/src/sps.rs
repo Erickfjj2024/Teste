@@ -19,8 +19,8 @@ pub const SPEC_CAPACITY: u64 = 1 << 50;
 /// `inputPerAntimatter`, `outputTankCapacity`, `energyPerInput` and the port's energy storage.
 pub const INPUT_PER_ANTIMATTER: u64 = 1_000;
 pub const OUTPUT_CAPACITY: u64 = 1_000;
-pub const ENERGY_PER_INPUT: u64 = 1_000_000;
-pub const PORT_ENERGY: u64 = 1_000_000_000;
+pub const ENERGY_PER_INPUT: u64 = fe(1_000_000);
+pub const PORT_ENERGY: u64 = fe(1_000_000_000);
 
 const GRID: [[u8; 7]; 7] = [
     [0, 0, 1, 1, 1, 0, 0],
@@ -471,9 +471,9 @@ mod tests {
     #[test]
     fn energy_turns_polonium_into_antimatter() {
         let mut s = Sps { input: process::Tank { chemical: POLONIUM.into(), amount: 2000 }, ..Sps::default() };
-        // A million FE a tick is a mB of polonium a tick: a thousand ticks for one of antimatter.
+        // A million J (400 thousand FE) a tick is a mB of polonium a tick: a thousand ticks for one of antimatter.
         for _ in 0..1000 {
-            tick(&mut s, 1_000_000);
+            tick(&mut s, ENERGY_PER_INPUT);
         }
         assert_eq!((s.output.amount, s.input.amount), (1, 1000));
         assert_eq!(s.output.chemical, ANTIMATTER);

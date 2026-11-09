@@ -30,10 +30,11 @@ pub const BLADES_PER_COIL: u32 = 4;
 pub const VENT_FLOW: f64 = 32_000.0;
 pub const DISPERSER_FLOW: f64 = 1_280.0;
 pub const CONDENSER_RATE: u64 = 64_000;
-pub const ENERGY_PER_VOLUME: u64 = 100;
+/// `turbineEnergyCapacityPerVolume` (16 million Joules).
+pub const ENERGY_PER_VOLUME: u64 = fe(16_000_000);
 pub const STEAM_PER_TANK: u64 = 64_000;
-pub const ENERGY_PER_STEAM: f64 = 5.0;
-pub const STEAM_DIVISOR: f64 = 100.0;
+/// `maxEnergyPerSteam` (Joules a mB of steam gives at the most; the port keeps Forge Energy, 2/5 of them).
+pub const ENERGY_PER_STEAM: f64 = 10.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -287,8 +288,9 @@ pub fn step(f: &Found, blades: u32, steam: u64, energy: u64, water: u64) -> Tick
     }
     let proportion = steam as f64 / steam_capacity(f).max(1) as f64;
     let orig = max_flow(f);
-    let rate = (steam as f64).min(orig).min(needed as f64 / mult * STEAM_DIVISOR) * proportion;
-    let generated = (mult * (rate / STEAM_DIVISOR)).min(f64::from(i32::MAX)) as u64;
+    // The release works in Joules: the room is 2.5 of them to each Forge Energy, and what it makes 2/5 of them.
+    let rate = (steam as f64).min(orig).min(needed as f64 * 2.5 / mult) * proportion;
+    let generated = (mult * rate * 0.4).min(f64::from(i32::MAX)) as u64;
     if rate <= 1e-5 || generated == 0 {
         return Tick::default();
     }
@@ -431,7 +433,7 @@ impl Mekanism {
                 half(steam_cap, 16),
                 chem::index(STEAM),
                 (result.energy as f64 * 20.0 / 1.0).min(f64::from(i32::MAX)) as i32 / 20,
-                (energy_multiplier(&found, blades) * max_flow(&found)).min(f64::from(i32::MAX)) as i32,
+                (energy_multiplier(&found, blades) * max_flow(&found) * 0.4).min(f64::from(i32::MAX)) as i32,
                 result.flow.min(i32::MAX as u64) as i32,
                 max_flow(&found).min(f64::from(i32::MAX)) as i32,
                 found.dispersers as i32,

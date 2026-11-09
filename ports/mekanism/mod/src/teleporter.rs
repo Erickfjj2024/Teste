@@ -9,11 +9,12 @@ use std::collections::{HashMap, HashSet};
 
 pub const TELEPORTER: &str = "mekanism:teleporter";
 pub const FRAME: &str = "mekanism:teleporter_frame";
-/// `usage.teleporter` base, distance and dimension penalty; the teleporter's energy buffer (the 26.3 value is a placeholder).
-pub const BASE_COST: u64 = 100;
-pub const DISTANCE_COST: f64 = 2.0;
-pub const DIMENSION_PENALTY: u64 = 1_000;
-pub const CAPACITY: u64 = 5_000_000;
+/// `usage.teleporter` base, distance and dimension penalty; the teleporter's energy buffer.
+/// `usage.teleporterBase`, `teleporterDistance` and `dimensionPenalty` (Joules) and `storage.teleporter` (Forge Energy).
+pub const BASE_COST: u64 = 1_000;
+pub const DISTANCE_COST: f64 = 10.0;
+pub const DIMENSION_PENALTY: u64 = 10_000;
+pub const CAPACITY: u64 = fe(5_000_000);
 pub const MAX_FREQUENCY: u8 = 99;
 /// Ticks the destination waits after receiving someone.
 pub const DELAY: u32 = 5;
@@ -60,7 +61,7 @@ pub fn find_frame(is_frame: impl Fn([i32; 3]) -> bool) -> Option<(usize, bool)> 
 /// The energy a trip costs: the distance and the dimension change (`calculateEnergyCost`, without passengers).
 pub fn cost(distance: f64, other_dimension: bool) -> u64 {
     let travel = (DISTANCE_COST * distance).round().max(0.0) as u64;
-    BASE_COST + travel + if other_dimension { DIMENSION_PENALTY } else { 0 }
+    fe(BASE_COST + travel + if other_dimension { DIMENSION_PENALTY } else { 0 })
 }
 
 /// How far a dimension scales the coordinates (`coordinateScale`).
@@ -265,12 +266,13 @@ mod tests {
 
     #[test]
     fn a_trip_costs_a_base_distance_and_a_penalty() {
-        assert_eq!(cost(0.0, false), 100);
-        assert_eq!(cost(50.0, false), 200);
-        assert_eq!(cost(10.0, true), 1120);
-        assert_eq!(trip_cost("minecraft:overworld", [0.0, 64.0, 0.0], "minecraft:overworld", [30, 64, 40]), 200);
+        // 1000 J a trip, 10 J a block, 10000 J for a dimension (Forge Energy: 2/5 of them).
+        assert_eq!(cost(0.0, false), 400);
+        assert_eq!(cost(50.0, false), 600);
+        assert_eq!(cost(10.0, true), 4_440);
+        assert_eq!(trip_cost("minecraft:overworld", [0.0, 64.0, 0.0], "minecraft:overworld", [30, 64, 40]), 600);
         // Overworld to nether: the distance is taken after the 1:8 scale.
-        assert_eq!(trip_cost("minecraft:overworld", [80.0, 64.0, 0.0], "minecraft:the_nether", [10, 64, 0]), 100 + 1000 + 0 + 0 + 0 + 0 + (2.0 * 0.0) as u64);
+        assert_eq!(trip_cost("minecraft:overworld", [80.0, 64.0, 0.0], "minecraft:the_nether", [10, 64, 0]), fe(1_000 + 10_000));
     }
 
     #[test]

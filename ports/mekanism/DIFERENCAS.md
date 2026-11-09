@@ -263,6 +263,24 @@ Legenda de origem: **mod X.Y.Z** = versão do `mekanism.hmod` em que a diferenç
 | 18.8 | Não existem no port: Thermodynamic Conductor, Restrictive Transporter e Diversion Transporter (sem modo de desvio) | ABERTA |
 | 18.9 | O Empty invoca cada stack como `minecraft:item` (`entities::summon`) e só esvazia os slots quando o jogo confirma o drop (`entity-spawned`); um drop que o jogo não consegue criar fica na máquina em vez de ser destruído, como o truque antigo dos slots extras fazia. Os drops levam só item e quantidade, não os componentes do stack; se `minecraft:item` não invocar com esse NBT no jogo, nada se perde, mas nada sai da máquina — confirmar no jogo antes de usar com itens de valor | ABERTA |
 
+## 19. Base 1.21.1-10.7.19.85 (mod 0.1.86, **sem teste no jogo**)
+
+A referência passou a ser o release `v1.21.1-10.7.19.85` (ver `BASE.md`). Números conferidos contra o Java desse release; a energia do release é em Joules e o port conta Forge Energy (J × 2/5, `feConversionRate` 2.5, função `fe()`).
+
+| # | Diferença | Estado |
+|---|---|---|
+| 19.1 | Máquinas: consumo e capacidade de `UsageConfig`/`StorageConfig` (crusher 50 J = 20 FE/t; capacidade 20 000 J = 8 000 FE); fábricas `max(armazenamento/2, consumo) × linhas`; separador 2 × densidade do hidrogênio; PRC e `energy_required` das receitas em FE | CORRIGIDO |
+| 19.2 | Cubos de energia, cabos e Induction Matrix (células, providers) em FE do release | CORRIGIDO |
+| 19.3 | Geradores: bio 350 J/t, tanques 24 000/18 000 mB, 200 mB por bio fuel; aquecedor 200/30/100 de calor, 10 mB/t; solar 50/300 J; vento 60–480 J; armazenamentos de `GeneratorsStorageConfig` | CORRIGIDO |
+| 19.4 | Gerador a gás: algoritmo do release (até 256 ticks de queima por tick, `burnTicks` por mB, etileno 40 ticks × 705 J). O resto de queima de um mB fica na memória do mod (some se o chunk descarrega) | PARCIAL |
+| 19.5 | Laser: dispara `usage.laser` (10 000 J) ou o que tem; amplificador dispara tudo o que guarda até o máximo, a partir do mínimo. Não existem: dano, escavação, vaso, atenuação por armadura, raio trator. Limites digitados no original; aqui botões ± | ABERTA |
+| 19.6 | Teletransportador: base 1 000 J, 10 J por bloco, 10 000 J de penalidade; capacidade 5 000 000 J | CORRIGIDO |
+| 19.7 | Turbina: 16 000 000 J por volume, `maxEnergyPerSteam` 10 J por mB sem o divisor ÷100 da 26.3; fusão: capacidade 1 bilhão de J, termopar em J, laser em J; SPS: 1 000 000 J por entrada, porta de 1 bilhão de J | CORRIGIDO |
+| 19.8 | Melhorias: sete tipos (a 10.7 não tem a de experiência); texturas `item/upgrade_*` | CORRIGIDO |
+| 19.9 | As sprites de GUI vêm de `tools/gui-sprites` (26.3: a mesma arte; a 10.7 guarda em atlas cortados por código) | LIMITE |
+| 19.10 | Itens novos sem função ainda: configuration card, crafting formula, electric bow, hdpe elytra, meka-tool, robit (modelos existem, comportamento não) | ABERTA |
+| 19.11 | Receitas agora do datagen 10.7 (normalizadas por `base_1211.py`); contagem e valores diferem da 26.3 (ex.: painting 32 vs 256) | CORRIGIDO |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

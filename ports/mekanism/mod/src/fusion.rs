@@ -33,7 +33,7 @@ pub const THERMOCOUPLE: f64 = 0.05;
 pub const CASING_CONDUCTIVITY: f64 = 0.1;
 pub const WATER_HEATING: f64 = 0.3;
 pub const FUEL_CAPACITY: u64 = 1_000;
-pub const ENERGY_CAPACITY: u64 = 1_000_000_000;
+pub const ENERGY_CAPACITY: u64 = fe(1_000_000_000);
 pub const WATER_PER_INJECTION: u64 = 1_000_000;
 pub const STEAM_PER_INJECTION: u64 = 100_000_000;
 pub const HOHLRAUM_FUEL: u64 = 10;
@@ -209,7 +209,8 @@ pub fn steam_capacity(injection: u64) -> u64 {
 /// `addTemperatureFromEnergyInput`: a laser's energy heats the plasma (ten times as much while it does not burn).
 pub fn add_laser_energy(r: &mut Reactor, energy: u64) {
     if energy > 0 {
-        let heat = energy as f64 / PLASMA_HEAT_CAPACITY;
+        // The laser's energy arrives in Forge Energy; the reactor takes the release's Joules (2.5 of them to a Forge Energy).
+        let heat = energy as f64 * 2.5 / PLASMA_HEAT_CAPACITY;
         r.plasma += if r.burning { heat } else { heat * 10.0 };
     }
 }
@@ -296,7 +297,8 @@ pub fn tick(r: &mut Reactor, ambient: f64, hohlraum: bool) -> bool {
     r.last_power = 0;
     if case_air.abs() > 1e-9 {
         r.case -= case_air / CASE_HEAT_CAPACITY;
-        let power = (case_air * THERMOCOUPLE).clamp(0.0, f64::from(i32::MAX)) as u64;
+        // (in Joules in the release; the port counts Forge Energy, 2/5 of them)
+        let power = (case_air * THERMOCOUPLE * 0.4).clamp(0.0, f64::from(i32::MAX)) as u64;
         if power > 0 {
             let added = power.min(ENERGY_CAPACITY.saturating_sub(r.energy));
             r.energy += added;
@@ -670,10 +672,10 @@ mod tests {
     #[test]
     fn the_laser_heats_ten_times_more_before_the_burn() {
         let mut r = Reactor::default();
-        add_laser_energy(&mut r, 1000);
+        add_laser_energy(&mut r, 400);
         assert_eq!(r.plasma, 100.0);
         r.burning = true;
-        add_laser_energy(&mut r, 1000);
+        add_laser_energy(&mut r, 400);
         assert_eq!(r.plasma, 110.0);
     }
 
