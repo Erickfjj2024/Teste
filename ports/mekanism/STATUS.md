@@ -709,3 +709,8 @@ Smelting Factory em `factory.toml`). Tirei os textos de diagnóstico das telas.
 
 ### 2ao. MekanismAdditions (mod 0.1.84)
 252 blocos de plástico e glow panels em 18 cores, gerados por `convert.py` com texturas pintadas por cor (jar 1.21.1 em `tools/additions-assets`) e as receitas do 26.3. Diferenças em DIFERENCAS.md seção 17.
+
+
+## 2ap. Rebase na 10.7.19 (mod 0.1.86)
+Feito: `base_1211.py` + `BASE.md` (pipeline), conversor roda contra o release; sete melhorias; números em Joules (máquinas, cubos, cabos, matriz, geradores, gás, laser, teletransportador, turbina, fusão, SPS) — ver DIFERENCAS.md seção 19.
+Falta auditar contra o Java 10.7: tanques/quantidades por operação das máquinas químicas, Dynamic Tank (fluido 350 000 mB/bloco vs químico), Boiler/Evaporador/Fission (calor), Digital Miner, Entangloporter, Chargepad, receitas contadas de novo, worldgen, e as máquinas/itens que ainda não existem (QIO, aquecimento, Formulaic Assemblicator, MekaSuit…).
