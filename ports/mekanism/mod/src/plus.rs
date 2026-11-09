@@ -159,7 +159,11 @@ impl Mekanism {
                 let mut above = e.clone();
                 above.pos.y += 1;
                 let sees = env.has_skylight && darken < 4 && self.sky_clear(&above, tick);
-                let rate = 64.0 * f64::from(generators::peak(env.temperature, env.downfall, env.precipitation)) * f64::from(brightness);
+                let mut share = f64::from(generators::peak(env.temperature, env.downfall, env.precipitation));
+                if env.precipitation && (env.rain > 0.0 || env.thunder > 0.0) {
+                    share *= 0.2;
+                }
+                let rate = 64.0 * share * f64::from(brightness);
                 if sees && rate >= 1.0 {
                     ops = rate as u32;
                     sun_ok = true;

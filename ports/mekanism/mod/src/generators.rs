@@ -217,12 +217,12 @@ pub fn tank_faces(facing: &str) -> Vec<FlowSide> {
     faces
 }
 
-/// Where a generator gives its energy: the front, the bottom for the solar one.
+/// Where a generator gives its energy: the front and bottom for wind and advanced solar, the bottom for solar, the front for the others.
 pub fn energy_faces(kind: GenKind, facing: &str) -> Vec<FlowSide> {
     let mut faces = vec![FlowSide::None; 6];
     match kind {
-        GenKind::Solar | GenKind::AdvSolar => faces[config::DOWN] = FlowSide::Output,
-        GenKind::Wind => {
+        GenKind::Solar => faces[config::DOWN] = FlowSide::Output,
+        GenKind::AdvSolar | GenKind::Wind => {
             faces[config::DOWN] = FlowSide::Output;
             faces[config::face_of(facing, config::FRONT)] = FlowSide::Output;
         }
@@ -265,7 +265,7 @@ impl Mekanism {
         let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let placed = e.data.get(8) == Some(&1);
         let mut heat = e.data.get(..8).and_then(|b| b.try_into().ok()).map_or(AMBIENT * HEAT_CAPACITY, f64::from_le_bytes);
-        if !placed && !matches!(kind, GenKind::Solar | GenKind::AdvSolar) {
+        if !placed && kind != GenKind::Solar {
             // A new generator looks at the nearest player, as one placed in front of them does.
             let front = cube::facing_name(front_for(e));
             if front != facing {
@@ -397,7 +397,10 @@ impl Mekanism {
                     let sees = env.has_skylight && darken < 4 && self.sky_clear(e, tick);
                     extra = i32::from(sees);
                     if sees && can {
-                        let share = peak(env.temperature, env.downfall, env.precipitation);
+                        let mut share = peak(env.temperature, env.downfall, env.precipitation);
+                        if env.precipitation && (env.rain > 0.0 || env.thunder > 0.0) {
+                            share *= 0.2;
+                        }
                         let made = if kind == GenKind::AdvSolar { adv_solar_production(brightness, share) } else { solar_production(brightness, share) }.min(room(energy));
                         energy += made;
                         producing = made;
@@ -545,6 +548,9 @@ mod tests {
         assert_eq!(solar_production(1.0, peak(2.0, 0.0, false)), 12);
         assert_eq!(solar_production(1.0, peak(-0.5, 0.0, false)), 27);
         assert_eq!(solar_production(0.0, plains), 0);
+        // Rain penalty: 80% reduction in rain-capable biome
+        let raining_share = peak(0.8, 0.4, true) * 0.2;
+        assert_eq!(solar_production(1.0, raining_share), 3);
     }
 
     #[test]
@@ -556,5 +562,9 @@ mod tests {
         assert_eq!(tank_faces("north")[config::SOUTH], FlowSide::Input);
         assert_eq!(energy_faces(GenKind::Gas, "east")[config::EAST], FlowSide::Output);
         assert_eq!(energy_faces(GenKind::Solar, "east")[config::DOWN], FlowSide::Output);
+        assert_eq!(energy_faces(GenKind::AdvSolar, "east")[config::DOWN], FlowSide::Output);
+        assert_eq!(energy_faces(GenKind::AdvSolar, "east")[config::EAST], FlowSide::Output);
+        assert_eq!(energy_faces(GenKind::Wind, "east")[config::DOWN], FlowSide::Output);
+        assert_eq!(energy_faces(GenKind::Wind, "east")[config::EAST], FlowSide::Output);
     }
 }

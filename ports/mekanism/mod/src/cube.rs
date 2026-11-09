@@ -9,11 +9,11 @@ use crate::sides::{self, Mode};
 pub const DISCHARGE: usize = 0;
 pub const CHARGE: usize = 1;
 
-/// The energy an item gives in the discharge slot (the recipes of `energy_conversion`: redstone, and a block of it).
+/// The energy in FE an item gives in the discharge slot (the recipes of `energy_conversion`: redstone 10_000 J = 4_000 FE, and a block of it 90_000 J = 36_000 FE).
 pub fn conversion(item: &str) -> Option<u64> {
     match item {
-        "minecraft:redstone" => Some(10_000),
-        "minecraft:redstone_block" => Some(90_000),
+        "minecraft:redstone" => Some(4_000),
+        "minecraft:redstone_block" => Some(36_000),
         _ => None,
     }
 }
@@ -121,8 +121,8 @@ mod tests {
 
     #[test]
     fn redstone_gives_the_energy_the_recipes_say() {
-        assert_eq!(conversion("minecraft:redstone"), Some(10_000));
-        assert_eq!(conversion("minecraft:redstone_block"), Some(90_000));
+        assert_eq!(conversion("minecraft:redstone"), Some(4_000));
+        assert_eq!(conversion("minecraft:redstone_block"), Some(36_000));
         assert_eq!(conversion("minecraft:stick"), None);
     }
 

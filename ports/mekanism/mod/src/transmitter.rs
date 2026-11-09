@@ -77,13 +77,13 @@ impl Connection {
 }
 
 /// The colours a logistical transporter cycles through (`EnumColor`, none first).
-pub const COLORS: [&str; 17] = [
-    "None", "Black", "Dark Blue", "Dark Green", "Dark Aqua", "Dark Red", "Dark Purple", "Gold", "Gray",
-    "Dark Gray", "Blue", "Green", "Aqua", "Red", "Light Purple", "Yellow", "White",
+pub const COLORS: [&str; 19] = [
+    "None", "Black", "Dark Blue", "Dark Green", "Dark Aqua", "Dark Red", "Purple", "Orange", "Light Gray",
+    "Gray", "Light Blue", "Lime", "Aqua", "Red", "Magenta", "Yellow", "White", "Brown", "Pink",
 ];
 
 /// What a transmitter keeps for the configurator: one connection per face of the world, whether it answers redstone,
-/// and (for a logistical transporter) its colour, 0 for none and 1..=16 for `COLORS`.
+/// and (for a logistical transporter) its colour, 0 for none and 1..=18 for `COLORS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct State {
     pub connections: [Connection; 6],
@@ -107,7 +107,7 @@ pub fn decode(data: &[u8]) -> State {
     for (i, b) in data.iter().take(6).enumerate() {
         connections[i] = Connection::from_byte(*b);
     }
-    State { connections, redstone: data[6] == 1, color: data[7].min(16) }
+    State { connections, redstone: data[6] == 1, color: data[7].min(18) }
 }
 
 /// The bytes a transmitter's data holds for a state.
@@ -133,7 +133,7 @@ impl Mekanism {
             if click.sneak {
                 if logistical && state.connections[click.face] == Connection::None {
                     // A sneak click on a disconnected side colours the transporter, as the original's onConfigure does.
-                    state.color = (state.color + 1) % 17;
+                    state.color = (state.color + 1) % 19;
                     let _ = players::tell(&click.player, &format!("Color bumped to: {}", COLORS[state.color as usize]));
                 } else {
                     state.connections[click.face] = state.connections[click.face].next();
