@@ -59,6 +59,10 @@
 | FORK-27 | Equipamentos e armaduras com módulos (MekaSuit, Meka-Tool) e inventário de módulos / equipment with modules | `gear/*` |
 | FORK-28 | Integrações (JEI/EMI/CC, `integration/*` – 190 classes) como pontos de extensão / integrations as extension points | `common/integration/*` |
 
+| FORK-29 | Uso de bloco **condicional pelo mod**: o mod decide por clique consumir ou passar (GUI só se formado e sem agachar; senão colocar o bloco da mão) / mod-decided conditional block use | `TileEntityMultiblock.onActivate:218-229` (ver `SINTOMAS_MULTIBLOCOS.md` S1) |
+| FORK-30 | `world.spawn-particles` para mods (tipo, posição, velocidade, quantidade, jogadores a até N blocos), p.ex. as faíscas de formação / mod particles | `TileEntityMultiblock.doMultiblockSparkle:297-312`, `SparkleAnimation` (S2) |
+| FORK-31 | Renderização de fluido/químico dentro de um volume ligada a uma estrutura (caixa, textura, cor, fração de altura) / fluid fill rendering in a volume | `MultiblockTileEntityRenderer` e `Render*` dos multiblocos (S4; detalha o FORK-19) |
+
 ## F. Como este arquivo vira a API pública / How this file becomes the public API
 
 **PT.** Cada `FORK-n` generalizável (A, C, E e parte de D) é escrito como **capacidade nomeada** do SDK (`horizon-mod-sdk`) com: contrato, exemplo mínimo, teste de conformidade. O Mekanism é o **primeiro cliente**; os próximos ports (outros mods) validam que a API não ficou sob medida para um só.
