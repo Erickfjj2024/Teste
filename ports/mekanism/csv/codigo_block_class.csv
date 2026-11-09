@@ -1,0 +1,56 @@
+item,estado,nota
+mekanism/common/block/BlockBounding.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/BlockCardboardBox.java,FALTA?,
+mekanism/common/block/BlockEnergyCube.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/BlockIndustrialAlarm.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/BlockMekanism.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/BlockOre.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/BlockPersonalBarrel.java,FALTA?,
+mekanism/common/block/BlockPersonalChest.java,FALTA?,
+mekanism/common/block/BlockPersonalStorage.java,FALTA?,
+mekanism/common/block/BlockQIOComponent.java,FALTA?,
+mekanism/common/block/BlockRadioactiveWasteBarrel.java,FALTA?,
+mekanism/common/block/attribute/Attribute.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/attribute/AttributeCustomSelectionBox.java,FALTA?,
+mekanism/common/block/attribute/AttributeCustomShape.java,FALTA?,
+mekanism/common/block/attribute/AttributeEnergy.java,FALTA?,
+mekanism/common/block/attribute/AttributeFactoryType.java,FALTA?,
+mekanism/common/block/attribute/AttributeGui.java,FALTA?,
+mekanism/common/block/attribute/AttributeHasBounding.java,FALTA?,
+mekanism/common/block/attribute/AttributeMultiblock.java,FALTA?,
+mekanism/common/block/attribute/AttributeParticleFX.java,FALTA?,
+mekanism/common/block/attribute/AttributeSideConfig.java,FALTA?,
+mekanism/common/block/attribute/AttributeSound.java,FALTA?,
+mekanism/common/block/attribute/AttributeState.java,FALTA?,
+mekanism/common/block/attribute/AttributeStateActive.java,FALTA?,
+mekanism/common/block/attribute/AttributeStateBoilerValveMode.java,FALTA?,
+mekanism/common/block/attribute/AttributeStateFacing.java,FALTA?,
+mekanism/common/block/attribute/AttributeStateOpen.java,FALTA?,
+mekanism/common/block/attribute/AttributeTier.java,FALTA?,
+mekanism/common/block/attribute/AttributeUpgradeSupport.java,FALTA?,
+mekanism/common/block/attribute/AttributeUpgradeable.java,FALTA?,
+mekanism/common/block/attribute/Attributes.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/basic/BlockBin.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/basic/BlockChargepad.java,FALTA?,
+mekanism/common/block/basic/BlockFluidTank.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/basic/BlockLogisticalSorter.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/basic/BlockResource.java,FALTA?,
+mekanism/common/block/basic/BlockStructuralGlass.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/interfaces/IColoredBlock.java,FALTA?,
+mekanism/common/block/interfaces/IHasDescription.java,FALTA?,
+mekanism/common/block/interfaces/IHasTileEntity.java,FALTA?,
+mekanism/common/block/interfaces/ITypeBlock.java,FALTA?,
+mekanism/common/block/prefab/BlockBase.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/prefab/BlockBasicMultiblock.java,FALTA?,
+mekanism/common/block/prefab/BlockFactoryMachine.java,FALTA?,
+mekanism/common/block/prefab/BlockTile.java,?,match heurístico por nome / name heuristic
+mekanism/common/block/prefab/BlockTileGlass.java,FALTA?,
+mekanism/common/block/states/BlockStateHelper.java,FALTA?,
+mekanism/common/block/states/FluidLogType.java,FALTA?,
+mekanism/common/block/states/IFluidLogType.java,FALTA?,
+mekanism/common/block/states/IStateFluidLoggable.java,FALTA?,
+mekanism/common/block/states/IStateStorage.java,FALTA?,
+mekanism/common/block/states/TransmitterType.java,FALTA?,
+mekanism/common/block/transmitter/BlockLargeTransmitter.java,FALTA?,
+mekanism/common/block/transmitter/BlockSmallTransmitter.java,FALTA?,
+mekanism/common/block/transmitter/BlockTransmitter.java,?,match heurístico por nome / name heuristic

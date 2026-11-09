@@ -1,0 +1,209 @@
+item,estado,nota
+AdditionsClientConfig.pushToTalk,?,default true
+AdditionsConfig.arrowDamageMultiplier,?,default 0.25
+AdditionsConfig.blastRadius,?,default 12
+AdditionsConfig.delay,?,default 5 * SharedConstants.TICKS_PER_SECOND
+AdditionsConfig.enabled,?,default false
+AdditionsConfig.maxSizePercentage,?,default 0.5
+AdditionsConfig.maxSpawnCostPercentage,?,default 1D
+AdditionsConfig.minSizePercentage,?,default 0.5
+AdditionsConfig.shouldSpawn,?,default true
+AdditionsConfig.spawnCostPerEntityPercentage,?,default 1D
+AdditionsConfig.voicePort,?,default 36_123
+AdditionsConfig.weightPercentage,?,default 0.05
+ClientConfig.allowModeScroll,?,default true
+ClientConfig.autoFocusSearchBar,?,default true
+ClientConfig.avoidSoundSubtitleOverlap,?,default true
+ClientConfig.baseVolume,?,default 1D
+ClientConfig.berRange,?,default 256
+ClientConfig.color,?,default 0x40F5F0
+ClientConfig.dangerColor,?,default 0xFF383C
+ClientConfig.enableMachine,?,default true
+ClientConfig.enablePlayer,?,default true
+ClientConfig.enabled,?,default true
+ClientConfig.energyColor,?,default 0x3CFE9A
+ClientConfig.jitter,?,default 6F
+ClientConfig.machineEffects,?,default true
+ClientConfig.magneticAttraction,?,default true
+ClientConfig.mekaSuitHelmetCompass,?,default true
+ClientConfig.multiblockFormation,?,default true
+ClientConfig.opacity,?,default 0.4F
+ClientConfig.opaqueTransmitters,?,default false
+ClientConfig.pinned,?,default false
+ClientConfig.radiationParticleCount,?,default 100
+ClientConfig.radiationParticleRadius,?,default 30
+ClientConfig.rejectsToInventory,?,default false
+ClientConfig.renderMekaSuitEnergyBar,?,default true
+ClientConfig.reverse,?,default false
+ClientConfig.scale,?,default 0.6
+ClientConfig.slotsTall,?,default 4
+ClientConfig.slotsWide,?,default 8
+ClientConfig.sortDirection,?,default SortDirection.ASCENDING
+ClientConfig.sortType,?,default ListSortType.NAME
+ClientConfig.toolAOE,?,default true
+ClientConfig.warningColor,?,default 0xFFDD4F
+ClientConfig.whiteRadialText,?,default false
+ClientConfig.x,?,default Integer.MAX_VALUE
+ClientConfig.y,?,default Integer.MAX_VALUE
+CommonConfig.copyBlockData,?,default true
+CommonConfig.enableDecayTimers,?,default true
+CommonConfig.energyType,?,default EnergyUnit.FORGE_ENERGY
+CommonConfig.holidays,?,default true
+CommonConfig.temperatureUnit,?,default TemperatureUnit.KELVIN
+GearConfig.attackSpeed,?,default -2.4
+GearConfig.baseDamage,?,default 4
+GearConfig.baseEfficiency,?,default 4
+GearConfig.capacity,?,default 16 * FluidType.BUCKET_VOLUME
+GearConfig.capacity,?,default 24 * FluidType.BUCKET_VOLUME
+GearConfig.delay,?,default 0
+GearConfig.destroyItems,?,default true
+GearConfig.extendedMining,?,default true
+GearConfig.fallDamageReductionRatio,?,default 1D
+GearConfig.fastMode,?,default true
+GearConfig.fillRate,?,default 16
+GearConfig.gravitationalVibrations,?,default true
+GearConfig.jetpackMaxStorage,?,default 24 * FluidType.BUCKET_VOLUME
+GearConfig.jetpackTransferRate,?,default 256
+GearConfig.magicDamageReductionRatio,?,default 1D
+GearConfig.maxDamage,?,default 20
+GearConfig.maxStorage,?,default 64 * FluidType.BUCKET_VOLUME
+GearConfig.maxTeleportReach,?,default 100
+GearConfig.minDamage,?,default 4
+GearConfig.miningCount,?,default 128
+GearConfig.nutritionalMaxStorage,?,default 128 * FluidType.BUCKET_VOLUME
+GearConfig.nutritionalTransferRate,?,default 256
+GearConfig.slowMode,?,default true
+GearConfig.transferRate,?,default 128
+GearConfig.transferRate,?,default 250
+GearConfig.unspecifiedDamageReductionRatio,?,default 1D
+GearConfig.veinMining,?,default false
+GeneralConfig.aestheticWorldDamage,?,default true
+GeneralConfig.allowChunkloading,?,default true
+GeneralConfig.allowProtection,?,default true
+GeneralConfig.alphaWarning,?,default true
+GeneralConfig.blacklistFluxNetworks,?,default false
+GeneralConfig.blacklistForge,?,default false
+GeneralConfig.blacklistGrandPower,?,default false
+GeneralConfig.blockDeactivationDelay,?,default 3 * SharedConstants.TICKS_PER_SECOND
+GeneralConfig.chemical,?,default 1_024
+GeneralConfig.chemical,?,default 1_024L
+GeneralConfig.chemicalBuffer,?,default ChemicalTankTier.ULTIMATE.getBaseStorage(
+GeneralConfig.chemicalPerTank,?,default 16_000L * FluidType.BUCKET_VOLUME
+GeneralConfig.chemicalTanks,?,default true
+GeneralConfig.chunkCheckRadius,?,default 5
+GeneralConfig.cooledCoolantPerTank,?,default 256L * FluidType.BUCKET_VOLUME
+GeneralConfig.dumpExcessKeepRatio,?,default 0.85D
+GeneralConfig.easyMinerFilters,?,default false
+GeneralConfig.enabled,?,default true
+GeneralConfig.energyBuffer,?,default EnergyCubeTier.ULTIMATE.getBaseMaxEnergy(
+GeneralConfig.feConversionRate,?,default 2.5
+GeneralConfig.fluid,?,default 1_024
+GeneralConfig.fluidBuffer,?,default FluidTankTier.ULTIMATE.getBaseStorage(
+GeneralConfig.fluidPerTank,?,default 350 * FluidType.BUCKET_VOLUME
+GeneralConfig.fluidPerTank,?,default 64 * FluidType.BUCKET_VOLUME
+GeneralConfig.fluidTanks,?,default true
+GeneralConfig.fuelwoodTickMultiplier,?,default 1
+GeneralConfig.heatCapacity,?,default 100D
+GeneralConfig.heatDissipation,?,default 0.02
+GeneralConfig.heatPerFuelTick,?,default 400
+GeneralConfig.heatedCoolantPerTank,?,default 256L * FluidType.BUCKET_VOLUME
+GeneralConfig.heavyWaterAmount,?,default FluidType.BUCKET_VOLUME / 100
+GeneralConfig.inputPerAntimatter,?,default FluidType.BUCKET_VOLUME
+GeneralConfig.logPackets,?,default false
+GeneralConfig.maxPlenisherNodes,?,default 4_000
+GeneralConfig.maxRadius,?,default 32
+GeneralConfig.maxSolarNeutronActivatorRate,?,default 64
+GeneralConfig.maxUpgradeMultiplier,?,default 10
+GeneralConfig.mbPerFood,?,default 50
+GeneralConfig.negativeEffectsMinSeverity,?,default 0.1D
+GeneralConfig.opsBypassRestrictions,?,default false
+GeneralConfig.outputTankCapacity,?,default 10 * FluidType.BUCKET_VOLUME
+GeneralConfig.outputTankCapacity,?,default FluidType.BUCKET_VOLUME
+GeneralConfig.pumpInfiniteFluidSources,?,default false
+GeneralConfig.range,?,default 64
+GeneralConfig.range,?,default 80
+GeneralConfig.resistiveEfficiency,?,default 0.6
+GeneralConfig.saturation,?,default 0.8
+GeneralConfig.silkMultiplier,?,default 12
+GeneralConfig.solarMultiplier,?,default 0.2
+GeneralConfig.sourceDecayRate,?,default 0.9995D
+GeneralConfig.steamPerTank,?,default 160L * FluidType.BUCKET_VOLUME
+GeneralConfig.strictUnboxing,?,default false
+GeneralConfig.superheatingHeatTransfer,?,default 16_000_000
+GeneralConfig.targetDecayRate,?,default 0.9995D
+GeneralConfig.tempMultiplier,?,default 0.4
+GeneralConfig.ticksPerMine,?,default 80
+GeneralConfig.transmitterAlloyUpgrade,?,default true
+GeneralConfig.wasteBarrelCapacity,?,default 512L * FluidType.BUCKET_VOLUME
+GeneralConfig.wasteBarrelDecayAmount,?,default 1
+GeneralConfig.wasteBarrelProcessTicks,?,default SharedConstants.TICKS_PER_SECOND
+GeneralConfig.waterConductivity,?,default 0.7
+GeneralConfig.waterPerTank,?,default 16 * FluidType.BUCKET_VOLUME
+GeneratorsConfig.bladesPerCoil,?,default 4
+GeneratorsConfig.burnPerAssembly,?,default 1L
+GeneratorsConfig.capacity,?,default 10
+GeneratorsConfig.casingHeatCapacity,?,default 1_000D
+GeneratorsConfig.casingThermalConductivity,?,default 0.1D
+GeneratorsConfig.chance,?,default 0.001D
+GeneratorsConfig.chemicalPerTank,?,default 64L * FluidType.BUCKET_VOLUME
+GeneratorsConfig.condenserRate,?,default 64 * FluidType.BUCKET_VOLUME
+GeneratorsConfig.cooledCoolantPerTank,?,default 100 * FluidType.BUCKET_VOLUME
+GeneratorsConfig.defaultBurnRate,?,default 0.1D
+GeneratorsConfig.disperserChemicalFlow,?,default 1_280D
+GeneratorsConfig.enabled,?,default true
+GeneratorsConfig.excessWaste,?,default 0.9D
+GeneratorsConfig.fillRate,?,default 1
+GeneratorsConfig.fuelCapacity,?,default FluidType.BUCKET_VOLUME
+GeneratorsConfig.heatGenerationFluidRate,?,default 10
+GeneratorsConfig.heatedCoolantPerTank,?,default 1_000L * FluidType.BUCKET_VOLUME
+GeneratorsConfig.maxFuelPerAssembly,?,default 8L * FluidType.BUCKET_VOLUME
+GeneratorsConfig.maxY,?,default DimensionType.MAX_Y
+GeneratorsConfig.minY,?,default 24
+GeneratorsConfig.postMeltdownDamage,?,default 0.75 * FissionReactorMultiblockData.MAX_DAMAGE
+GeneratorsConfig.radiationMultiplier,?,default 50
+GeneratorsConfig.radius,?,default 8D
+GeneratorsConfig.steamPerInjection,?,default 100L * baseMaxWater
+GeneratorsConfig.surfaceAreaTarget,?,default 4D
+GeneratorsConfig.tankCapacity,?,default 18L * FluidType.BUCKET_VOLUME
+GeneratorsConfig.tankCapacity,?,default 24 * FluidType.BUCKET_VOLUME
+GeneratorsConfig.thermocoupleEfficiency,?,default 0.05D
+GeneratorsConfig.ventChemicalFlow,?,default 32D * FluidType.BUCKET_VOLUME
+GeneratorsConfig.waterHeatingRatio,?,default 0.3D
+GeneratorsConfig.waterPerInjection,?,default 1_000 * FluidType.BUCKET_VOLUME
+GeneratorsGearConfig.geothermalChargingRate,?,default 10L
+GeneratorsGearConfig.heatDamageReductionRatio,?,default 0.8
+MekanismStartupConfig.armor,?,default 3
+MekanismStartupConfig.armor,?,default 8
+MekanismStartupConfig.bodyArmorArmor,?,default ArmorMaterials.NETHERITE.value(
+MekanismStartupConfig.bootsArmor,?,default ArmorMaterials.NETHERITE.value(
+MekanismStartupConfig.helmetArmor,?,default ArmorMaterials.NETHERITE.value(
+MekanismStartupConfig.knockbackResistance,?,default 0.0
+MekanismStartupConfig.knockbackResistance,?,default ArmorMaterials.NETHERITE.value(
+MekanismStartupConfig.pantsArmor,?,default ArmorMaterials.NETHERITE.value(
+MekanismStartupConfig.toughness,?,default 2.0
+MekanismStartupConfig.toughness,?,default ArmorMaterials.NETHERITE.value(
+ToolsClientConfig.displayDurabilityTooltips,?,default true
+ToolsConfig.armorEnchantmentChance,?,default armorEnchantmentChance
+ToolsConfig.bootsChance,?,default bootsChance
+ToolsConfig.canSpawnWeapon,?,default true
+ToolsConfig.chestplateChance,?,default chestplateChance
+ToolsConfig.general,?,default 0.1D
+ToolsConfig.helmetChance,?,default helmetChance
+ToolsConfig.leggingsChance,?,default leggingsChance
+ToolsConfig.multiplePieceChance,?,default 0.25
+ToolsConfig.multiplePieceChanceHard,?,default 0.1
+ToolsConfig.swordWeight,?,default swordChance
+ToolsConfig.weapon,?,default 0.01D
+ToolsConfig.weaponEnchantmentChance,?,default weaponEnchantmentChance
+ToolsConfig.weaponHard,?,default 0.05F
+UsageConfig.randomizedConsumption,?,default true
+WorldConfig.discardChanceOnAirExposure,?,default baseConfig.discardChanceOnAirExposure(
+WorldConfig.enableRegeneration,?,default false
+WorldConfig.halfHeight,?,default ySize
+WorldConfig.maxRadius,?,default spread
+WorldConfig.maxVeinSize,?,default baseConfig.maxVeinSize(
+WorldConfig.minRadius,?,default baseRadius
+WorldConfig.perChunk,?,default baseConfig.perChunk(
+WorldConfig.perChunk,?,default perChunk
+WorldConfig.shouldGenerate,?,default true
+WorldConfig.userWorldGenVersion,?,default 0
