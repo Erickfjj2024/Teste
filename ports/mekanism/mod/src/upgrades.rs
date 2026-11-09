@@ -4,7 +4,8 @@
 use super::*;
 
 /// The upgrade types, in the order their counts are kept (`mekanism:upgrade` data: `speed`, `energy`, `chemical`, ...).
-pub const TYPES: [&str; 8] = ["speed", "energy", "chemical", "muffling", "xp_containment", "anchor", "filter", "stone_generator"];
+/// (1.21.1 has no experience upgrade: seven types; the counts keep their eight bytes, the last one unused.)
+pub const TYPES: [&str; 7] = ["speed", "energy", "chemical", "muffling", "anchor", "filter", "stone_generator"];
 /// How many of each type fit (`max` of its definition).
 pub const MAX: [u8; 8] = [8, 8, 8, 1, 1, 1, 1, 1];
 pub const SPEED: usize = 0;
@@ -30,7 +31,7 @@ pub fn type_of(item: &str) -> Option<usize> {
     TYPES.iter().position(|t| *t == name)
 }
 
-/// The types a machine takes (`AttributeUpgradeSupport`): speed, energy, muffling and experience for the ones that process
+/// The types a machine takes (`AttributeUpgradeSupport`): speed, energy and muffling for the ones that process
 /// things; the three chambers that use chemical by chance take the chemical upgrade too; a generator only muffling.
 pub fn supported(def: &Def) -> Vec<usize> {
     match def.kind {
@@ -41,7 +42,7 @@ pub fn supported(def: &Def) -> Vec<usize> {
                 def.block,
                 "mekanism:purification_chamber" | "mekanism:chemical_injection_chamber" | "mekanism:chemical_dissolution_chamber"
             );
-            if advanced { vec![SPEED, ENERGY, CHEMICAL, MUFFLING, 4] } else { vec![SPEED, ENERGY, MUFFLING, 4] }
+            if advanced { vec![SPEED, ENERGY, CHEMICAL, MUFFLING] } else { vec![SPEED, ENERGY, MUFFLING] }
         }
     }
 }
@@ -301,7 +302,7 @@ mod tests {
     #[test]
     fn an_upgrade_installs_after_a_second_up_to_its_maximum() {
         let none = [0u8; 8];
-        let sup = [SPEED, ENERGY, MUFFLING, 4];
+        let sup = [SPEED, ENERGY, MUFFLING];
         let (mut slot, mut counts, mut progress) = (upgrade("speed", 3), none, 0);
         for _ in 0..INSTALL_TICKS {
             (slot, counts, progress) = install_tick(slot.as_ref(), counts, &sup, progress);
