@@ -1,0 +1,7 @@
+# verificador — compila o port inteiro sem o fork do Horizon / compiles the whole port without the Horizon fork
+
+**PT-BR.** `check.sh <mod/src>` copia o `mod/src`, declara todo `.rs` novo no `lib.rs`, e roda `cargo check` e `cargo test` contra `sdk/`, um SDK de mentira gerado de `api/horizon.wit` (tipos e funções reais; as funções do host aceitam qualquer argumento e devolvem o tipo certo, mas não fazem nada). Pega erros de tipo, empréstimo, `const fn`, `ref` da edição 2024, campos/funções inexistentes e API inventada. **Não** prova que o jogo carrega o mod (isso é o build real).
+Limite do stub: o SDK real do fork pode diferir do `horizon.wit` (ele tem `mine_block`, `pull_items`, o meio `Items`…; já estão no stub, os que faltarem aparecem como "função não encontrada": acrescente em `sdk/src/lib.rs`).
+**Regra para chamar função do host que não existe no SDK:** nunca invente; isole-a em `fork_<grupo>.rs` atrás de `#[cfg(feature = "fork")]` com versão sem a feature que devolve `Err("FORK-n pendente")`.
+
+**EN.** `check.sh <mod/src>` copies `mod/src`, declares every new `.rs` in `lib.rs`, and runs `cargo check` and `cargo test` against `sdk/`, a stub SDK generated from `api/horizon.wit`. Catches type/borrow/`const fn`/edition-2024 errors and invented APIs; does **not** prove the game loads the mod. Calls to host functions missing from the SDK must be isolated in `fork_<group>.rs` behind `#[cfg(feature = "fork")]`.

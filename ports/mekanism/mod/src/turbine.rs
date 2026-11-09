@@ -179,7 +179,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
     Found {
         valid: true,
         min,
-        volume: (u32::from(size[0]) * u32::from(size[1]) * u32::from(size[2])),
+        volume: (size[0] * size[1] * size[2]) as u32,
         lower_volume: (size[0] * size[2] * height) as u32,
         condensers: condensers.len() as u32,
         vents: vents.len() as u32,

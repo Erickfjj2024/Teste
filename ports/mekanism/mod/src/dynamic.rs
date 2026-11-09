@@ -162,7 +162,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: None,
-                    tank_faces: if !found.valid && is_valve { Some(vec![FlowSide::None; 6]) } else { None },
+                    tank_faces: if !found.valid && is_valve { Some(vec![vec![FlowSide::None; 6]; 2]) } else { None },
                     menu_data: None,
                     transmitter_faces: None,
                 });
@@ -282,7 +282,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: Some(tanks.clone()),
-                    tank_faces: Some(vec![FlowSide::Both; 6]),
+                    tank_faces: Some(vec![vec![FlowSide::Both; 6]; 2]),
                     menu_data: Some(data),
                     transmitter_faces: None,
                 });

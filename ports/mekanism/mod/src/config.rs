@@ -289,7 +289,7 @@ fn skip_value(text: &str, i: &mut usize) -> bool {
 /// the mode does not touch round-trip byte-for-byte. The split is structural — strings, escapes and nesting are
 /// honoured — so a key named inside another component's string value is never mistaken for the component itself, as
 /// a substring search could. `None` when the text is not a compound.
-fn split_components(components: &str) -> Option<Vec<(String, std::ops::Range<usize>)>> {
+pub(crate) fn split_components(components: &str) -> Option<Vec<(String, std::ops::Range<usize>)>> {
     let mut i = 0;
     let mut entries = Vec::new();
     skip_ws(components, &mut i);

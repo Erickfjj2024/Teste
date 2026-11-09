@@ -143,7 +143,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
         valid: true,
         min,
         size: [size[0] as u8, size[1] as u8, size[2] as u8],
-        volume: (u32::from(size[0]) * u32::from(size[1]) * u32::from(size[2])),
+        volume: (size[0] * size[1] * size[2]) as u32,
         blocks: members.len() as u32,
         assemblies: fuels.len() as u32,
         surface,
