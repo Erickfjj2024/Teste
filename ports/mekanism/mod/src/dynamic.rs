@@ -32,28 +32,46 @@ pub struct Found {
     pub min: [i32; 3],
 }
 
-/// Whether the members of one candidate make a dynamic tank, given what each is (`is_valve`) and what the inside holds (`inside_empty`).
-pub fn validate(members: &[([i32; 3], bool)], min: [i32; 3], max: [i32; 3], inside_empty: impl Fn([i32; 3]) -> bool) -> Found {
+/// What kind of part a member of the dynamic tank group is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Casing,
+    Glass,
+    Valve,
+}
+
+impl From<bool> for Part {
+    fn from(is_valve: bool) -> Self {
+        if is_valve { Part::Valve } else { Part::Casing }
+    }
+}
+
+/// Whether the members of one candidate make a dynamic tank, given what each is (`Part` or `bool`) and what the inside holds (`inside_empty`).
+pub fn validate<P: Copy + Into<Part>>(members: &[([i32; 3], P)], min: [i32; 3], max: [i32; 3], inside_empty: impl Fn([i32; 3]) -> bool) -> Found {
     let size = [max[0] - min[0] + 1, max[1] - min[1] + 1, max[2] - min[2] + 1];
     let bad = Found { valid: false, volume: 0, min };
     if size.iter().any(|s| !(3..=18).contains(s)) {
         return bad;
     }
-    let have: HashMap<[i32; 3], bool> = members.iter().copied().collect();
+    let have: HashMap<[i32; 3], Part> = members.iter().map(|(pos, p)| (*pos, (*p).into())).collect();
     for x in min[0]..=max[0] {
         for y in min[1]..=max[1] {
             for z in min[2]..=max[2] {
                 let p = [x, y, z];
                 let edges = [x == min[0] || x == max[0], y == min[1] || y == max[1], z == min[2] || z == max[2]].iter().filter(|b| **b).count();
                 match (edges, have.get(&p)) {
-                    // The inside holds no member and nothing solid.
+                    // The inside holds no member and nothing solid (air only, CuboidStructureValidator.java:97).
                     (0, Some(_)) => return bad,
                     (0, None) if !inside_empty(p) => return bad,
                     (0, None) => {}
-                    // The shell is made of members; a valve is on a face alone.
+                    // Edges and corners (edges > 1) MUST be casing (neither valve nor structural glass allowed, CuboidStructureValidator.java:115).
+                    (e, Some(Part::Casing)) if e > 1 => {}
+                    (e, Some(_)) if e > 1 => return bad,
+                    // Faces (edges == 1) allow casing, structural glass, and valves.
+                    (1, Some(_)) => {}
+                    // The shell is made of members.
                     (_, None) => return bad,
-                    (e, Some(true)) if e > 1 => return bad,
-                    _ => {}
+                    _ => return bad,
                 }
             }
         }
@@ -107,20 +125,35 @@ impl Mekanism {
     pub(crate) fn dynamic_structures(&mut self, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> {
         let mut out = Vec::new();
         for s in structures {
-            let members: Vec<([i32; 3], bool)> = s
+            let members: Vec<([i32; 3], Part)> = s
                 .members
                 .iter()
-                .map(|m| ([m.pos.x, m.pos.y, m.pos.z], m.state.starts_with(VALVE)))
+                .map(|m| {
+                    let name = m.state.split('[').next().unwrap_or("");
+                    let part = if name == VALVE {
+                        Part::Valve
+                    } else if name == "mekanism:structural_glass" {
+                        Part::Glass
+                    } else {
+                        Part::Casing
+                    };
+                    ([m.pos.x, m.pos.y, m.pos.z], part)
+                })
                 .collect();
             let min = [s.min.x, s.min.y, s.min.z];
             let max = [s.max.x, s.max.y, s.max.z];
             let found = validate(&members, min, max, |p| {
-                world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| {
+                world::get_block(dimension, p[0], p[1], p[2]).is_some_and(|b| {
                     let name = b.split('[').next().unwrap_or("");
-                    matches!(name, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air" | "minecraft:water" | "minecraft:lava")
+                    matches!(name, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air")
                 })
             });
             for m in &s.members {
+                let is_valve = m.state.starts_with(VALVE);
+                if is_valve && !found.valid {
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 0, &[NOTHING.to_owned()]);
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
+                }
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
@@ -129,7 +162,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: None,
-                    tank_faces: None,
+                    tank_faces: if !found.valid && is_valve { Some(vec![FlowSide::None; 6]) } else { None },
                     menu_data: None,
                     transmitter_faces: None,
                 });
@@ -198,24 +231,33 @@ impl Mekanism {
             if shared.fluid.amount > 0 && shared.chemical.amount > 0 {
                 shared.chemical = process::Tank::default();
             }
+
+            // The valve's slots: a bucket in the first fills or empties the shared tank.
+            // Run sequentially across valves, tracking item changes per valve.
+            let mut valve_items: HashMap<[i32; 3], Vec<Option<ItemStack>>> = HashMap::new();
+            for v in &group {
+                let slot = |i: usize| stack(v.items.get(i).unwrap_or(&None));
+                let (mut i0, mut o1) = (slot(0), slot(1));
+                let mut f = shared.fluid.clone();
+                if tank::buckets(&mut i0, &mut o1, &mut f, fluid_cap, tank::EditMode::Both) {
+                    shared.fluid = f;
+                    valve_items.insert([v.pos.x, v.pos.y, v.pos.z], vec![item(&i0), item(&o1)]);
+                }
+            }
+
             let (fluid, chemical) = (shared.fluid.clone(), shared.chemical.clone());
+            // Synchronize given for ALL valves in the group so no phantom differences occur next tick!
             for v in &group {
                 let p = [v.pos.x, v.pos.y, v.pos.z];
                 shared.given.insert(p, (fluid.amount, chemical.amount));
             }
-            let mut tanks = vec![plus::as_tank(&fluid), plus::as_tank(&chemical)];
-            // The valve's slots: a bucket in the first fills or empties the shared tank.
+            let tanks = vec![plus::as_tank(&fluid), plus::as_tank(&chemical)];
+
             for v in &group {
-                let slot = |i: usize| stack(v.items.get(i).unwrap_or(&None));
-                let (mut i0, mut o1) = (slot(0), slot(1));
-                let mut f = fluid.clone();
-                let used = tank::buckets(&mut i0, &mut o1, &mut f, fluid_cap, tank::EditMode::Both);
-                if used {
-                    // A bucket moved fluid: it counts for this valve alone, the others follow next tick.
-                    tanks[0] = plus::as_tank(&f);
-                }
+                let p = [v.pos.x, v.pos.y, v.pos.z];
+                let items = valve_items.remove(&p);
                 let shown_cap = if chemical.amount > 0 { chem_cap } else if fluid.amount > 0 { fluid_cap } else { chem_cap };
-                let data = dynamic_menu(&v.data, &f_or(&tanks, 0), &tanks[1], shown_cap);
+                let data = dynamic_menu(&v.data, &tanks[0], &tanks[1], shown_cap);
                 let filter_0 = if fluid.amount >= fluid_cap || chemical.amount > 0 {
                     vec![NOTHING.to_owned()]
                 } else if fluid.amount > 0 {
@@ -232,11 +274,6 @@ impl Mekanism {
                 };
                 let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 0, &filter_0);
                 let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 1, &filter_1);
-                let items = used.then(|| vec![item(&i0), item(&o1)]);
-                if used {
-                    shared.fluid = f;
-                    shared.given.insert([v.pos.x, v.pos.y, v.pos.z], (shared.fluid.amount, chemical.amount));
-                }
                 out.push(BlockEntityUpdate {
                     dimension: v.dimension.clone(),
                     pos: v.pos,
@@ -245,7 +282,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: Some(tanks.clone()),
-                    tank_faces: None,
+                    tank_faces: Some(vec![FlowSide::Both; 6]),
                     menu_data: Some(data),
                     transmitter_faces: None,
                 });
@@ -361,5 +398,67 @@ mod tests {
             Vec::new()
         };
         assert_eq!(f0, vec!["minecraft:water"]);
+    }
+
+    /// CuboidStructureValidator.java:115,149 and TankValidator.java:13-21:
+    /// Structural glass is accepted on faces (edges == 1), but forbidden on edges/corners (edges > 1).
+    #[test]
+    fn structural_glass_allowed_on_faces_rejected_on_edges() {
+        let n = 3;
+        let mut members = Vec::new();
+        for x in 0..n {
+            for y in 0..n {
+                for z in 0..n {
+                    let edge = |c: i32| c == 0 || c == n - 1;
+                    let e = [edge(x), edge(y), edge(z)].iter().filter(|b| **b).count();
+                    if e > 0 {
+                        // Put structural glass on face (1, 2, 1) - top face middle
+                        let part = if (x, y, z) == (1, 2, 1) {
+                            Part::Glass
+                        } else {
+                            Part::Casing
+                        };
+                        members.push(([x, y, z], part));
+                    }
+                }
+            }
+        }
+        let f = validate(&members, [0; 3], [2; 3], |_| true);
+        assert!(f.valid, "Structural glass on face should be valid");
+
+        // Now put structural glass on an edge (0, 0, 1)
+        for (pos, part) in &mut members {
+            if *pos == [0, 0, 1] {
+                *part = Part::Glass;
+            }
+        }
+        let bad = validate(&members, [0; 3], [2; 3], |_| true);
+        assert!(!bad.valid, "Structural glass on edge must be invalid (CuboidStructureValidator.java:115)");
+    }
+
+    /// CuboidStructureValidator.java:97:
+    /// TankValidator inner nodes must be air only. Non-air (e.g. water or solid) invalidates the tank.
+    #[test]
+    fn interior_must_be_air_only() {
+        assert!(!validate(&shell(3), [0; 3], [2; 3], |_| false).valid);
+    }
+
+    /// TankMultiblockData.java:64-86:
+    /// Multi-valve synchronization: when one valve changes fluid via buckets, all valves
+    /// receive the updated given amount so no phantom duplication occurs in subsequent ticks.
+    #[test]
+    fn multi_valve_bucket_sync_prevents_duplication() {
+        let total = 10_000u64;
+        let given = [10_000u64, 10_000u64];
+        let now = [10_000u64, 10_000u64];
+        let merged = merge(total, &given, &now, 1_000_000);
+        assert_eq!(merged, 10_000);
+
+        // After bucket adds 1000 to valve 0: total becomes 11_000.
+        // Both valves must be given 11_000 so next tick neither reports phantom changes.
+        let new_total = 11_000u64;
+        let synchronized_given = [11_000u64, 11_000u64];
+        let untouched_now = [11_000u64, 11_000u64];
+        assert_eq!(merge(new_total, &synchronized_given, &untouched_now, 1_000_000), 11_000);
     }
 }

@@ -39,6 +39,7 @@ pub const ENERGY_PER_STEAM: f64 = 10.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Casing,
+    Glass,
     Valve,
     Vent,
     Rotor,
@@ -50,7 +51,8 @@ pub enum Part {
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        CASING | "mekanism:structural_glass" => Some(Part::Casing),
+        CASING => Some(Part::Casing),
+        "mekanism:structural_glass" => Some(Part::Glass),
         VALVE => Some(Part::Valve),
         VENT => Some(Part::Vent),
         ROTOR => Some(Part::Rotor),
@@ -119,9 +121,9 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                     }
                     (0, Some(Part::Condenser)) => condensers.push(p),
                     (0, Some(_)) => return bad,
-                    (_, Some(Part::Casing)) => {}
-                    (1, Some(Part::Valve)) => {}
+                    (1, Some(Part::Casing | Part::Glass | Part::Valve)) => {}
                     (1, Some(Part::Vent)) => vents.push(p),
+                    (2 | 3, Some(Part::Casing)) => {}
                     _ => return bad,
                 }
             }
@@ -151,7 +153,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
         }
         height += 1;
     }
-    if !rotors.is_empty() {
+    if height == 0 || !rotors.is_empty() {
         return bad;
     }
     // The coils, all of them connected to the one over the complex.
@@ -266,6 +268,18 @@ pub fn water_capacity(f: &Found) -> u64 {
     u64::from(f.condensers) * CONDENSER_RATE
 }
 
+/// Redstone comparator output level for the turbine (0 to 15 based on steam contents).
+/// Matches Mekanism Java `TurbineMultiblockData.java:251-253` and `MekanismUtils.java`.
+pub fn redstone_level(steam: u64, steam_cap: u64) -> u8 {
+    if steam == 0 || steam_cap == 0 {
+        0
+    } else if steam >= steam_cap {
+        15
+    } else {
+        1 + (14.0 * (steam as f64 / steam_cap as f64)) as u8
+    }
+}
+
 /// What one tick of the turbine did.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Tick {
@@ -295,9 +309,6 @@ pub fn step(f: &Found, blades: u32, steam: u64, energy: u64, water: u64) -> Tick
         return Tick::default();
     }
     let generated = (mult * rate * 0.4).max(0.0) as u64;
-    if generated == 0 {
-        return Tick::default();
-    }
     let room = water_capacity(f).saturating_sub(water);
     let produced = flow.min(water_capacity(f)).min(room);
     Tick { flow, energy: generated.min(needed), water: produced, rotation: rate / orig }
@@ -335,7 +346,17 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
-            let keep = self.turbines.get(&(dimension.to_owned(), found.min)).map_or(0, |t| t.energy);
+            let keep = if let Some(t) = self.turbines.get_mut(&(dimension.to_owned(), found.min)) {
+                if !found.valid {
+                    t.started = false;
+                    t.steam_given.clear();
+                    t.water_given.clear();
+                    t.energy_given.clear();
+                }
+                t.energy
+            } else {
+                0
+            };
             for m in &s.members {
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
@@ -380,6 +401,9 @@ impl Mekanism {
             let t = self.turbines.entry(key.clone()).or_default();
             if !t.started {
                 t.started = true;
+                t.steam_given.clear();
+                t.water_given.clear();
+                t.energy_given.clear();
                 t.energy = stored.min(energy_cap);
                 if let Some(best) = valves.iter().filter_map(|v| v.tanks.first()).max_by_key(|x| x.amount).filter(|x| x.amount > 0) {
                     t.steam = process::Tank { chemical: best.substance.clone(), amount: best.amount.min(steam_cap) };
@@ -477,8 +501,6 @@ impl Mekanism {
                     }
                 } else if !e.state.starts_with(ROTOR) {
                     continue;
-                } else {
-                    update.data = e.data.clone();
                 }
                 out.push(update);
             }
@@ -665,5 +687,68 @@ mod tests {
     fn a_member_remembers_its_turbine() {
         let f = Found { valid: true, min: [-3, 70, 9], volume: 100, lower_volume: 200, condensers: 4, vents: 3, coils: 5, dispersers: 8 };
         assert_eq!(decode(&encode(&f, 123_456_789_012)), Some((f, 123_456_789_012)));
+    }
+
+    #[test]
+    fn structural_glass_allowed_on_faces_but_forbidden_on_edges_and_corners() {
+        let ok = turbine(8, 3);
+        // Structural glass on a face (edges == 1): valid in Java (CuboidStructureValidator.java:115,152)
+        let mut glass_face = ok.clone();
+        for (p, part) in &mut glass_face {
+            if *p == [0, 2, 2] {
+                *part = Part::Glass;
+            }
+        }
+        assert!(validate(&glass_face, [0; 3], [4, 7, 4], |_| true).valid);
+
+        // Structural glass on an edge (edges == 2): forbidden in Java (CuboidStructureValidator.java:115,149)
+        let mut glass_edge = ok.clone();
+        for (p, part) in &mut glass_edge {
+            if *p == [0, 0, 2] {
+                *part = Part::Glass;
+            }
+        }
+        assert!(!validate(&glass_edge, [0; 3], [4, 7, 4], |_| true).valid);
+
+        // Structural glass on a corner (edges == 3): forbidden in Java
+        let mut glass_corner = ok.clone();
+        for (p, part) in &mut glass_corner {
+            if *p == [0, 0, 0] {
+                *part = Part::Glass;
+            }
+        }
+        assert!(!validate(&glass_corner, [0; 3], [4, 7, 4], |_| true).valid);
+    }
+
+    #[test]
+    fn turbine_requires_at_least_one_rotor_under_the_complex() {
+        // Complex at y = 1 has 0 rotors under it (floor at y = 0).
+        // Java fails with TURBINE_INVALID_NO_BLADES (TurbineValidator.java:153-170).
+        let no_rotors = turbine(8, 1);
+        assert!(!validate(&no_rotors, [0; 3], [4, 7, 4], |_| true).valid);
+    }
+
+    #[test]
+    fn turbine_consumes_steam_and_makes_water_even_when_energy_rounds_to_zero() {
+        let f = validate(&turbine(8, 3), [0; 3], [4, 7, 4], |_| true);
+        assert!(f.valid);
+        // With blades = 1 and steam = 4000:
+        // proportion = 4000 / 3,200,000 = 0.00125, rate = 4000 * 0.00125 = 5.0 mB/t.
+        // mult = 10 / 28 = 0.3571 J/mB.
+        // mult * rate * 0.4 = 0.3571 * 5.0 * 0.4 = 0.7142 FE -> integer rounds to 0 FE.
+        // In Java (TurbineMultiblockData.java:152-157), clientFlow > 0 consumes steam and condenses water regardless.
+        let t = step(&f, 1, 4000, 0, 0);
+        assert_eq!(t.flow, 5);
+        assert_eq!(t.energy, 0);
+        assert_eq!(t.water, 5);
+    }
+
+    #[test]
+    fn redstone_comparator_level_matches_java_formula() {
+        // Java MekanismUtils.redstoneLevelFromContents: 0 when empty, 15 when full, 1 + 14*(current/max)
+        assert_eq!(redstone_level(0, 100_000), 0);
+        assert_eq!(redstone_level(100_000, 100_000), 15);
+        assert_eq!(redstone_level(50_000, 100_000), 8);
+        assert_eq!(redstone_level(1, 100_000), 1);
     }
 }
