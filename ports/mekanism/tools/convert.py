@@ -2450,7 +2450,8 @@ for p in sorted(glob.glob(f'{TGEN}/data/mekanismtools/recipe/**/*.json', recursi
     result = r.get('result', {}).get('id', '').split(':')[-1]
     if result not in _tool_names:
         continue
-    put(f'{OUT}/data/{NS}/recipe/tools_{result}.json', r)
+    _rel = os.path.relpath(p, f'{TGEN}/data/mekanismtools/recipe')[:-5].replace(os.sep, '__')
+    put(f'{OUT}/data/{NS}/recipe/tools_{_rel}.json', r)
 tools_lang = read_json(f'{TJ}/lang/en_us.json')
 
 # ---------------------------------------------------------------- MekanismAdditions: plastic blocks (18 colors) and glow panels
@@ -2573,7 +2574,9 @@ for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', rec
     r = json.loads(open(p).read().replace('mekanismadditions:', f'{NS}:'))
     result = r.get('result', {}).get('id', '').split(':')[-1]
     if result in plastic_blocks:
-        put(f'{OUT}/data/{NS}/recipe/additions_{result}.json', r)
+        # one file per recipe (the path, not the result: a block has several recipes: from sheets and a dye, from its slab, from its stairs...)
+        _rel = os.path.relpath(p, f'{AGEN}/data/mekanismadditions/recipe')[:-5].replace(os.sep, '__')
+        put(f'{OUT}/data/{NS}/recipe/additions_{_rel}.json', r)
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
