@@ -327,7 +327,7 @@ fn strip_security_components(comp: &str) -> String {
     cleaned
 }
 
-fn apply_security_components(comp: &str, owner_hex: &str, mode: SecurityMode) -> String {
+fn apply_security_components(_comp: &str, owner_hex: &str, mode: SecurityMode) -> String {
     let mode_str = match mode {
         SecurityMode::Public => "public",
         SecurityMode::Private => "private",

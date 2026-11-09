@@ -67,6 +67,40 @@ pub trait QioStorageView {
     fn get_all_stored(&self) -> Vec<(String, String, u64)>;
 }
 
+/// `WildcardMatcher.matches` (`lib/WildcardMatcher.java`): case-insensitive; `*` is any run of characters, anywhere in the pattern;
+/// `?` is any one character; `#` is any one digit. The text must be used up unless the pattern ends with `*`.
+pub fn wildcard_matches(wildcard: &str, text: &str) -> bool {
+    let wildcard: Vec<char> = wildcard.to_lowercase().chars().collect();
+    let text: Vec<char> = text.to_lowercase().chars().collect();
+    fn go(wildcard: &[char], text: &[char], wildcard_start: usize, text_start: usize, continue_search: bool) -> bool {
+        let mut text_index = text_start;
+        let mut wildcard_index = wildcard_start;
+        while wildcard_index < wildcard.len() {
+            let wc = wildcard[wildcard_index];
+            let mut fail = false;
+            if wc == '*' {
+                return go(wildcard, text, wildcard_index + 1, text_index, true);
+            } else if text_index >= text.len() {
+                return false;
+            } else if wc == '#' {
+                if !text[text_index].is_ascii_digit() {
+                    fail = true;
+                }
+            } else if wc != '?' && wc != text[text_index] {
+                fail = true;
+            }
+            if fail {
+                return continue_search && go(wildcard, text, wildcard_start, text_index + 1, true);
+            }
+            text_index += 1;
+            wildcard_index += 1;
+        }
+        // there is text left and the pattern did not end with a `*`: no match
+        text_index >= text.len() || wildcard.last() == Some(&'*')
+    }
+    go(&wildcard, &text, 0, 0, false)
+}
+
 // ============================================================================
 // QIO Filters (QIOFilter.java, QIOItemStackFilter.java, QIOTagFilter.java, QIOModIDFilter.java)
 // ============================================================================
@@ -117,22 +151,11 @@ impl QioFilter {
             }
             QioFilter::Tag { tag, .. } => {
                 let pattern = tag.trim();
-                if pattern.ends_with('*') {
-                    let prefix = &pattern[..pattern.len() - 1];
-                    tags.iter().any(|t| t.starts_with(prefix))
-                } else {
-                    tags.iter().any(|t| t == pattern)
-                }
+                tags.iter().any(|t| wildcard_matches(pattern, t))
             }
             QioFilter::ModId { mod_id, .. } => {
                 let namespace = item.split(':').next().unwrap_or("");
-                let pattern = mod_id.trim();
-                if pattern.ends_with('*') {
-                    let prefix = &pattern[..pattern.len() - 1];
-                    namespace.starts_with(prefix)
-                } else {
-                    namespace == pattern
-                }
+                wildcard_matches(mod_id.trim(), namespace)
             }
         }
     }
@@ -735,6 +758,25 @@ pub fn step_exporter<F: QioStorageView, T: Fn(&str) -> Vec<String>>(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn java_wildcard_matcher_rules() {
+        // `WildcardMatcher.java`: `*` anywhere, `?` one char, `#` one digit, case-insensitive, text must be fully used unless the pattern ends in `*`.
+        assert!(wildcard_matches("c:ores/*", "c:ores/iron"));
+        assert!(wildcard_matches("*:ingots/iron", "c:ingots/iron"));
+        assert!(wildcard_matches("c:*/iron", "C:Ingots/Iron"));
+        assert!(wildcard_matches("c:ore?/iron", "c:ores/iron"));
+        assert!(wildcard_matches("tier#", "tier3"));
+        assert!(!wildcard_matches("tier#", "tierx"));
+        assert!(!wildcard_matches("c:ores", "c:ores/iron"));
+        assert!(wildcard_matches("c:ores*", "c:ores/iron"));
+        assert!(!wildcard_matches("c:ores/iron", "c:ores"));
+        assert!(wildcard_matches("*", "anything"));
+        assert!(wildcard_matches("", ""));
+        // `*` is not limited to the end: `m*d` must find a later `d`.
+        assert!(wildcard_matches("m*d", "mekanismgeneratord"));
+    }
+
     use super::*;
 
     /// Fake in-memory QIO frequency for unit testing.

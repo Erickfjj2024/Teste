@@ -181,17 +181,19 @@ impl InstalledModuleContainer {
     pub fn parse(components: &str) -> Self {
         let mut modules = HashMap::new();
         // Simple JSON / KV parsing for `modules: {"module_id": count, ...}`
-        if let Some(pos) = components.find("\"modules\":{") {
-            let rest = &components[pos + 10..];
-            if let Some(end) = rest.find('}') {
-                let inner = &rest[..end];
-                for part in inner.split(',') {
-                    let mut kv = part.split(':');
-                    if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
-                        let key = k.trim().trim_matches('"');
-                        if let Ok(count) = v.trim().parse::<u32>() {
-                            if !key.is_empty() && count > 0 {
-                                modules.insert(key.to_string(), count);
+        if let Some(pos) = components.find("\"modules\":") {
+            let after_modules = &components[pos + 10..];
+            if let Some(brace_start) = after_modules.find('{') {
+                let rest = &after_modules[brace_start + 1..];
+                if let Some(end) = rest.find('}') {
+                    let inner = &rest[..end];
+                    for part in inner.split(',') {
+                        if let Some((k, v)) = part.rsplit_once(':') {
+                            let key = k.trim().trim_matches('"');
+                            if let Ok(count) = v.trim().parse::<u32>() {
+                                if !key.is_empty() && count > 0 {
+                                    modules.insert(key.to_string(), count);
+                                }
                             }
                         }
                     }

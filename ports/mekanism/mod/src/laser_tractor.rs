@@ -12,7 +12,6 @@
 //! - `mekanism.common.config.GeneralConfig` (`GeneralConfig.java`)
 
 use super::*;
-use crate::laser::{face_of, facing_name, direction, opposite};
 
 // ============================================================================
 // Constants (StorageConfig.java:98 & GeneralConfig.java:237-238)
@@ -268,7 +267,7 @@ impl LaserTractorBeam {
         out.push(SLOTS as u8);
 
         for slot in &self.slots {
-            if let Some(ref item) = slot {
+            if let Some(item) = slot {
                 out.push(1);
                 out.extend(item.count.to_le_bytes());
                 out.extend(item.max_stack.to_le_bytes());
@@ -351,13 +350,13 @@ impl LaserTractorBeam {
 // ============================================================================
 
 /// FORK-7: Mod-driven entity damage and item absorption.
-pub fn host_laser_entity_damage(_dim: &str, _from: [f64; 3], _to: [f64; 3], _damage_fe: u64) {
-    // FORK-7: Hurt entities intersecting beam
+pub fn host_laser_entity_damage(dim: &str, from: [f64; 3], to: [f64; 3], damage_fe: u64) {
+    let _ = crate::fork_qio_calor::laser_entity_damage(dim, from, to, damage_fe);
 }
 
 /// FORK-8: Energy-driven block breaking by hardness and item drop intercept.
-pub fn host_pop_resource_from_face(_dim: &str, _pos: [i32; 3], _face: usize, _item: &str, _count: u32) {
-    // FORK-8: Eject overflow item into world with directional velocity
+pub fn host_pop_resource_from_face(dim: &str, pos: [i32; 3], face: usize, item: &str, count: u32) {
+    let _ = crate::fork_qio_calor::pop_resource_from_face(dim, pos, face, item, count);
 }
 
 // ============================================================================

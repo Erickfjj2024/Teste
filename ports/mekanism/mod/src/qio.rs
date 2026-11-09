@@ -889,7 +889,7 @@ pub fn encode_drive_array(state: &DriveArrayState) -> Vec<u8> {
     out.extend(&facing_bytes[..facing_bytes.len().min(16)]);
 
     // Frequency name
-    if let Some(ref name) = state.frequency_name {
+    if let Some(name) = &state.frequency_name {
         let name_bytes = name.as_bytes();
         out.push(1u8);
         out.extend((name_bytes.len() as u16).to_le_bytes());
@@ -913,7 +913,7 @@ pub fn encode_drive_array(state: &DriveArrayState) -> Vec<u8> {
 
     // Number of drives
     for slot in 0..DRIVE_SLOTS {
-        if let Some((tier, ref contents)) = state.drives[slot] {
+        if let Some((tier, contents)) = &state.drives[slot] {
             out.push(1u8);
             out.push(match tier {
                 QIODriveTier::Base => 0,
@@ -1037,11 +1037,11 @@ pub fn decode_drive_array(data: &[u8]) -> Option<DriveArrayState> {
 pub fn update_drive_array_status(state: &mut DriveArrayState, freq: Option<&QIOFrequency>) -> bool {
     state.active = freq.is_some();
     for i in 0..DRIVE_SLOTS {
-        let Some((tier, ref contents)) = state.drives[i] else {
+        let Some((tier, contents)) = &state.drives[i] else {
             state.drive_statuses[i] = DriveStatus::None;
             continue;
         };
-        let Some(frequency) = freq else {
+        let Some(_frequency) = freq else {
             state.drive_statuses[i] = DriveStatus::Offline;
             continue;
         };
@@ -1136,7 +1136,7 @@ pub fn encode_redstone_adapter(state: &RedstoneAdapterState) -> Vec<u8> {
     out.extend(&facing_bytes[..facing_bytes.len().min(16)]);
 
     // Item type
-    if let Some(ref item) = state.item_type {
+    if let Some(item) = &state.item_type {
         out.push(1u8);
         let encoded_item = item.encode();
         out.extend((encoded_item.len() as u16).to_le_bytes());
@@ -1146,7 +1146,7 @@ pub fn encode_redstone_adapter(state: &RedstoneAdapterState) -> Vec<u8> {
     }
 
     // Frequency name
-    if let Some(ref name) = state.frequency_name {
+    if let Some(name) = &state.frequency_name {
         let name_bytes = name.as_bytes();
         out.push(1u8);
         out.extend((name_bytes.len() as u16).to_le_bytes());
@@ -1257,19 +1257,19 @@ pub fn decode_redstone_adapter(data: &[u8]) -> Option<RedstoneAdapterState> {
 // ============================================================================
 
 // FORK-18: Host-side persistence and lookup for named frequencies by UUID and security mode
-pub fn host_lookup_frequency(_name: &str, _owner: Option<u128>) -> Option<QIOFrequency> {
-    // Pure Rust fallback when running in sandbox without host support
+pub fn host_lookup_frequency(name: &str, owner: Option<u128>) -> Option<QIOFrequency> {
+    let _ = crate::fork_qio_calor::lookup_frequency(name, owner);
     None
 }
 
 // FORK-20: Custom GUI layout and widget rendering (text field, virtual scroll, LEDs)
-pub fn host_open_qio_screen(_player_id: u64, _screen_type: &str, _data: &[u8]) {
-    // Isolated thin call
+pub fn host_open_qio_screen(player_id: u64, screen_type: &str, data: &[u8]) {
+    let _ = crate::fork_qio_calor::open_qio_screen(player_id, screen_type, data);
 }
 
 // FORK-21: Emitting redstone signal strength per face to adjacent blocks
-pub fn host_set_redstone_output(_dimension: &str, _pos: [i32; 3], _side: usize, _level: u8) {
-    // Isolated thin call
+pub fn host_set_redstone_output(dimension: &str, pos: [i32; 3], side: usize, level: u8) {
+    let _ = crate::fork_qio_calor::set_redstone_output(dimension, pos, side, level);
 }
 
 // FORK-23: Reading and writing item data components (DriveMetadata, DriveContents)
@@ -1278,8 +1278,8 @@ pub fn host_set_item_components(_stack: &mut ItemStack, _metadata: &DriveMetadat
 }
 
 // FORK-24: Sincronização em lote cliente-servidor (BulkQIOData)
-pub fn host_broadcast_bulk_qio_data(_dimension: &str, _pos: [i32; 3], _data: &[u8]) {
-    // Isolated thin call
+pub fn host_broadcast_bulk_qio_data(dimension: &str, pos: [i32; 3], data: &[u8]) {
+    let _ = crate::fork_qio_calor::broadcast_bulk_qio_data(dimension, pos, data);
 }
 
 // ============================================================================
