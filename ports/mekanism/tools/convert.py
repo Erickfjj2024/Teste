@@ -2368,12 +2368,12 @@ TGEN = f'{SRC}/src/datagen/generated/mekanismtools'
 # name: axe damage, axe speed, durability, mining speed, damage bonus, enchantability, armor enchantability, toughness, knockback resistance,
 # armor durability (boots, leggings, chestplate, helmet), armor defense (same), the vanilla tier whose incorrect-for-drops tag it uses
 TOOL_MATERIALS = {
-    'bronze': (7, -3.0, 375, 7, 2, 10, 5, 1, 0.0, (234, 270, 288, 198), (2, 6, 7, 3), 'iron'),
-    'lapis_lazuli': (4, -2.9, 128, 9, 1, 32, 35, 0, 0.0, (130, 150, 160, 110), (1, 3, 4, 1), 'stone'),
-    'osmium': (8, -3.3, 1024, 4, 4, 14, 9, 3, 0.1, (390, 450, 480, 330), (3, 6, 8, 4), 'iron'),
-    'refined_glowstone': (6, -2.9, 384, 15, 2, 20, 23, 0, 0.0, (221, 255, 272, 187), (3, 6, 8, 3), 'diamond'),
-    'refined_obsidian': (7, -2.9, 4096, 12, 8, 18, 13, 5, 0.2, (975, 1125, 1200, 825), (5, 8, 12, 6), 'netherite'),
-    'steel': (7, -3.0, 500, 8, 3, 16, 11, 2, 0.0, (260, 300, 320, 220), (3, 6, 8, 3), 'diamond'),
+    'bronze': (7, -3.0, 375, 7, 2, 10, 10, 1, 0.0, (234, 270, 288, 198), (2, 6, 7, 3), 'iron'),
+    'lapis_lazuli': (4, -2.9, 128, 9, 1, 32, 32, 0, 0.0, (130, 150, 160, 110), (1, 3, 4, 1), 'stone'),
+    'osmium': (8, -3.3, 1024, 4, 4, 14, 14, 3, 0.1, (390, 450, 480, 330), (3, 6, 8, 4), 'iron'),
+    'refined_glowstone': (6, -2.9, 384, 15, 2, 20, 20, 0, 0.0, (221, 255, 272, 187), (3, 6, 8, 3), 'diamond'),
+    'refined_obsidian': (7, -2.9, 4096, 12, 8, 18, 18, 5, 0.2, (975, 1125, 1200, 825), (5, 8, 12, 6), 'netherite'),
+    'steel': (7, -3.0, 500, 8, 3, 16, 16, 2, 0.0, (260, 300, 320, 220), (3, 6, 8, 3), 'diamond'),
 }
 # the vanilla materials' paxels: durability, speed, damage bonus, enchantability, axe damage, axe speed, the tier
 PAXEL_MATERIALS = {
@@ -2418,7 +2418,7 @@ for mat, (axe_d, axe_s, dur, speed, bonus, ench, arm_ench, tough, kb, arm_dur, a
     tools_item(f'{mat}_axe', tool_item('minecraft:iron_axe', dur, axe_d + bonus, axe_s, ench, tool_rules(tier, ['axe'], speed), ingots), texture('axe'), 'minecraft:item/handheld', None)
     tools_item(f'{mat}_shovel', tool_item('minecraft:iron_shovel', dur, 1.5 + bonus, -3.0, ench, tool_rules(tier, ['shovel'], speed), ingots), texture('shovel'), 'minecraft:item/handheld', None)
     tools_item(f'{mat}_hoe', tool_item('minecraft:iron_hoe', dur, 0.0, bonus - 3.0, ench, tool_rules(tier, ['hoe'], speed), ingots), texture('hoe'), 'minecraft:item/handheld', None)
-    tools_item(f'{mat}_paxel', tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, axe_s, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed), ingots), texture('paxel'), 'minecraft:item/handheld', None)
+    tools_item(f'{mat}_paxel', tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, -2.4, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed), ingots), texture('paxel'), 'minecraft:item/handheld', None)
     for k, (piece, slot, template) in enumerate(ARMOR_PIECES):
         mods = [{'type': 'minecraft:armor', 'id': f'minecraft:armor.{piece}', 'amount': arm_def[k], 'operation': 'add_value', 'slot': slot},
                 {'type': 'minecraft:armor_toughness', 'id': f'minecraft:armor.{piece}', 'amount': tough, 'operation': 'add_value', 'slot': slot}]
@@ -2436,7 +2436,7 @@ for mat, (axe_d, axe_s, dur, speed, bonus, ench, arm_ench, tough, kb, arm_dur, a
 
 for mat, (dur, speed, bonus, ench, axe_d, axe_s, tier) in PAXEL_MATERIALS.items():
     name = f'{mat}_paxel'
-    tools_item(name, tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, axe_s, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed)),
+    tools_item(name, tool_item('minecraft:iron_axe', 2 * dur, axe_d + 1 + bonus, -2.4, ench, tool_rules(tier, ['axe', 'pickaxe', 'shovel', 'hoe'], speed)),
                f'{TJ}/textures/item/{name}.png', 'minecraft:item/handheld', None)
 
 # the recipes (the ids of the module turned into the port's, the paxel's own recipe type into a shaped one)
@@ -2478,7 +2478,7 @@ PLASTIC_KINDS = {
     '_plastic_transparent_stairs': ('minecraft:stone_stairs', {'hardness': 5.0, 'explosion_resistance': 6.0}),
     '_plastic_fence': ('minecraft:chorus_plant', {'hardness': 5.0, 'explosion_resistance': 6.0}),
     '_plastic_fence_gate': ('minecraft:oak_fence_gate', {'hardness': 5.0, 'explosion_resistance': 6.0}),
-    '_glow_panel': ('minecraft:stone', {'hardness': 1.0, 'explosion_resistance': 6.0, 'light': 10}),
+    '_glow_panel': ('minecraft:stone', {'hardness': 1.0, 'explosion_resistance': 6.0, 'light': 15}),
 }
 
 def tinted_texture(name, color, rgb):

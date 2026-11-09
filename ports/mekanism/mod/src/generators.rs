@@ -388,7 +388,7 @@ impl Mekanism {
                     let made = wind_production(top.pos.y).min(room(energy));
                     energy += made;
                     producing = made;
-                    active = made > 0;
+                    active = true;
                 }
             }
             GenKind::Solar | GenKind::AdvSolar => {

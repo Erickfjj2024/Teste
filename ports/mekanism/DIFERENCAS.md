@@ -412,6 +412,7 @@ Cada escopo foi refeito por uma conta diferente da rodada 1 (`revisao2/`). Erros
 | 21.8.32 | **Industrial Alarm - Efeitos Audiovisuais e Bloco**: Som em loop da sirene (`MekanismSounds.INDUSTRIAL_ALARM`) e feixe de holofote vermelho giratório renderizado em shader (`RenderIndustrialAlarm`) não existem no WASM (FORK-19); estado de bloco utiliza propriedade `lit` (herança vanilla) em vez de `active=true/false` com nível de luz ambiente 15 | FORK (FORK-19) |
 | 21.8.33 | **Químicos Líquidos e Baldes**: 18 fluidos (`LiquidBlock`) e respectivos baldes de químicos listados como `FALTA` no inventário, incluindo receitas no Rotary Condensentrator e consumo de balde de pasta nutricional como bebida alimentar | FALTA |
 
+| 21.6.1 | Tools: encantabilidade do paxel = a do material (bronze 10, lápis 32…), velocidade de ataque do paxel -2,4 (`IPaxelMaterial`), glow panel com luz 15 (`AdditionsBlockTypes.GLOW_PANEL.withLight(15)`); Wind Generator fica ativo quando pode funcionar / paxel enchantability and attack speed, glow panel light, wind generator active state | CORRIGIDO (não compilado / not compiled) |
 Tarefas sem bloco próprio (r1, r3, r5): ver `revisao2/REVISAO_*.md` / tasks without own block: see the review files.
 
 ## 5. Fork do Horizon (precisam de APK novo)
