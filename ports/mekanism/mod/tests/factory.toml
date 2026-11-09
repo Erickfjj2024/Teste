@@ -266,7 +266,7 @@ blocks = [
     { x = 301, y = 65, z = 304, state = "mekanism:creative_energy_cube" },
 ]
 ticks = 60
-expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [8000, 0, 8000, 0, 256, 0, 1, 1] }]
+expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [3200, 0, 3200, 0, 102, 0, 1, 1] }]
 
 [[step]]
 # A sneak click with the configurator on the matrix's port toggles it to output (Alex's tool is fresh in this run,

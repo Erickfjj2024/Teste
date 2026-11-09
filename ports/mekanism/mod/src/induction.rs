@@ -13,16 +13,16 @@ pub const PORT: &str = "mekanism:induction_port";
 pub const GROUP: &str = "mekanism:induction";
 /// `InductionCellTier` and `InductionProviderTier`: what a cell stores and what a provider moves each tick.
 pub const CELLS: [(&str, u64); 4] = [
-    ("mekanism:basic_induction_cell", 8_000_000_000),
-    ("mekanism:advanced_induction_cell", 64_000_000_000),
-    ("mekanism:elite_induction_cell", 512_000_000_000),
-    ("mekanism:ultimate_induction_cell", 4_000_000_000_000),
+    ("mekanism:basic_induction_cell", fe(8_000_000_000)),
+    ("mekanism:advanced_induction_cell", fe(64_000_000_000)),
+    ("mekanism:elite_induction_cell", fe(512_000_000_000)),
+    ("mekanism:ultimate_induction_cell", fe(4_000_000_000_000)),
 ];
 pub const PROVIDERS: [(&str, u64); 4] = [
-    ("mekanism:basic_induction_provider", 256_000),
-    ("mekanism:advanced_induction_provider", 2_048_000),
-    ("mekanism:elite_induction_provider", 16_384_000),
-    ("mekanism:ultimate_induction_provider", 131_072_000),
+    ("mekanism:basic_induction_provider", fe(256_000)),
+    ("mekanism:advanced_induction_provider", fe(2_048_000)),
+    ("mekanism:elite_induction_provider", fe(16_384_000)),
+    ("mekanism:ultimate_induction_provider", fe(131_072_000)),
 ];
 /// What a port is registered to hold: far more than a matrix can (the real room is set each tick).
 pub const SPEC_CAPACITY: u64 = 1 << 60;
@@ -280,15 +280,15 @@ mod tests {
                 }
             }
         }
-        out.push(([1, 1, 1], Part::Cell(8_000_000_000)));
-        out.push(([1, 1, 2], Part::Provider(256_000)));
+        out.push(([1, 1, 1], Part::Cell(fe(8_000_000_000))));
+        out.push(([1, 1, 2], Part::Provider(fe(256_000))));
         out
     }
 
     #[test]
     fn a_matrix_adds_up_its_cells_and_providers() {
         let f = validate(&matrix(4), [0; 3], [3; 3], |_| true);
-        assert_eq!((f.valid, f.capacity, f.rate, f.cells, f.providers), (true, 8_000_000_000, 256_000, 1, 1));
+        assert_eq!((f.valid, f.capacity, f.rate, f.cells, f.providers), (true, fe(8_000_000_000), fe(256_000), 1, 1));
     }
 
     #[test]

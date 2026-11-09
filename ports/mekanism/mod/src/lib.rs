@@ -179,43 +179,43 @@ const fn spec(shape: Shape, usage: u64, ticks: u32, cap_in: u64, cap_out: u64, r
 }
 
 const MACHINES: [Def; 78] = [
-    electric("mekanism:crusher", Source::Files("mekanism:crushing"), 8),
-    electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5),
-    electric("mekanism:energized_smelter", Source::Cooking("smelting"), 5),
-    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: 5, kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
-    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: 5, kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
-    chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, 5, 200, 1000, 0, false)),
+    electric("mekanism:crusher", Source::Files("mekanism:crushing"), fe(50)),
+    electric("mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), fe(50)),
+    electric("mekanism:energized_smelter", Source::Cooking("smelting"), fe(50)),
+    Def { block: "mekanism:precision_sawmill", source: Source::Files("mekanism:sawing"), usage: fe(50), kind: Kind::Sawmill, layout: Layout::Sawmill, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
+    Def { block: "mekanism:combiner", source: Source::Files("mekanism:combining"), usage: fe(50), kind: Kind::Combiner, layout: Layout::Combiner, proc: None, cont: None, tank: None, generator: None, lines: 0, base: "", form: 0 },
+    chemical("mekanism:metallurgic_infuser", "mekanism:metallurgic_infusing", Layout::Infuser, spec(Shape::ItemChemToItem, fe(50), 200, 1000, 0, false)),
     // The purification and injection chambers use their chemical by chance (the config's randomized consumption).
-    chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, 10, 200, 210, 0, true)),
-    chemical("mekanism:chemical_injection_chamber", "mekanism:injecting", Layout::Adv, spec(Shape::ItemChemToItem, 15, 200, 210, 0, true)),
-    chemical("mekanism:osmium_compressor", "mekanism:compressing", Layout::Compressor, spec(Shape::ItemChemToItem, 15, 200, 210, 0, false)),
-    chemical("mekanism:chemical_oxidizer", "mekanism:oxidizing", Layout::Oxidizer, spec(Shape::ItemToChem, 15, 100, 0, 10_000, false)),
-    chemical("mekanism:chemical_dissolution_chamber", "mekanism:dissolution", Layout::Dissolution, spec(Shape::ItemChemToChem, 16, 100, 10_000, 10_000, true)),
-    chemical("mekanism:chemical_crystallizer", "mekanism:crystallizing", Layout::Crystallizer, spec(Shape::ChemToItem, 15, 200, 10_000, 0, false)),
+    chemical("mekanism:purification_chamber", "mekanism:purifying", Layout::Adv, spec(Shape::ItemChemToItem, fe(200), 200, 210, 0, true)),
+    chemical("mekanism:chemical_injection_chamber", "mekanism:injecting", Layout::Adv, spec(Shape::ItemChemToItem, fe(400), 200, 210, 0, true)),
+    chemical("mekanism:osmium_compressor", "mekanism:compressing", Layout::Compressor, spec(Shape::ItemChemToItem, fe(100), 200, 210, 0, false)),
+    chemical("mekanism:chemical_oxidizer", "mekanism:oxidizing", Layout::Oxidizer, spec(Shape::ItemToChem, fe(200), 100, 0, 10_000, false)),
+    chemical("mekanism:chemical_dissolution_chamber", "mekanism:dissolution", Layout::Dissolution, spec(Shape::ItemChemToChem, fe(400), 100, 10_000, 10_000, true)),
+    chemical("mekanism:chemical_crystallizer", "mekanism:crystallizing", Layout::Crystallizer, spec(Shape::ChemToItem, fe(400), 200, 10_000, 0, false)),
     // The chemical infuser, the washer and the electrolytic separator work their tanks every tick.
     continuous_machine("mekanism:chemical_infuser", "mekanism:chemical_infusing", Layout::ChemInfuser,
-        continuous::Spec { shape: continuous::Shape::Infuser, usage: 15, caps: [10_000; 3] }),
+        continuous::Spec { shape: continuous::Shape::Infuser, usage: fe(200), caps: [10_000; 3] }),
     continuous_machine("mekanism:chemical_washer", "mekanism:washing", Layout::Washer,
-        continuous::Spec { shape: continuous::Shape::Washer, usage: 5, caps: [10_000; 3] }),
+        continuous::Spec { shape: continuous::Shape::Washer, usage: fe(200), caps: [10_000; 3] }),
     // Its energy is twice the hydrogen's energy density (2), so 4 a tick.
     continuous_machine("mekanism:electrolytic_separator", "mekanism:separating", Layout::Separator,
-        continuous::Spec { shape: continuous::Shape::Separator, usage: 4, caps: [24_000, 2_400, 2_400] }),
+        continuous::Spec { shape: continuous::Shape::Separator, usage: fe(2 * 200), caps: [24_000, 2_400, 2_400] }),
     // The rotary condensentrator turns a gas into a fluid or a fluid into a gas, by its mode (10 buckets in each tank).
     continuous_machine("mekanism:rotary_condensentrator", "mekanism:rotary", Layout::Rotary,
-        continuous::Spec { shape: continuous::Shape::Rotary, usage: 2, caps: [10_000, 10_000, 0] }),
+        continuous::Spec { shape: continuous::Shape::Rotary, usage: fe(50), caps: [10_000, 10_000, 0] }),
     // The antiprotonic nucleosynthesizer: an item and antimatter make an item, each recipe taking its own time (`duration`).
-    chemical("mekanism:antiprotonic_nucleosynthesizer", "mekanism:nucleosynthesizing", Layout::Adv, spec(Shape::ItemChemToItem, 15, 400, 10_000, 0, false)),
+    chemical("mekanism:antiprotonic_nucleosynthesizer", "mekanism:nucleosynthesizing", Layout::Adv, spec(Shape::ItemChemToItem, fe(100_000), 400, 10_000, 0, false)),
     // The nutritional liquifier turns food into nutritional paste (a fluid).
-    chemical("mekanism:nutritional_liquifier", "mekanism:liquifying", Layout::Oxidizer, spec(Shape::ItemToChem, 8, 100, 0, 10_000, false)),
+    chemical("mekanism:nutritional_liquifier", "mekanism:liquifying", Layout::Oxidizer, spec(Shape::ItemToChem, fe(200), 100, 0, 10_000, false)),
     // Pigments: an item gives a pigment, a pigment paints an item, two pigments mix into a third.
-    chemical("mekanism:pigment_extractor", "mekanism:pigment_extracting", Layout::Oxidizer, spec(Shape::ItemToChem, 5, 100, 0, 20_000, false)),
-    chemical("mekanism:painting_machine", "mekanism:painting", Layout::Adv, spec(Shape::ItemChemToItem, 5, 200, 15_000, 0, false)),
+    chemical("mekanism:pigment_extractor", "mekanism:pigment_extracting", Layout::Oxidizer, spec(Shape::ItemToChem, fe(200), 100, 0, 20_000, false)),
+    chemical("mekanism:painting_machine", "mekanism:painting", Layout::Adv, spec(Shape::ItemChemToItem, fe(100), 200, 15_000, 0, false)),
     continuous_machine("mekanism:pigment_mixer", "mekanism:pigment_mixing", Layout::Mixer,
-        continuous::Spec { shape: continuous::Shape::Infuser, usage: 5, caps: [1_000, 1_000, 2_000] }),
+        continuous::Spec { shape: continuous::Shape::Infuser, usage: fe(200), caps: [1_000, 1_000, 2_000] }),
     // The nuclear chain: the isotopic centrifuge turns uranium hexafluoride into fissile fuel and nuclear waste into plutonium, and the solar
     // neutron activator nuclear waste into polonium (it needs no energy, only the sun).
     continuous_machine("mekanism:isotopic_centrifuge", "mekanism:centrifuging", Layout::ChemInfuser,
-        continuous::Spec { shape: continuous::Shape::Converter, usage: 8, caps: [10_000, 10_000, 0] }),
+        continuous::Spec { shape: continuous::Shape::Converter, usage: fe(200), caps: [10_000, 10_000, 0] }),
     continuous_machine("mekanism:solar_neutron_activator", "mekanism:activating", Layout::ChemInfuser,
         continuous::Spec { shape: continuous::Shape::Converter, usage: 0, caps: [10_000, 10_000, 0] }),
     // An item, a fluid and a gas make an item and a gas (14 recipes: gasification and substrate).
@@ -228,44 +228,44 @@ const MACHINES: [Def; 78] = [
     generator("mekanism:advanced_solar_generator", GenKind::AdvSolar),
     generator("mekanism:wind_generator", GenKind::Wind),
     // The factories of the electric machines: `FactoryTier` gives 3, 5, 7 and 9 lines.
-    factory("mekanism:basic_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 3, 0),
-    factory("mekanism:advanced_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 5, 0),
-    factory("mekanism:elite_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 7, 0),
-    factory("mekanism:ultimate_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), 8, 9, 0),
-    factory("mekanism:basic_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 3, 0),
-    factory("mekanism:advanced_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 5, 0),
-    factory("mekanism:elite_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 7, 0),
-    factory("mekanism:ultimate_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), 5, 9, 0),
-    factory("mekanism:basic_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 3, 0),
-    factory("mekanism:advanced_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 5, 0),
-    factory("mekanism:elite_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 7, 0),
-    factory("mekanism:ultimate_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), 5, 9, 0),
+    factory("mekanism:basic_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), fe(50), 3, 0),
+    factory("mekanism:advanced_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), fe(50), 5, 0),
+    factory("mekanism:elite_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), fe(50), 7, 0),
+    factory("mekanism:ultimate_crushing_factory", "mekanism:crusher", Source::Files("mekanism:crushing"), fe(50), 9, 0),
+    factory("mekanism:basic_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), fe(50), 3, 0),
+    factory("mekanism:advanced_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), fe(50), 5, 0),
+    factory("mekanism:elite_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), fe(50), 7, 0),
+    factory("mekanism:ultimate_enriching_factory", "mekanism:enrichment_chamber", Source::Files("mekanism:enriching"), fe(50), 9, 0),
+    factory("mekanism:basic_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), fe(50), 3, 0),
+    factory("mekanism:advanced_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), fe(50), 5, 0),
+    factory("mekanism:elite_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), fe(50), 7, 0),
+    factory("mekanism:ultimate_smelting_factory", "mekanism:energized_smelter", Source::Cooking("smelting"), fe(50), 9, 0),
     // The factories of the combiner and the sawmill: the combiner's extra input is one for all the lines, the sawmill's lines have two outputs.
-    factory("mekanism:basic_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 3, 1),
-    factory("mekanism:advanced_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 5, 1),
-    factory("mekanism:elite_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 7, 1),
-    factory("mekanism:ultimate_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), 5, 9, 1),
-    factory("mekanism:basic_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 3, 2),
-    factory("mekanism:advanced_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 5, 2),
-    factory("mekanism:elite_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 7, 2),
-    factory("mekanism:ultimate_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), 5, 9, 2),
+    factory("mekanism:basic_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), fe(50), 3, 1),
+    factory("mekanism:advanced_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), fe(50), 5, 1),
+    factory("mekanism:elite_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), fe(50), 7, 1),
+    factory("mekanism:ultimate_combining_factory", "mekanism:combiner", Source::Files("mekanism:combining"), fe(50), 9, 1),
+    factory("mekanism:basic_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), fe(50), 3, 2),
+    factory("mekanism:advanced_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), fe(50), 5, 2),
+    factory("mekanism:elite_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), fe(50), 7, 2),
+    factory("mekanism:ultimate_sawing_factory", "mekanism:precision_sawmill", Source::Files("mekanism:sawing"), fe(50), 9, 2),
     // The factories that work a chemical: one tank for all the lines (a compressing or infusing one can be emptied by the right side).
-    factory("mekanism:basic_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 3, 4),
-    factory("mekanism:advanced_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 5, 4),
-    factory("mekanism:elite_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 7, 4),
-    factory("mekanism:ultimate_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), 15, 9, 4),
-    factory("mekanism:basic_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 3, 4),
-    factory("mekanism:advanced_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 5, 4),
-    factory("mekanism:elite_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 7, 4),
-    factory("mekanism:ultimate_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), 5, 9, 4),
-    factory("mekanism:basic_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 3, 3),
-    factory("mekanism:advanced_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 5, 3),
-    factory("mekanism:elite_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 7, 3),
-    factory("mekanism:ultimate_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), 15, 9, 3),
-    factory("mekanism:basic_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 3, 3),
-    factory("mekanism:advanced_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 5, 3),
-    factory("mekanism:elite_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 7, 3),
-    factory("mekanism:ultimate_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), 10, 9, 3),
+    factory("mekanism:basic_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), fe(100), 3, 4),
+    factory("mekanism:advanced_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), fe(100), 5, 4),
+    factory("mekanism:elite_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), fe(100), 7, 4),
+    factory("mekanism:ultimate_compressing_factory", "mekanism:osmium_compressor", Source::Files("mekanism:compressing"), fe(100), 9, 4),
+    factory("mekanism:basic_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), fe(50), 3, 4),
+    factory("mekanism:advanced_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), fe(50), 5, 4),
+    factory("mekanism:elite_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), fe(50), 7, 4),
+    factory("mekanism:ultimate_infusing_factory", "mekanism:metallurgic_infuser", Source::Files("mekanism:metallurgic_infusing"), fe(50), 9, 4),
+    factory("mekanism:basic_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), fe(400), 3, 3),
+    factory("mekanism:advanced_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), fe(400), 5, 3),
+    factory("mekanism:elite_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), fe(400), 7, 3),
+    factory("mekanism:ultimate_injecting_factory", "mekanism:chemical_injection_chamber", Source::Files("mekanism:injecting"), fe(400), 9, 3),
+    factory("mekanism:basic_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), fe(200), 3, 3),
+    factory("mekanism:advanced_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), fe(200), 5, 3),
+    factory("mekanism:elite_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), fe(200), 7, 3),
+    factory("mekanism:ultimate_purifying_factory", "mekanism:purification_chamber", Source::Files("mekanism:purifying"), fe(200), 9, 3),
     // The electric pump takes fluid sources of the world.
     pump_machine("mekanism:electric_pump", 0),
     // The fluidic plenisher pours the fluid of its tank into the world.
@@ -283,24 +283,44 @@ const MACHINES: [Def; 78] = [
     tank_block("mekanism:creative_chemical_tank", false, 1_000_000_000_000, 1_000_000_000, true),
 ];
 
-/// Energy a machine holds: ticks of its use (an assumption: 26.3's own table is
-/// still to be written upstream).
-const STORED_TICKS: u64 = 2500;
+/// Energy in Mekanism 1.21.1 is Joules; the port keeps Forge Energy, which is Joules over the default `feConversionRate` (2.5).
+pub const fn fe(joules: u64) -> u64 {
+    joules * 2 / 5
+}
+
+/// `MekanismConfig.storage.*`: what a machine holds before its energy upgrades (Joules in the release, Forge Energy here).
+pub fn storage_of(block: &str) -> u64 {
+    fe(match block {
+        "mekanism:enrichment_chamber" | "mekanism:crusher" | "mekanism:metallurgic_infuser" | "mekanism:energized_smelter" | "mekanism:precision_sawmill"
+        | "mekanism:rotary_condensentrator" | "mekanism:seismic_vibrator" => 20_000,
+        "mekanism:osmium_compressor" | "mekanism:purification_chamber" | "mekanism:chemical_oxidizer" | "mekanism:chemical_infuser"
+        | "mekanism:chemical_washer" | "mekanism:isotopic_centrifuge" | "mekanism:pigment_mixer" => 80_000,
+        "mekanism:combiner" | "mekanism:electric_pump" | "mekanism:fluidic_plenisher" | "mekanism:formulaic_assemblicator"
+        | "mekanism:nutritional_liquifier" | "mekanism:pigment_extractor" | "mekanism:painting_machine" | "mekanism:modification_station"
+        | "mekanism:dimensional_stabilizer" => 40_000,
+        "mekanism:chemical_injection_chamber" | "mekanism:electrolytic_separator" | "mekanism:chemical_dissolution_chamber"
+        | "mekanism:chemical_crystallizer" => 160_000,
+        "mekanism:pressurized_reaction_chamber" => 2_000,
+        "mekanism:digital_miner" => 50_000,
+        "mekanism:antiprotonic_nucleosynthesizer" => 1_000_000_000,
+        _ => 0,
+    })
+}
 const CREATIVE_CUBE: u64 = 1_000_000_000_000;
 /// `EnergyCubeTier`: what each cube holds and moves a tick (the creative one: everything, refilled).
 const CUBE_TIERS: [(&str, u64, u64); 4] = [
-    ("mekanism:basic_energy_cube", 4_000_000, 4_000),
-    ("mekanism:advanced_energy_cube", 16_000_000, 16_000),
-    ("mekanism:elite_energy_cube", 64_000_000, 64_000),
-    ("mekanism:ultimate_energy_cube", 256_000_000, 256_000),
+    ("mekanism:basic_energy_cube", fe(4_000_000), fe(4_000)),
+    ("mekanism:advanced_energy_cube", fe(16_000_000), fe(16_000)),
+    ("mekanism:elite_energy_cube", fe(64_000_000), fe(64_000)),
+    ("mekanism:ultimate_energy_cube", fe(256_000_000), fe(256_000)),
 ];
 
 /// What a machine holds before its energy upgrades: ticks of its use (the separator stores more: its use is tiny and a bucket of
 /// water is many ticks of it); a factory, half of its machine's for each line (`Factory.setMachineData`).
 fn base_capacity(def: &Def) -> u64 {
     match def.kind {
-        Kind::Factory => (def.usage * STORED_TICKS / 2).max(def.usage) * def.lines as u64,
-        _ => def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 },
+        Kind::Factory => (storage_of(def.base) / 2).max(def.usage) * def.lines as u64,
+        _ => storage_of(def.block),
     }
 }
 
@@ -309,7 +329,7 @@ fn cube_capacity(block: &str) -> (u64, bool) {
     CUBE_TIERS.iter().find(|(b, _, _)| *b == block).map_or((CREATIVE_CUBE, true), |(_, c, _)| (*c, false))
 }
 /// What a cable, a tube and a pipe of each tier carry a tick.
-const CABLE_RATES: [u64; 4] = [8_000, 128_000, 1_024_000, 8_192_000];
+const CABLE_RATES: [u64; 4] = [fe(8_000), fe(128_000), fe(1_024_000), fe(8_192_000)];
 const TUBE_RATES: [u64; 4] = [750, 2_000, 64_000, 256_000];
 const PIPE_RATES: [u64; 4] = [250, 1_000, 8_000, 32_000];
 /// What a logistical transporter moves every ten ticks (`TransporterTier` pull: 1, 16, 32 and 64 items).
@@ -362,6 +382,8 @@ struct Mekanism {
     buttons: HashMap<(String, i32, i32, i32), Vec<i32>>,
     /// Whether a solar generator saw the sky when last asked, and when.
     suns: HashMap<(String, i32, i32, i32), (u64, bool)>,
+    /// The ticks of a gas-burning generator's current mB still to burn (`burnTicks`).
+    burns: HashMap<(String, i32, i32, i32), u64>,
     /// The redstone signal each machine had the tick before (`redstoneLastTick`), and whether the one being run may work.
     last_power: HashMap<(String, i32, i32, i32), bool>,
     can: bool,
@@ -1197,7 +1219,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
+        let capacity = upgrades::max_energy(base_capacity(def), counts[upgrades::ENERGY]);
         let mut data = menu_data(next_progress, energy, capacity, status, &cfg);
         let spec = def.proc;
         if let Some(spec) = spec {
@@ -1972,6 +1994,7 @@ impl ServerMod for Mekanism {
             flow: HashMap::new(),
             buttons: HashMap::new(),
             suns: HashMap::new(),
+            burns: HashMap::new(),
             last_power: HashMap::new(),
             can: true,
             install: HashMap::new(),

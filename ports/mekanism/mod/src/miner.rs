@@ -13,8 +13,8 @@ pub const MINER: &str = "mekanism:digital_miner";
 pub const DEFAULT_RADIUS: u8 = 10;
 pub const MAX_RADIUS: u8 = 32;
 pub const TICKS_PER_MINE: u32 = 80;
-pub const USAGE: u64 = 40;
-pub const CAPACITY: u64 = USAGE * 2500;
+pub const USAGE: u64 = crate::fe(1_000);
+pub const CAPACITY: u64 = crate::fe(50_000);
 pub const DEFAULT_MIN_Y: i32 = 0;
 pub const DEFAULT_MAX_Y: i32 = 60;
 /// 27 slots of what was mined, then five filters.

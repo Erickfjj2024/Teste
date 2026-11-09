@@ -537,11 +537,16 @@ def copy_gui(rel, name):
     return f'{NS}:gui/{name}'
 
 # what each machine uses a tick while it works (the mod's `MACHINES` table; `MekanismConfig.usage`)
-MACHINE_USAGE = {'antiprotonic_nucleosynthesizer': 15, 'electric_pump': 2, 'fluidic_plenisher': 2, 'nutritional_liquifier': 8, **{f: {'crushing': 8, 'enriching': 5, 'smelting': 5, 'combining': 5, 'sawing': 5, 'compressing': 15, 'infusing': 5, 'injecting': 15, 'purifying': 10}[k] for f, (t, k) in FACTORIES.items()}, 'crusher': 8, 'enrichment_chamber': 5, 'energized_smelter': 5, 'precision_sawmill': 5, 'combiner': 5,
-                 'metallurgic_infuser': 5, 'purification_chamber': 10, 'chemical_injection_chamber': 15, 'osmium_compressor': 15,
-                 'chemical_oxidizer': 15, 'chemical_dissolution_chamber': 16, 'chemical_crystallizer': 15,
-                 'chemical_infuser': 15, 'chemical_washer': 5, 'electrolytic_separator': 4, 'rotary_condensentrator': 2,
-                 'pressurized_reaction_chamber': 2, 'pigment_extractor': 5, 'painting_machine': 5, 'pigment_mixer': 5, 'isotopic_centrifuge': 8, 'solar_neutron_activator': 0}
+# (the release's Joules over the default feConversionRate, 2.5: Forge Energy, what the screen and the port count in)
+_USAGE_J = {'crusher': 50, 'enrichment_chamber': 50, 'energized_smelter': 50, 'precision_sawmill': 50, 'combiner': 50, 'metallurgic_infuser': 50,
+            'purification_chamber': 200, 'chemical_injection_chamber': 400, 'osmium_compressor': 100, 'chemical_oxidizer': 200,
+            'chemical_dissolution_chamber': 400, 'chemical_crystallizer': 400, 'chemical_infuser': 200, 'chemical_washer': 200,
+            'electrolytic_separator': 400, 'rotary_condensentrator': 50, 'pressurized_reaction_chamber': 5, 'pigment_extractor': 200,
+            'painting_machine': 100, 'pigment_mixer': 200, 'isotopic_centrifuge': 200, 'solar_neutron_activator': 0, 'electric_pump': 100,
+            'fluidic_plenisher': 100, 'antiprotonic_nucleosynthesizer': 100_000, 'nutritional_liquifier': 200}
+_FACTORY_BASE = {'crushing': 'crusher', 'enriching': 'enrichment_chamber', 'smelting': 'energized_smelter', 'combining': 'combiner', 'sawing': 'precision_sawmill',
+                 'compressing': 'osmium_compressor', 'infusing': 'metallurgic_infuser', 'injecting': 'chemical_injection_chamber', 'purifying': 'purification_chamber'}
+MACHINE_USAGE = {**{m: j * 2 // 5 for m, j in _USAGE_J.items()}, **{f: _USAGE_J[_FACTORY_BASE[k]] * 2 // 5 for f, (t, k) in FACTORIES.items()}}
 MACHINE_NAMES = {'antiprotonic_nucleosynthesizer': 'Antiprotonic Nucleosynthesizer', 'nutritional_liquifier': 'Nutritional Liquifier', 'electric_pump': 'Electric Pump', 'fluidic_plenisher': 'Fluidic Plenisher', **{f: f'{t.title()} {k.title()} Factory' for f, (t, k) in FACTORIES.items()}, 'chemical_infuser': 'Chemical Infuser', 'chemical_washer': 'Chemical Washer',
                  'electrolytic_separator': 'Electrolytic Separator', 'rotary_condensentrator': 'Rotary Condensentrator', 'pressurized_reaction_chamber': 'Pressurized Reaction Chamber', 'pigment_extractor': 'Pigment Extractor',
                  'painting_machine': 'Painting Machine', 'pigment_mixer': 'Pigment Mixer', 'isotopic_centrifuge': 'Isotopic Centrifuge', 'solar_neutron_activator': 'Solar Neutron Activator',

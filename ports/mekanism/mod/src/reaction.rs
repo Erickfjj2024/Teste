@@ -11,7 +11,7 @@ pub const TANK: u64 = 10_000;
 /// The base duration of a recipe with none (`BASE_DURATION`: five seconds).
 pub const BASE_DURATION: u32 = 100;
 /// What it uses a tick before a recipe adds its own (`pressurizedReactionBase`).
-pub const USAGE: u64 = 2;
+pub const USAGE: u64 = crate::fe(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recipe {
@@ -161,7 +161,7 @@ pub fn load_book() -> Book {
             gases,
             gas: json["chemical_input"]["amount"].as_u64().unwrap_or(1),
             duration: json["duration"].as_u64().unwrap_or(u64::from(BASE_DURATION)) as u32,
-            energy: json["energy_required"].as_u64().unwrap_or(0),
+            energy: fe(json["energy_required"].as_u64().unwrap_or(0)),
             out_item,
             out_gas,
         });
@@ -223,7 +223,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
+        let capacity = upgrades::max_energy(base_capacity(def), counts[upgrades::ENERGY]);
         let mut data = menu_data(next.progress, next.energy, capacity, status, &cfg);
         for t in [&next.fluid, &next.gas_in, &next.gas_out] {
             data.extend(chem::screen(t));

@@ -26,34 +26,34 @@ impl GenKind {
 /// The bioethanol a bio-generator burns, and where its tank comes from.
 pub const BIOETHANOL: &str = "mekanismgenerators:bioethanol";
 /// `bioGeneration`, `bioTankCapacity` and `bioFuelPerItem`.
-pub const BIO_GENERATION: u64 = 25;
-pub const BIO_TANK: u64 = 200;
-pub const BIO_PER_ITEM: u64 = 64;
+pub const BIO_GENERATION: u64 = fe(350);
+pub const BIO_TANK: u64 = 24_000;
+pub const BIO_PER_ITEM: u64 = 200;
 /// `heatGeneration` (heat added a tick from the lava), `heatGenerationFluidRate`, `heatGenerationLava` (a side of lava),
 /// `heatGenerationNether` and `heatTankCapacity`.
-pub const HEAT_GENERATION: f64 = 100.0;
-pub const HEAT_FLUID_RATE: u64 = 100;
-pub const HEAT_LAVA_SIDE: f64 = 7.0;
-pub const HEAT_NETHER: f64 = 10.0;
-pub const HEAT_TANK: u64 = 1_000;
+pub const HEAT_GENERATION: f64 = 200.0;
+pub const HEAT_FLUID_RATE: u64 = 10;
+pub const HEAT_LAVA_SIDE: f64 = 30.0;
+pub const HEAT_NETHER: f64 = 100.0;
+pub const HEAT_TANK: u64 = 24_000;
 /// `solarGeneration`.
-pub const SOLAR_GENERATION: f64 = 2.0;
+/// (Joules, as the release has them; the productions below turn them into Forge Energy.)
+pub const SOLAR_GENERATION: f64 = 50.0;
 /// `advancedSolarGeneration`, and the wind generator's `generationMin`, `generationMax` and `minY`.
-pub const ADV_SOLAR_GENERATION: f64 = 12.0;
-pub const WIND_MIN: f64 = 1.0;
-pub const WIND_MAX: f64 = 5.0;
+pub const ADV_SOLAR_GENERATION: f64 = 300.0;
+pub const WIND_MIN: f64 = 60.0;
+pub const WIND_MAX: f64 = 480.0;
 pub const WIND_MIN_Y: i32 = 24;
 pub const WIND_MAX_Y: i32 = 319;
 /// `gbgTankCapacity`.
-pub const GAS_TANK: u64 = 1_000;
-/// What the energy containers hold (`GeneratorsStorageConfig`: 12, 30 and 2 seconds of ticks, and 1000 times the hydrogen's
-/// energy density for the gas-burning one).
-pub const HEAT_ENERGY: u64 = 240;
-pub const BIO_ENERGY: u64 = 600;
-pub const SOLAR_ENERGY: u64 = 40;
-pub const ADV_SOLAR_ENERGY: u64 = 240;
-pub const WIND_ENERGY: u64 = 100;
-pub const GAS_ENERGY: u64 = 2_000;
+pub const GAS_TANK: u64 = 18_000;
+/// What the energy containers hold (`GeneratorsStorageConfig`, and 1000 times the hydrogen's energy density for the gas-burning one).
+pub const HEAT_ENERGY: u64 = fe(160_000);
+pub const BIO_ENERGY: u64 = fe(160_000);
+pub const SOLAR_ENERGY: u64 = fe(96_000);
+pub const ADV_SOLAR_ENERGY: u64 = fe(200_000);
+pub const WIND_ENERGY: u64 = fe(200_000);
+pub const GAS_ENERGY: u64 = fe(1_000 * 200);
 
 pub const HEAT_CAPACITY: f64 = 10.0;
 pub const AMBIENT: f64 = 300.0;
@@ -67,7 +67,8 @@ const INVERSE_INSULATION: f64 = 100.0;
 const AIR_INVERSE: f64 = 10_000.0;
 const THERMAL_EFFICIENCY: f64 = 0.5;
 /// The most a heat generator makes from the heat in a tick: its three sources at their best.
-pub const HEAT_MAX_PRODUCTION: u64 = 159;
+/// (`heatGenerationLava` on six sides and the generator's own, the nether's and the burning one, in Joules.)
+pub const HEAT_MAX_PRODUCTION: u64 = 30 * 7 + 100 + 200;
 
 /// What the heat generator does in a tick (`TileEntityHeatGenerator.onUpdateServer` and `simulate`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,7 +91,7 @@ pub fn heat_tick(heat: f64, boost: f64, burning: bool, ambient: f64) -> HeatOut 
     let carnot = 1.0 - temp.min(ambient) / temp.max(ambient);
     let lost = THERMAL_EFFICIENCY * (temp - ambient);
     heat = (heat - lost).max(0.0);
-    let energy = ((lost.abs() * carnot) as u64).min(HEAT_MAX_PRODUCTION);
+    let energy = fe(((lost.abs() * carnot) as u64).min(HEAT_MAX_PRODUCTION));
     // The air takes heat on each of the six sides; the bottom is not insulated.
     let mut environment = 0.0;
     for insulation in [INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, INVERSE_INSULATION, 0.0] {
@@ -130,34 +131,30 @@ pub fn bioethanol_of(item: &str) -> Option<u64> {
     }
 }
 
-/// `ChemicalFuel`: the energy a mB of a gas gives and the most a tick burns (`chemical_attribute_fuel` data map).
+/// `ChemicalFuel` (`chemical_attribute_fuel` data map): the ticks a mB burns and the energy a tick of it gives (Joules in the release,
+/// Forge Energy here).
 pub fn fuel_of(chemical: &str) -> Option<(u64, u64)> {
     match chemical {
-        "mekanism:hydrogen" => Some((2, 10)),
-        "mekanism:ethene" => Some((8, 10)),
+        "mekanism:hydrogen" => Some((1, fe(200))),
+        "mekanism:ethene" => Some((40, fe(705))),
         _ => None,
     }
 }
 
-/// What the gas-burning generator burns of a full-or-not tank this tick, and what it makes: (mB used, energy). `room` is
-/// what its energy container can still take.
-pub fn gas_tick(chemical: &str, amount: u64, capacity: u64, room: u64) -> (u64, u64) {
-    let Some((density, max_burn)) = fuel_of(chemical) else { return (0, 0) };
-    if amount == 0 {
-        return (0, 0);
+/// What a tick of the gas-burning generator does (`TileEntityGasGenerator.onUpdateServer`, `getToUse`): it burns up to 256 ticks of
+/// fuel a tick, fewer when the tank is low or the energy container nearly full; a mB lasts `burn ticks` of them, the rest of the
+/// mB being kept in `burn`. Returns (mB left, burn left, energy made, ticks burnt).
+pub fn gas_tick(chemical: &str, amount: u64, capacity: u64, room: u64, burn: u64) -> (u64, u64, u64, u64) {
+    let Some((max_burn, rate)) = fuel_of(chemical) else { return (amount, burn, 0, 0) };
+    // `insert(generationRate, SIMULATE) == 0`: it has to have room for a whole tick's worth.
+    if amount == 0 || rate == 0 || room < rate {
+        return (amount, burn, 0, 0);
     }
-    let fullness = amount as f64 / capacity as f64;
-    let burn = ((max_burn as f64 * fullness).ceil() as u64).min(amount);
-    let max_energy = density * burn;
-    if max_energy == 0 {
-        return (0, 0);
-    }
-    let inserted = max_energy.min(room);
-    if inserted == 0 {
-        return (0, 0);
-    }
-    let used = inserted.div_ceil(density);
-    (used, inserted)
+    let mut to_use = (256.0 * (amount as f64 / capacity as f64)).ceil() as u64;
+    to_use = to_use.min(max_burn * amount + burn);
+    to_use = to_use.min((room as f64 / rate as f64) as u64);
+    let total = burn + amount * max_burn - to_use;
+    (total / max_burn, total % max_burn, rate * to_use, to_use)
 }
 
 /// The sky: the share of the sun's light the day and the weather leave (`getSunBrightness`, as vanilla works its sky out) and
@@ -183,12 +180,12 @@ pub fn peak(temperature: f32, downfall: f32, precipitation: bool) -> f32 {
 /// What a solar generator makes of its sun (`getProduction`): its generation by the sky's brightness and the biome's share,
 /// cut to a whole number.
 pub fn solar_production(brightness: f32, peak: f32) -> u64 {
-    (SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64
+    fe((SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64)
 }
 
 /// The advanced solar generator's.
 pub fn adv_solar_production(brightness: f32, peak: f32) -> u64 {
-    (ADV_SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64
+    fe((ADV_SOLAR_GENERATION * f64::from(brightness * peak)).max(0.0) as u64)
 }
 
 /// What a wind generator makes with its top at height `top_y` under the open sky (`getMultiplier` and `getCurrentGeneration`): the
@@ -197,7 +194,7 @@ pub fn wind_production(top_y: i32) -> u64 {
     let y = top_y.clamp(WIND_MIN_Y, WIND_MAX_Y);
     let slope = (WIND_MAX - WIND_MIN) / f64::from(WIND_MAX_Y - WIND_MIN_Y);
     let generation = WIND_MIN + slope * f64::from(y - WIND_MIN_Y);
-    (WIND_MIN * (generation / WIND_MIN)) as u64
+    fe((WIND_MIN * (generation / WIND_MIN)) as u64)
 }
 
 /// The faces of a generator each item slot is reached from (`forSide` of its tile): the fuel slot (0) by every side but the
@@ -368,12 +365,16 @@ impl Mekanism {
                 extra = (heat / HEAT_CAPACITY).round() as i32;
             }
             GenKind::Gas => {
-                let (used, made) = if can { gas_tick(&tank.chemical, tank.amount, GAS_TANK, room(energy)) } else { (0, 0) };
+                let burn = self.burns.get(&key).copied().unwrap_or(0);
+                let (left, burn_left, made, used) = if can { gas_tick(&tank.chemical, tank.amount, GAS_TANK, room(energy), burn) } else { (tank.amount, burn, 0, 0) };
                 if used > 0 {
-                    tank.amount -= used;
+                    tank.amount = left;
                     energy += made;
                     active = true;
                     producing = made;
+                    self.burns.insert(key.clone(), burn_left);
+                } else if tank.amount == 0 && burn == 0 {
+                    self.burns.remove(&key);
                 }
                 extra = used as i32;
             }
@@ -469,16 +470,17 @@ mod tests {
 
     #[test]
     fn the_wind_blows_harder_higher_up() {
-        assert_eq!(wind_production(0), 1);
-        assert_eq!(wind_production(24), 1);
-        assert_eq!(wind_production(319), 5);
+        // 60 J at the bottom (24 FE), 480 J at the top (192 FE).
+        assert_eq!(wind_production(0), 24);
+        assert_eq!(wind_production(24), 24);
+        assert_eq!(wind_production(319), 192);
         assert!(wind_production(200) > wind_production(100));
-        assert_eq!(adv_solar_production(1.0, 1.0), 12);
+        assert_eq!(adv_solar_production(1.0, 1.0), 120);
     }
 
     #[test]
     fn heat_settles_where_the_loss_equals_the_burn() {
-        // 100 heat a tick from the lava: it settles near 500 K and the energy near 40 a tick.
+        // 200 heat a tick from the lava: it settles where the loss equals the burn.
         let mut heat = AMBIENT * HEAT_CAPACITY;
         let mut last = HeatOut { heat, energy: 0, environment: 0.0 };
         for _ in 0..2000 {
@@ -486,15 +488,15 @@ mod tests {
             heat = last.heat;
         }
         let temp = heat / HEAT_CAPACITY;
-        assert!((480.0..=495.0).contains(&temp), "settled at {temp}");
-        assert!((35..=42).contains(&last.energy), "makes {}", last.energy);
+        assert!((670.0..=680.0).contains(&temp), "settled at {temp}");
+        assert!((43..=45).contains(&last.energy), "makes {}", last.energy);
         // Without fuel it cools back to the air's temperature.
         for _ in 0..20_000 {
             heat = heat_tick(heat, 0.0, false, AMBIENT).heat;
         }
         assert!((heat / HEAT_CAPACITY - AMBIENT).abs() < 1.0);
         // The lava beside it and the nether add heat even with no fuel.
-        let warm = (0..2000).fold(AMBIENT * HEAT_CAPACITY, |h, _| heat_tick(h, 7.0 * 3.0 + 10.0, false, AMBIENT).heat);
+        let warm = (0..2000).fold(AMBIENT * HEAT_CAPACITY, |h, _| heat_tick(h, 30.0 * 3.0 + 100.0, false, AMBIENT).heat);
         assert!(warm / HEAT_CAPACITY > AMBIENT + 20.0);
         for (biome, kelvin) in [(0.8, 300.0), (2.0, 330.0), (-0.5, 267.5), (50.0, 405.0), (-9.0, 155.0)] {
             assert!((ambient_of(biome) - kelvin).abs() < 1e-3, "{biome}");
@@ -507,22 +509,25 @@ mod tests {
         assert_eq!(lava_of("minecraft:coal_block"), Some(800));
         assert_eq!(lava_of("minecraft:oak_planks"), Some(15));
         assert_eq!(lava_of("minecraft:dirt"), None);
-        assert_eq!(bioethanol_of("mekanism:bio_fuel"), Some(64));
-        assert_eq!(bioethanol_of("mekanism:block_bio_fuel"), Some(576));
+        assert_eq!(bioethanol_of("mekanism:bio_fuel"), Some(200));
+        assert_eq!(bioethanol_of("mekanism:block_bio_fuel"), Some(1_800));
         assert_eq!(bioethanol_of("minecraft:coal"), None);
     }
 
     #[test]
     fn a_gas_burns_faster_the_fuller_the_tank() {
-        // Hydrogen: 2 an mB, up to 10 mB a tick, by how full the tank is.
-        assert_eq!(gas_tick("mekanism:hydrogen", 1_000, 1_000, 2_000), (10, 20));
-        assert_eq!(gas_tick("mekanism:hydrogen", 500, 1_000, 2_000), (5, 10));
-        assert_eq!(gas_tick("mekanism:hydrogen", 3, 1_000, 2_000), (1, 2));
-        assert_eq!(gas_tick("mekanism:ethene", 1_000, 1_000, 2_000), (10, 80));
-        // Only what the container has room for, in whole mB.
-        assert_eq!(gas_tick("mekanism:ethene", 1_000, 1_000, 20), (3, 20));
-        assert_eq!(gas_tick("mekanism:oxygen", 1_000, 1_000, 2_000), (0, 0));
-        assert_eq!(gas_tick("mekanism:hydrogen", 1_000, 1_000, 0), (0, 0));
+        // Hydrogen: 80 FE (200 J) a mB, one tick of burn each, up to 256 a tick at a full tank (18000).
+        assert_eq!(gas_tick("mekanism:hydrogen", 18_000, 18_000, 1_000_000, 0), (17_744, 0, 256 * 80, 256));
+        assert_eq!(gas_tick("mekanism:hydrogen", 9_000, 18_000, 1_000_000, 0), (8_872, 0, 128 * 80, 128));
+        assert_eq!(gas_tick("mekanism:hydrogen", 3, 18_000, 1_000_000, 0), (2, 0, 80, 1));
+        // Ethene: 40 ticks a mB at 282 FE (705 J) a tick; the unburnt ticks of the mB are kept.
+        assert_eq!(gas_tick("mekanism:ethene", 18_000, 18_000, 1_000_000, 0), (17_993, 24, 256 * 282, 256));
+        assert_eq!(gas_tick("mekanism:ethene", 17_993, 18_000, 1_000_000, 24), (17_987, 8, 256 * 282, 256));
+        // Only what the container has room for, in whole ticks of burn.
+        assert_eq!(gas_tick("mekanism:ethene", 18_000, 18_000, 1_000, 0), (17_999, 37, 3 * 282, 3));
+        // No room for even a tick, none burnt; and what is no fuel.
+        assert_eq!(gas_tick("mekanism:hydrogen", 18_000, 18_000, 79, 0), (18_000, 0, 0, 0));
+        assert_eq!(gas_tick("mekanism:oxygen", 18_000, 18_000, 1_000_000, 0), (18_000, 0, 0, 0));
     }
 
     #[test]
@@ -533,12 +538,12 @@ mod tests {
         assert!(night < 0.01 && dark_night >= 4);
         let (rainy, _) = sky(6_000, 1.0, 0.0);
         assert!((rainy - 11.0 / 16.0).abs() < 1e-6);
-        // Plains (0.8, 0.4, rain): 0.88 of the sun, so 1 a tick of the base 2; a cold dry biome makes more.
+        // Plains (0.8, 0.4, rain): 0.88 of the sun, so 44 J (17 FE) a tick of the base 50 J; a cold dry biome makes more.
         let plains = peak(0.8, 0.4, true);
         assert!((plains - 0.88).abs() < 1e-6);
-        assert_eq!(solar_production(1.0, plains), 1);
-        assert_eq!(solar_production(1.0, peak(2.0, 0.0, false)), 1);
-        assert_eq!(solar_production(1.0, peak(-0.5, 0.0, false)), 2);
+        assert_eq!(solar_production(1.0, plains), 17);
+        assert_eq!(solar_production(1.0, peak(2.0, 0.0, false)), 12);
+        assert_eq!(solar_production(1.0, peak(-0.5, 0.0, false)), 27);
         assert_eq!(solar_production(0.0, plains), 0);
     }
 

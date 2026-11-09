@@ -247,7 +247,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = upgrades::max_energy(def.usage * STORED_TICKS * if def.layout == Layout::Separator { 25 } else { 1 }, counts[upgrades::ENERGY]);
+        let capacity = upgrades::max_energy(base_capacity(def), counts[upgrades::ENERGY]);
         let mut data = menu_data(u32::from(active), next.energy, capacity, status, &cfg);
         for t in &tanks {
             data.extend(chem::screen(t));
@@ -338,7 +338,7 @@ impl Mekanism {
             self.filtered.insert(key.clone());
         }
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
-        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
+        let capacity = upgrades::max_energy(base_capacity(def), counts[upgrades::ENERGY]);
         let mut data = menu_data(u32::from(active), next.energy, capacity, status, &cfg);
         for t in &tanks {
             data.extend(chem::screen(t));

@@ -5,7 +5,7 @@ use super::*;
 use crate::tank::EditMode;
 
 /// `MekanismConfig.usage.electricPump`.
-pub const USAGE: u64 = 2;
+pub const USAGE: u64 = crate::fe(100);
 /// `BASE_TICKS_REQUIRED`.
 pub const BASE_TICKS: u32 = 19;
 /// `MAX_FLUID`: ten buckets.
@@ -225,7 +225,7 @@ impl Mekanism {
         let counts = upgrades::counts_of(def, e);
         let usage = upgrades::energy_per_tick(def.usage, counts[upgrades::SPEED], counts[upgrades::ENERGY]);
         let ticks = upgrades::ticks(if def.form == 1 { 20 } else { BASE_TICKS }, counts[upgrades::SPEED]);
-        let capacity = upgrades::max_energy(def.usage * STORED_TICKS, counts[upgrades::ENERGY]);
+        let capacity = upgrades::max_energy(base_capacity(def), counts[upgrades::ENERGY]);
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
         let mut items: Vec<Option<Stack>> = (0..e.items.len()).map(slot).collect();
         let mut tank = plus::held(e, 0);
