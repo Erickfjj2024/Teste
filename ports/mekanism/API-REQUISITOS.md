@@ -58,7 +58,6 @@
 | FORK-26 | Químicos (gás, infusão, pigmento, lodo) como registro de primeira classe, com tint / chemicals as a first-class registry | `MekanismChemicals` |
 | FORK-27 | Equipamentos e armaduras com módulos (MekaSuit, Meka-Tool) e inventário de módulos / equipment with modules | `gear/*` |
 | FORK-28 | Integrações (JEI/EMI/CC, `integration/*` – 190 classes) como pontos de extensão / integrations as extension points | `common/integration/*` |
-
 | FORK-29 | Uso de bloco **condicional pelo mod**: o mod decide por clique consumir ou passar (GUI só se formado e sem agachar; senão colocar o bloco da mão) / mod-decided conditional block use | `TileEntityMultiblock.onActivate:218-229` (ver `SINTOMAS_MULTIBLOCOS.md` S1) |
 | FORK-30 | `world.spawn-particles` para mods (tipo, posição, velocidade, quantidade, jogadores a até N blocos), p.ex. as faíscas de formação / mod particles | `TileEntityMultiblock.doMultiblockSparkle:297-312`, `SparkleAnimation` (S2) |
 | FORK-31 | Renderização de fluido/químico dentro de um volume ligada a uma estrutura (caixa, textura, cor, fração de altura) / fluid fill rendering in a volume | `MultiblockTileEntityRenderer` e `Render*` dos multiblocos (S4; detalha o FORK-19) |

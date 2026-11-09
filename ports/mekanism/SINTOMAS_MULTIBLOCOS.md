@@ -36,3 +36,10 @@
 **FORK-19 (detalhado):** `render.multiblock-fluid(structure-id, min, max, fluid, fraction)` + remoção ao desmontar.
 
 **EN.** Mekanism draws the fluid inside the structure with a tile-entity renderer filling the inside to a height proportional to the content, with the fluid's texture and colour. Fix: a fork primitive to draw fluid/chemical in a volume tied to the structure, used by every multiblock that Java renders. **FORK-19 (detailed):** `render.multiblock-fluid(...)`.
+
+## S5. A Thermal Evaporation Plant não produzia salmoura / The Thermal Evaporation Plant produced no brine
+
+**PT.** Causa: o `.hmod` testado **não continha nenhuma receita `mekanism:evaporating`**. O conversor (`tools/convert.py`, `MACHINE_TYPES`) não incluía os tipos `evaporating`, `activating` e `centrifuging`, então `evaporation::load_book()` (`recipe_types::recipes_of_type("mekanism:evaporating")`) devolvia um livro vazio: a água entrava no tanque de entrada e nada era produzido. O mesmo valia para o **Solar Neutron Activator** (`activating`) e a **Isotopic Centrifuge** (`centrifuging`). O inventário mecânico já mostrava `evaporating/brine.json` e `evaporating/lithium.json` como FALTA.
+**Java:** `data/mekanism/recipe/evaporating/brine.json` (`input` 10 mB de `minecraft:water` → `output` 1 mB de `mekanism:brine`) e `lithium.json`.
+**Correção (feita, ainda sem build):** os três tipos entraram em `MACHINE_TYPES` (commit `831bff0`, patch da r5). Conferência mecânica: todo tipo de receita de máquina que o Rust lê agora é convertido (`bin_*`, `clear_configuration`, `energy_conversion` e `mek_data` são tratados à parte).
+**EN.** Cause: the tested `.hmod` held no `mekanism:evaporating` recipe: the converter's `MACHINE_TYPES` lacked `evaporating`, `activating` and `centrifuging`, so the plant's recipe book was empty (same for the Solar Neutron Activator and the Isotopic Centrifuge). Fixed by adding the three types; every machine recipe type the Rust reads is now converted. Not built yet.
