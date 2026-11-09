@@ -61,6 +61,7 @@
 | FORK-29 | Uso de bloco **condicional pelo mod**: o mod decide por clique consumir ou passar (GUI só se formado e sem agachar; senão colocar o bloco da mão) / mod-decided conditional block use | `TileEntityMultiblock.onActivate:218-229` (ver `SINTOMAS_MULTIBLOCOS.md` S1) |
 | FORK-30 | `world.spawn-particles` para mods (tipo, posição, velocidade, quantidade, jogadores a até N blocos), p.ex. as faíscas de formação / mod particles | `TileEntityMultiblock.doMultiblockSparkle:297-312`, `SparkleAnimation` (S2) |
 | FORK-31 | Renderização de fluido/químico dentro de um volume ligada a uma estrutura (caixa, textura, cor, fração de altura) / fluid fill rendering in a volume | `MultiblockTileEntityRenderer` e `Render*` dos multiblocos (S4; detalha o FORK-19) |
+| FORK-32 | Consulta do tempo de queima de qualquer item (registro de combustíveis do jogo, data packs e outros mods) / burn time of any item from the game's fuel registry | `FuelInventorySlot.burn` (`getBurnTime(null)`), usado pelo Fuelwood Heater, geradores e fornalhas; hoje o port usa uma tabela vanilla aproximada |
 
 ## F. Como este arquivo vira a API pública / How this file becomes the public API
 

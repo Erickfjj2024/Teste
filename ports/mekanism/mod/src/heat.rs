@@ -298,12 +298,12 @@ impl HeatCapacitor {
     /// Commits queued heat if exceeding EPSILON.
     /// Java: `BasicHeatCapacitor.java:104-113`.
     pub fn update(&mut self) -> bool {
-        if self.heat_to_handle.abs() > EPSILON {
-            self.stored_heat = (self.stored_heat + self.heat_to_handle).max(0.0);
+        // Java keeps a queued amount at or under EPSILON (it keeps adding up until it passes it) and does not clamp the stored heat.
+        if self.heat_to_handle != 0.0 && self.heat_to_handle.abs() > EPSILON {
+            self.stored_heat += self.heat_to_handle;
             self.heat_to_handle = 0.0;
             true
         } else {
-            self.heat_to_handle = 0.0;
             false
         }
     }
@@ -472,170 +472,88 @@ impl HeatNetwork {
 
         let mut new_heat_lost = 0.0;
         let mut new_heat_transferred = 0.0;
-
-        // Collect conductor positions to iterate safely
         let positions: Vec<[i32; 3]> = conductors.keys().copied().collect();
 
-        // --------------------------------------------------------------------
-        // Step 1: Environmental Loss (ITileHeatHandler.java:47-62)
-        // --------------------------------------------------------------------
-        let mut env_losses: Vec<([i32; 3], f64)> = Vec::with_capacity(positions.len());
+        // Every conductor simulates on the temperatures it had when the tick began: `handleHeat` only queues the heat, `update()` commits it
+        // after all of them ran (`HeatNetwork.onUpdate`), so the order between conductors does not matter.
+        // Each conductor: `simulate()` = `simulateAdjacent()` then `simulateEnvironment()` (`ITileHeatHandler.java:simulate`).
+        let mut to_conductors: Vec<([i32; 3], f64)> = Vec::new();
+        let mut to_sinks: Vec<([i32; 3], f64)> = Vec::new();
         for &pos in &positions {
-            let (temp, cap, inv_air) = {
-                let cond = conductors.get(&pos).unwrap();
-                (
-                    cond.capacitor.temperature(),
-                    cond.capacitor.heat_capacity,
-                    AIR_INVERSE_COEFFICIENT + cond.tier.inverse_insulation() + cond.tier.inverse_conduction(),
-                )
-            };
-
-            let mut total_loss = 0.0;
-            for face in 0..6 {
-                let neighbor_pos = [
-                    pos[0] + direction_offset(face)[0],
-                    pos[1] + direction_offset(face)[1],
-                    pos[2] + direction_offset(face)[2],
-                ];
-
-                // If face touches another conductor in the network, air dissipation does not occur on this face
-                if conductors.contains_key(&neighbor_pos) {
-                    continue;
-                }
-
-                // If face touches an external sink, air dissipation does not occur on this face
-                if external_sinks.contains_key(&neighbor_pos) {
-                    continue;
-                }
-
-                let delta_t = (temp - ambient) / inv_air;
-                let heat_loss = delta_t * cap;
-                total_loss += heat_loss;
-
-                if delta_t > 0.0 {
-                    new_heat_lost += delta_t;
-                }
-            }
-            if total_loss.abs() > 0.0 {
-                env_losses.push((pos, total_loss));
-            }
-        }
-
-        for (pos, loss) in env_losses {
-            if let Some(c) = conductors.get_mut(&pos) {
-                c.capacitor.handle_heat(-loss);
-            }
-        }
-
-        // --------------------------------------------------------------------
-        // Step 2: Conductor-to-Conductor Heat Transfer (Internal Network Exchange)
-        // --------------------------------------------------------------------
-        // Conductors in the network exchange heat along connected faces.
-        // To avoid duplicate processing, only process when pos < neighbor_pos.
-        let mut internal_exchanges: Vec<([i32; 3], [i32; 3], f64)> = Vec::new();
-        for &pos in &positions {
-            let (temp1, cap1, inv1, connections) = {
+            let (temp, cap, coeff, insulation, connections) = {
                 let cond = conductors.get(&pos).unwrap();
                 (
                     cond.capacitor.temperature(),
                     cond.capacitor.heat_capacity,
                     cond.tier.inverse_conduction(),
+                    cond.tier.inverse_insulation(),
                     cond.connections,
                 )
             };
+            let mut self_loss = 0.0;
 
+            // simulateAdjacent: the neighbour on a connected face is the sink. The heat moved is
+            // (own temperature - AMBIENT) / (sink inverse conduction + own coefficient) * own heat capacity: the original uses the
+            // ambient temperature here, not the sink's (`ITileHeatHandler.java:simulateAdjacent`).
             for face in 0..6 {
                 if !connections[face].connects() {
                     continue;
                 }
-
                 let neighbor_pos = [
                     pos[0] + direction_offset(face)[0],
                     pos[1] + direction_offset(face)[1],
                     pos[2] + direction_offset(face)[2],
                 ];
-
-                if pos < neighbor_pos {
-                    if let Some(neighbor) = conductors.get(&neighbor_pos) {
-                        let opp = opposite_face(face);
-                        if neighbor.connections[opp].connects() {
-                            let temp2 = neighbor.capacitor.temperature();
-                            let cap2 = neighbor.capacitor.heat_capacity;
-                            let inv2 = neighbor.tier.inverse_conduction();
-
-                            // Combined inverse conduction
-                            let total_inv = inv1 + inv2;
-                            // Temperature difference between the two conductors
-                            let delta_t = (temp1 - temp2) / total_inv;
-                            let heat_exchange = delta_t * cap1.min(cap2);
-                            internal_exchanges.push((pos, neighbor_pos, heat_exchange));
-                        }
+                let (sink_inv, sink_is_conductor) = if let Some(n) = conductors.get(&neighbor_pos) {
+                    if !n.connections[opposite_face(face)].connects() {
+                        continue;
                     }
-                }
-            }
-        }
-
-        for (p1, p2, exchange) in internal_exchanges {
-            if let Some(c1) = conductors.get_mut(&p1) {
-                c1.capacitor.handle_heat(-exchange);
-            }
-            if let Some(c2) = conductors.get_mut(&p2) {
-                c2.capacitor.handle_heat(exchange);
-            }
-        }
-
-        // --------------------------------------------------------------------
-        // Step 3: Adjacent Transfer to External Sinks (ITileHeatHandler.java:64-100)
-        // --------------------------------------------------------------------
-        let mut external_transfers: Vec<([i32; 3], [i32; 3], f64, f64)> = Vec::new();
-        for &pos in &positions {
-            let (temp, cap, inv_cond, connections) = {
-                let cond = conductors.get(&pos).unwrap();
-                (
-                    cond.capacitor.temperature(),
-                    cond.capacitor.heat_capacity,
-                    cond.tier.inverse_conduction(),
-                    cond.connections,
-                )
-            };
-
-            for face in 0..6 {
-                if !connections[face].connects() {
+                    (n.tier.inverse_conduction(), true)
+                } else if let Some(sink) = external_sinks.get(&neighbor_pos) {
+                    (sink.inverse_conduction, false)
+                } else {
                     continue;
+                };
+                let temp_to_transfer = (temp - ambient) / (sink_inv + coeff);
+                let heat = temp_to_transfer * cap;
+                self_loss += heat;
+                if sink_is_conductor {
+                    to_conductors.push((neighbor_pos, heat));
+                } else {
+                    to_sinks.push((neighbor_pos, heat));
                 }
-
-                let sink_pos = [
-                    pos[0] + direction_offset(face)[0],
-                    pos[1] + direction_offset(face)[1],
-                    pos[2] + direction_offset(face)[2],
-                ];
-
-                if let Some(sink) = external_sinks.get(&sink_pos) {
-                    let total_inv = sink.inverse_conduction + inv_cond;
-                    // Java ITileHeatHandler.java:71:
-                    // double tempToTransfer = (getTotalTemperature(side) - getAmbientTemperature(side)) / invConduction;
-                    let delta_t = (temp - ambient) / total_inv;
-                    let heat_to_transfer = delta_t * cap;
-                    external_transfers.push((pos, sink_pos, heat_to_transfer, delta_t));
+                // `ThermodynamicConductor.incrementAdjacentTransfer`: heat going to another conductor of the network, while the temperature
+                // difference is positive, does not count as adjacent transfer; everything else adds its (possibly negative) amount.
+                if !(temp_to_transfer > 0.0 && sink_is_conductor) {
+                    new_heat_transferred += temp_to_transfer;
                 }
             }
-        }
 
-        for (pos, sink_pos, heat_to_transfer, delta_t) in external_transfers {
+            // simulateEnvironment: all six faces, always (a face that touches a neighbour still loses to the air).
+            let inv_air = AIR_INVERSE_COEFFICIENT + insulation + coeff;
+            for _ in 0..6 {
+                let temp_to_transfer = (temp - ambient) / inv_air;
+                self_loss += temp_to_transfer * cap;
+                if temp_to_transfer > 0.0 {
+                    new_heat_lost += temp_to_transfer;
+                }
+            }
             if let Some(c) = conductors.get_mut(&pos) {
-                c.capacitor.handle_heat(-heat_to_transfer);
+                c.capacitor.handle_heat(-self_loss);
             }
-            if let Some(sink) = external_sinks.get_mut(&sink_pos) {
-                sink.handle_heat(heat_to_transfer);
+        }
+        for (pos, heat) in to_conductors {
+            if let Some(c) = conductors.get_mut(&pos) {
+                c.capacitor.handle_heat(heat);
             }
-            if delta_t > 0.0 {
-                new_heat_transferred += delta_t;
+        }
+        for (pos, heat) in to_sinks {
+            if let Some(sink) = external_sinks.get_mut(&pos) {
+                sink.handle_heat(heat);
             }
         }
 
-        // --------------------------------------------------------------------
-        // Step 4: Update Capacitors & Calculate Mean Metrics (HeatNetwork.java:59-66)
-        // --------------------------------------------------------------------
+        // After every conductor simulated, the queued heat is committed and the mean temperature taken (`HeatNetwork.onUpdate`).
         let mut new_sum_temp = 0.0;
         for cond in conductors.values_mut() {
             cond.capacitor.update();
@@ -646,14 +564,9 @@ impl HeatNetwork {
         self.heat_transferred = new_heat_transferred;
         self.mean_temp = new_sum_temp / (conductors.len() as f64);
 
-        // Efficiency calculation: Math.round(heatTransferred / (heatTransferred + heatLost) * 10_000) / 100F
-        // Java: HeatNetwork.java:44
+        // `Math.round(heatTransferred / (heatTransferred + heatLost) * 10_000) / 100F`
         let denom = self.heat_transferred + self.heat_lost;
-        self.efficiency = if denom > 0.0 {
-            (self.heat_transferred / denom) * 100.0
-        } else {
-            0.0
-        };
+        self.efficiency = if denom != 0.0 { ((self.heat_transferred / denom) * 10_000.0).round() / 100.0 } else { 0.0 };
     }
 
     /// Formatted status string for Configurator display.
@@ -889,8 +802,58 @@ mod tests {
         assert!(net.heat_transferred > 0.0);
         assert!(net.heat_lost > 0.0);
         assert!(net.efficiency > 0.0 && net.efficiency < 100.0);
-        // Sink should have received heat
-        assert!(sinks.get(&[1, 0, 0]).unwrap().stored_heat > 30_000.0);
+        // The sink is lazy (it commits on its own tick, `BasicHeatCapacitor.update`): the heat waits in `heat_to_handle`.
+        // `ITileHeatHandler.simulateAdjacent`: (temperature - ambient) / (sink inverse conduction + own coefficient) * heat capacity
+        // = (500 - 300) / (5 + 5) * 1 = 20 (`ConductorTier.BASIC`: inverse conduction 5, heat capacity 1).
+        let sink = sinks.get(&[1, 0, 0]).unwrap();
+        assert_eq!(sink.stored_heat, 30_000.0);
+        assert!((sink.heat_to_handle - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn java_two_conductors_use_ambient_not_the_neighbours_temperature() {
+        // `ITileHeatHandler.simulateAdjacent`: a conductor sends (own temperature - AMBIENT) / (sink inverse conduction + own coefficient) * heat capacity
+        // to each connected neighbour; the neighbour's temperature is not used. `simulateEnvironment`: all six faces lose
+        // (temperature - ambient) / (AIR 10 000 + insulation + coefficient) * heat capacity, even faces that touch a neighbour.
+        // Basic conductor (`ConductorTier.BASIC`): coefficient 5, insulation 10, heat capacity 1.
+        let mut hot = ThermodynamicConductor::new(ConductorTier::Basic, 300.0);
+        hot.capacitor.set_heat(500.0);
+        hot.connections[EAST] = Connection::Normal;
+        let mut cold = ThermodynamicConductor::new(ConductorTier::Basic, 300.0);
+        cold.connections[WEST] = Connection::Normal;
+        for f in [DOWN, UP, NORTH, SOUTH, WEST] {
+            hot.connections[f] = Connection::None;
+        }
+        for f in [DOWN, UP, NORTH, SOUTH, EAST] {
+            cold.connections[f] = Connection::None;
+        }
+        let mut conductors = HashMap::new();
+        conductors.insert([0, 0, 0], hot);
+        conductors.insert([1, 0, 0], cold);
+        let mut sinks = HashMap::new();
+        let mut net = HeatNetwork::new();
+        net.tick(&mut conductors, 300.0, &mut sinks);
+
+        let air = (500.0 - 300.0) / (10_000.0 + 10.0 + 5.0);
+        let to_neighbour = (500.0 - 300.0) / (5.0 + 5.0) * 1.0;
+        let hot_after = conductors[&[0, 0, 0]].capacitor.temperature();
+        let cold_after = conductors[&[1, 0, 0]].capacitor.temperature();
+        assert!((hot_after - (500.0 - to_neighbour - 6.0 * air)).abs() < 1e-9);
+        assert!((cold_after - (300.0 + to_neighbour)).abs() < 1e-9);
+        // Conductor-to-conductor heat with a positive difference is not "adjacent transfer"; the cold one adds (300 - 300) / 10 = 0.
+        assert!(net.heat_transferred.abs() < 1e-12);
+        assert!((net.heat_lost - 6.0 * air).abs() < 1e-9);
+    }
+
+    #[test]
+    fn java_capacitor_keeps_small_heat_until_it_passes_epsilon() {
+        // `BasicHeatCapacitor.update`: a queued amount of at most EPSILON (1e-5) is kept, not dropped, and adds up with later ones.
+        let mut cap = HeatCapacitor::new(1.0, 5.0, 10.0, 300.0);
+        cap.handle_heat(6e-6);
+        assert!(!cap.update());
+        cap.handle_heat(6e-6);
+        assert!(cap.update());
+        assert!((cap.stored_heat - (300.0 + 1.2e-5)).abs() < 1e-12);
     }
 
     #[test]

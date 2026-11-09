@@ -240,9 +240,8 @@ impl ResistiveHeater {
             self.capacitor.handle_heat(-q);
             sink.handle_heat(q);
 
-            if delta_t > 0.0 {
-                adj_loss += delta_t;
-            }
+            // `ITileHeatHandler.incrementAdjacentTransfer` adds the amount whatever its sign.
+            adj_loss += delta_t;
         }
         self.last_transfer_loss = adj_loss;
 

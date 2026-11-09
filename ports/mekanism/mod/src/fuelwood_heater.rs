@@ -46,24 +46,33 @@ pub const ACTIVE_LIGHT_LEVEL: u8 = 8;
 /// Returns standard burn duration in ticks for furnace fuels.
 /// Java: `Vanilla ItemStack.getBurnTime(null)`.
 pub fn fuel_burn_duration(item: &str) -> Option<u32> {
+    // The original asks the game's fuel registry (`FuelInventorySlot` -> `ItemStack.getBurnTime`); the port cannot, so this is the vanilla 1.21.1 table
+    // for the common fuels (FORK-32: `item-types.burn-time(item)` makes it exact, with data-pack and other-mod fuels).
     let name = item.strip_prefix("minecraft:").unwrap_or(item);
-    let name = name.strip_prefix("mekanism:").unwrap_or(name);
-
+    // Only the Overworld woods burn: crimson and warped (Nether) planks, stems and slabs do not.
+    const WOODS: [&str; 8] = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry"];
+    let wood = |s: &str| {
+        let s = s.strip_prefix("stripped_").unwrap_or(s);
+        WOODS.iter().chain(["bamboo"].iter()).any(|w| s.strip_prefix(w).is_some_and(|rest| rest.starts_with('_')))
+    };
     match name {
-        "coal" | "charcoal" => Some(1_600),
-        "coal_block" => Some(16_000),
         "lava_bucket" => Some(20_000),
-        "blaze_rod" => Some(2_400),
-        "blaze_powder" => Some(1_200),
-        "stick" | "sapling" => Some(100),
-        "wooden_slab" => Some(150),
-        s if s.ends_with("_planks") || s.ends_with("_log") || s.ends_with("_wood") => Some(300),
-        s if s.ends_with("_stairs") || s.ends_with("_slab") => Some(150),
-        s if s.ends_with("_fence") || s.ends_with("_gate") => Some(300),
-        s if s.ends_with("_door") || s.ends_with("_trapdoor") => Some(300),
-        "scaffolding" | "bamboo" => Some(50),
+        "coal_block" => Some(16_000),
         "dried_kelp_block" => Some(4_000),
-        "bio_fuel" => Some(100), // Mekanism bio-fuel
+        "blaze_rod" => Some(2_400),
+        "coal" | "charcoal" => Some(1_600),
+        "stick" | "bowl" | "wooden_button" => Some(100),
+        // Mekanism's own fuels (`MekanismDataMapsProvider`: `FURNACE_FUELS`; bio fuel is 5 seconds, its block ten times that).
+        "mekanism:charcoal_block" => Some(16_000),
+        "mekanism:bio_fuel" => Some(100),
+        "mekanism:bio_fuel_block" => Some(1_000),
+        "scaffolding" | "bamboo" => Some(50),
+        s if s.ends_with("_sapling") => Some(100),
+        s if wood(s) && (s.ends_with("_planks") || s.ends_with("_log") || s.ends_with("_wood") || s.ends_with("_block") || s.ends_with("_mosaic")) => Some(300),
+        s if wood(s) && (s.ends_with("_stairs") || s.ends_with("_fence") || s.ends_with("_fence_gate") || s.ends_with("_trapdoor") || s.ends_with("_pressure_plate")) => Some(300),
+        s if wood(s) && s.ends_with("_slab") => Some(150),
+        s if wood(s) && s.ends_with("_door") => Some(200),
+        s if wood(s) && (s.ends_with("_boat") || s.ends_with("_chest_boat")) => Some(1_200),
         _ => None,
     }
 }
@@ -159,9 +168,13 @@ impl FuelwoodHeater {
         if self.burn_time == 0 {
             if let Some(ref item) = self.fuel_slot_item {
                 if let Some(duration) = fuel_burn_duration(item) {
-                    if self.fuel_slot_count > 0 {
-                        self.burn_time = duration;
-                        self.max_burn_time = duration;
+                    // `FuelInventorySlot.burn`: the heater burns half of the fuel's burn time (`getBurnTime(null) / 2`); an item that
+                    // gives zero is not consumed, and a container item (a lava bucket) in a stack of more than one does not burn at all.
+                    let burn = duration / 2;
+                    let container_stack = item == "minecraft:lava_bucket" && self.fuel_slot_count > 1;
+                    if burn != 0 && self.fuel_slot_count > 0 && !container_stack {
+                        self.burn_time = burn;
+                        self.max_burn_time = burn;
 
                         // Decrement fuel or handle bucket
                         if item == "minecraft:lava_bucket" {
@@ -214,9 +227,8 @@ impl FuelwoodHeater {
             self.capacitor.handle_heat(-q);
             sink.handle_heat(q);
 
-            if delta_t > 0.0 {
-                adj_loss += delta_t;
-            }
+            // `ITileHeatHandler.incrementAdjacentTransfer` adds the amount whatever its sign.
+            adj_loss += delta_t;
         }
         self.last_transfer_loss = adj_loss;
 
@@ -362,6 +374,19 @@ mod tests {
     }
 
     #[test]
+    fn java_burn_time_is_half_and_mekanism_fuels_are_known() {
+        // `FuelInventorySlot.java:burn`: getBurnTime(null) / 2. Bio fuel: 5 * 20 = 100 ticks (block: 1000), charcoal block 16000
+        // (`MekanismDataMapsProvider.java:52-57`); a stick burns 100, so the heater gets 50.
+        assert_eq!(fuel_burn_duration("mekanism:bio_fuel"), Some(100));
+        assert_eq!(fuel_burn_duration("mekanism:bio_fuel_block"), Some(1_000));
+        assert_eq!(fuel_burn_duration("mekanism:charcoal_block"), Some(16_000));
+        assert_eq!(fuel_burn_duration("minecraft:stick").map(|d| d / 2), Some(50));
+        // Nether woods do not burn.
+        assert_eq!(fuel_burn_duration("minecraft:crimson_planks"), None);
+        assert_eq!(fuel_burn_duration("minecraft:stone_slab"), None);
+    }
+
+    #[test]
     fn test_burning_coal_yields_expected_heat() {
         // 1 coal burns for 1600 ticks, producing 1600 * 400.0 = 640,000 J of heat
         let mut heater = FuelwoodHeater::new(300.0);
@@ -375,8 +400,9 @@ mod tests {
         heater.tick(300.0, &mut sinks);
 
         assert!(heater.active);
-        assert_eq!(heater.max_burn_time, 1_600);
-        assert_eq!(heater.burn_time, 1_599); // 1 tick consumed
+        // `FuelInventorySlot.burn`: coal burns 1600 ticks in a furnace, the heater takes half: 800; one tick consumed.
+        assert_eq!(heater.max_burn_time, 800);
+        assert_eq!(heater.burn_time, 799);
         assert_eq!(heater.fuel_slot_count, 0); // Consumed 1 item
         assert!(heater.capacitor.temperature() > 300.0);
     }
