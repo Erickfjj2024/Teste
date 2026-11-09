@@ -16,7 +16,11 @@ pub fn offsets(block: &str) -> Vec<[i32; 3]> {
 pub fn parts(block: &str) -> Vec<([i32; 3], &'static str)> {
     match block {
         // `ABOVE_ONLY`: the block over it.
-        "mekanism:pigment_mixer" | "mekanism:isotopic_centrifuge" | "mekanism:solar_neutron_activator" => vec![([0, 1, 0], "none")],
+        "mekanism:pigment_mixer"
+        | "mekanism:isotopic_centrifuge"
+        | "mekanism:solar_neutron_activator"
+        | "mekanism:seismic_vibrator"
+        | "mekanism:security_desk" => vec![([0, 1, 0], "none")],
         // The block over it and a plane of nine two over it.
         "mekanism:advanced_solar_generator" => {
             let mut v = vec![([0, 1, 0], "none")];
@@ -134,6 +138,7 @@ mod tests {
         assert_eq!(offsets("mekanism:wind_generator").len(), 4);
         assert_eq!(offsets("mekanism:advanced_solar_generator").len(), 10);
         assert_eq!(offsets("mekanism:pigment_mixer"), vec![[0, 1, 0]]);
+        assert_eq!(offsets("mekanism:seismic_vibrator"), vec![[0, 1, 0]]);
         assert!(offsets("mekanism:crusher").is_empty());
         assert!(is_bounded("mekanism:wind_generator") && !is_bounded("mekanism:crusher"));
     }

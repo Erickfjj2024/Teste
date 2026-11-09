@@ -78,7 +78,7 @@ impl Connection {
 
 /// The colours a logistical transporter cycles through (`EnumColor`, none first).
 pub const COLORS: [&str; 19] = [
-    "None", "Black", "Dark Blue", "Dark Green", "Dark Aqua", "Dark Red", "Purple", "Orange", "Light Gray",
+    "None", "Black", "Blue", "Green", "Cyan", "Dark Red", "Purple", "Orange", "Light Gray",
     "Gray", "Light Blue", "Lime", "Aqua", "Red", "Magenta", "Yellow", "White", "Brown", "Pink",
 ];
 
@@ -189,6 +189,13 @@ mod tests {
         state.color = 11;
         assert_eq!(decode(&encode(&state)), state);
         assert_eq!(decode(&[]), State::default());
+        assert_eq!(COLORS.len(), 19);
+        assert_eq!(COLORS[0], "None");
+        assert_eq!(COLORS[1], "Black");
+        assert_eq!(COLORS[2], "Blue");
+        assert_eq!(COLORS[3], "Green");
+        assert_eq!(COLORS[4], "Cyan");
+        assert_eq!(COLORS[18], "Pink");
         assert!(is_transmitter("mekanism:elite_logistical_transporter"));
         assert!(is_logistical("mekanism:basic_logistical_transporter"));
         assert!(!is_logistical("mekanism:basic_universal_cable"));

@@ -353,5 +353,9 @@ mod tests {
     #[test]
     fn max_nodes_matches_java_config() {
         assert_eq!(MAX_NODES, 4000);
+        assert_eq!(USAGE, 40);
+        assert_eq!(BASE_TICKS, 19);
+        assert_eq!(TANK, 10_000);
+        assert_eq!(RANGE, 80);
     }
 }

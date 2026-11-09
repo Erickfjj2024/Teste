@@ -133,12 +133,16 @@ pub fn salt_replaces(block: &str) -> bool {
     matches!(block, "minecraft:dirt" | "minecraft:clay")
 }
 
-/// What a block becomes when ore grows in it: stone gives the ore, deepslate
-/// its deepslate ore; nothing else is replaced.
+/// What a block becomes when ore grows in it: stone, granite, diorite and andesite
+/// give the ore; deepslate and tuff give its deepslate ore; nothing else is replaced.
 pub fn replace(ore: &str, block: &str) -> Option<String> {
     match block {
-        "minecraft:stone" => Some(format!("mekanism:{ore}_ore")),
-        "minecraft:deepslate" => Some(format!("mekanism:deepslate_{ore}_ore")),
+        "minecraft:stone" | "minecraft:granite" | "minecraft:diorite" | "minecraft:andesite" => {
+            Some(format!("mekanism:{ore}_ore"))
+        }
+        "minecraft:deepslate" | "minecraft:tuff" => {
+            Some(format!("mekanism:deepslate_{ore}_ore"))
+        }
         _ => None,
     }
 }
@@ -178,7 +182,11 @@ mod tests {
     #[test]
     fn ore_replaces_stone_and_deepslate_only() {
         assert_eq!(replace("tin", "minecraft:stone").as_deref(), Some("mekanism:tin_ore"));
+        assert_eq!(replace("tin", "minecraft:granite").as_deref(), Some("mekanism:tin_ore"));
+        assert_eq!(replace("tin", "minecraft:diorite").as_deref(), Some("mekanism:tin_ore"));
+        assert_eq!(replace("tin", "minecraft:andesite").as_deref(), Some("mekanism:tin_ore"));
         assert_eq!(replace("tin", "minecraft:deepslate").as_deref(), Some("mekanism:deepslate_tin_ore"));
+        assert_eq!(replace("tin", "minecraft:tuff").as_deref(), Some("mekanism:deepslate_tin_ore"));
         assert_eq!(replace("tin", "minecraft:dirt"), None);
         assert_eq!(replace("tin", "minecraft:air"), None);
     }

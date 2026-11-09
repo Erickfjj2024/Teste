@@ -215,7 +215,18 @@ pub fn step(spec: &Spec, book: &Book, io: &Io, dice: f64) -> (Io, Status) {
     }
     // What a per-tick recipe uses this tick.
     let uses = if needs_chem && recipe.per_tick {
-        if spec.random_use { inverse_poisson(spec.mean, dice) } else { 1 }
+        if spec.random_use {
+            inverse_poisson(spec.mean, dice)
+        } else if spec.speed == 0 {
+            recipe.amount.max(1) as u32
+        } else {
+            let req_ticks = recipe.duration.map_or(spec.ticks, |d| crate::upgrades::ticks(d, spec.speed)).max(1);
+            let base_ticks = recipe.duration.unwrap_or(200);
+            let total_usage = (base_ticks as u64) * recipe.amount.max(1);
+            let used_before = (total_usage as f64 * (next.progress as f64) / (req_ticks as f64)).round() as u64;
+            let used_after = (total_usage as f64 * ((next.progress + 1) as f64) / (req_ticks as f64)).round() as u64;
+            used_after.saturating_sub(used_before) as u32
+        }
     } else {
         0
     };
@@ -419,5 +430,25 @@ mod tests {
         let full = Io { output: stack("mekanism:alloy_infused", 64), ..b(10) };
         assert_eq!(run(&INFUSER, &full, 1).1, Status::Blocked);
         assert_eq!(step(&INFUSER, &Book::default(), &b(10), 0.5).1, Status::NoBook);
+    }
+
+    #[test]
+    fn constant_chemical_use_scales_with_speed_upgrades() {
+        let mut comp_book = Book::default();
+        comp_book.add(
+            &s("minecraft:glowstone_dust"),
+            &s("mekanism:osmium"),
+            Recipe { item_count: 1, amount: 1, per_tick: true, out: item("mekanism:ingot_refined_glowstone"), duration: None },
+        );
+        let fast_spec = Spec { shape: Shape::ItemChemToItem, usage: 40, ticks: 20, cap_in: 210, cap_out: 0, random_use: false, speed: 8, mean: 10.0 };
+        let io = Io { input: stack("minecraft:glowstone_dust", 1), tank_in: tank("mekanism:osmium", 210), energy: 10_000, ..Io::default() };
+        let mut cur = io;
+        for _ in 0..20 {
+            let (next, status) = step(&fast_spec, &comp_book, &cur, 0.5);
+            assert_eq!(status, Status::Running);
+            cur = next;
+        }
+        assert_eq!(cur.tank_in.amount, 10);
+        assert_eq!(cur.output, stack("mekanism:ingot_refined_glowstone", 1));
     }
 }

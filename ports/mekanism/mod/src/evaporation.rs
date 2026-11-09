@@ -274,7 +274,7 @@ impl Mekanism {
             let solars = if sunny {
                 corners
                     .iter()
-                    .filter(|c| world::get_block(&ctl.dimension, c[0], c[1], c[2]).is_some_and(|b| b.starts_with("mekanism:solar_generator") || b.starts_with("mekanism:advanced_solar_generator")))
+                    .filter(|c| world::get_block(&ctl.dimension, c[0], c[1], c[2]).is_some_and(|b| b.starts_with("mekanism:advanced_solar_generator")))
                     .count() as u32
             } else {
                 0
@@ -332,6 +332,7 @@ impl Mekanism {
                 // The input tank only takes the fluids a recipe uses, and neither takes more when full.
                 let filter_in: Vec<String> = if input.amount >= in_cap { vec![NOTHING.to_owned()] } else { self.evaporating.keys().cloned().collect() };
                 let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 0, &filter_in);
+                let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
                 out.push(BlockEntityUpdate {
                     dimension: m.dimension.clone(),
                     pos: m.pos,
@@ -448,5 +449,12 @@ mod tests {
     fn evaporation_input_capacity() {
         assert_eq!(3 * PER_LEVEL, 768_000);
         assert_eq!(18 * PER_LEVEL, 4_608_000);
+    }
+
+    #[test]
+    fn only_advanced_solar_powers_evaporation() {
+        let is_valid = |b: &str| b.starts_with("mekanism:advanced_solar_generator");
+        assert!(is_valid("mekanism:advanced_solar_generator"));
+        assert!(!is_valid("mekanism:solar_generator"));
     }
 }

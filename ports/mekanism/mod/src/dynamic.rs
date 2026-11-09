@@ -1,6 +1,6 @@
 //! The dynamic tank (`TankMultiblockData`, `TankValidator`): `mekanism:dynamic_tank` blocks that make the shell of a hollow cuboid
 //! (3 to 18 blocks on a side, empty inside), `mekanism:dynamic_valve` blocks on its faces (not on an edge or a corner) that give access to
-//! the one tank the structure holds: sixteen thousand buckets for each block of its inside, of a fluid or of a chemical, not both.
+//! the one tank the structure holds: 350 buckets of fluid or 16,000 of chemical for each block of its volume (the whole box, walls included: `MultiblockData.setShape` uses the bounds), not both.
 //!
 //! The structure is found by the game (`multiblock-changed`); this validates it and writes what each member knows into its bytes
 //! (`[valid, volume (4 bytes), min x, y, z (4 bytes each)]`). The valves hold the tank: all of them keep the same amount (a mirror of the
@@ -11,9 +11,9 @@ use std::collections::{HashMap, HashSet};
 pub const CASING: &str = "mekanism:dynamic_tank";
 pub const VALVE: &str = "mekanism:dynamic_valve";
 pub const GROUP: &str = "mekanism:dynamic_tank";
-/// `fluidPerTank`: 350 buckets (350,000 mB) for each block of the inside.
+/// `fluidPerTank`: 350 buckets (350,000 mB) for each block of the volume (the whole box).
 pub const FLUID_PER_BLOCK: u64 = 350 * 1000;
-/// `chemicalPerTank`: 16,000 buckets (16,000,000 mB) for each block of the inside.
+/// `chemicalPerTank`: 16,000 buckets (16,000,000 mB) for each block of the volume (the whole box).
 pub const CHEMICAL_PER_BLOCK: u64 = 16_000 * 1000;
 /// Backwards-compatible alias for chemical capacity per block.
 pub const PER_BLOCK: u64 = CHEMICAL_PER_BLOCK;
@@ -24,7 +24,7 @@ pub const VALVE_RATE: u64 = 1_000_000;
 /// A substance nothing is made of: a full tank's filter, so nothing more is taken in.
 pub const NOTHING: &str = "mekanism:nothing";
 
-/// A found structure: whether it is a tank, and the box and volume of its inside.
+/// A found structure: whether it is a tank, and the box and volume (the whole box, walls included, as `MultiblockData.setVolume`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Found {
     pub valid: bool,
@@ -62,8 +62,8 @@ pub fn validate(members: &[([i32; 3], bool)], min: [i32; 3], max: [i32; 3], insi
     if members.len() != have.len() || members.iter().any(|(p, _)| (0..3).any(|i| p[i] < min[i] || p[i] > max[i])) {
         return bad;
     }
-    let inside = ((size[0] - 2) * (size[1] - 2) * (size[2] - 2)) as u64;
-    Found { valid: true, volume: inside, min }
+    let volume = (size[0] * size[1] * size[2]) as u64;
+    Found { valid: true, volume, min }
 }
 
 /// What a member keeps of its structure.
@@ -216,8 +216,22 @@ impl Mekanism {
                 }
                 let shown_cap = if chemical.amount > 0 { chem_cap } else if fluid.amount > 0 { fluid_cap } else { chem_cap };
                 let data = dynamic_menu(&v.data, &f_or(&tanks, 0), &tanks[1], shown_cap);
-                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 0, &if fluid.amount >= fluid_cap || chemical.amount > 0 { vec![NOTHING.to_owned()] } else { Vec::new() });
-                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 1, &if chemical.amount >= chem_cap || fluid.amount > 0 { vec![NOTHING.to_owned()] } else { Vec::new() });
+                let filter_0 = if fluid.amount >= fluid_cap || chemical.amount > 0 {
+                    vec![NOTHING.to_owned()]
+                } else if fluid.amount > 0 {
+                    vec![fluid.chemical.clone()]
+                } else {
+                    Vec::new()
+                };
+                let filter_1 = if chemical.amount >= chem_cap || fluid.amount > 0 {
+                    vec![NOTHING.to_owned()]
+                } else if chemical.amount > 0 {
+                    vec![chemical.chemical.clone()]
+                } else {
+                    Vec::new()
+                };
+                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 0, &filter_0);
+                let _ = world::set_tank_filter(&v.dimension, v.pos.x, v.pos.y, v.pos.z, 1, &filter_1);
                 let items = used.then(|| vec![item(&i0), item(&o1)]);
                 if used {
                     shared.fluid = f;
@@ -287,9 +301,9 @@ mod tests {
     #[test]
     fn a_hollow_box_is_a_tank() {
         let f = validate(&shell(3), [0; 3], [2; 3], |_| true);
-        assert_eq!((f.valid, f.volume), (true, 1));
+        assert_eq!((f.valid, f.volume), (true, 27));
         let big = validate(&shell(5), [0; 3], [4; 3], |_| true);
-        assert_eq!((big.valid, big.volume), (true, 27));
+        assert_eq!((big.valid, big.volume), (true, 125));
     }
 
     #[test]
@@ -332,5 +346,20 @@ mod tests {
         let f = Found { valid: true, volume: 10, min: [0; 3] };
         assert_eq!(f.volume * FLUID_PER_BLOCK, 3_500_000);
         assert_eq!(f.volume * CHEMICAL_PER_BLOCK, 160_000_000);
+    }
+
+    #[test]
+    fn tank_filter_locks_substance() {
+        let fluid = process::Tank { chemical: "minecraft:water".into(), amount: 10_000 };
+        let chem = process::Tank::default();
+        let cap = 350_000;
+        let f0 = if fluid.amount >= cap || chem.amount > 0 {
+            vec![NOTHING.to_owned()]
+        } else if fluid.amount > 0 {
+            vec![fluid.chemical.clone()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(f0, vec!["minecraft:water"]);
     }
 }

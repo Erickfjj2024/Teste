@@ -536,7 +536,7 @@ impl Mekanism {
                             vec![FlowSide::Input; 6],
                             vec![FlowSide::None; 6],
                         ]);
-                        update.energy_faces = Some(vec![FlowSide::Input; 6]);
+                        update.energy_faces = Some(vec![FlowSide::None; 6]);
                     }
                     let share = r.energy / n + u64::from(index < r.energy % n);
                     index += 1;

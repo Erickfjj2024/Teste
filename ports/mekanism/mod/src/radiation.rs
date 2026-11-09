@@ -230,4 +230,16 @@ mod tests {
         assert_eq!(format_sv(3.0), "3.00 ");
         assert_eq!(radioactivity("mekanism:polonium"), 0.05);
     }
+
+    #[test]
+    fn radiation_constants_match_java_config() {
+        assert_eq!(BASELINE, 0.000_000_100);
+        assert_eq!(MIN_MAGNITUDE, 0.000_010);
+        assert_eq!(DECAY, 0.9995);
+        assert_eq!(MIN_SEVERITY, 0.1);
+        assert_eq!(radioactivity("mekanism:nuclear_waste"), 0.01);
+        assert_eq!(radioactivity("mekanism:spent_nuclear_waste"), 0.01);
+        assert_eq!(radioactivity("mekanism:plutonium"), 0.02);
+        assert_eq!(radioactivity("mekanism:polonium"), 0.05);
+    }
 }

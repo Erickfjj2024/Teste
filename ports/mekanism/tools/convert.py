@@ -2607,7 +2607,8 @@ nrec = 0
 MACHINE_TYPES = {f'{NS}:crushing', f'{NS}:enriching', f'{NS}:sawing', f'{NS}:combining', f'{NS}:metallurgic_infusing',
                  f'{NS}:chemical_conversion', f'{NS}:purifying', f'{NS}:injecting', f'{NS}:compressing', f'{NS}:oxidizing',
                  f'{NS}:dissolution', f'{NS}:crystallizing', f'{NS}:chemical_infusing', f'{NS}:washing', f'{NS}:separating', f'{NS}:rotary', f'{NS}:reaction',
-                 f'{NS}:pigment_extracting', f'{NS}:pigment_mixing', f'{NS}:painting', f'{NS}:nucleosynthesizing'}
+                 f'{NS}:pigment_extracting', f'{NS}:pigment_mixing', f'{NS}:painting', f'{NS}:nucleosynthesizing',
+                 f'{NS}:activating', f'{NS}:centrifuging', f'{NS}:evaporating'}
 for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
     rel = os.path.relpath(p, f'{GEN}/data/{NS}/recipe')
     r = read_json(p)

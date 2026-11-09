@@ -94,7 +94,7 @@ impl Settings {
             TOGGLE_EJECT => self.eject = !self.eject,
             TOGGLE_SILK => self.silk = !self.silk,
             TOGGLE_INVERSE => self.inverse = !self.inverse,
-            RESET => {}
+            RESET => self.running = false,
             _ => return false,
         }
         // The area changed: what was queued is stale.
@@ -229,8 +229,9 @@ impl Mekanism {
                         }
                         if s.delay == 0 {
                             s.delay = TICKS_PER_MINE;
-                            // The next block that is still there to mine.
-                            while let Some(p) = work.queue.pop() {
+                            // The next block that is still there to mine (top down).
+                            while !work.queue.is_empty() {
+                                let p = work.queue.remove(0);
                                 let still = world::get_block(&e.dimension, p[0], p[1], p[2]).is_some_and(|b| wants(&b, &filters, s.inverse));
                                 if still {
                                     let _ = world::mine_block(
@@ -348,6 +349,8 @@ mod tests {
         assert!(!s.press(TOGGLE_RUN));
         assert!(s.running);
         assert!(s.press(TOGGLE_INVERSE) && s.inverse);
+        assert!(s.press(RESET));
+        assert!(!s.running);
     }
 
     #[test]

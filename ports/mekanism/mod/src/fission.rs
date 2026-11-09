@@ -3,8 +3,8 @@
 //! burns into heat and nuclear waste; the heat boils the coolant (water into steam, sodium into superheated sodium) that leaves by the ports.
 //! Too much heat damages the reactor, and a damaged one that stays hot melts down.
 //!
-//! As the boiler, the ports hold mirrors of the shared tanks (water, coolant, fuel, heated coolant, waste). Unlike the original, a port has no
-//! mode: every port takes fuel and coolant in and gives heated coolant and waste out. The logic adapter is a plain wall block.
+//! As the boiler, the ports hold mirrors of the shared tanks (water, coolant, fuel, heated coolant, waste). The ports support three
+//! configurable modes (input only, output waste, output coolant) cycled with a configurator. The logic adapter is a plain wall block.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -143,7 +143,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
         valid: true,
         min,
         size: [size[0] as u8, size[1] as u8, size[2] as u8],
-        volume: ((size[0] - 2) * (size[1] - 2) * (size[2] - 2)) as u32,
+        volume: (u32::from(size[0]) * u32::from(size[1]) * u32::from(size[2])),
         blocks: members.len() as u32,
         assemblies: fuels.len() as u32,
         surface,
@@ -663,7 +663,7 @@ mod tests {
     fn a_column_of_fuel_under_a_rod_is_a_reactor() {
         let f = validate(&reactor(5, 2), [0; 3], [4; 3], |_| true);
         assert!(f.valid);
-        assert_eq!((f.assemblies, f.surface, f.volume, f.blocks), (2, 10, 27, reactor(5, 2).len() as u32));
+        assert_eq!((f.assemblies, f.surface, f.volume, f.blocks), (2, 10, 125, reactor(5, 2).len() as u32));
         assert!((boil_efficiency(&f) - 1.0).abs() < 1e-9);
     }
 

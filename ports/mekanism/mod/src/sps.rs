@@ -505,4 +505,13 @@ mod tests {
         assert_eq!((g, back.input_processed), (f, 321));
         assert!((back.progress - 0.5).abs() < 1e-6);
     }
+
+    #[test]
+    fn sps_constants_match_java_config() {
+        assert_eq!(INPUT_PER_ANTIMATTER, 1_000);
+        assert_eq!(OUTPUT_CAPACITY, 1_000);
+        assert_eq!(ENERGY_PER_INPUT, 400_000);
+        assert_eq!(PORT_ENERGY, 400_000_000);
+        assert_eq!(input_capacity(), 2_000);
+    }
 }

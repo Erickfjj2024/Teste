@@ -66,7 +66,7 @@ pub fn part_of(state: &str) -> Option<Part> {
 pub struct Found {
     pub valid: bool,
     pub min: [i32; 3],
-    /// Blocks of the inside (the energy buffer), and the box the steam fills: width times length times the rotors' height.
+    /// Bounding volume of the structure (the energy buffer), and the box the steam fills: width times length times the rotors' height.
     pub volume: u32,
     pub lower_volume: u32,
     pub condensers: u32,
@@ -177,7 +177,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
     Found {
         valid: true,
         min,
-        volume: ((size[0] - 2) * (size[1] - 2) * (size[2] - 2)) as u32,
+        volume: (u32::from(size[0]) * u32::from(size[1]) * u32::from(size[2])),
         lower_volume: (size[0] * size[2] * height) as u32,
         condensers: condensers.len() as u32,
         vents: vents.len() as u32,
@@ -290,11 +290,14 @@ pub fn step(f: &Found, blades: u32, steam: u64, energy: u64, water: u64) -> Tick
     let orig = max_flow(f);
     // The release works in Joules: the room is 2.5 of them to each Forge Energy, and what it makes 2/5 of them.
     let rate = (steam as f64).min(orig).min(needed as f64 * 2.5 / mult) * proportion;
-    let generated = (mult * rate * 0.4).min(f64::from(i32::MAX)) as u64;
-    if rate <= 1e-5 || generated == 0 {
+    let flow = (rate as u64).min(steam);
+    if flow == 0 {
         return Tick::default();
     }
-    let flow = (rate as u64).min(steam);
+    let generated = (mult * rate * 0.4).max(0.0) as u64;
+    if generated == 0 {
+        return Tick::default();
+    }
     let room = water_capacity(f).saturating_sub(water);
     let produced = flow.min(water_capacity(f)).min(room);
     Tick { flow, energy: generated.min(needed), water: produced, rotation: rate / orig }
@@ -585,7 +588,7 @@ mod tests {
         let f = validate(&turbine(8, 3), [0; 3], [4, 7, 4], |_| true);
         assert!(f.valid);
         assert_eq!((f.coils, f.condensers, f.vents, f.dispersers), (1, 1, 1, 8));
-        assert_eq!(f.volume, 3 * 6 * 3);
+        assert_eq!(f.volume, 5 * 8 * 5);
         // Two rotors under the complex (y = 1, 2): the steam fills 5 x 5 x 2.
         assert_eq!(f.lower_volume, 50);
     }
@@ -646,9 +649,10 @@ mod tests {
         let t = step(&f, 4, steam, 0, 0);
         assert!(t.flow > 0 && t.energy > 0, "{t:?}");
         assert_eq!(t.water, t.flow.min(water_capacity(&f)));
-        // No blades, no steam, or a full energy buffer: nothing.
+        // No blades, no steam, a full energy buffer, or sub-integer steam flow: nothing.
         assert_eq!(step(&f, 0, steam, 0, 0), Tick::default());
         assert_eq!(step(&f, 4, 0, 0, 0), Tick::default());
+        assert_eq!(step(&f, 4, 1, 0, 0), Tick::default());
         assert_eq!(step(&f, 4, steam, energy_capacity(&f), 0), Tick::default());
         // A full water tank does not stop the turbine, but receives no new water.
         let full_water = step(&f, 4, steam, 0, water_capacity(&f));

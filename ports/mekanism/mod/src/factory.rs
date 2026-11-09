@@ -354,10 +354,10 @@ mod tests {
 
     #[test]
     fn the_charge_slot_turns_redstone_into_energy_while_there_is_room() {
-        assert_eq!(charge(0, 100_000, stack("minecraft:redstone", 2)), (10_000, stack("minecraft:redstone", 1)));
-        assert_eq!(charge(0, 100_000, stack("minecraft:redstone", 1)), (10_000, None));
+        assert_eq!(charge(0, 100_000, stack("minecraft:redstone", 2)), (4_000, stack("minecraft:redstone", 1)));
+        assert_eq!(charge(0, 100_000, stack("minecraft:redstone", 1)), (4_000, None));
         // No room for all of it: it stays.
-        assert_eq!(charge(95_000, 100_000, stack("minecraft:redstone", 1)), (95_000, stack("minecraft:redstone", 1)));
+        assert_eq!(charge(98_000, 100_000, stack("minecraft:redstone", 1)), (98_000, stack("minecraft:redstone", 1)));
         assert_eq!(charge(0, 100_000, stack("minecraft:stick", 1)), (0, stack("minecraft:stick", 1)));
     }
 

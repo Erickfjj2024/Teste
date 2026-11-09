@@ -384,6 +384,12 @@ impl Mekanism {
             if b.hot.amount > 0 && b.hot.chemical != HOT {
                 b.hot = process::Tank::default();
             }
+            if b.steam.amount > 0 && b.steam.chemical != STEAM {
+                b.steam = process::Tank::default();
+            }
+            if b.cold.amount > 0 && b.cold.chemical != COLD {
+                b.cold = process::Tank::default();
+            }
             let env = world::get_environment(&group[0].dimension, group[0].pos.x, group[0].pos.y, group[0].pos.z);
             let ambient = env.as_ref().map_or(300.0, |e| generators::ambient_of(e.temperature));
             let (rate, max) = tick(b, &found, ambient);
@@ -413,7 +419,9 @@ impl Mekanism {
             for v in &group {
                 let (x, y, z) = (v.pos.x, v.pos.y, v.pos.z);
                 let _ = world::set_tank_filter(&v.dimension, x, y, z, 0, &if tanks_now[0].amount >= cap_of[0] { vec![NOTHING.to_owned()] } else { vec![WATER.to_owned()] });
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
                 let _ = world::set_tank_filter(&v.dimension, x, y, z, 2, &if tanks_now[2].amount >= cap_of[2] { vec![NOTHING.to_owned()] } else { vec![HOT.to_owned()] });
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 3, &[NOTHING.to_owned()]);
                 let _ = full;
                 // A sneak click with the configurator cycles what the valve does (`TileEntityBoilerValve` on sneak
                 // right click): take in, give steam out, give cooled coolant out. A plain click says which.
@@ -550,5 +558,32 @@ mod tests {
         let f = Found { valid: true, min: [-4, 70, 9], blocks: 98, water_volume: 40, steam_volume: 50, elements: 3 };
         assert_eq!(decode(&encode(&f, 400.5)), Some((f, 400.5)));
         assert_eq!(boil_capacity(&f), 960_000);
+    }
+
+    #[test]
+    fn boiler_cleans_invalid_substances() {
+        let mut b = Boiler {
+            water: process::Tank { chemical: "minecraft:lava".into(), amount: 100 },
+            steam: process::Tank { chemical: "mekanism:oxygen".into(), amount: 100 },
+            hot: process::Tank { chemical: "mekanism:hydrogen".into(), amount: 100 },
+            cold: process::Tank { chemical: "minecraft:water".into(), amount: 100 },
+            ..Boiler::default()
+        };
+        if b.water.amount > 0 && b.water.chemical != WATER {
+            b.water = process::Tank::default();
+        }
+        if b.hot.amount > 0 && b.hot.chemical != HOT {
+            b.hot = process::Tank::default();
+        }
+        if b.steam.amount > 0 && b.steam.chemical != STEAM {
+            b.steam = process::Tank::default();
+        }
+        if b.cold.amount > 0 && b.cold.chemical != COLD {
+            b.cold = process::Tank::default();
+        }
+        assert_eq!(b.water.amount, 0);
+        assert_eq!(b.steam.amount, 0);
+        assert_eq!(b.hot.amount, 0);
+        assert_eq!(b.cold.amount, 0);
     }
 }

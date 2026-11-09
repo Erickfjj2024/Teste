@@ -92,9 +92,18 @@ pub fn max_energy(def: u64, energy: u8) -> u64 {
     (def as f64 * MULTIPLIER.powf(fraction(energy, ENERGY))) as u64
 }
 
-/// `getGasPerTickMeanMultiplier`: the mean of the chemical a chance-using machine takes a tick.
+/// `getGasPerTickMeanMultiplier`: the mean of the chemical a machine takes a tick via upgrades.
 pub fn gas_mean(speed: u8, chemical: u8) -> f64 {
-    MULTIPLIER.powf(2.0 * fraction(speed, SPEED) - fraction(chemical, CHEMICAL))
+    gas_mean_with_support(speed, chemical, true)
+}
+
+/// `getGasPerTickMeanMultiplier` with check whether the machine supports chemical upgrades (`supportsUpgrade(Upgrade.CHEMICAL)`).
+pub fn gas_mean_with_support(speed: u8, chemical: u8, supports_chemical: bool) -> f64 {
+    if supports_chemical {
+        MULTIPLIER.powf(2.0 * fraction(speed, SPEED) - fraction(chemical, CHEMICAL))
+    } else {
+        MULTIPLIER.powf(fraction(speed, SPEED))
+    }
 }
 
 /// The operations a machine of `continuous` does a tick with `speed` speed upgrades (`baselineMaxOperations`).
@@ -294,6 +303,7 @@ mod tests {
         assert_eq!(max_energy(20_000, 0), 20_000);
         assert_eq!(max_energy(20_000, 8), 200_000);
         assert!((gas_mean(8, 8) - 10.0).abs() < 1e-9);
+        assert!((gas_mean_with_support(8, 0, false) - 10.0).abs() < 1e-9);
         assert_eq!(operations(3), 8);
     }
 

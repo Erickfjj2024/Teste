@@ -350,4 +350,12 @@ mod tests {
         assert_eq!(decode_amp(&encode_amp(&a)), Some(a));
         assert_eq!(decode_amp(&[0, 1, 2]), None);
     }
+
+    #[test]
+    fn laser_constants_match_java_config() {
+        assert_eq!(RANGE, 64);
+        assert_eq!(FIRE, 4_000);
+        assert_eq!(LASER_CAPACITY, 800_000);
+        assert_eq!(AMPLIFIER_CAPACITY, 2_000_000_000);
+    }
 }
