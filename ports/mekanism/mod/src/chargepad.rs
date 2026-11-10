@@ -68,6 +68,8 @@ pub struct RechargeableSlot {
     pub slot: usize,
     pub energy_stored: u64,
     pub max_energy: u64,
+    /// The most the item takes in one insert (the rate limit of its energy container, e.g. `mekaSuitBaseChargeRate`); `u64::MAX` when it has none.
+    pub max_insert: u64,
 }
 
 /// Simulated charging result for one tick.
@@ -141,7 +143,8 @@ pub fn step_charging(
                     for slot in rechargeable_slots.iter_mut() {
                         let needed = slot.max_energy.saturating_sub(slot.energy_stored);
                         if needed > 0 {
-                            let to_give = CHARGE_RATE.min(*current_energy).min(needed);
+                            // `provideEnergy`: the pad offers its rate, the item accepts what it has room for within its own insert limit, the pad pays that.
+                            let to_give = CHARGE_RATE.min(*current_energy).min(needed).min(slot.max_insert);
                             if to_give > 0 {
                                 slot.energy_stored += to_give;
                                 *current_energy -= to_give;
@@ -287,8 +290,8 @@ mod tests {
             id: "Steve".into(),
             is_spectator: false,
             rechargeable_slots: vec![
-                RechargeableSlot { slot: 0, energy_stored: 0, max_energy: 1_000_000 },
-                RechargeableSlot { slot: 1, energy_stored: 0, max_energy: 1_000_000 },
+                RechargeableSlot { slot: 0, energy_stored: 0, max_energy: 1_000_000, max_insert: u64::MAX },
+                RechargeableSlot { slot: 1, energy_stored: 0, max_energy: 1_000_000, max_insert: u64::MAX },
             ],
         }];
 
@@ -319,6 +322,45 @@ mod tests {
         // Needed: 90_000, buffer has 500_000, rate is 409_600 -> min(409600, 500000, 90000) = 90_000
         assert_eq!(result.energy_extracted, 90_000);
         assert_eq!(buffer, 410_000);
+    }
+
+    #[test]
+    fn java_chargepad_gives_one_item_per_player_within_the_item_insert_limit() {
+        // `TileEntityChargepad.provideEnergy`/`chargeHandler`: the pad offers its rate; the item takes what fits within its own insert limit; only the first
+        // item that takes energy is charged per player each tick; a spectator is skipped; the pad stops when it is empty.
+        let slot = |i, stored, max, insert| RechargeableSlot { slot: i, energy_stored: stored, max_energy: max, max_insert: insert };
+        let mut buffer = 1_000_000;
+        let mut targets = vec![
+            ChargeTarget::Player {
+                id: "steve".into(),
+                is_spectator: false,
+                rechargeable_slots: vec![slot(0, 1_000, 1_000, u64::MAX) /* full: skipped */, slot(1, 0, 500_000, 40_000), slot(2, 0, 500_000, u64::MAX)],
+            },
+            ChargeTarget::Player { id: "ghost".into(), is_spectator: true, rechargeable_slots: vec![slot(0, 0, 500_000, u64::MAX)] },
+        ];
+        let result = step_charging(&mut buffer, false, &mut targets);
+        assert!(result.active);
+        assert_eq!(result.energy_extracted, 40_000, "the second item takes 40 000 FE (its limit); the third item waits for the next tick");
+        assert_eq!(buffer, 960_000);
+        match &targets[0] {
+            ChargeTarget::Player { rechargeable_slots, .. } => {
+                assert_eq!(rechargeable_slots[1].energy_stored, 40_000);
+                assert_eq!(rechargeable_slots[2].energy_stored, 0);
+            }
+            _ => unreachable!(),
+        }
+        match &targets[1] {
+            ChargeTarget::Player { rechargeable_slots, .. } => assert_eq!(rechargeable_slots[0].energy_stored, 0, "spectators are not charged"),
+            _ => unreachable!(),
+        }
+        // A pad with less than the rate gives what it has.
+        let mut low = 1_000;
+        let mut robit = vec![ChargeTarget::Robit { id: "r".into(), energy_stored: 0, max_energy: 40_000 }];
+        assert_eq!(step_charging(&mut low, false, &mut robit).energy_extracted, 1_000);
+        assert_eq!(low, 0);
+        // An empty pad does nothing.
+        let mut empty = 0;
+        assert!(!step_charging(&mut empty, true, &mut robit).active);
     }
 
     #[test]
