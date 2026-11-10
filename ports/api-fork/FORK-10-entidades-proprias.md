@@ -22,3 +22,28 @@
 **Quando existir:** ligar `robit.rs` (todas as regras de energia, seguir, recolher, fornalha, skins e botões já estão no módulo e conferidas, ver `revisao_numeros/REVISAO_robit.md`).
 
 **EN.** The Robit is a living entity with its own type, AI, a 30-slot inventory, energy, a furnace and 13 skins. Horizon only lets a mod create the game's own entity types. Without FORK-10 (mod-defined entity types with per-tick control, persistence, interaction, damage, dropped-item queries and a menu) the Robit cannot exist faithfully. Everything in `robit.rs` is ready to be wired once it exists.
+
+
+---
+
+## Levantamento no fork (passo 4, antes de codar) / Survey of the fork (step 4, before coding)
+
+**PT-BR.** Conferido em `horizon-android` (branch `mekanism-api`). Não é um patch pequeno; por isso o FORK-10 vai em sub-passos, cada um com patch, teste e exemplo.
+
+| Ponto do fork | Hoje | O que o FORK-10 precisa |
+|---|---|---|
+| `mobs/species.rs` | `enum Species` fechado (vanilla); `def(s)` cai em `ALL[0]` (porco) se não achar | variante `ModEntity` com `Def` próprio (som, animação, caixa vêm do tipo do mod, não do `Def`); o `cargo check` com a variante nova compila sem erro (os `match` têm `_`), mas o resto do código trata espécie desconhecida como porco: cada consulta a `def()` precisa de revisão |
+| `mobs.rs` `MobTypes::load` | só percorre `species::ALL` e lê `entity-types.json` / `entity-models.json` da pasta de dados | também os tipos do mod, com `layers` do modelo do próprio mod (mesmo formato de `entity-models.json`, `Part::parse`) |
+| `Resources.mob_types` | `HashMap` imutável criado ao carregar | tipos do mod entram na carga (conteúdo, sem código): `horizon/entity_kind/*.json` ao lado de `item/`, `block/` |
+| `horizon-mods/src/content.rs` `EntityType` | só projéteis (`template: minecraft:snowball`) | tipo novo `EntityKind` (caixa, vida, velocidade, skins, slots) |
+| spawn / `Mob` | `spawn_mob_for` busca em `mob_types` | `spawn-mod-entity` + `Extra.modded: { data, items, energy, skin }` |
+| persistência | NBT de mob por espécie | gravar e ler `Extra.modded` |
+| IA | `ai::Ai` por espécie | espécie `ModEntity` sem IA própria: anda só pelo `path-to` do mod |
+| render / LAN | modelos e texturas por `Def` | modelo e skin do mod; o pacote de mob leva o `kind` e a skin |
+| tela | menu de bloco | menu de entidade (passo 3) |
+
+**Decisão de desenho:** tipos declarados em **conteúdo** (JSON, sem código), como itens e blocos; o código do mod só cria, move e lê as instâncias.
+
+**Sub-passos (um patch cada, na ordem do Java):** (a) tipo + spawn + remover + dados/slots/energia persistentes + `entities-tick`, só no servidor; (b) modelo e skin no cliente e na LAN; (c) `path-to` e teleporte; (d) clique e menu de entidade; (e) dano e morte; (f) itens soltos (`items-in-box`, `take-dropped-item`).
+
+**EN.** Surveyed in the fork: `Species` is a closed enum, `def()` falls back to the pig, `MobTypes::load` only walks the vanilla list, and `Resources.mob_types` is built once at load. So mod entity kinds are declared as **content** (JSON, no code) and the mod's code only spawns, moves and reads instances. Sub-steps, one patch each: (a) kind + spawn + remove + persistent data/slots/energy + `entities-tick`, server only; (b) client/LAN model and skin; (c) `path-to` and teleport; (d) entity click and menu; (e) damage and death; (f) dropped items.
