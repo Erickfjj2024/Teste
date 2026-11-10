@@ -69,3 +69,10 @@ tools/build.sh /tmp/base /caminho/do/fork /caminho/do/cargo-horizon-mod
 
 - PT: cada diferença entra em `DIFERENCAS.md` no mesmo commit; sem processos em segundo plano no fim; sem PR sem pedido. EN: every difference goes into `DIFERENCAS.md` in the same commit; no background processes at the end; no PR unless asked.
 - PT: **não existem "limites do Horizon"**: tudo o que falta na API é pedido de fork. EN: **there are no "Horizon limits"**: whatever the API lacks is a fork request.
+
+## 8. Antes do build real: rodar o verificador / Before the real build: run the checker
+
+**PT.** `tools/verificador/check.sh mod/src` compila o mod inteiro contra um SDK de mentira (gerado do `horizon.wit`) e roda os testes unitários (hoje: **0 erros, 404 testes**). Pega erro de tipo, de empréstimo e API inventada em segundos, sem o fork. Se o build real acusar uma função que o verificador não conhece, acrescente-a em `tools/verificador/sdk/src/lib.rs`. Com `cargo check --features fork` (dentro da pasta temporária do verificador) aparecem as chamadas ao host que o SDK atual ainda não tem: `FORK-INDICE.md` lista cada uma.
+**Atenção:** os 25 módulos da rodada 3 (`qio*`, `meka_tool`, `mekasuit`, `robit`, `heat*`, etc.) **ainda não estão declarados no `lib.rs` real**: o verificador os declara sozinho. Eles precisam ser ligados (registro dos blocos e itens, `convert.py`, `horizon-mod.toml`) seguindo os `INTEGRACAO_*.md` em `rodada3/`.
+
+**EN.** `tools/verificador/check.sh mod/src` compiles the whole mod against a stub SDK and runs the unit tests (today: **0 errors, 404 tests**). **Note:** the 25 round-3 modules are **not declared in the real `lib.rs` yet**; the checker declares them itself. They still have to be wired in following the `INTEGRACAO_*.md` files.

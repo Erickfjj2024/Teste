@@ -215,7 +215,7 @@ impl Mekanism {
             state.facing = facing.to_string();
 
             // Energy stored in the block entity
-            let mut energy = e.energy.unwrap_or(state.energy);
+            let mut energy = e.energy;
 
             // Execute charging step
             let result = scan_and_charge_entities(&e.dimension, e.pos, &mut energy, state.active);
@@ -228,7 +228,7 @@ impl Mekanism {
                 let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "active", if state.active { "true" } else { "false" });
             }
 
-            if state_changed || energy != e.energy.unwrap_or(0) {
+            if state_changed || energy != e.energy {
                 out.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos,
@@ -328,7 +328,7 @@ mod tests {
         let mut targets = vec![ChargeTarget::Robit {
             id: "Robit_1".into(),
             energy_stored: 0,
-            max_energy: 100_000,
+            max_energy: 1_000_000,
         }];
 
         // false -> true: click_on (pitch 0.8)

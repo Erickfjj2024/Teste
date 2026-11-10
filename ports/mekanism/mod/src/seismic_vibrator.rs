@@ -136,7 +136,7 @@ impl Mekanism {
 
             let facing = sides::property(&e.state, "facing").unwrap_or("north");
             let mut state = decode(&e.data);
-            let mut energy = e.energy.unwrap_or(state.energy);
+            let mut energy = e.energy;
 
             // Check redstone signal
             let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
@@ -159,7 +159,7 @@ impl Mekanism {
 
             state.energy = energy;
 
-            let changed = was_active != state.active || energy != e.energy.unwrap_or(0);
+            let changed = was_active != state.active || energy != e.energy;
             if changed {
                 let _ = world::set_block_property(
                     &e.dimension,

@@ -179,7 +179,8 @@ impl AttackDamage {
 
     pub const fn max_index_for_installed(installed: u8) -> usize {
         // installed + 2 values accessible (ModuleAttackAmplificationUnit.java:85)
-        (installed as usize + 2).min(5)
+        let val = installed as usize + 2;
+        if val < 5 { val } else { 5 }
     }
 }
 
@@ -212,7 +213,8 @@ impl ExcavationMode {
 
     pub const fn max_index_for_installed(installed: u8) -> usize {
         // installed + 2 values accessible (ModuleExcavationEscalationUnit.java:51)
-        (installed as usize + 2).min(5)
+        let val = installed as usize + 2;
+        if val < 5 { val } else { 5 }
     }
 }
 
@@ -247,7 +249,8 @@ impl BlastRadius {
 
     pub const fn max_index_for_installed(installed: u8) -> usize {
         // installed + 1 values accessible (ModuleBlastingUnit.java:49)
-        (installed as usize + 1).min(4)
+        let val = installed as usize + 1;
+        if val < 4 { val } else { 4 }
     }
 }
 
@@ -277,7 +280,8 @@ impl ExcavationRange {
     }
 
     pub const fn max_index_for_installed(installed: u8) -> usize {
-        (installed as usize + 1).min(4)
+        let val = installed as usize + 1;
+        if val < 4 { val } else { 4 }
     }
 }
 
@@ -315,7 +319,8 @@ impl FarmingRadius {
     }
 
     pub const fn max_index_for_installed(installed: u8) -> usize {
-        (installed as usize + 1).min(4)
+        let val = installed as usize + 1;
+        if val < 4 { val } else { 4 }
     }
 }
 
@@ -1007,28 +1012,27 @@ mod tests {
         assert_eq!(cost, 1_600, "800 * 8 / 4 = 1600 FE");
 
         // Test all modes
-        let m = tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap();
-        m.attack_damage = AttackDamage::Off;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Off;
         assert_eq!(tool.calculate_attack(), (4.0, 0));
 
-        m.attack_damage = AttackDamage::Low;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Low;
         assert_eq!(tool.calculate_attack(), (8.0, 800));
 
-        m.attack_damage = AttackDamage::Med;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Med;
         assert_eq!(tool.calculate_attack(), (12.0, 1_600));
 
-        m.attack_damage = AttackDamage::High;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::High;
         assert_eq!(tool.calculate_attack(), (20.0, 3_200));
 
-        m.attack_damage = AttackDamage::Extreme;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Extreme;
         assert_eq!(tool.calculate_attack(), (28.0, 4_800));
 
-        m.attack_damage = AttackDamage::Max;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Max;
         assert_eq!(tool.calculate_attack(), (36.0, 6_400));
 
         // Partial power scaling: 800 FE available for 1600 FE cost (ratio 0.5)
         tool.energy = 800;
-        m.attack_damage = AttackDamage::Med;
+        tool.get_module_mut(ModuleType::AttackAmplificationUnit).unwrap().attack_damage = AttackDamage::Med;
         let (dmg_partial, cost_partial) = tool.calculate_attack();
         assert_eq!(cost_partial, 1_600);
         assert_eq!(dmg_partial, 4.0 + 8.0 * 0.5, "4 + 4 = 8.0 with half power");

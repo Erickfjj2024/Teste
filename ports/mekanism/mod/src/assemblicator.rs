@@ -23,7 +23,7 @@
 //! - `mekanism.common.attachments.FormulaAttachment`
 
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub const BLOCK: &str = "mekanism:formulaic_assemblicator";
 pub const CRAFTING_FORMULA: &str = "mekanism:crafting_formula";
@@ -475,7 +475,7 @@ impl RecipeFormula {
     }
 
     pub fn is_valid(&self) -> bool {
-        self.recipe.is_some()
+        self.recipe.is_some() || !self.is_empty()
     }
 
     /// Java: `RecipeFormula.java:82-103`: Checks if stack is valid ingredient at slot `pos`.
@@ -1012,7 +1012,7 @@ pub fn encode_formula_slot(slots: &mut [Option<ItemStack>]) -> bool {
 /// Ticks a single Formulaic Assemblicator block entity.
 /// Java: `TileEntityFormulaicAssemblicator.java:213-267`.
 pub fn tick_assemblicator(
-    e: &BlockEntity,
+    _e: &BlockEntity,
     state: &mut AssemblicatorState,
     items: &mut [Option<ItemStack>],
     energy: &mut u64,
@@ -1023,7 +1023,7 @@ pub fn tick_assemblicator(
 
     // Upgrades recalculation
     state.ticks_required = upgrades::ticks(BASE_TICKS_REQUIRED, state.speed_upgrades);
-    let max_storage = upgrades::max_energy(BASE_STORAGE, state.energy_upgrades);
+    let _max_storage = upgrades::max_energy(BASE_STORAGE, state.energy_upgrades);
     let energy_per_tick = upgrades::energy_per_tick(BASE_ENERGY_USAGE, state.speed_upgrades, state.energy_upgrades);
 
     // Pulse redstone operation tracking
@@ -1091,7 +1091,7 @@ pub fn tick_assemblicator(
 
 impl Mekanism {
     /// Runs all Formulaic Assemblicators in the world during the mod's server tick.
-    pub(crate) fn run_assemblicators(&mut self, assemblicators: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
+    pub(crate) fn run_assemblicators(&mut self, assemblicators: &[&BlockEntity], _tick: u64) -> Vec<BlockEntityUpdate> {
         let mut updates = Vec::new();
 
         for e in assemblicators {
@@ -1112,7 +1112,7 @@ impl Mekanism {
             let mut items: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
             let mut energy = e.energy;
 
-            let powered = world::has_neighbor_signal(&e.dimension, e.pos.x, e.pos.y, e.pos.z);
+            let powered = crate::fork_utilidades::has_neighbor_signal(&e.dimension, e.pos.x, e.pos.y, e.pos.z);
             let last_powered = self.last_power.insert(at.clone(), powered).unwrap_or(false);
 
             let changed = tick_assemblicator(e, &mut state, &mut items, &mut energy, powered, last_powered);
@@ -1122,18 +1122,17 @@ impl Mekanism {
                 updates.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos.clone(),
-                    state: None,
-                    data: Some(encoded_data),
+                    data: encoded_data,
                     items: Some(items),
                     energy: Some(energy),
-                    tanks: None,
                     menu_data: Some(vec![
-                        state.auto_mode as u16,
-                        state.stock_control as u16,
-                        state.operating_ticks as u16,
-                        state.ticks_required as u16,
-                        state.control as u16,
+                        state.auto_mode as i32,
+                        state.stock_control as i32,
+                        state.operating_ticks as i32,
+                        state.ticks_required as i32,
+                        state.control as i32,
                     ]),
+                    ..Default::default()
                 });
             }
         }
@@ -1196,18 +1195,17 @@ impl Mekanism {
             Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos.clone(),
-                state: None,
-                data: Some(state.encode()),
+                data: state.encode(),
                 items: Some(items),
                 energy: Some(e.energy),
-                tanks: None,
                 menu_data: Some(vec![
-                    state.auto_mode as u16,
-                    state.stock_control as u16,
-                    state.operating_ticks as u16,
-                    state.ticks_required as u16,
-                    state.control as u16,
+                    state.auto_mode as i32,
+                    state.stock_control as i32,
+                    state.operating_ticks as i32,
+                    state.ticks_required as i32,
+                    state.control as i32,
                 ]),
+                ..Default::default()
             })
         } else {
             None

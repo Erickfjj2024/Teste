@@ -168,7 +168,7 @@ pub fn step_conversion(
     output_item: &mut Option<ItemStack>,
     get_item_tags: impl Fn(&str) -> Vec<String>,
 ) -> bool {
-    let Some(ref mut input) = input_item else {
+    let Some(input) = input_item else {
         return false;
     };
     if input.count == 0 {
@@ -199,7 +199,7 @@ pub fn step_conversion(
                     }
                     return true;
                 }
-                Some(ref mut out) => {
+                Some(out) => {
                     if out.item == *target && out.count < 64 {
                         out.count += 1;
                         input.count -= 1;
@@ -326,8 +326,9 @@ mod tests {
 
         assert!(processed);
         assert_eq!(input.unwrap().count, 4);
-        assert_eq!(output.unwrap().item, "mekanism:ingot_copper");
-        assert_eq!(output.unwrap().count, 1);
+        let out = output.unwrap();
+        assert_eq!(out.item, "mekanism:ingot_copper");
+        assert_eq!(out.count, 1);
     }
 
     #[test]

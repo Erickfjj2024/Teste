@@ -660,7 +660,7 @@ pub fn pack_robit_to_item(robit: &RobitEntity) -> RobitItemData {
         skin: robit.skin.clone(),
         owner_uuid: robit.owner_uuid.clone(),
         security_mode: robit.security_mode,
-        default_manually_selected: robit.default_manually_selected,
+        default_manually_selected: robit.default_skin_manually_selected,
         items: robit.slots.clone(),
     }
 }

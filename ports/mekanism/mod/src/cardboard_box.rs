@@ -239,7 +239,7 @@ impl Mekanism {
         &mut self,
         boxes: &[&BlockEntity],
     ) -> Vec<BlockEntityUpdate> {
-        let mut out = Vec::new();
+        let out = Vec::new();
         for e in boxes {
             let block = e.state.split('[').next().unwrap_or("");
             if block != BLOCK {
@@ -254,7 +254,7 @@ impl Mekanism {
                 if let Some(ref packed) = state.packed_data {
                     // Restore block into the world
                     let _ = host_unbox_block(&e.dimension, e.pos, packed);
-                    let _ = world::set_block(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &packed.block_name);
+                    let _ = crate::fork_utilidades::set_block(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &packed.block_name);
 
                     // Drop empty cardboard box item
                     drop_item(&e.dimension, e.pos, BLOCK, 1);

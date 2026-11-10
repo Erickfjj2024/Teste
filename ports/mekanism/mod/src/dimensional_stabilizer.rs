@@ -214,7 +214,7 @@ impl Mekanism {
             }
 
             let mut state = decode(&e.data);
-            let mut energy = e.energy.unwrap_or(state.energy);
+            let mut energy = e.energy;
 
             // Handle GUI button clicks
             for (_, p, id) in self.sorter_buttons.iter().filter(|(d, pos, _)| {
@@ -252,7 +252,7 @@ impl Mekanism {
             let loaded_chunks = state.get_loaded_chunk_set(e.pos.x, e.pos.z);
             sync_chunk_tickets(&e.dimension, &loaded_chunks, state.active);
 
-            let changed = was_active != state.active || energy != e.energy.unwrap_or(0);
+            let changed = was_active != state.active || energy != e.energy;
             if changed {
                 // Sits in menu_data: [active, chunks_loaded, energy_low, energy_high]
                 let menu_data = vec![

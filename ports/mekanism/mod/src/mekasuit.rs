@@ -1297,8 +1297,8 @@ mod tests {
         assert_eq!(piece.max_charge_rate(), 40_000 * 256); // 10,240,000 FE/t
 
         // Full set of 4 pieces with 8 EnergyUnits each: 4 * 1,638,400,000 = 6,553,600,000 FE (16.384 GJ)
-        let full_suit_total = 4 * (6_400_000 * 256);
-        assert_eq!(full_suit_total, 6_553_600_000);
+        let full_suit_total: u64 = 4 * (6_400_000u64 * 256);
+        assert_eq!(full_suit_total, 6_553_600_000u64);
     }
 
     #[test]
