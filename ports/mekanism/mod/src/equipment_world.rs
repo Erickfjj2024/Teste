@@ -6,9 +6,9 @@
 //! farming units (a use that changes blocks with the tool's own rules). Nothing here charges energy for an effect the
 //! game does not apply.
 
-use horizon_mod_sdk::server::{GameMode, player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, DamageSource, ItemStack, Player};
+use horizon_mod_sdk::server::{entities, GameMode, player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, DamageSource, ItemStack, Player};
 
-use crate::{assemblicator, configuration_card, generators, mekasuit, meka_tool, Mekanism};
+use crate::{assemblicator, configuration_card, electric_bow, generators, mekasuit, meka_tool, Mekanism};
 
 /// Whether a ray passes through the block: air and fluids (`ClipContext.Fluid.NONE` skips fluids; a plant or a torch has an outline and is hit).
 pub fn passes_ray(block: Option<&str>) -> bool {
@@ -479,6 +479,77 @@ impl Mekanism {
     }
 }
 
+/// The components with `key` set to `value` (SNBT text of the value), the rest byte-for-byte; the key is added when it is not there.
+pub fn with_component(components: &str, key: &str, value: &str) -> String {
+    let pair = format!("\"{key}\":{value}");
+    let trimmed = components.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return format!("{{{pair}}}");
+    }
+    if let Some(entries) = crate::config::split_components(components) {
+        for (k, range) in &entries {
+            if k == key {
+                let mut out = components.to_owned();
+                out.replace_range(range.clone(), value);
+                return out;
+            }
+        }
+        let at = components.rfind('}').unwrap_or(components.len());
+        let mut out = components.to_owned();
+        out.insert_str(at, &if entries.is_empty() { pair } else { format!(",{pair}") });
+        return out;
+    }
+    components.to_owned()
+}
+
+impl Mekanism {
+    /// `ItemElectricBow.releaseUsing`: outside creative the string only goes if the bow holds the energy of a shot (1 200 J in fire mode, 120 J otherwise).
+    pub(crate) fn electric_bow_released(&mut self, player: &Player, stack: &ItemStack) -> bool {
+        if stack.item != electric_bow::ELECTRIC_BOW || player.game_mode == GameMode::Creative {
+            return true;
+        }
+        electric_bow::host_read_electric_bow(&stack.components).can_release(false)
+    }
+
+    /// `ItemElectricBow.shoot`: after the arrows exist, outside creative the shot costs its energy, and in fire mode the arrows burn (`Flame` 1: 100 ticks).
+    pub(crate) fn electric_bow_shot(&mut self, player: &Player, stack: &ItemStack, projectiles: &[u32]) {
+        if stack.item != electric_bow::ELECTRIC_BOW {
+            return;
+        }
+        let data = electric_bow::host_read_electric_bow(&stack.components);
+        if data.fire_mode {
+            for id in projectiles {
+                let _ = entities::set_entity_fire(&player.dimension, *id, 100);
+            }
+        }
+        if player.game_mode == GameMode::Creative || projectiles.is_empty() {
+            return;
+        }
+        let Some((slot, components)) = Self::find_hotbar_slot(&player.id, stack) else { return };
+        let Some(written) = with_energy(&components, data.energy.saturating_sub(data.energy_for_shot())) else { return };
+        let current = ItemStack { item: stack.item.clone(), count: stack.count, components };
+        let replacement = ItemStack { item: stack.item.clone(), count: stack.count, components: written };
+        let _ = player_items::compare_and_set_slot(&player.id, slot, Some(&current), Some(&replacement));
+    }
+
+    /// The fire mode of the bow (`IAttachmentBasedModeItem.changeMode`, an odd shift toggles it). The original turns it with the mode key and the scroll
+    /// of a sneaking player; Android has neither, so sneak + use in the air does it, as it does for the configurator. Says whether it took the use.
+    pub(crate) fn electric_bow_mode(&mut self, player: &Player, stack: &ItemStack, pos: Option<BlockPos>) -> bool {
+        if stack.item != electric_bow::ELECTRIC_BOW || pos.is_some() || !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking) {
+            return false;
+        }
+        let data = electric_bow::host_read_electric_bow(&stack.components);
+        let new_mode = !data.fire_mode;
+        let Some((slot, components)) = Self::find_hotbar_slot(&player.id, stack) else { return true };
+        let written = with_component(&components, "mekanism:electric_bow_mode", if new_mode { "true" } else { "false" });
+        let current = ItemStack { item: stack.item.clone(), count: stack.count, components };
+        let replacement = ItemStack { item: stack.item.clone(), count: stack.count, components: written };
+        let _ = player_items::compare_and_set_slot(&player.id, slot, Some(&current), Some(&replacement));
+        let _ = players::tell_overlay(&player.id, &format!("Fire Mode: {}", if new_mode { "on" } else { "off" }));
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +633,14 @@ mod tests {
         assert_eq!(eat(15, 2.0, 5, 0.8), (20, 10.0));
         // The level never passes 20 and the saturation never the level.
         assert_eq!(eat(18, 19.0, 5, 0.8), (20, 20.0));
+    }
+
+    #[test]
+    fn a_component_is_set_in_place_or_added() {
+        assert_eq!(with_component("{}", "mekanism:electric_bow_mode", "true"), r#"{"mekanism:electric_bow_mode":true}"#);
+        let c = r#"{"mekanism:electric_bow_mode":false,"minecraft:damage":3}"#;
+        assert_eq!(with_component(c, "mekanism:electric_bow_mode", "true"), r#"{"mekanism:electric_bow_mode":true,"minecraft:damage":3}"#);
+        let d = r#"{"minecraft:damage":3}"#;
+        assert_eq!(with_component(d, "mekanism:electric_bow_mode", "true"), r#"{"minecraft:damage":3,"mekanism:electric_bow_mode":true}"#);
     }
 }

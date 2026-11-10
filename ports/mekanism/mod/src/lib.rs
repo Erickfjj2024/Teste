@@ -2244,7 +2244,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().redirect(bounding::BLOCK, 0, 1)))
+        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2401,6 +2401,14 @@ impl ServerMod for Mekanism {
         self.meka_tool_hit_damage(&stack, damage)
     }
 
+    fn item_released(&mut self, player: &Player, stack: ItemStack, _hand: &str, _ticks_held: u32) -> bool {
+        self.electric_bow_released(player, &stack)
+    }
+
+    fn item_shot(&mut self, player: &Player, stack: ItemStack, projectiles: Vec<u32>) {
+        self.electric_bow_shot(player, &stack, &projectiles);
+    }
+
     fn item_hit(&mut self, player: &Player, stack: ItemStack, _entity: u32, _kind: &str) {
         self.meka_tool_hit(player, &stack);
     }
@@ -2416,6 +2424,9 @@ impl ServerMod for Mekanism {
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        if stack.item == electric_bow::ELECTRIC_BOW && self.electric_bow_mode(player, &stack, pos) {
+            return true;
+        }
         if stack.item == meka_tool::MEKA_TOOL && self.meka_tool_used(player, &stack) {
             return true;
         }
