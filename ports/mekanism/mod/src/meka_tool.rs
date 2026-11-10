@@ -52,10 +52,12 @@ pub const DEFAULT_EXTENDED_MINING: bool = true;
 pub const MAX_TELEPORT_REACH: u32 = 100;
 
 /// Base block break energy usage: 10 J = 4 FE (`GearConfig.java:237`).
-pub const ENERGY_USAGE_BASE: u64 = fe(10);
+pub const ENERGY_USAGE_BASE_JOULES: u64 = 10;
+pub const ENERGY_USAGE_BASE: u64 = fe(ENERGY_USAGE_BASE_JOULES);
 
 /// Block break energy usage with Silk Touch: 100 J = 40 FE (`GearConfig.java:238`).
-pub const ENERGY_USAGE_SILK: u64 = fe(100);
+pub const ENERGY_USAGE_SILK_JOULES: u64 = 100;
+pub const ENERGY_USAGE_SILK: u64 = fe(ENERGY_USAGE_SILK_JOULES);
 
 /// Base weapon attack energy usage: 2_000 J = 800 FE (`GearConfig.java:239`).
 pub const ENERGY_USAGE_WEAPON: u64 = fe(2_000);
@@ -532,33 +534,41 @@ impl MekaToolData {
         BASE_EFFICIENCY
     }
 
-    /// Base destroy energy in FE before block hardness scaling.
-    /// Java: `getDestroyEnergy(boolean silk)` (ItemMekaTool.java:326).
-    pub fn base_destroy_energy(&self) -> u64 {
+    /// Base destroy energy in Joules, before efficiency and hardness (`getDestroyEnergy(boolean silk)`, ItemMekaTool.java:326).
+    pub fn base_destroy_joules(&self) -> u64 {
         if self.has_silk_touch() {
-            ENERGY_USAGE_SILK
+            ENERGY_USAGE_SILK_JOULES
         } else {
-            ENERGY_USAGE_BASE
+            ENERGY_USAGE_BASE_JOULES
         }
     }
 
-    /// Modified destroy energy including efficiency multiplier.
-    /// Java: `clampToLong(destroyEnergy * efficiency)` (ItemMekaTool.java:155, 342).
+    /// Base destroy energy in FE before block hardness scaling.
+    pub fn base_destroy_energy(&self) -> u64 {
+        fe(self.base_destroy_joules())
+    }
+
+    /// Destroy energy in Joules with the efficiency: `MathUtils.clampToLong(destroyEnergy * efficiency)` (ItemMekaTool.java:151-156): a `long`
+    /// times a `float`, so the product is a float. With the excavation unit off the efficiency is 0 and so is the cost.
+    pub fn mod_destroy_joules(&self) -> u64 {
+        let product = self.base_destroy_joules() as f32 * self.efficiency();
+        if product <= 0.0 { 0 } else { product as u64 }
+    }
+
+    /// Modified destroy energy in FE (the original works in Joules, the port counts Forge Energy).
     pub fn mod_destroy_energy(&self) -> u64 {
-        let base = self.base_destroy_energy();
-        let eff = self.efficiency();
-        (base as f32 * eff).round().max(1.0) as u64
+        fe(self.mod_destroy_joules())
     }
 
-    /// Total destroy energy required to break a block with given hardness.
-    /// Java: `hardness == 0 ? Math.max(baseDestroyEnergy / 2, 1) : baseDestroyEnergy` (ItemMekaTool.java:335).
+    /// Destroy energy in Joules for a block of this hardness: `hardness == 0 ? Math.max(base / 2, 1) : base` (ItemMekaTool.java:335).
+    pub fn get_destroy_joules(&self, hardness: f32) -> u64 {
+        let joules = self.mod_destroy_joules();
+        if hardness == 0.0 { (joules / 2).max(1) } else { joules }
+    }
+
+    /// Total destroy energy in FE required to break a block with given hardness.
     pub fn get_destroy_energy(&self, hardness: f32) -> u64 {
-        let mod_energy = self.mod_destroy_energy();
-        if hardness == 0.0 {
-            (mod_energy / 2).max(1)
-        } else {
-            mod_energy
-        }
+        fe(self.get_destroy_joules(hardness))
     }
 
     /// Mining break speed against block state hardness (`ItemMekaTool.java:234-248`).
@@ -642,52 +652,54 @@ pub fn find_vein_positions(
     initial_blocks: &[[i32; 3]],
     extended_range: u32,
     is_ore: bool,
-    max_count: usize,
+    tracked_types: usize,
     matches_target_block: impl Fn([i32; 3]) -> bool,
 ) -> Vec<([i32; 3], u32)> {
     use std::collections::{HashSet, VecDeque};
 
-    let mut found = Vec::new();
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-
-    for &pos in initial_blocks {
-        visited.insert(pos);
-        found.push((pos, 0u32));
-        queue.push_back((pos, 0u32));
+    // `maxCount = initial.size() + maxVein * oreTracker.size()` (ModuleVeinMiningUnit.java:139-140): the limit grows with each tracked block type.
+    let max_count = initial_blocks.len() + MAX_VEIN_MINING_COUNT * tracked_types;
+    let mut found: Vec<([i32; 3], u32)> = Vec::new();
+    let mut found_set: HashSet<[i32; 3]> = HashSet::new();
+    let mut frontier: VecDeque<[i32; 3]> = VecDeque::new();
+    let mut in_frontier: HashSet<[i32; 3]> = HashSet::new();
+    for &p in initial_blocks {
+        if in_frontier.insert(p) {
+            frontier.push_back(p);
+        }
     }
-
-    let limit = max_count.min(MAX_VEIN_MINING_COUNT);
-
-    while let Some((curr, dist)) = queue.pop_front() {
-        if found.len() >= limit {
+    // `TraversalDistance`: the distance goes up when every block of the current layer has been taken off the frontier.
+    let mut distance = 0u32;
+    let mut next = frontier.len();
+    while let Some(pos) = frontier.pop_front() {
+        in_frontier.remove(&pos);
+        // A block counts as found when it comes off the frontier, and the limit is checked right then.
+        found.push((pos, distance));
+        found_set.insert(pos);
+        if found.len() >= max_count {
             break;
         }
-
-        // If block is ore or distance is within extendedRange (ModuleVeinMiningUnit.java:158)
-        if is_ore || extended_range > dist {
-            for dx in -1..=1 {
+        // If the block is an ore, or the distance is within the extended range (ModuleVeinMiningUnit.java:158).
+        if is_ore || extended_range > distance {
+            // `BlockPos.betweenClosed` goes x fastest, then y, then z.
+            for dz in -1..=1 {
                 for dy in -1..=1 {
-                    for dz in -1..=1 {
-                        if dx == 0 && dy == 0 && dz == 0 {
-                            continue;
-                        }
-                        let next = [curr[0] + dx, curr[1] + dy, curr[2] + dz];
-                        if !visited.contains(&next) && matches_target_block(next) {
-                            visited.insert(next);
-                            let next_dist = dist + 1;
-                            found.push((next, next_dist));
-                            queue.push_back((next, next_dist));
-                            if found.len() >= limit {
-                                return found;
-                            }
+                    for dx in -1..=1 {
+                        let n = [pos[0] + dx, pos[1] + dy, pos[2] + dz];
+                        if !found_set.contains(&n) && !in_frontier.contains(&n) && matches_target_block(n) {
+                            in_frontier.insert(n);
+                            frontier.push_back(n);
                         }
                     }
                 }
             }
         }
+        // `dist.updateDistance(found.size(), frontier.size())`
+        if found.len() == next {
+            distance += 1;
+            next += frontier.len();
+        }
     }
-
     found
 }
 
@@ -1097,7 +1109,7 @@ mod tests {
         let initial = [[0, 0, 0]];
 
         // Ore traversal: follows connected line of 10 blocks
-        let found_ores = find_vein_positions(&initial, 0, true, 50, |p| p[0] >= 0 && p[0] <= 9 && p[1] == 0 && p[2] == 0);
+        let found_ores = find_vein_positions(&initial, 0, true, 1, |p| p[0] >= 0 && p[0] <= 9 && p[1] == 0 && p[2] == 0);
         assert_eq!(found_ores.len(), 10);
         assert_eq!(found_ores[0], ([0, 0, 0], 0));
         assert_eq!(found_ores[9], ([9, 0, 0], 9));
@@ -1112,9 +1124,44 @@ mod tests {
         assert_eq!(non_ore_energy, 32, "4 * (0.5 * 4^2) = 4 * 8 = 32 FE");
 
         // Non-ore traversal respecting extended range limit
-        let found_non_ore = find_vein_positions(&initial, 3, false, 50, |p| p[0] >= 0 && p[0] <= 10 && p[1] == 0 && p[2] == 0);
+        let found_non_ore = find_vein_positions(&initial, 3, false, 1, |p| p[0] >= 0 && p[0] <= 10 && p[1] == 0 && p[2] == 0);
         // extended_range = 3 allows expansion from dist 0, 1, 2 up to dist 3
         assert_eq!(found_non_ore.len(), 4, "Covers dist 0, 1, 2, 3 = 4 blocks");
+    }
+
+    #[test]
+    fn java_vein_limit_grows_with_the_tracked_block_types() {
+        // ModuleVeinMiningUnit.java:139-140: maxCount = initial.size() + miningCount (128) * oreTracker.size(); a block counts as found when it
+        // comes off the frontier and the limit is checked then.
+        let line = |p: [i32; 3]| p[1] == 0 && p[2] == 0 && p[0] >= 0 && p[0] < 1_000;
+        assert_eq!(find_vein_positions(&[[0, 0, 0]], 0, true, 1, line).len(), 1 + 128);
+        assert_eq!(find_vein_positions(&[[0, 0, 0]], 0, true, 2, line).len(), 1 + 256);
+        assert_eq!(find_vein_positions(&[[0, 0, 0], [500, 0, 0]], 0, true, 1, line).len(), 2 + 128);
+    }
+
+    #[test]
+    fn java_vein_neighbours_go_x_then_y_then_z() {
+        // `BlockPos.betweenClosed` (used by ModuleVeinMiningUnit.findPositions) goes x fastest, then y, then z.
+        let cube = |p: [i32; 3]| p.iter().all(|c| (-1..=1).contains(c));
+        let found = find_vein_positions(&[[0, 0, 0]], 5, false, 1, cube);
+        assert_eq!(found.len(), 27);
+        assert_eq!(found[0], ([0, 0, 0], 0));
+        assert_eq!(found[1], ([-1, -1, -1], 1));
+        assert_eq!(found[2], ([0, -1, -1], 1));
+        assert_eq!(found[3], ([1, -1, -1], 1));
+        assert_eq!(found[4], ([-1, 0, -1], 1));
+    }
+
+    #[test]
+    fn java_excavation_unit_off_costs_nothing() {
+        // ItemMekaTool.java:151-156: clampToLong(destroyEnergy * efficiency); the Off mode has efficiency 0, so a block with hardness costs 0.
+        let mut tool = MekaToolData::new(100_000);
+        assert!(tool.install_module(ModuleType::ExcavationEscalationUnit).is_ok());
+        tool.get_module_mut(ModuleType::ExcavationEscalationUnit).unwrap().excavation_mode = ExcavationMode::Off;
+        assert_eq!(tool.efficiency(), 0.0);
+        assert_eq!(tool.get_destroy_energy(1.5), 0);
+        // A block of hardness 0 still takes `Math.max(base / 2, 1)` Joules, which is below one Forge Energy.
+        assert_eq!(tool.get_destroy_joules(0.0), 1);
     }
 
     #[test]

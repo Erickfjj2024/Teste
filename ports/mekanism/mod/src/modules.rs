@@ -318,9 +318,16 @@ impl ModuleType {
     }
 
     /// Default enabled state upon installation.
+    /// Whether the module answers to the mode-change key as soon as it is installed (`ModuleData.java:517`: `HANDLES_MODE_CHANGE_ENABLED`
+    /// or `_DISABLED`). Every module that handles it does, but the elytra unit (`modeChangeDisabledByDefault`).
+    pub const fn handles_mode_change_by_default(&self) -> bool {
+        self.handles_mode_change() && !matches!(self, Self::ElytraUnit)
+    }
     pub const fn default_enabled(&self) -> bool {
         match self {
-            Self::VisionEnhancementUnit | Self::ElytraUnit => false, // disabledByDefault
+            // `MekanismModules.java:139`: only the vision enhancement unit is `disabledByDefault`. The elytra unit is enabled; what it
+            // has off by default is the mode-change key (`modeChangeDisabledByDefault`, line 181): see `handles_mode_change_by_default`.
+            Self::VisionEnhancementUnit => false,
             _ => true,
         }
     }
@@ -734,7 +741,7 @@ pub struct InstalledModule {
 impl InstalledModule {
     pub fn new(module_type: ModuleType, count: u8) -> Self {
         let count = count.min(module_type.max_stack()).max(1);
-        let handles = module_type.handles_mode_change();
+        let handles = module_type.handles_mode_change_by_default();
         let hud = module_type.renders_hud();
         let default_enabled = module_type.default_enabled();
         Self {
@@ -1143,6 +1150,12 @@ mod tests {
 
         // MekanismModules.java:139 - vision_enhancement_unit disabledByDefault = true
         assert!(!ModuleType::VisionEnhancementUnit.default_enabled());
+        // MekanismModules.java:181 - the elytra unit is enabled by default; only its mode-change key is off (`modeChangeDisabledByDefault`).
+        assert!(ModuleType::ElytraUnit.default_enabled());
+        assert!(ModuleType::ElytraUnit.handles_mode_change());
+        assert!(!ModuleType::ElytraUnit.handles_mode_change_by_default());
+        assert!(!InstalledModule::new(ModuleType::ElytraUnit, 1).handle_mode_change);
+        assert!(InstalledModule::new(ModuleType::JetpackUnit, 1).handle_mode_change);
 
         // MekanismModules.java:149 - jetpack_unit max stack = 4, exclusive OVERRIDE_JUMP
         assert_eq!(ModuleType::JetpackUnit.max_stack(), 4);

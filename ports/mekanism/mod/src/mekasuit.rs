@@ -49,7 +49,9 @@ pub const ENERGY_USAGE_DAMAGE: u64 = fe(100_000); // 40_000 FE
 pub const ENERGY_USAGE_MAGIC_REDUCE: u64 = fe(1_000); // 400 FE
 
 /// Energy usage per fall damage event prevented: 50 Joules = 20 FE (`GearConfig.java:267`).
-pub const ENERGY_USAGE_FALL: u64 = fe(50); // 20 FE
+pub const ENERGY_USAGE_FALL: u64 = fe(50); // 20 FE per point of fall damage
+/// `mekaSuitFallDamageRatio` (`GearConfig.java:281-282`, default 1.0).
+pub const MEKASUIT_FALL_DAMAGE_RATIO: f32 = 1.0;
 
 /// Base jump energy usage: 1,000 Joules = 400 FE (`GearConfig.java:268`).
 pub const ENERGY_USAGE_JUMP: u64 = fe(1_000); // 400 FE
@@ -432,6 +434,15 @@ fn insert_or_replace_component(components: &str, key: &str, pair: &str) -> Strin
     out
 }
 
+/// `Player.getArmorSlots()` order, the one `ItemMekaSuitArmor.getDamageAbsorbed` walks: feet, legs, chest, head (indexes into `[helmet, chest, legs, boots]`).
+const ARMOR_SLOT_ORDER: [usize; 4] = [3, 2, 1, 0];
+
+/// How much of a damage type the suit pieces take: `MekanismDataMapsProvider.java` gives the sonic boom 0.75 and the always-supported tag 1.0;
+/// `mekaSuitUnspecifiedDamageRatio` (default 1.0) covers the rest.
+pub fn damage_type_absorption_ratio(source: &DamageSource) -> f32 {
+    if source.name.ends_with("sonic_boom") { 0.75 } else { 1.0 }
+}
+
 // -----------------------------------------------------------------------------
 // Damage Absorption Model (ItemMekaSuitArmor.java:408-477)
 // -----------------------------------------------------------------------------
@@ -469,11 +480,10 @@ pub fn calculate_damage_absorbed(
     // -------------------------------------------------------------------------
     // Phase 1: Module-specific absorption
     // -------------------------------------------------------------------------
-    for slot_idx in 0..4 {
+    for slot_idx in ARMOR_SLOT_ORDER {
         if let Some(ref mut piece) = pieces[slot_idx] {
-            if piece.energy == 0 {
-                continue;
-            }
+            // A piece without energy still takes part here: `absorbDamage` returns the whole ratio when the energy cost is zero (the geothermal
+            // unit), and returns nothing by itself when the cost is above zero and there is no energy.
 
             // Inhalation purification on Helmet: absorbs preventable magic damage
             if piece.item == HELMET && source.is_magic && piece.modules.is_enabled(ModuleType::InhalationPurificationUnit) {
@@ -519,14 +529,16 @@ pub fn calculate_damage_absorbed(
         let cannot_absorb = source.is_technical || (source.bypasses_armor && !source.always_supported);
 
         if !cannot_absorb {
-            for slot_idx in 0..4 {
+            for slot_idx in ARMOR_SLOT_ORDER {
                 if let Some(ref mut piece) = pieces[slot_idx] {
                     if piece.energy == 0 {
                         continue;
                     }
 
                     let piece_info = &PIECES[slot_idx];
-                    let base_piece_absorption = piece_info.absorption; // 0.15, 0.40, 0.30, 0.15
+                    // `details.armor.absorption * absorbRatio`: the data map `mekasuit_absorption` gives the sonic boom 0.75; every other type 1.0
+                    // (`mekaSuitUnspecifiedDamageRatio`, GearConfig.java:285-286).
+                    let base_piece_absorption = piece_info.absorption * damage_type_absorption_ratio(source); // 0.15, 0.40, 0.30, 0.15
                     let max_absorb_ratio = (1.0f32 - ratio_absorbed).min(base_piece_absorption);
                     let to_absorb_damage = amount * max_absorb_ratio;
                     let needed_energy = (ENERGY_USAGE_DAMAGE as f32 * to_absorb_damage).ceil() as u64;
@@ -569,13 +581,18 @@ pub fn absorb_fall_damage(boots: &mut MekaSuitItemStack, damage: f32) -> (f32, u
     if boots.item != BOOTS || damage <= 0.0 {
         return (0.0, 0);
     }
-    let cost = ENERGY_USAGE_FALL; // 20 FE
-    if boots.energy >= cost {
-        boots.energy -= cost;
-        (damage, cost)
+    // `CommonPlayerTickHandler.onLivingFall` (java:237-250): `energyRequirement = ceilToLong(mekaSuitEnergyUsageFall * fallDamage * ratio)`
+    // (the cost is per point of fall damage), `extracted` is what the container gives, and the ratio absorbed is `ratio * extracted / required`.
+    let ratio = MEKASUIT_FALL_DAMAGE_RATIO;
+    let required = (ENERGY_USAGE_FALL as f32 * (damage * ratio)).ceil() as u64;
+    let (ratio_absorbed, extracted) = if required == 0 {
+        (ratio, 0)
     } else {
-        (0.0, 0)
-    }
+        let extracted = required.min(boots.energy);
+        boots.energy -= extracted;
+        ((f64::from(ratio) * (extracted as f64 / required as f64)) as f32, extracted)
+    };
+    (damage * ratio_absorbed, extracted)
 }
 
 // -----------------------------------------------------------------------------
@@ -1413,15 +1430,69 @@ mod tests {
     }
 
     #[test]
+    fn java_absorption_goes_feet_legs_chest_head() {
+        // `Player.getArmorSlots()` order. Geothermal x8 on the pants takes 0.8 of fire damage for free; the rest, 0.2, goes to the pieces in order:
+        // boots 0.15, legs min(0.05, 0.30) = 0.05, then chest and helmet nothing (ItemMekaSuitArmor.java:408-477).
+        let mut pieces: [Option<MekaSuitItemStack>; 4] = [
+            MekaSuitItemStack::new(HELMET),
+            MekaSuitItemStack::new(BODYARMOR),
+            MekaSuitItemStack::new(PANTS),
+            MekaSuitItemStack::new(BOOTS),
+        ];
+        pieces[2].as_mut().unwrap().modules.add_module(PANTS, ModuleType::GeothermalGeneratorUnit, 8);
+        let result = calculate_damage_absorbed(&mut pieces, &DamageSource::fire("minecraft:in_fire"), 10.0);
+        assert!((result.ratio_absorbed - 1.0).abs() < 1e-6);
+        assert_eq!(result.energy_drained_by_piece[3], 60_000, "boots: 10 * 0.15 * 40 000");
+        assert_eq!(result.energy_drained_by_piece[2], 20_000, "legs: 10 * 0.05 * 40 000");
+        assert_eq!(result.energy_drained_by_piece[1], 0);
+        assert_eq!(result.energy_drained_by_piece[0], 0);
+    }
+
+    #[test]
+    fn java_geothermal_unit_absorbs_fire_even_without_energy() {
+        // The geothermal unit costs no energy (`ConstantPredicates.ZERO_LONG`), so `absorbDamage` returns the ratio even with an empty piece.
+        let mut pants_only: [Option<MekaSuitItemStack>; 4] = [None, None, MekaSuitItemStack::new(PANTS), None];
+        {
+            let pants = pants_only[2].as_mut().unwrap();
+            pants.modules.add_module(PANTS, ModuleType::GeothermalGeneratorUnit, 8);
+            pants.energy = 0;
+        }
+        let result = calculate_damage_absorbed(&mut pants_only, &DamageSource::fire("minecraft:in_fire"), 10.0);
+        assert!((result.ratio_absorbed - 0.8).abs() < 1e-6, "count / 8 * heatDamageReductionRatio(0.8) = 0.8");
+    }
+
+    #[test]
+    fn java_sonic_boom_is_absorbed_at_three_quarters() {
+        // MekanismDataMapsProvider.java: `SONIC_BOOM` -> `MekaSuitAbsorption(0.75F)`; the pieces absorb `armor.absorption * 0.75`.
+        let mut pieces: [Option<MekaSuitItemStack>; 4] = [
+            MekaSuitItemStack::new(HELMET),
+            MekaSuitItemStack::new(BODYARMOR),
+            MekaSuitItemStack::new(PANTS),
+            MekaSuitItemStack::new(BOOTS),
+        ];
+        let result = calculate_damage_absorbed(&mut pieces, &DamageSource::generic("minecraft:sonic_boom"), 10.0);
+        assert!((result.ratio_absorbed - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_fall_damage_absorption() {
         // GearConfig.java:267 - mekaSuitEnergyUsageFall = 50 J = 20 FE
         let mut boots = MekaSuitItemStack::new(BOOTS).unwrap();
         boots.energy = 10_000;
 
+        // `CommonPlayerTickHandler.java:237-250`: the cost is per point of fall damage: 20 FE * 15 = 300 FE.
         let (absorbed, cost) = absorb_fall_damage(&mut boots, 15.0);
         assert_eq!(absorbed, 15.0);
-        assert_eq!(cost, 20);
-        assert_eq!(boots.energy, 9_980);
+        assert_eq!(cost, 300);
+        assert_eq!(boots.energy, 9_700);
+
+        // With less energy than required the ratio absorbed is `ratio * extracted / required`: 150 of 300 FE absorbs half.
+        let mut weak = MekaSuitItemStack::new(BOOTS).unwrap();
+        weak.energy = 150;
+        let (absorbed, cost) = absorb_fall_damage(&mut weak, 15.0);
+        assert!((absorbed - 7.5).abs() < 1e-5);
+        assert_eq!(cost, 150);
+        assert_eq!(weak.energy, 0);
     }
 
     #[test]
