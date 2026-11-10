@@ -383,6 +383,8 @@ struct Mekanism {
     pending: Vec<Click>,
     /// Configuration card clicks waiting for the machine's next tick (a use can't change a block entity).
     card_clicks: Vec<equipment_world::CardClick>,
+    /// The waste barrels whose tank filter was set.
+    waste_filtered: HashSet<(String, i32, i32, i32)>,
     /// Empties waiting for the game to confirm their drops exist, by block and by summon ticket, and empties whose
     /// drops all spawned, waiting for the block's next tick to clear the slots they came from (see `empty_block`).
     empty: HashMap<EmptyKey, EmptyPending>,
@@ -1932,6 +1934,13 @@ impl ServerMod for Mekanism {
             r = r.block_entity_kind(storage);
         }
         r = r.block_entity_kind(kind(cardboard_box::BLOCK, true));
+        // The radioactive waste barrel: one chemical tank (512 000 mB) through the top and the bottom only.
+        let mut barrel = kind(radioactive_waste_barrel::BLOCK_ID, true);
+        let mut barrel_faces = vec![FlowSide::None; 6];
+        barrel_faces[config::UP] = FlowSide::Both;
+        barrel_faces[config::DOWN] = FlowSide::Both;
+        barrel.tanks.push(TankSpec { kind: "chemical".into(), capacity: radioactive_waste_barrel::CAPACITY, max_rate: radioactive_waste_barrel::CAPACITY, faces: barrel_faces });
+        r = r.block_entity_kind(barrel);
         // The QIO drive array holds twelve drives (one per slot, none moved by hoppers); the redstone adapter's one slot is its ghost target.
         let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
@@ -2169,6 +2178,7 @@ impl ServerMod for Mekanism {
             filtered: HashSet::new(),
             pending: Vec::new(),
             card_clicks: Vec::new(),
+            waste_filtered: HashSet::new(),
             empty: HashMap::new(),
             empty_tickets: HashMap::new(),
             empty_ready: HashMap::new(),
@@ -2925,6 +2935,10 @@ impl ServerMod for Mekanism {
         let oredictionificators: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(oredictionificator::BLOCK)).collect();
         if !oredictionificators.is_empty() {
             out.extend(self.run_oredictionificators(&oredictionificators));
+        }
+        let waste_barrels: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(radioactive_waste_barrel::BLOCK_ID)).collect();
+        if !waste_barrels.is_empty() {
+            out.extend(self.run_waste_barrels(&waste_barrels, tick));
         }
         let drive_arrays: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_DRIVE_ARRAY)).collect();
         if !drive_arrays.is_empty() {

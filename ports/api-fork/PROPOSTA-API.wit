@@ -579,3 +579,18 @@ crafting-matches: func(id: string, grid: list<option<item-stack>>) -> bool;
 item-max-stack-size: func(item: string) -> u32;
 // Validador por slot do contêiner (stock control: um slot só aceita o item da fórmula); hoje ContainerSpec só tem entradas/saídas por slot.
 // per-slot item validators for the container (stock control accepts only the formula's item in a slot)
+
+// ---- FORK-10: entidades próprias de mod (Robit) — ver FORK-10-entidades-proprias.md ----
+record entity-skin { id: string, texture: string, model: option<string> }
+record entity-kind { id: string, width: f32, height: f32, eye-height: f32, max-health: f32, speed: f32, persistent: bool, skins: list<entity-skin>, container-slots: u32 }
+record mod-entity { dimension: string, id: u32, kind: string, x: f64, y: f64, z: f64, yaw: f32, data: list<u8>, items: list<option<item-stack>>, energy: u64, skin: string, name: option<string> }
+record mod-entity-update { dimension: string, id: u32, data: option<list<u8>>, items: option<list<option<item-stack>>>, energy: option<u64>, skin: option<string>, name: option<option<string>>, path-to: option<tuple<f64, f64, f64, f32>>, teleport: option<tuple<f64, f64, f64>>, remove: bool }
+// registration.entity-kinds: list<entity-kind>
+// export entities-tick: func(entities: list<mod-entity>) -> list<mod-entity-update>;
+// export mod-entity-used: func(player: player, entity: mod-entity, sneaking: bool) -> bool;
+// export mod-entity-damaged: func(entity: mod-entity, source: damage-source, amount: f32) -> f32;
+// export mod-entity-died: func(entity: mod-entity);
+spawn-mod-entity: func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>;
+record dropped-item { id: u32, stack: item-stack, x: f64, y: f64, z: f64 }
+items-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>;
+take-dropped-item: func(dimension: string, id: u32, count: u32) -> result<_, string>;

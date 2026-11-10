@@ -21,8 +21,13 @@
 //! 7. Catastrophic radiation dump: when destroyed, all contained radioactive chemical is released into the world
 //!    environment as a radiation source, while the dropped item does NOT retain any radioactive chemicals.
 
+use std::collections::HashMap;
+
+use horizon_mod_sdk::server::{player_control, world, BlockEntity, BlockEntityUpdate, BlockPos};
+
 use crate::process::Tank;
 use crate::radiation::radioactivity;
+use crate::Mekanism;
 
 /// Block and Item registry ID.
 pub const BLOCK_ID: &str = "mekanism:radioactive_waste_barrel";
@@ -353,6 +358,114 @@ pub fn step_auto_drain(barrel: &mut WasteBarrel, barrel_below: Option<&mut Waste
 }
 
 // -------------------------------------------------------------------------------------------------
+// In the world: the block entities
+// -------------------------------------------------------------------------------------------------
+
+/// The chemicals a barrel takes (`StackedWasteBarrel`'s attribute validator): the radioactive ones, and while it holds one only that one.
+fn accepted(held: &Tank) -> Vec<String> {
+    if held.amount > 0 && !held.chemical.is_empty() {
+        return vec![held.chemical.clone()];
+    }
+    ["mekanism:nuclear_waste", "mekanism:spent_nuclear_waste", "mekanism:plutonium", "mekanism:polonium"]
+        .iter()
+        .filter(|c| is_radioactive_chemical(c))
+        .map(|c| (*c).to_owned())
+        .collect()
+}
+
+impl Mekanism {
+    /// A tick of the radioactive waste barrels (`TileEntityRadioactiveWasteBarrel.onUpdateServer`): the decay, the sneak click of the configurator
+    /// that turns the draining on or off, and, when it drains, the barrel below taking what it can (`ChemicalUtil.emit`, limited to the room
+    /// there). Draining into something that is not a barrel waits for the game to push a tank's content out of a face (FORK); so do the comparator
+    /// level and the radiation dump of a broken barrel.
+    pub(crate) fn run_waste_barrels(&mut self, barrels: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
+        let mut states: HashMap<(String, i32, i32, i32), WasteBarrel> = HashMap::new();
+        let mut order: Vec<(String, i32, i32, i32)> = Vec::new();
+        for b in barrels {
+            let key = (b.dimension.clone(), b.pos.x, b.pos.y, b.pos.z);
+            let mut state = decode(&b.data).unwrap_or_default();
+            state.tank = crate::plus::held(b, 0);
+            states.insert(key.clone(), state);
+            order.push(key);
+        }
+        let mut out = Vec::new();
+        for (key, b) in order.iter().zip(barrels) {
+            let mut state = states.remove(key).unwrap_or_default();
+            let mut toggled = false;
+            if let Some(click) = self.take_click(b) {
+                if click.sneak && click.mode.is_configurating() {
+                    state.active = !state.active;
+                    toggled = true;
+                    let _ = player_control::play_sound(&b.dimension, SOUND_TOGGLE_ACTIVE, f64::from(b.pos.x) + 0.5, f64::from(b.pos.y) + 0.5, f64::from(b.pos.z) + 0.5, 0.3, 1.0);
+                }
+            }
+            let before = state.tank.clone();
+            state.tick(tick);
+            if state.active && state.tank.amount > 0 {
+                let below_key = (key.0.clone(), key.1, key.2 - 1, key.3);
+                if let Some(below) = states.get_mut(&below_key) {
+                    // Only as much as the barrel below can take: what goes up the chain again is not sent.
+                    if below.tank.chemical.is_empty() || below.tank.chemical == state.tank.chemical {
+                        step_auto_drain(&mut state, Some(below));
+                    }
+                }
+            }
+            let first = self.waste_filtered.insert((key.0.clone(), key.1, key.2, key.3));
+            if first || state.tank != before {
+                let _ = world::set_tank_filter(&b.dimension, b.pos.x, b.pos.y, b.pos.z, 0, &accepted(&state.tank));
+            }
+            let changed = toggled || state.tank != before || state.process_ticks != decode(&b.data).map_or(0, |d| d.process_ticks);
+            let new_data = encode(&state);
+            states.insert(key.clone(), state);
+            if changed {
+                out.push((key.clone(), new_data));
+            }
+        }
+        // The barrels below may have changed too (they took the drain): every changed barrel gets its tank written.
+        let mut updates = Vec::new();
+        for ((dim, x, y, z), data) in out {
+            let st = states.get(&(dim.clone(), x, y, z)).cloned().unwrap_or_default();
+            updates.push(BlockEntityUpdate {
+                dimension: dim,
+                pos: BlockPos { x, y, z },
+                data,
+                items: None,
+                energy: None,
+                energy_faces: None,
+                tanks: Some(vec![crate::plus::as_tank(&st.tank)]),
+                tank_faces: None,
+                menu_data: None,
+                transmitter_faces: None,
+            });
+        }
+        // A barrel that only received the drain (no change of its own) is written as well.
+        for b in barrels {
+            let key = (b.dimension.clone(), b.pos.x, b.pos.y, b.pos.z);
+            if updates.iter().any(|u| (u.dimension.as_str(), u.pos.x, u.pos.y, u.pos.z) == (key.0.as_str(), key.1, key.2, key.3)) {
+                continue;
+            }
+            if let Some(st) = states.get(&key) {
+                if st.tank != crate::plus::held(b, 0) {
+                    updates.push(BlockEntityUpdate {
+                        dimension: key.0.clone(),
+                        pos: b.pos,
+                        data: encode(st),
+                        items: None,
+                        energy: None,
+                        energy_faces: None,
+                        tanks: Some(vec![crate::plus::as_tank(&st.tank)]),
+                        tank_faces: None,
+                        menu_data: None,
+                        transmitter_faces: None,
+                    });
+                }
+            }
+        }
+        updates
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
 // Interaction Handlers (Sneak Right-Click)
 // -------------------------------------------------------------------------------------------------
 
@@ -649,5 +762,14 @@ mod tests {
         let encoded = encode(&original);
         let decoded = decode(&encoded).expect("decode should succeed");
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn a_barrel_takes_the_radioactive_chemicals_and_then_only_the_one_it_holds() {
+        let empty = accepted(&Tank::default());
+        assert!(empty.contains(&"mekanism:plutonium".to_owned()) && empty.contains(&"mekanism:nuclear_waste".to_owned()));
+        assert!(!empty.contains(&"mekanism:hydrogen".to_owned()));
+        let holding = accepted(&Tank { chemical: "mekanism:polonium".into(), amount: 5 });
+        assert_eq!(holding, vec!["mekanism:polonium".to_owned()]);
     }
 }
