@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use horizon_mod_sdk::server::{world, BlockEntity, BlockEntityUpdate, ItemStack};
 
-use crate::{fuelwood_heater, heat, resistive_heater};
+use crate::{boiler, evaporation, fuelwood_heater, heat, resistive_heater, Mekanism};
 
 type Pos = [i32; 3];
 
@@ -48,8 +48,29 @@ fn neighbour(pos: Pos, face: usize) -> Pos {
     [pos[0] + o[0], pos[1] + o[1], pos[2] + o[2]]
 }
 
+/// What kind of multiblock a heat sink belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SinkKind {
+    Evaporation,
+    Boiler,
+}
+
+/// A block that is part of a multiblock and shows its heat capacitor to the heat blocks around it. The multiblock publishes it each
+/// tick (`TileEntityThermalEvaporationValve` and `TileEntityBoilerCasing.getInitialHeatCapacitors` give the structure's capacitors to every side).
+/// Heat given to it is kept in `pending` and the multiblock commits it when it next ticks, as Java does (`handleHeat` queues,
+/// `updateHeatCapacitors` commits).
+#[derive(Clone, Copy, Debug)]
+pub struct HeatSink {
+    pub kind: SinkKind,
+    /// The `min` corner of the structure, which is what the multiblock state is keyed by.
+    pub key: Pos,
+    pub capacitor: heat::HeatCapacitor,
+}
+
 /// The state of the heat blocks of one dimension, and the outcome of a tick.
 pub struct Heat {
+    /// Heat sinks of multiblocks around, by position.
+    external: HashMap<Pos, heat::HeatCapacitor>,
     conductors: HashMap<Pos, heat::ThermodynamicConductor>,
     resistive: HashMap<Pos, resistive_heater::ResistiveHeater>,
     fuelwood: HashMap<Pos, fuelwood_heater::FuelwoodHeater>,
@@ -57,7 +78,7 @@ pub struct Heat {
 
 impl Heat {
     pub fn new() -> Self {
-        Heat { conductors: HashMap::new(), resistive: HashMap::new(), fuelwood: HashMap::new() }
+        Heat { external: HashMap::new(), conductors: HashMap::new(), resistive: HashMap::new(), fuelwood: HashMap::new() }
     }
 
     /// One tick of the three kinds together at `ambient` (a heater at a position uses its own ambient: `heater_ambient`).
@@ -77,6 +98,12 @@ impl Heat {
                         sinks.push(copy);
                         at.push(n);
                     }
+                }
+                else if let Some(c) = self.external.get(&n) {
+                    let mut copy = *c;
+                    copy.heat_to_handle = 0.0;
+                    sinks.push(copy);
+                    at.push(n);
                 }
             }
             let amb = heater_ambient.get(&pos).copied().unwrap_or(ambient);
@@ -100,6 +127,12 @@ impl Heat {
                         at.push(n);
                     }
                 }
+                else if let Some(c) = self.external.get(&n) {
+                    let mut copy = *c;
+                    copy.heat_to_handle = 0.0;
+                    sinks.push(copy);
+                    at.push(n);
+                }
             }
             let amb = heater_ambient.get(&pos).copied().unwrap_or(ambient);
             let h = self.fuelwood.get_mut(&pos).unwrap();
@@ -111,6 +144,8 @@ impl Heat {
         for (n, q) in to_conductors {
             if let Some(c) = self.conductors.get_mut(&n) {
                 c.capacitor.handle_heat(q);
+            } else if let Some(c) = self.external.get_mut(&n) {
+                c.handle_heat(q);
             }
         }
 
@@ -125,10 +160,18 @@ impl Heat {
         for s in sinks.values_mut() {
             s.heat_to_handle = 0.0;
         }
+        let outside: Vec<Pos> = self.external.keys().copied().collect();
+        for pos in &outside {
+            let mut copy = self.external[pos];
+            copy.heat_to_handle = 0.0;
+            sinks.insert(*pos, copy);
+        }
         let mut network = heat::HeatNetwork::new();
         network.tick(&mut self.conductors, ambient, &mut sinks);
         for (pos, s) in sinks {
-            if let Some(h) = self.resistive.get_mut(&pos) {
+            if let Some(c) = self.external.get_mut(&pos) {
+                c.handle_heat(s.heat_to_handle);
+            } else if let Some(h) = self.resistive.get_mut(&pos) {
                 h.capacitor.handle_heat(s.heat_to_handle);
                 h.capacitor.update();
             } else if let Some(h) = self.fuelwood.get_mut(&pos) {
@@ -139,21 +182,99 @@ impl Heat {
     }
 }
 
-/// Runs the heat blocks among `entities` for one tick and gives their new state, each dimension on its own.
-pub fn run(entities: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
+/// Whether `p` is on the surface of the box `min..=max`.
+fn on_shell(p: Pos, min: Pos, max: Pos) -> bool {
+    (0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]) && (0..3).any(|i| p[i] == min[i] || p[i] == max[i])
+}
+
+impl Mekanism {
+    /// The multiblock blocks that touch a heat block, with the capacitor each shows (`getAdjacent` finds the neighbour's heat capability).
+    /// Evaporation shows its heat only through the valves (`TileEntityThermalEvaporationValve`), the boiler through every casing part
+    /// and valve (`TileEntityBoilerCasing`); both give the structure's one capacitor.
+    pub(crate) fn heat_sinks_near(&self, heat_blocks: &[&BlockEntity]) -> HashMap<(String, Pos), HeatSink> {
+        let mut out = HashMap::new();
+        if self.plants.is_empty() && self.boilers.is_empty() {
+            return out;
+        }
+        for e in heat_blocks {
+            let at = [e.pos.x, e.pos.y, e.pos.z];
+            for face in 0..6 {
+                let n = neighbour(at, face);
+                if out.contains_key(&(e.dimension.clone(), n)) {
+                    continue;
+                }
+                for ((dim, key), plant) in &self.plants {
+                    let Some((min, max)) = plant.bounds else { continue };
+                    if *dim != e.dimension || !on_shell(n, min, max) {
+                        continue;
+                    }
+                    if world::get_block(dim, n[0], n[1], n[2]).is_some_and(|b| b.split('[').next() == Some(evaporation::VALVE)) {
+                        let height = (max[1] - min[1] + 1) as u8;
+                        let mut c = heat::HeatCapacitor::new(evaporation::heat_capacity(height), 1.0, 0.0, evaporation::AMBIENT);
+                        c.stored_heat = plant.temperature * c.heat_capacity;
+                        out.insert((dim.clone(), n), HeatSink { kind: SinkKind::Evaporation, key: *key, capacitor: c });
+                    }
+                }
+                for ((dim, key), b) in &self.boilers {
+                    let Some((min, max)) = b.bounds else { continue };
+                    if *dim != e.dimension || !on_shell(n, min, max) {
+                        continue;
+                    }
+                    if world::get_block(dim, n[0], n[1], n[2]).is_some_and(|x| matches!(x.split('[').next(), Some(boiler::CASING | boiler::VALVE))) {
+                        let size = [max[0] - min[0] + 1, max[1] - min[1] + 1, max[2] - min[2] + 1];
+                        let shell = size[0] * size[1] * size[2] - (size[0] - 2) * (size[1] - 2) * (size[2] - 2);
+                        let mut c = heat::HeatCapacitor::new(boiler::CASING_HEAT * f64::from(shell), boiler::CONDUCTION, boiler::INSULATION, boiler::AIR);
+                        c.stored_heat = b.temperature * c.heat_capacity;
+                        out.insert((dim.clone(), n), HeatSink { kind: SinkKind::Boiler, key: *key, capacitor: c });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Queues on each multiblock the heat the heat blocks passed to its blocks.
+    pub(crate) fn commit_heat_given(&mut self, sinks: &HashMap<(String, Pos), HeatSink>, given: Vec<(String, Pos, f64)>) {
+        for (dim, pos, q) in given {
+            let Some(s) = sinks.get(&(dim.clone(), pos)) else { continue };
+            match s.kind {
+                SinkKind::Evaporation => {
+                    if let Some(p) = self.plants.get_mut(&(dim, s.key)) {
+                        p.pending_heat += q;
+                    }
+                }
+                SinkKind::Boiler => {
+                    if let Some(b) = self.boilers.get_mut(&(dim, s.key)) {
+                        b.pending_heat += q;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Runs the heat blocks among `entities` for one tick and gives their new state, each dimension on its own, with the heat they
+/// passed to the multiblocks in `sinks` (dimension, position, joules) for the multiblocks to commit.
+pub fn run(entities: &[&BlockEntity], sinks: &HashMap<(String, Pos), HeatSink>) -> (Vec<BlockEntityUpdate>, Vec<(String, Pos, f64)>) {
     let mut dimensions: Vec<&str> = entities.iter().map(|e| e.dimension.as_str()).collect();
     dimensions.sort_unstable();
     dimensions.dedup();
     let mut out = Vec::new();
+    let mut given = Vec::new();
     for d in dimensions {
         let group: Vec<&BlockEntity> = entities.iter().copied().filter(|e| e.dimension == d).collect();
-        out.extend(run_dimension(&group));
+        let outside: HashMap<Pos, heat::HeatCapacitor> =
+            sinks.iter().filter(|((dim, _), _)| dim == d).map(|((_, pos), s)| (*pos, s.capacitor)).collect();
+        let (updates, deliveries) = run_dimension(&group, outside);
+        out.extend(updates);
+        given.extend(deliveries.into_iter().map(|(pos, q)| (d.to_owned(), pos, q)));
     }
-    out
+    (out, given)
 }
 
-fn run_dimension(entities: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
+fn run_dimension(entities: &[&BlockEntity], outside: HashMap<Pos, heat::HeatCapacitor>) -> (Vec<BlockEntityUpdate>, Vec<(Pos, f64)>) {
     let mut world_heat = Heat::new();
+    world_heat.external = outside;
     let mut powered: HashMap<Pos, bool> = HashMap::new();
     let mut ambients: HashMap<Pos, f64> = HashMap::new();
     let mut by_pos: HashMap<Pos, &BlockEntity> = HashMap::new();
@@ -188,7 +309,11 @@ fn run_dimension(entities: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
             world_heat.fuelwood.insert(pos, h);
         }
     }
+    for c in world_heat.external.values_mut() {
+        c.heat_to_handle = 0.0;
+    }
     world_heat.tick(ambient, &powered, &ambients);
+    let deliveries: Vec<(Pos, f64)> = world_heat.external.iter().filter(|(_, c)| c.heat_to_handle != 0.0).map(|(p, c)| (*p, c.heat_to_handle)).collect();
 
     let mut out = Vec::new();
     for (pos, e) in by_pos {
@@ -206,7 +331,7 @@ fn run_dimension(entities: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
             out.push(u);
         }
     }
-    out
+    (out, deliveries)
 }
 
 #[cfg(test)]
@@ -232,6 +357,32 @@ mod tests {
         // The original moves heat by (own temperature - AMBIENT) / resistance (`ITileHeatHandler.simulateAdjacent`), not by the
         // difference to the sink, so a conductor of capacity 1 ends far hotter than the heater (checked against the Java).
         assert!(w.resistive[&[0, 0, 0]].capacitor.temperature() > 300.0);
+    }
+
+    #[test]
+    fn a_conductor_gives_heat_to_a_multiblock_block_and_a_heater_next_to_one_does_too() {
+        // A basic conductor beside a boiler casing (capacity 50 a block): the casing capacitor is queued heat as the conductor's
+        // `simulateAdjacent` finds it as its sink. A heater touching the casing directly gives it heat too.
+        let casing = heat::HeatCapacitor::new(5000.0, boiler::CONDUCTION, boiler::INSULATION, boiler::AIR);
+        let mut w = Heat::new();
+        w.external.insert([2, 0, 0], casing);
+        w.external.insert([0, 1, 0], casing);
+        let mut heater = resistive_heater::ResistiveHeater::new(300.0);
+        heater.energy_stored_fe = heater.max_energy_fe();
+        w.resistive.insert([0, 0, 0], heater);
+        w.conductors.insert([1, 0, 0], heat::ThermodynamicConductor::new(heat::ConductorTier::Basic, 300.0));
+        let powered = HashMap::from([([0, 0, 0], true)]);
+        let (mut by_conductor, mut by_heater) = (0.0, 0.0);
+        for _ in 0..100 {
+            for c in w.external.values_mut() {
+                c.heat_to_handle = 0.0;
+            }
+            w.tick(300.0, &powered, &HashMap::new());
+            by_conductor += w.external[&[2, 0, 0]].heat_to_handle;
+            by_heater += w.external[&[0, 1, 0]].heat_to_handle;
+        }
+        assert!(by_conductor > 0.0, "the conductor passes heat to the block at its end: {by_conductor}");
+        assert!(by_heater > 0.0, "the heater passes heat to the block it touches: {by_heater}");
     }
 
     #[test]

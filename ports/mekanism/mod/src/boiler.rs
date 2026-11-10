@@ -206,6 +206,10 @@ pub struct Boiler {
     pub given: HashMap<[i32; 3], [u64; 4]>,
     pub elements: Vec<[i32; 3]>,
     pub formed: bool,
+    /// The box of the structure and the heat that conductors and heaters around gave it since its last tick, in joules
+    /// (`handleHeat` queues it, the next `updateHeatCapacitors` commits it).
+    pub bounds: Option<([i32; 3], [i32; 3])>,
+    pub pending_heat: f64,
 }
 
 pub struct Caps {
@@ -228,6 +232,8 @@ pub fn capacities(f: &Found) -> Caps {
 pub fn tick(b: &mut Boiler, f: &Found, ambient: f64) -> (u64, u64) {
     let capacity = CASING_HEAT * f64::from(f.blocks).max(1.0);
     let caps = capacities(f);
+    // What the heat blocks around gave since the last tick.
+    b.temperature += std::mem::take(&mut b.pending_heat) / capacity;
     // The air takes heat away.
     let inv = AIR + INSULATION + CONDUCTION;
     b.temperature -= (b.temperature - ambient) / inv;
@@ -288,6 +294,7 @@ impl Mekanism {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
             let b = self.boilers.entry((dimension.to_owned(), found.min)).or_default();
+            b.bounds = found.valid.then_some((min, max));
             if found.valid {
                 b.elements = s.members.iter().filter(|m| part_of(&m.state) == Some(Part::Element)).map(|m| [m.pos.x, m.pos.y, m.pos.z]).collect();
                 if !b.formed {
@@ -693,6 +700,16 @@ mod tests {
         let f = validate(&boiler(6, 2), [0; 3], [5; 3], |_| true);
         assert!(f.valid);
         assert_eq!(f.steam_volume, 6 * 6 * 3);
+    }
+
+    #[test]
+    fn heat_given_by_the_blocks_around_is_committed_at_the_next_tick_over_the_capacity() {
+        let f = Found { valid: true, min: [0; 3], blocks: 100, water_volume: 1, steam_volume: 1, elements: 1 };
+        let mut b = Boiler { temperature: 300.0, pending_heat: 5000.0, ..Boiler::default() };
+        tick(&mut b, &f, 300.0);
+        // 5000 J over 100 blocks * 50 J/K = 1 K; the air takes back almost nothing at once (insulation 100 000).
+        assert!((b.temperature - 301.0).abs() < 1e-3, "{}", b.temperature);
+        assert_eq!(b.pending_heat, 0.0);
     }
 
     #[test]

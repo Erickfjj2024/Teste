@@ -2936,7 +2936,10 @@ impl ServerMod for Mekanism {
         }
         let heat_blocks: Vec<&BlockEntity> = entities.iter().filter(|e| heat_world::is_heat_block(e.state.split('[').next().unwrap_or(""))).collect();
         if !heat_blocks.is_empty() {
-            out.extend(heat_world::run(&heat_blocks));
+            let sinks = self.heat_sinks_near(&heat_blocks);
+            let (updates, given) = heat_world::run(&heat_blocks, &sinks);
+            out.extend(updates);
+            self.commit_heat_given(&sinks, given);
         }
         let chargepads: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(chargepad::BLOCK)).collect();
         if !chargepads.is_empty() {

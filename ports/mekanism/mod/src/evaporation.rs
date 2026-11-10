@@ -126,7 +126,12 @@ pub fn decode(data: &[u8]) -> Option<(Found, f32)> {
 
 /// One tick of the plant's heat: the solar generators warm it, then it loses heat to the air around (`simulateEnvironment`).
 pub fn heat(temperature: f64, solars: u32, ambient: f64) -> f64 {
-    let mut t = temperature + f64::from(solars) * SOLAR;
+    heat_with(temperature, solars, ambient, 0.0)
+}
+
+/// `heat` with `external` kelvin given by the heat blocks around, committed together with the solar generators' heat.
+pub fn heat_with(temperature: f64, solars: u32, ambient: f64, external: f64) -> f64 {
+    let mut t = temperature + f64::from(solars) * SOLAR + external;
     let diff = (t - ambient).abs();
     if diff < 0.001 {
         return ambient;
@@ -194,6 +199,14 @@ pub struct Plant {
     pub temperature: f64,
     pub given: HashMap<[i32; 3], (u64, u64)>,
     pub rate: f64,
+    /// The box of the structure and the heat that conductors and heaters around gave it since its last tick, in joules.
+    pub bounds: Option<([i32; 3], [i32; 3])>,
+    pub pending_heat: f64,
+}
+
+/// `evaporationHeatCapacity` (default 100) for each level of height: the plant's `VariableHeatCapacitor` (`EvaporationMultiblockData:137`).
+pub fn heat_capacity(height: u8) -> f64 {
+    100.0 * f64::from(height)
 }
 
 /// Comparator signal from input tank contents (`EvaporationMultiblockData:312`).
@@ -258,6 +271,7 @@ impl Mekanism {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
             // The formation notice (sparkles / action bar) is made for every multiblock in `multiblock_changed` (lib.rs).
+            self.plants.entry((dimension.to_owned(), found.min)).or_default().bounds = found.valid.then_some((min, max));
             if !found.valid {
                 let _ = host_remove_multiblock_fluid(dimension, min, max); // FORK-19 / FORK-31
             }
@@ -392,7 +406,8 @@ impl Mekanism {
             } else {
                 0
             };
-            plant.temperature = heat(plant.temperature.max(1.0), solars, ambient);
+            let external = std::mem::take(&mut plant.pending_heat) / heat_capacity(found.height);
+            plant.temperature = heat_with(plant.temperature.max(1.0), solars, ambient, external);
             let mult = multiplier(plant.temperature, found.height);
             let ops = operations(mult, tick);
             let can_operate = !plant.input.chemical.is_empty() && plant.input.amount > 0 && plant.output.amount < OUTPUT_CAPACITY;
@@ -539,6 +554,15 @@ mod tests {
         assert!((t - (AMBIENT + 1600.0)).abs() < 2.0, "{t}");
         assert_eq!(heat(AMBIENT, 0, AMBIENT), AMBIENT);
         assert!(heat(1000.0, 0, AMBIENT) < 1000.0);
+    }
+
+    #[test]
+    fn heat_given_by_the_blocks_around_warms_the_plant_by_joules_over_capacity() {
+        // 4 levels: capacity 400 J/K, so 800 J is 2 K on top of the air's own pull (`VariableHeatCapacitor.handleHeat` / `getTemperature`).
+        assert_eq!(heat_capacity(4), 400.0);
+        let plain = heat_with(400.0, 0, AMBIENT, 0.0);
+        let warmed = heat_with(400.0, 0, AMBIENT, 800.0 / heat_capacity(4));
+        assert!((warmed - plain - 2.0).abs() < 0.2, "{plain} {warmed}");
     }
 
     #[test]
