@@ -116,6 +116,55 @@ impl State {
         changed
     }
 
+    /// `GuiDimensionalStabilizer.hasAtRadius`: whether some chunk of the ring at `radius` is `state`.
+    pub fn has_at_radius(&self, radius: i32, state: bool) -> bool {
+        for dx in -radius..=radius {
+            let skip_inner = dx > -radius && dx < radius;
+            let mut dz = -radius;
+            while dz <= radius {
+                if self.loading_chunks[(dx + MAX_LOAD_RADIUS) as usize][(dz + MAX_LOAD_RADIUS) as usize] == state {
+                    return true;
+                }
+                dz += if skip_inner { 2 * radius } else { 1 };
+            }
+        }
+        false
+    }
+
+    /// The numbers the screen reads: 0-1 energy, 2-3 capacity (low and high 16 bits), 4 active, 5 chunks loaded, 6-7 energy a tick, 8 the radius the
+    /// middle button's left click turns on (the first ring with a chunk off, 0 for none), 9 the radius its right click turns off (the outermost ring with
+    /// a chunk on, 0 for none), 10 the redstone control, 11-12 energy still needed, then the 25 chunks in grid order (`x * 5 + z`), then at 38 both radii in one number.
+    pub fn menu_numbers(&self, energy: u64) -> Vec<i32> {
+        let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
+        let capacity = self.max_energy();
+        let per_tick = self.energy_per_tick();
+        let enable = (1..=MAX_LOAD_RADIUS).find(|r| self.has_at_radius(*r, false)).unwrap_or(0);
+        let disable = (1..=MAX_LOAD_RADIUS).rev().find(|r| self.has_at_radius(*r, true)).unwrap_or(0);
+        let mut v = vec![
+            half(energy, 0),
+            half(energy, 16),
+            half(capacity, 0),
+            half(capacity, 16),
+            i32::from(self.active),
+            self.chunks_loaded as i32,
+            half(per_tick, 0),
+            half(per_tick, 16),
+            enable,
+            disable,
+            self.control as i32,
+            half(capacity.saturating_sub(energy), 0),
+            half(capacity.saturating_sub(energy), 16),
+        ];
+        for x in 0..MAX_LOAD_DIAMETER {
+            for z in 0..MAX_LOAD_DIAMETER {
+                v.push(i32::from(self.loading_chunks[x][z]));
+            }
+        }
+        // 38: both radii in one number (`turn on * 3 + turn off`), for a screen that can test only one number at a time.
+        v.push(enable * 3 + disable);
+        v
+    }
+
     /// Calculates energy capacity scaled by energy upgrades (up to 8 upgrades).
     pub fn max_energy(&self) -> u64 {
         upgrades::max_energy(BASE_CAPACITY, self.energy_upgrades)
@@ -254,6 +303,10 @@ impl Mekanism {
                 if (BUTTON_TOGGLE_CHUNK_BASE..BUTTON_TOGGLE_CHUNK_BASE + 25).contains(&id) {
                     let offset = (id - BUTTON_TOGGLE_CHUNK_BASE) as usize;
                     state.toggle_chunk(offset / MAX_LOAD_DIAMETER, offset % MAX_LOAD_DIAMETER);
+                } else if id == crate::redstone::NEXT {
+                    state.control = state.control.next();
+                } else if id == crate::redstone::PREVIOUS {
+                    state.control = state.control.previous();
                 } else if (BUTTON_RING_ENABLE_BASE + 1..=BUTTON_RING_ENABLE_BASE + MAX_LOAD_RADIUS).contains(&id) {
                     state.adjust_radius(id - BUTTON_RING_ENABLE_BASE, true);
                 } else if (BUTTON_RING_DISABLE_BASE + 1..=BUTTON_RING_DISABLE_BASE + MAX_LOAD_RADIUS).contains(&id) {
@@ -283,15 +336,10 @@ impl Mekanism {
             let loaded_chunks = state.get_loaded_chunk_set(e.pos.x, e.pos.z);
             self.sync_stabilizer_tickets(&key, &loaded_chunks, state.active);
 
-            let changed = was_active != state.active || energy != e.energy;
+            let numbers = state.menu_numbers(energy);
+            let changed = was_active != state.active || energy != e.energy || e.menu_data != numbers || e.data != encode(&state);
             if changed {
-                // Sits in menu_data: [active, chunks_loaded, energy_low, energy_high]
-                let menu_data = vec![
-                    i32::from(state.active),
-                    state.chunks_loaded as i32,
-                    (energy & 0xFFFF_FFFF) as i32,
-                    ((energy >> 32) & 0xFFFF_FFFF) as i32,
-                ];
+                let menu_data = numbers;
 
                 out.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
@@ -418,5 +466,28 @@ mod tests {
         assert_eq!(decoded.energy_upgrades, 3);
         assert_eq!(decoded.chunks_loaded, 9);
         assert_eq!(decoded.loading_chunks, state.loading_chunks);
+    }
+
+    #[test]
+    fn test_screen_numbers_and_the_middle_button_radii() {
+        let mut state = State::default();
+        // Only the middle chunk: left click turns on ring 1, nothing is on at the rings to turn off.
+        let n = state.menu_numbers(1_000);
+        assert_eq!(n.len(), 13 + 25 + 1);
+        assert_eq!(n[38], 1 * 3 + 0);
+        assert_eq!((n[8], n[9]), (1, 0));
+        assert_eq!(n[13 + 2 * 5 + 2], 1, "the middle chunk");
+        assert_eq!(n[13], 0);
+        // Ring 1 on: left click now turns on ring 2, right click turns ring 1 off.
+        state.adjust_radius(1, true);
+        let n = state.menu_numbers(1_000);
+        assert_eq!((n[8], n[9]), (2, 1));
+        // Everything on: nothing to turn on, the outermost ring turns off.
+        state.adjust_radius(2, true);
+        let n = state.menu_numbers(1_000);
+        assert_eq!((n[8], n[9]), (0, 2));
+        assert_eq!(n[5], 25);
+        // The energy halves.
+        assert_eq!(n[0], 1_000);
     }
 }

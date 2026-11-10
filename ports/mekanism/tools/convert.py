@@ -1575,6 +1575,71 @@ def assemblicator_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
+def stabilizer_menu(m):
+    """GuiDimensionalStabilizer (176 by 166): the 5 by 5 grid of chunks (10 by 10 squares at 63, 19, blue when it loads), the up arrow and the N at its
+    left, the charge slot, the power bar, and the energy and redstone tabs. The screen's numbers are `dimensional_stabilizer.rs::menu_numbers`.
+    The middle square is always loaded: its left click turns on the first ring with a chunk off and its right click turns off the outermost ring with a
+    chunk on (the radius is a number the mod works out). The tooltips say where the chunk is from the stabilizer's own: the original gives the
+    world chunk's coordinates, which a screen number of 16 bits cannot carry."""
+    width, height = 176, 166
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    panel.alpha_composite(gui_sprite('slot/power'), (142, 34))
+    panel.alpha_composite(gui_sprite('arrow/up'), (52, 28))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 15))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Dimensional Stabilizer')
+    BLUE = '#366BD0'  # EnumColor.DARK_BLUE
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 16, 'w': 4, 'h': 52, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 49 - text_width('N') // 2, 'y': 41, 'text': 'N', 'color': '#404040'}]
+    for x in range(5):
+        for z in range(5):
+            px, py = 63 + 10 * x, 19 + 10 * z
+            dx, dz = x - 2, z - 2
+            if dx == 0 and dz == 0:
+                widgets.append({'type': 'bar', 'x': px, 'y': py, 'w': 10, 'h': 10, 'value': {'const': 1}, 'max': {'const': 1}, 'color': BLUE, 'direction': 'up'})
+                # the left click: ring `enable`, the right click: ring `disable` (7530 + r and 7540 + r); none when 0
+                for enable in (0, 1, 2):
+                    for disable in (0, 1, 2):
+                        button = {'type': 'button', 'x': px, 'y': py, 'w': 10, 'h': 10,
+                                  'tooltip': 'The chunk of the stabilizer is always loaded.'
+                                  + ('\n\nLeft click to enable chunk loading for all chunks with a radius of %d.' % enable if enable else '')
+                                  + ('\nRight click to disable chunk loading for all chunks with a radius of %d.' % disable if disable else '')}
+                        if enable:
+                            button['id'] = 7530 + enable
+                        if disable:
+                            button['alt_id'] = 7540 + disable
+                        if 'id' not in button and 'alt_id' not in button:
+                            continue
+                        if 'id' not in button:
+                            button['id'] = 7540 + disable  # only the right click would act: the left one does the same
+                        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 38}, 'eq': enable * 3 + disable}}, 'widgets': [button]})
+                continue
+            idx = 13 + x * 5 + z
+            where = '(%+d, %+d)' % (dx, dz)
+            widgets.append({'type': 'bar', 'x': px, 'y': py, 'w': 10, 'h': 10, 'value': {'data': idx}, 'max': {'const': 1}, 'color': BLUE, 'direction': 'up'})
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': idx}, 'eq': 1}}, 'widgets': [
+                {'type': 'button', 'x': px, 'y': py, 'w': 10, 'h': 10, 'id': 7500 + x * 5 + z, 'tooltip': f'Toggle chunk loading on at {where} from here'}]})
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': idx}, 'eq': 0}}, 'widgets': [
+                {'type': 'button', 'x': px, 'y': py, 'w': 10, 'h': 10, 'id': 7500 + x * 5 + z, 'tooltip': f'Toggle chunk loading off at {where} from here'}]})
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
+                 'tooltip': 'Using: {6+7} FE/t\nNeeded: {11+12} FE\nUnit: Forge Energy'}]
+    widgets += redstone_widgets(10)
+    return {'slots': 1, 'data_slots': 39, 'results': [],
+            'accepts': [{'slot': 0, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[143, 35]], 'width': width, 'height': height, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -2077,6 +2142,7 @@ def pump_menu(m):
 
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/formulaic_assemblicator.json', assemblicator_menu('formulaic_assemblicator'))
+put(f'{OUT}/data/{NS}/horizon/menu/dimensional_stabilizer.json', stabilizer_menu('dimensional_stabilizer'))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))
