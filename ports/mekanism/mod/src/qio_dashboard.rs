@@ -40,7 +40,7 @@ pub const CLEAR_CRAFTING_WINDOW_BASE: i32 = 7611; // 7611, 7612, 7613 for window
 // ============================================================================
 
 /// Represents one 3x3 crafting grid with output slot.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct CraftingWindow {
     pub inputs: [Option<ItemStack>; CRAFTING_GRID_SIZE],
     pub output: Option<ItemStack>,
@@ -100,7 +100,7 @@ impl CraftingWindow {
 // Dashboard Settings & State
 // ============================================================================
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DashboardState {
     /// Shift-click routing flag (`insertIntoFrequency`, default `true`, `TileEntityQIODashboard.java:42`).
     pub insert_into_frequency: bool,
@@ -319,7 +319,7 @@ pub fn route_shift_click<F: QioStorageView>(
 // Catalog Actions (Virtual Item Viewer: PacketQIOItemViewerSlot*)
 // ============================================================================
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CatalogAction {
     /// Takes 1 item (`PacketQIOItemViewerSlotTake.java`).
     TakeSingle { item: String, components: String },

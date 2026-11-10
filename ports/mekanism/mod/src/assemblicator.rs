@@ -82,7 +82,7 @@ pub const BUTTON_AUTO_MODE: i32 = 7905;
 
 /// What a Crafting Formula item stores (`FormulaAttachment.java:21-31`).
 /// Contains a 9-element array representing the 3x3 grid, plus an `invalid` flag.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FormulaAttachment {
     pub items: [Option<ItemStack>; 9],
     pub invalid: bool,
@@ -274,7 +274,7 @@ impl CraftingFormulaItem {
 // ============================================================================
 
 /// Recipe representation for 3x3 crafting matrix.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CraftingPattern {
     Shaped {
         width: usize,
@@ -286,7 +286,7 @@ pub enum CraftingPattern {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CraftingRecipeDef {
     pub id: String,
     pub pattern: CraftingPattern,
@@ -439,7 +439,7 @@ impl RecipeResolver {
 }
 
 /// Java: `RecipeFormula` (`RecipeFormula.java:17-36`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RecipeFormula {
     pub input_stacks: [Option<ItemStack>; 9],
     pub recipe: Option<CraftingRecipeDef>,
@@ -514,7 +514,7 @@ impl RecipeFormula {
 // ============================================================================
 
 /// What a Formulaic Assemblicator keeps in `BlockEntity.data`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AssemblicatorState {
     pub auto_mode: bool,
     pub stock_control: bool,
@@ -1132,7 +1132,10 @@ impl Mekanism {
                         state.ticks_required as i32,
                         state.control as i32,
                     ]),
-                    ..Default::default()
+                    tanks: None,
+                    tank_faces: None,
+                    energy_faces: None,
+                    transmitter_faces: None,
                 });
             }
         }
@@ -1205,7 +1208,10 @@ impl Mekanism {
                     state.ticks_required as i32,
                     state.control as i32,
                 ]),
-                ..Default::default()
+                tanks: None,
+                tank_faces: None,
+                energy_faces: None,
+                transmitter_faces: None,
             })
         } else {
             None

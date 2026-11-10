@@ -244,7 +244,7 @@ pub fn can_access(
 // ============================================================================
 
 /// Security component attached to machines.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TileComponentSecurity {
     pub owner: Option<[u8; 16]>,
     pub owner_name: String,
@@ -265,7 +265,7 @@ impl Default for TileComponentSecurity {
 // TileEntitySecurityDesk (TileEntitySecurityDesk.java)
 // ============================================================================
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SecurityDeskState {
     pub owner: Option<[u8; 16]>,
     pub owner_name: String,

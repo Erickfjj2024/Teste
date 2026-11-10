@@ -22,7 +22,7 @@ pub const EMPTY_STACK_LIMIT: u32 = 16;
 pub const FILLED_STACK_LIMIT: u32 = 1;
 
 /// Packed block data capturing blockstate and block entity data.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PackedBlockData {
     pub block_name: String,
     pub properties: HashMap<String, String>,
@@ -44,7 +44,7 @@ impl PackedBlockData {
 }
 
 /// The state stored in a Cardboard Box block entity.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
     pub is_storage: bool,
     pub packed_data: Option<PackedBlockData>,

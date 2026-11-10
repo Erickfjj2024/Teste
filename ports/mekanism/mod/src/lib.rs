@@ -24,6 +24,7 @@ mod fusion;
 mod induction;
 mod factory;
 mod pump;
+mod qio;
 mod radiation;
 mod reaction;
 mod redstone;
@@ -439,6 +440,8 @@ struct Mekanism {
     force: bool,
     /// The reaction chamber's recipes.
     reactions: reaction::Book,
+    /// The QIO frequencies and the buttons of the drive arrays and redstone adapters.
+    qio: qio::QIOManager,
     /// Formed multiblock structures tracked by (dimension, group, min_corner).
     formed_structures: HashSet<(String, String, [i32; 3])>,
     /// All block positions that are members of a currently formed multiblock.
@@ -1837,6 +1840,13 @@ impl ServerMod for Mekanism {
             }
             r = r.block_entity_kind(k);
         }
+        // The QIO drive array holds twelve drives (one per slot, none moved by hoppers); the redstone adapter's one slot is its ghost target.
+        let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
+        array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(array);
+        let mut adapter = kind(qio::BLOCK_REDSTONE_ADAPTER, true);
+        adapter.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(adapter);
         // The discharge and charge slots of its screen; a face reaches the charge slot where the cube's item side
         // says input, the discharge slot where it says output (set by the configurator, `cube()`).
         let slots = || ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: vec![1], outputs: vec![0], menu: true };
@@ -2120,6 +2130,7 @@ impl ServerMod for Mekanism {
             capacity: HashMap::new(),
             force: false,
             reactions: reaction::Book::default(),
+            qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
         }, r.on_chunks().on_items().on_tick().on_blocks()))
@@ -2754,6 +2765,14 @@ impl ServerMod for Mekanism {
         let alarms: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(alarm::ALARM)).collect();
         if !alarms.is_empty() {
             out.extend(self.run_alarms(&alarms));
+        }
+        let drive_arrays: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_DRIVE_ARRAY)).collect();
+        if !drive_arrays.is_empty() {
+            out.extend(self.qio.run_drive_arrays(&drive_arrays, tick));
+        }
+        let redstone_adapters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_REDSTONE_ADAPTER)).collect();
+        if !redstone_adapters.is_empty() {
+            out.extend(self.qio.run_redstone_adapters(&redstone_adapters, tick));
         }
         let qes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(entangloporter::BLOCK)).collect();
         if !qes.is_empty() || !self.qe_buttons.is_empty() {

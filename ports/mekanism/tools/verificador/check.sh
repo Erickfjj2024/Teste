@@ -13,7 +13,8 @@ rm -rf "$WORK/mod/src"; mkdir -p "$WORK/mod"
 cp -r "$SRC" "$WORK/mod/src"
 # CHECK_SKIP="modulo1 modulo2": exclui modulos que ainda nao compilam (outro grupo) / skip modules that do not compile yet (another group)
 for m in ${CHECK_SKIP:-}; do rm -f "$WORK/mod/src/$m.rs"; done
-rm -rf "$WORK/sdk"; cp -r "$HERE/sdk" "$WORK/sdk"
+# CHECK_SDK=<pasta horizon-mod-sdk do fork>: usa o SDK REAL em vez do de mentira / use the REAL SDK instead of the stub
+if [ -n "${CHECK_SDK:-}" ]; then SDK_PATH="$(cd "$CHECK_SDK" && pwd)"; else rm -rf "$WORK/sdk"; cp -r "$HERE/sdk" "$WORK/sdk"; SDK_PATH="../sdk"; fi
 cat > "$WORK/mod/Cargo.toml" <<TOML
 [package]
 name = "mekanism"
@@ -22,7 +23,7 @@ edition = "2024"
 [lib]
 crate-type = ["rlib"]
 [dependencies]
-horizon-mod-sdk = { path = "../sdk" }
+horizon-mod-sdk = { path = "$SDK_PATH" }
 [features]
 fork = []
 [workspace]

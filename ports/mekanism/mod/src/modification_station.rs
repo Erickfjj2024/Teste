@@ -265,7 +265,7 @@ impl InstalledModuleContainer {
 // Modification Station State & Server Tick (TileEntityModificationStation.java)
 // ============================================================================
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModificationStationState {
     pub energy: u64,
     pub operating_ticks: u32,
