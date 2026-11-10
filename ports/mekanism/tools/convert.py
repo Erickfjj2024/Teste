@@ -1640,6 +1640,81 @@ def stabilizer_menu(m):
             'accepts': [{'slot': 0, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[143, 35]], 'width': width, 'height': height, 'widgets': widgets}}
 
+def heater_common(panel_name, slot_xy, power_bar):
+    """The 176 by 166 panel of the two heaters: the base, the inventory, their slot's frame and the inner screen at 48, 23 (80 by 42 for the resistive one,
+    28 high for the fuelwood one)."""
+    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    slot = gui_sprite('slot/normal')
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, 141))
+    return panel
+
+tab_heat_info = copy_gui('tab/heat_info_k', 'tab_heat_info_k')
+HEAT_TIP = 'Temperature: {{{t}}} K\nTransferred: {{{x}}} K/t\nDissipated: {{{d}}} K/t\nUnit: Kelvin'
+
+def resistive_heater_menu(m):
+    """GuiResistiveHeater: the inner screen (the temperature and the usage), the charge slot at 15, 35, the power bar, and the energy, heat and redstone
+    tabs. Its numbers are `resistive_heater.rs::screen_numbers`. The original has a text field for the usage (7 digits, `PacketGuiSetEnergy`); the
+    screens of the port have no field yet, so eight buttons move it by 1000, 100, 10 and 1 Forge Energy up or down (7600 to 7607)."""
+    panel = heater_common(m, (15, 35), (164, 15))
+    panel.alpha_composite(gui_sprite('slot/power'), (14, 34))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 80, 42, 3), (48, 23))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 15))
+    steps = [-1000, -100, -10, -1, 1, 10, 100, 1000]
+    minus, plus = gui_sprite('button/minus'), gui_sprite('button/plus')
+    for i, step in enumerate(steps):
+        b = nine_slice(gui_sprite('button'), 10, 12, 2)
+        icon = (minus if step < 0 else plus).resize((8, 5), 0)
+        b.alpha_composite(icon, (1, 3))
+        panel.alpha_composite(b, (48 + 10 * i, 51))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Resistive Heater')
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 16, 'w': 4, 'h': 52, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 52, 'y': 28, 'text': 'Temperature: {8} K', 'color': '#00CD00', 'scale': 85},
+        {'type': 'text', 'x': 52, 'y': 38, 'text': 'Usage: {4+5} FE/t', 'color': '#00CD00', 'scale': 85}]
+    for i, step in enumerate(steps):
+        widgets.append({'type': 'button', 'x': 48 + 10 * i, 'y': 51, 'w': 10, 'h': 12, 'id': 7600 + i,
+                        'tooltip': f'Usage {"+" if step > 0 else "-"}{abs(step)} FE/t'})
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
+                 'tooltip': 'Using: {6+7} FE/t\nNeeded: {10+11} FE\nUnit: Forge Energy'},
+                {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': HEAT_TIP.format(t=8, x=12, d=13)}]
+    widgets += redstone_widgets(9)
+    return {'slots': 1, 'data_slots': 14, 'results': [],
+            'accepts': [{'slot': 0, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[15, 35]], 'width': 176, 'height': 166, 'widgets': widgets}}
+
+def fuelwood_heater_menu(m):
+    """GuiFuelwoodHeater: the inner screen (the temperature and the fuel), the fuel slot at 15, 29, the flame at 144, 31, and the heat tab. Its numbers
+    are `fuelwood_heater.rs::screen_numbers`."""
+    panel = heater_common(m, (15, 29), None)
+    panel.alpha_composite(gui_sprite('slot/normal'), (14, 28))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 80, 28, 3), (48, 23))
+    panel.alpha_composite(gui_sprite('progress/flame/empty'), (144, 31))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Fuelwood Heater')
+    widgets = [
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 52, 'y': 28, 'text': 'Temperature: {0} K', 'color': '#00CD00', 'scale': 85},
+        {'type': 'text', 'x': 52, 'y': 38, 'text': 'Fuel: {1}', 'color': '#00CD00', 'scale': 85},
+        {'type': 'sprite', 'texture': copy_gui('progress/flame/full', 'progress_flame_full'), 'x': 144, 'y': 31, 'w': 13, 'h': 13,
+         'value': {'data': 1}, 'max': {'data': 2}, 'direction': 'up', 'tooltip': 'Burning: {percent}%'},
+        {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': HEAT_TIP.format(t=0, x=3, d=4)}]
+    return {'slots': 1, 'data_slots': 5, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[15, 29]], 'width': 176, 'height': 166, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -2143,6 +2218,8 @@ def pump_menu(m):
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/formulaic_assemblicator.json', assemblicator_menu('formulaic_assemblicator'))
 put(f'{OUT}/data/{NS}/horizon/menu/dimensional_stabilizer.json', stabilizer_menu('dimensional_stabilizer'))
+put(f'{OUT}/data/{NS}/horizon/menu/resistive_heater.json', resistive_heater_menu('resistive_heater'))
+put(f'{OUT}/data/{NS}/horizon/menu/fuelwood_heater.json', fuelwood_heater_menu('fuelwood_heater'))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))

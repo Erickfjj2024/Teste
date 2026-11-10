@@ -1903,7 +1903,7 @@ impl ServerMod for Mekanism {
         }
         let mut resistive = kind(resistive_heater::BLOCK, true);
         let resistive_cap = resistive_heater::ResistiveHeater::default().max_energy_fe();
-        resistive.container = Some(ContainerSpec { slots: 0, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        resistive.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
         resistive.energy = Some(energy(resistive_cap, resistive_cap, FlowSide::Input));
         r = r.block_entity_kind(resistive);
         let mut fuelwood = kind(fuelwood_heater::BLOCK, true);
@@ -2647,6 +2647,9 @@ impl ServerMod for Mekanism {
         }
         if block == assemblicator::BLOCK {
             return self.assemblicator_button(&e, id);
+        }
+        if block == resistive_heater::BLOCK {
+            return self.resistive_button(&e, id);
         }
         if block == dimensional_stabilizer::BLOCK {
             self.stabilizer_buttons.push((e.dimension.clone(), e.pos, id));

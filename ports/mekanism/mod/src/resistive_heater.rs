@@ -334,6 +334,53 @@ impl ResistiveHeater {
     }
 }
 
+/// The buttons of its screen that change the usage by a number of Forge Energy: the original has a text field (`GuiTextField`, up to 7 digits, sent as
+/// `PacketGuiSetEnergy`), and the screens of the port have no field yet, so the usage moves in steps (`BUTTON_USAGE_BASE + i`).
+pub const BUTTON_USAGE_BASE: i32 = 7600;
+pub const USAGE_STEPS: [i64; 8] = [-1000, -100, -10, -1, 1, 10, 100, 1000];
+/// What the field takes at most: 7 digits.
+pub const MAX_USAGE_FE: i64 = 9_999_999;
+
+impl ResistiveHeater {
+    /// A usage step button: the usage in Forge Energy moves by the step (never below 0, at most 7 digits) and is turned into Joules the way
+    /// `convertToJoules` does (a whole number of Joules). Says whether it moved.
+    pub fn press_usage_step(&mut self, id: i32) -> bool {
+        let Some(step) = USAGE_STEPS.get((id - BUTTON_USAGE_BASE) as usize).copied().filter(|_| id >= BUTTON_USAGE_BASE) else { return false };
+        let now = self.usage_fe() as i64;
+        let next = (now + step).clamp(0, MAX_USAGE_FE);
+        if next == now {
+            return false;
+        }
+        self.set_energy_usage((next as u64) * 5 / 2);
+        true
+    }
+
+    /// The numbers the screen reads: 0-1 energy, 2-3 its capacity, 4-5 the usage a tick, 6-7 the energy used last tick (Forge Energy, low and high 16 bits),
+    /// 8 the temperature in Kelvin, 9 the redstone control, 10-11 the energy still needed, 12 the heat it gave to what is beside it and 13 what it lost to the
+    /// air (Kelvin, whole).
+    pub fn screen_numbers(&self) -> Vec<i32> {
+        let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
+        let max = self.max_energy_fe();
+        let needed = max.saturating_sub(self.energy_stored_fe);
+        vec![
+            half(self.energy_stored_fe, 0),
+            half(self.energy_stored_fe, 16),
+            half(max, 0),
+            half(max, 16),
+            half(self.usage_fe(), 0),
+            half(self.usage_fe(), 16),
+            half(self.client_energy_used_fe, 0),
+            half(self.client_energy_used_fe, 16),
+            self.capacitor.temperature().round() as i32,
+            self.redstone as i32,
+            half(needed, 0),
+            half(needed, 16),
+            self.last_transfer_loss.round() as i32,
+            self.last_environment_loss.round() as i32,
+        ]
+    }
+}
+
 // ============================================================================
 // Host Bridges (FORK-4 & FORK-20)
 // ============================================================================
@@ -479,5 +526,34 @@ mod tests {
         assert_eq!(decoded.energy_stored_fe, 25_000);
         assert!((decoded.capacitor.stored_heat - 35_400.0).abs() < 1e-6);
         assert_eq!(decoded.max_energy_fe(), fe(5_000 * 400));
+    }
+
+    #[test]
+    fn usage_steps_move_the_usage_in_forge_energy() {
+        let mut h = ResistiveHeater::new(300.0);
+        // The base usage is 100 J = 40 FE.
+        assert_eq!(h.usage_fe(), 40);
+        assert!(h.press_usage_step(BUTTON_USAGE_BASE + 6)); // +100 FE
+        assert_eq!(h.usage_fe(), 140);
+        assert_eq!(h.energy_usage_joules, 350);
+        assert!(h.press_usage_step(BUTTON_USAGE_BASE)); // -1000 FE: never below 0
+        assert_eq!(h.usage_fe(), 0);
+        assert!(!h.press_usage_step(BUTTON_USAGE_BASE), "already at 0");
+        h.energy_usage_joules = 25_000_000;
+        assert!(h.press_usage_step(BUTTON_USAGE_BASE + 7), "at most 7 digits");
+        // 9 999 999 FE is 24 999 997 whole Joules (`convertToJoules`), which reads back as 9 999 998 FE.
+        assert!(h.usage_fe() as i64 <= MAX_USAGE_FE && h.usage_fe() as i64 >= MAX_USAGE_FE - 1);
+        assert!(!h.press_usage_step(9999), "not a usage button");
+    }
+
+    #[test]
+    fn the_screen_numbers_carry_the_temperature_and_the_energy() {
+        let mut h = ResistiveHeater::new(300.0);
+        h.energy_stored_fe = 70_000;
+        let n = h.screen_numbers();
+        assert_eq!(n.len(), 14);
+        assert_eq!(n[8], 300);
+        assert_eq!(n[0] + (n[1] << 16), 70_000);
+        assert_eq!(n[4], 40);
     }
 }

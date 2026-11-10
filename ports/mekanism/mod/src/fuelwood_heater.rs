@@ -336,6 +336,20 @@ impl FuelwoodHeater {
     }
 }
 
+impl FuelwoodHeater {
+    /// The numbers the screen reads: 0 the temperature in Kelvin (whole), 1 the ticks of burn left, 2 the ticks the burning fuel gives, 3 the heat it gave to
+    /// what is beside it and 4 what it lost to the air (Kelvin, whole).
+    pub fn screen_numbers(&self) -> Vec<i32> {
+        vec![
+            self.capacitor.temperature().round() as i32,
+            self.burn_time as i32,
+            self.max_burn_time as i32,
+            self.last_transfer_loss.round() as i32,
+            self.last_environment_loss.round() as i32,
+        ]
+    }
+}
+
 // ============================================================================
 // Unit Tests (comparing with Java source files and line numbers)
 // ============================================================================

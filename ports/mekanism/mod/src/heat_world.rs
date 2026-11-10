@@ -278,6 +278,7 @@ fn run_dimension(entities: &[&BlockEntity], outside: HashMap<Pos, heat::HeatCapa
     let mut powered: HashMap<Pos, bool> = HashMap::new();
     let mut ambients: HashMap<Pos, f64> = HashMap::new();
     let mut by_pos: HashMap<Pos, &BlockEntity> = HashMap::new();
+    let mut charge_slot: HashMap<Pos, Option<ItemStack>> = HashMap::new();
     let mut ambient = heat::AMBIENT_TEMP;
     for e in entities {
         let pos = [e.pos.x, e.pos.y, e.pos.z];
@@ -292,6 +293,16 @@ fn run_dimension(entities: &[&BlockEntity], outside: HashMap<Pos, heat::HeatCapa
         } else if block == resistive_heater::BLOCK {
             let mut h = resistive_heater::ResistiveHeater::decode(&e.data, a).unwrap_or_else(|| resistive_heater::ResistiveHeater::new(a));
             h.energy_stored_fe = e.energy;
+            // The charge slot turns redstone into energy when it fits (`fillContainerOrConvert`).
+            if let Some(stack) = e.items.first().cloned().flatten() {
+                if let Some(gain) = crate::cube::conversion(&stack.item) {
+                    if h.energy_stored_fe + gain <= h.max_energy_fe() {
+                        h.energy_stored_fe += gain;
+                        let left = stack.count.saturating_sub(1);
+                        charge_slot.insert(pos, if left == 0 { None } else { Some(ItemStack { count: left, ..stack }) });
+                    }
+                }
+            }
             powered.insert(pos, world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0);
             world_heat.resistive.insert(pos, h);
         } else if block == fuelwood_heater::BLOCK {
@@ -322,16 +333,46 @@ fn run_dimension(entities: &[&BlockEntity], outside: HashMap<Pos, heat::HeatCapa
         } else if let Some(h) = world_heat.resistive.get(&pos) {
             let mut u = update(e, h.encode());
             u.energy = Some(h.energy_stored_fe);
-            u.menu_data = Some(h.menu_data());
+            if let Some(slot) = charge_slot.remove(&pos) {
+                u.items = Some(vec![slot]);
+            }
+            u.menu_data = Some(h.screen_numbers());
             out.push(u);
         } else if let Some(h) = world_heat.fuelwood.get(&pos) {
             let mut u = update(e, h.encode());
             u.items = Some(vec![h.fuel_slot_item.clone().filter(|_| h.fuel_slot_count > 0).map(|item| ItemStack { item, count: h.fuel_slot_count, components: String::new() })]);
-            u.menu_data = Some(h.menu_data());
+            u.menu_data = Some(h.screen_numbers());
             out.push(u);
         }
     }
     (out, deliveries)
+}
+
+
+impl crate::Mekanism {
+    /// A button of the resistive heater's screen: the redstone tab, or a step of the usage. The capacity follows the usage (400 ticks of it), so the stored
+    /// energy is cut to it and the game is told the new capacity.
+    pub(crate) fn resistive_button(&mut self, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
+        let mut h = resistive_heater::ResistiveHeater::decode(&e.data, heat::AMBIENT_TEMP)?;
+        h.energy_stored_fe = e.energy;
+        let changed = if id == crate::redstone::NEXT {
+            h.redstone = h.redstone.next();
+            true
+        } else if id == crate::redstone::PREVIOUS {
+            h.redstone = resistive_heater::RedstoneMode::from_u8((h.redstone as u8 + 2) % 3);
+            true
+        } else {
+            h.press_usage_step(id)
+        };
+        if !changed {
+            return None;
+        }
+        let _ = world::set_energy_capacity(&e.dimension, e.pos.x, e.pos.y, e.pos.z, h.max_energy_fe().max(1));
+        let mut u = update(e, h.encode());
+        u.energy = Some(h.energy_stored_fe.min(h.max_energy_fe()));
+        u.menu_data = Some(h.screen_numbers());
+        Some(u)
+    }
 }
 
 #[cfg(test)]
