@@ -3033,6 +3033,83 @@ for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', rec
         # one file per recipe (the path, not the result: a block has several recipes: from sheets and a dye, from its slab, from its stairs...)
         _rel = os.path.relpath(p, f'{AGEN}/data/mekanismadditions/recipe')[:-5].replace(os.sep, '__')
         put(f'{OUT}/data/{NS}/recipe/additions_{_rel}.json', r)
+# Mekanism Additions' machine recipes for the plastic and the glow panels: the painting machine recolours a block with a pigment (the recipe takes "any block of
+# that kind but this colour": `neoforge:difference` over a tag of the mod, written out here as the list of the items), the pigment extractor takes a pigment out of a
+# plastic block, and the enricher makes slick plastic. (The balloons are not here yet, and the recolour *crafting* recipes need the same ingredient: below.)
+def additions_tag_items(name, seen=()):
+    """The items of a tag of Additions (`mekanismadditions:plastic_stairs/normal`), nested tags followed."""
+    ns, _, path = name.partition(':')
+    p = f'{AGEN}/data/{ns}/tags/item/{path}.json'
+    if ns != 'mekanismadditions' or name in seen or not os.path.exists(p):
+        return []
+    out = []
+    for v in read_json(p).get('values', []):
+        v = v if isinstance(v, str) else v.get('id', '')
+        if v.startswith('#'):
+            out += additions_tag_items(v[1:], seen + (name,))
+        else:
+            out.append(v)
+    return out
+
+def additions_item_ingredient(v):
+    """An item ingredient as the normalised base has it (a name, a `#tag`, or a difference of the two), in the port's shape: a name, a `#tag` or a list of
+    names, with the difference of a tag and an item written out."""
+    if isinstance(v, str):
+        if v.startswith('#'):
+            items = additions_tag_items(v[1:])
+            return [i.replace('mekanismadditions:', f'{NS}:') for i in items] if v[1:].startswith('mekanismadditions:') else v
+        return v.replace('mekanismadditions:', f'{NS}:')
+    if isinstance(v, dict) and v.get('neoforge:ingredient_type') == 'neoforge:difference':
+        base, gone = v['base'], v['subtracted']
+        items = additions_tag_items(base[1:]) if isinstance(base, str) and base.startswith('#') else [base]
+        gone = gone if isinstance(gone, str) else ''
+        return [i.replace('mekanismadditions:', f'{NS}:') for i in items if i != gone]
+    return None
+
+_plastic_have = set(plastic_blocks)
+_have_a = set(kept_items) | set(kept_blocks)
+nadd = 0
+for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', recursive=True)):
+    if 'balloon' in p:
+        continue
+    r = read_json(p)
+    kind = r.get('type')
+    if kind not in (f'{NS}:painting', f'{NS}:pigment_extracting', f'{NS}:enriching'):
+        continue
+    out_id = r.get('output', {}).get('id', '')
+    item_in = r.get('item_input', r.get('input', {}))
+    ing = additions_item_ingredient(item_in.get('ingredient'))
+    if ing is None:
+        continue
+    names = [i for i in (ing if isinstance(ing, list) else [ing]) if not i.startswith('#')]
+    if isinstance(ing, list):
+        ing = [i for i in ing if i.split(':')[-1] in _plastic_have or i.split(':')[-1] in _have_a]
+        if not ing:
+            continue
+    new = {'type': kind}
+    sized_in = {'count': item_in.get('count', 1), 'ingredient': ing}
+    target = out_id.split(':')[-1]
+    if kind == f'{NS}:painting':
+        new['item_input'] = sized_in
+        new['chemical_input'] = r['chemical_input']
+        new['output'] = {'count': r['output'].get('count', 1), 'id': out_id.replace('mekanismadditions:', f'{NS}:')}
+        new['per_tick_usage'] = r.get('per_tick_usage', False)
+        if target not in _plastic_have and target not in _have_a:
+            continue
+    elif kind == f'{NS}:pigment_extracting':
+        new['input'] = sized_in
+        new['output'] = r['output']
+        if not all(n.split(':')[-1] in _plastic_have or n.split(':')[-1] in _have_a for n in names):
+            continue
+    else:
+        new['input'] = sized_in
+        new['output'] = {'count': r['output'].get('count', 1), 'id': out_id.replace('mekanismadditions:', f'{NS}:')}
+        if target not in _plastic_have or not all(n.split(':')[-1] in _plastic_have for n in names):
+            continue
+    rel = os.path.relpath(p, f'{AGEN}/data/mekanismadditions/recipe')[:-5].replace(os.sep, '__')
+    put(f'{OUT}/data/{NS}/recipe/additions_{rel}.json', new)
+    nadd += 1
+print(f'additions machine recipes {nadd}')
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
