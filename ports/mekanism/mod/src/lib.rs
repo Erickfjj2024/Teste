@@ -52,6 +52,7 @@ mod fusion;
 mod induction;
 mod factory;
 mod pump;
+mod equipment_world;
 mod heat_world;
 mod qio;
 mod radiation;
@@ -2356,6 +2357,9 @@ impl ServerMod for Mekanism {
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        if stack.item == meka_tool::MEKA_TOOL && self.meka_tool_used(player, &stack) {
+            return true;
+        }
         if self.read_radiation(player, &stack.item) {
             return true;
         }

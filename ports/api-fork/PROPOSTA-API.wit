@@ -539,3 +539,21 @@ entities-in-box: func(dimension: string, min: tuple<f64,f64,f64>, max: tuple<f64
 // Slots de energia do inventário do jogador (item, energia, capacidade, max-insert) / player inventory energy slots
 player-energy-slots: func(player: player) -> list<energy-slot>;
 set-player-slot-energy: func(player: player, slot: u32, energy: u64);
+
+// ---- Meka-Tool e MekaSuit (mekanism/revisao_numeros/REVISAO_meka_tool_ligacao.md) ----
+// Troca de componentes segura: só escreve se o stack ainda for o esperado (evita duplicar/apagar item por escrita cega do set-slot)
+// Safe component swap: writes only if the stack is still the expected one (a blind set-slot can duplicate or destroy an item)
+compare-and-set-slot: func(player: string, slot: u32, expected: item-stack, replacement: option<item-stack>) -> result<bool, string>;
+// Impulso/movimento do jogador (jetpack, módulos de movimento, hydraulic jump) / player motion (jetpack, movement modules)
+set-motion: func(player: string, vx: f64, vy: f64, vz: f64) -> result<_, string>;
+set-allow-flight: func(player: string, allowed: bool, flying: option<bool>) -> result<_, string>;
+// Evento de dano ao jogador com armadura: o mod pode reduzir o dano e consumir energia (absorção do MekaSuit) / armour damage event
+// (a hook before damage: returns the damage to apply)
+// player-damaged: func(player: player, damage-type: string, amount: f32, source-entity: option<u32>) -> f32;
+// Dano de ataque modificado pelo mod (Meka-Tool: Attack Amplification) / mod-modified melee damage
+// item-hit-damage: func(player: player, stack: item-stack, entity: u32, base-damage: f32) -> f32;
+// HUD de módulos (ícone + texto) e menu radial / module HUD and radial menu
+set-hud-line: func(player: string, id: string, icon: string, text: string, fraction: f32) -> result<_, string>;
+open-radial-menu: func(player: string, item: string, entries: list<string>) -> result<_, string>;
+// Quebra de vários blocos por energia (blasting/vein mining) e agricultura com regras próprias / multi-block mining
+break-blocks: func(player: string, dimension: string, positions: list<tuple<s32,s32,s32>>, tool: item-stack) -> result<u32, string>;
