@@ -502,7 +502,7 @@ pub const BUTTON_REMOVE_ALL_BASE: i32 = 7820;
 /// How many rows of the list the screen shows.
 pub const LIST_ROWS: usize = 6;
 
-/// The name a module shows (`module_energy` -> `Energy`, `module_electrolytic_breathing` -> `Electrolytic Breathing`).
+/// The name a module shows (`module_energy_unit` -> `Energy Unit`, the module's own name in the original's language file).
 pub fn module_title(t: ModuleType) -> String {
     let id = t.item_id();
     let path = id.split(':').nth(1).unwrap_or(id).trim_start_matches("module_");
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn a_module_goes_into_the_gear_after_ten_ticks_of_energy() {
-        let mut slots = vec![Some(module("mekanism:module_attack_amplification", 2)), Some(gear_with("{}")), None];
+        let mut slots = vec![Some(module("mekanism:module_attack_amplification_unit", 2)), Some(gear_with("{}")), None];
         let (mut energy, mut ticks) = (ENERGY_CAPACITY, 0u32);
         for _ in 0..(TICKS_REQUIRED - 1) {
             assert!(step_station(&mut slots, &mut energy, &mut ticks, true));
@@ -910,11 +910,11 @@ mod tests {
     #[test]
     fn the_station_stops_when_it_cannot_install_or_cannot_function() {
         // A module that does not go on this gear, a gear that is full of it, no energy, redstone off: the count starts over.
-        let mut slots = vec![Some(module("mekanism:module_jetpack", 1)), Some(gear_with("{}")), None];
+        let mut slots = vec![Some(module("mekanism:module_jetpack_unit", 1)), Some(gear_with("{}")), None];
         let (mut energy, mut ticks) = (ENERGY_CAPACITY, 3u32);
         assert!(!step_station(&mut slots, &mut energy, &mut ticks, true), "a jetpack unit does not go on a tool");
         assert_eq!(ticks, 0);
-        let mut slots = vec![Some(module("mekanism:module_teleportation", 1)), Some(gear_with("{}")), None];
+        let mut slots = vec![Some(module("mekanism:module_teleportation_unit", 1)), Some(gear_with("{}")), None];
         let (mut energy, mut ticks) = (ENERGY_USAGE - 1, 2u32);
         assert!(!step_station(&mut slots, &mut energy, &mut ticks, true));
         assert_eq!(ticks, 0);
@@ -931,9 +931,9 @@ mod tests {
         let stack = ItemStack { item: "mekanism:meka_tool".into(), count: 1, components: c.encode_to_components("{}") };
         let texts = list_texts(Some(&stack));
         assert_eq!(texts.len(), LIST_ROWS);
-        assert_eq!(texts[0], "Fortune x2");
-        assert_eq!(texts[1], "Teleportation x1");
+        assert_eq!(texts[0], "Fortune Unit x2");
+        assert_eq!(texts[1], "Teleportation Unit x1");
         assert!(texts[2].is_empty());
-        assert_eq!(module_title(ModuleType::ElectrolyticBreathingUnit), "Electrolytic Breathing");
+        assert_eq!(module_title(ModuleType::ElectrolyticBreathingUnit), "Electrolytic Breathing Unit");
     }
 }

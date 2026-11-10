@@ -210,6 +210,19 @@ items = {}
 # blocks the port has only as items so far (their blocks are not made yet): the heat conductors, two transporters, the chest, the vibrator
 ITEM_ONLY_BLOCKS = {'diversion_transporter', 'restrictive_transporter'}
 ITEM_LANG = {k[len('item.mekanism.'):] for k in read_json(f'{GEN}/assets/{NS}/lang/en_us.json') if k.startswith('item.mekanism.')}
+# The module items (`module_energy_unit`...): their names are the modules' (`module.mekanism.energy_unit`), not `item.mekanism.*` keys.
+_lang_en = read_json(f'{GEN}/assets/{NS}/lang/en_us.json')
+MODULE_NAMES = {k[len('module.mekanism.'):]: v for k, v in _lang_en.items() if k.startswith('module.mekanism.') and k.count('.') == 2 and k.endswith('_unit')}
+ITEM_LANG |= {f'module_{n}' for n in MODULE_NAMES}
+# the module items: the ids `modules.rs::ModuleType::item_id` gives (`mekanism:module_energy`...), read from the mod's own source so the two never differ
+_modules_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'mod', 'src', 'modules.rs'), encoding='utf-8').read()
+_item_id_fn = _modules_src[_modules_src.index('pub const fn item_id'):_modules_src.index('pub fn from_item')]
+MODULE_ITEMS = sorted(set(re.findall(r'"mekanism:module_([a-z_]+)"', _item_id_fn)))
+# how many of a module an item holds (`ItemModule` stacks to the module's own maximum): `max_stack` of the same enum, joined to the ids by the variant's name
+_max_stack_fn = _modules_src[_modules_src.index('pub const fn max_stack'):_modules_src.index('pub const fn exclusive_flags')]
+_stack_of = {m.group(1): int(m.group(2)) for m in re.finditer(r'Self::(\w+) => (\d+),', _max_stack_fn)}
+MODULE_STACK = {m.group(2): _stack_of[m.group(1)] for m in re.finditer(r'Self::(\w+) => "mekanism:(module_[a-z_]+)"', _item_id_fn) if m.group(1) in _stack_of}
+
 for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
     n = os.path.basename(p)[:-5]
     if n not in ITEM_LANG and n not in ITEM_ONLY_BLOCKS:
@@ -253,6 +266,8 @@ for n, model in items.items():
         continue
     kept_items.append(n)
     item = dict(ITEM_LIKE.get(n, {'template': 'minecraft:stick'}))
+    if n in MODULE_STACK:
+        item['max_stack_size'] = MODULE_STACK[n]
     if n in WORN:
         # Equippable(slot): a player wears it in its armor slot, one at a time (the worn model is still to do)
         item['max_stack_size'] = 1
@@ -1857,11 +1872,6 @@ def qio_drive_array_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
-# the module items: the ids `modules.rs::ModuleType::item_id` gives (`mekanism:module_energy`...), read from the mod's own source so the two never differ
-_modules_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'mod', 'src', 'modules.rs'), encoding='utf-8').read()
-_item_id_fn = _modules_src[_modules_src.index('pub const fn item_id'):_modules_src.index('pub fn from_item')]
-MODULE_ITEMS = sorted(set(re.findall(r'"mekanism:module_([a-z_]+)"', _item_id_fn)))
-
 def modification_station_menu(m):
     """GuiModificationStation (176 by 230): the list of the modules the gear holds (28, 20; here six rows, each a button: a click takes one out, Shift takes all
     out, which is the original's "Remove" button on a selected row), the module slot at 35, 118, the gear slot at 125, 118, the charge slot at 151, 21, the
@@ -2801,7 +2811,7 @@ for g in TURBINE + FISSION + FUSION:
     put(f'{OUT}/assets/{GNS}/items/{g}.json', {'model': {'type': 'minecraft:model', 'model': bs['variants'][''] ['model']}})
     put(f'{OUT}/data/{GNS}/loot_table/blocks/{g}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
         {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'type': 'minecraft:survives_explosion'}]}]})
-for gi in ('turbine_blade', 'hohlraum'):
+for gi in ('turbine_blade', 'hohlraum', 'module_geothermal_generator_unit', 'module_solar_recharging_unit'):
     gen_model(f'{GSRC}:item/{gi}')
     put(f'{OUT}/data/{NS}/horizon/item/{gi}.json', {'template': 'minecraft:stick'})
     put(f'{OUT}/assets/{NS}/items/{gi}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/generators/{gi}'}})
@@ -3144,6 +3154,9 @@ for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', rec
     ncraft += 1
 print(f'additions recolour crafting recipes {ncraft}')
 
+for _g in ('geothermal_generator_unit', 'solar_recharging_unit'):
+    _r = json.loads(open(f'{GGEN}/data/{GNS_SRC}/recipe/module_{_g}.json').read().replace(f'{GSRC}:', f'{NS}:'))
+    put(f'{OUT}/data/{NS}/recipe/generator_module_{_g}.json', _r)
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
@@ -3359,6 +3372,10 @@ for _k, _v in tools_lang.items():
         out[f'item.{NS}.' + _k.split('.')[-1]] = _v
 out[f'item.{NS}.turbine_blade'] = glang[f'item.{GSRC}.turbine_blade']
 out[f'item.{NS}.hohlraum'] = glang[f'item.{GSRC}.hohlraum']
+for _n, _v in MODULE_NAMES.items():
+    out[f'item.{NS}.module_{_n}'] = _v
+for _g in ('geothermal_generator_unit', 'solar_recharging_unit'):
+    out[f'item.{NS}.module_{_g}'] = glang[f'module.{GSRC}.{_g}']
 for k, u in enumerate(UPGRADES):
     out[f'item.{NS}.upgrade_{u}'] = f'{UPGRADE_NAMES[k]} Upgrade'
 # Item and block names the lang file keeps under other keys: block items use block.*
