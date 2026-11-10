@@ -818,59 +818,177 @@ pub fn tick_charge_distribution(
     (suit_distributed, inventory_charged)
 }
 
-/// Jetpack unit tick on Bodyarmor (`ModuleJetpackUnit.java`, `ItemMekaSuitArmor.java:334-384`).
-/// Modes: NORMAL, HOVER, DISABLED.
-/// Thrust: 0.15 * multiplier.
-/// Fuel consumed: ceil(multiplier) mB of hydrogen per tick of thrust.
-pub fn tick_jetpack(
-    bodyarmor: &mut MekaSuitItemStack,
-    is_jumping: bool,
-    is_sneaking: bool,
-) -> (f64, u64) {
-    if bodyarmor.item != BODYARMOR {
-        return (0.0, 0);
-    }
-    let Some(m) = bodyarmor.modules.get(ModuleType::JetpackUnit) else {
-        return (0.0, 0);
-    };
-    if !m.enabled || m.jetpack_mode == JetpackMode::Disabled || bodyarmor.chemical_amount == 0 {
-        return (0.0, 0);
-    }
+/// The thrust of one tick of the jetpack at the multiplier 1 (`ItemMekaSuitArmor.getJetpackThrust`: `0.15 * thrustMultiplier`).
+pub const JETPACK_BASE_THRUST: f64 = 0.15;
 
-    let multiplier = if m.jetpack_mode == JetpackMode::Hover {
-        m.hover_thrust_multiplier.multiplier()
-    } else {
-        m.thrust_multiplier.multiplier()
-    };
+/// What the player is doing, as the jetpack needs it (`CommonPlayerTickHandler.tickEnd`, `IJetpackItem`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct JetpackInput {
+    /// The ascend key (jump).
+    pub ascending: bool,
+    /// `Player.isDescending()`.
+    pub descending: bool,
+    /// `CommonPlayerTickHandler.isOnGroundOrSleeping`.
+    pub on_ground_or_sleeping: bool,
+    /// `Player.isShiftKeyDown()`.
+    pub sneaking: bool,
+    pub fall_flying: bool,
+    pub spectator: bool,
+    pub passenger: bool,
+    /// The jetpack item is on a cooldown (`getCooldowns().isOnCooldown`).
+    pub on_cooldown: bool,
+    /// `Player.getDeltaMovement()`.
+    pub motion: [f64; 3],
+    /// `Player.getLookAngle()`.
+    pub look: [f64; 3],
+    /// `Player.getUpVector(1F)`.
+    pub up: [f64; 3],
+}
 
-    let fuel_needed = (multiplier.ceil() as u64).max(1);
-    if bodyarmor.chemical_amount < fuel_needed {
-        return (0.0, 0);
+/// What one tick of the jetpack did.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct JetpackTick {
+    /// The mode the player is in this tick (`getPlayerJetpackMode`): `Disabled` means the jetpack did nothing.
+    pub mode: JetpackMode,
+    pub thrust: f64,
+    /// The new `deltaMovement` of the player when the jetpack moved it.
+    pub new_motion: Option<[f64; 3]>,
+    /// `handleJetpackMotion` returned true: the fall distance is reset.
+    pub reset_fall: bool,
+    /// Hydrogen taken, in mB.
+    pub fuel_used: u64,
+}
+
+impl Default for JetpackMode {
+    fn default() -> Self {
+        JetpackMode::Disabled
     }
+}
 
-    match m.jetpack_mode {
+fn has_hydrogen(body: &MekaSuitItemStack) -> bool {
+    body.chemical_amount > 0 && (body.chemical_type.is_empty() || body.chemical_type == "mekanism:hydrogen")
+}
+
+/// `ItemMekaSuitArmor.canUseJetpack`: the chestplate with the enabled jetpack unit and some hydrogen, or any enabled module that overrides the jump.
+pub fn can_use_jetpack(body: &MekaSuitItemStack) -> bool {
+    if body.item != BODYARMOR {
+        return false;
+    }
+    if body.modules.is_enabled(ModuleType::JetpackUnit) {
+        return has_hydrogen(body);
+    }
+    body.modules.modules.values().any(|m| m.enabled && m.module_type.exclusive_flags() & modules::EXCLUSIVE_OVERRIDE_JUMP != 0)
+}
+
+/// `ItemMekaSuitArmor.getJetpackMode`: the unit's mode when it is enabled, `Disabled` otherwise.
+pub fn jetpack_mode_of(body: &MekaSuitItemStack) -> JetpackMode {
+    match body.modules.get(ModuleType::JetpackUnit) {
+        Some(m) if m.enabled => m.jetpack_mode,
+        _ => JetpackMode::Disabled,
+    }
+}
+
+/// The multiplier the unit is set to (`ModuleJetpackUnit.getThrustMultiplier`: the hover one while hovering).
+fn jetpack_multiplier(m: &InstalledModule) -> f32 {
+    if m.jetpack_mode == JetpackMode::Hover { m.hover_thrust_multiplier.multiplier() } else { m.thrust_multiplier.multiplier() }
+}
+
+/// `ItemMekaSuitArmor.getJetpackThrust`: `0.15 * multiplier`; when the tank holds fewer mB than `ceil(multiplier)` the multiplier drops to what it holds.
+pub fn jetpack_thrust(body: &MekaSuitItemStack) -> f64 {
+    let Some(m) = body.modules.get(ModuleType::JetpackUnit).filter(|m| m.enabled) else { return 0.0 };
+    let mut multiplier = jetpack_multiplier(m);
+    let needed = multiplier.ceil() as u64;
+    if needed > 1 && needed > body.chemical_amount {
+        multiplier = body.chemical_amount as f32;
+    }
+    JETPACK_BASE_THRUST * f64::from(multiplier)
+}
+
+/// `ItemMekaSuitArmor.useJetpackFuel`: `ceil(multiplier)` mB of hydrogen (what is there when there is less). Returns what was taken.
+pub fn use_jetpack_fuel(body: &mut MekaSuitItemStack) -> u64 {
+    let Some(m) = body.modules.get(ModuleType::JetpackUnit).filter(|m| m.enabled) else { return 0 };
+    let amount = jetpack_multiplier(m).ceil() as u64;
+    let taken = amount.min(body.chemical_amount);
+    body.chemical_amount -= taken;
+    taken
+}
+
+/// `IJetpackItem.getPlayerJetpackMode`: the mode the player is really in this tick.
+pub fn player_jetpack_mode(mode: JetpackMode, input: &JetpackInput) -> JetpackMode {
+    if input.spectator || mode == JetpackMode::Disabled {
+        return JetpackMode::Disabled;
+    }
+    if mode == JetpackMode::Hover {
+        if (input.ascending && !input.descending) || !input.on_ground_or_sleeping {
+            return mode;
+        }
+    } else if input.ascending {
+        return mode;
+    }
+    JetpackMode::Disabled
+}
+
+/// `IJetpackItem.handleJetpackMotion`: the new `deltaMovement` and whether the fall distance is reset.
+pub fn handle_jetpack_motion(mode: JetpackMode, thrust: f64, input: &JetpackInput) -> ([f64; 3], bool) {
+    let motion = input.motion;
+    let vertical = |vy: f64| (-vy).exp().min(1.0); // `getVerticalCoefficient`
+    let mut mode = mode;
+    if mode == JetpackMode::Vector && input.sneaking {
+        mode = JetpackMode::Normal;
+    }
+    if (mode == JetpackMode::Normal || mode == JetpackMode::Vector) && input.fall_flying {
+        let forward = input.look;
+        let drag = [(forward[0] * 1.5 - motion[0]) * 0.5, (forward[1] * 1.5 - motion[1]) * 0.5, (forward[2] * 1.5 - motion[2]) * 0.5];
+        let delta = [forward[0] * thrust + drag[0], forward[1] * thrust + drag[1], forward[2] * thrust + drag[2]];
+        return ([motion[0] + delta[0], motion[1] + delta[1], motion[2] + delta[2]], false);
+    }
+    let mut out = motion;
+    match mode {
         JetpackMode::Normal => {
-            if is_jumping {
-                bodyarmor.chemical_amount -= fuel_needed;
-                let thrust = 0.15 * (multiplier as f64);
-                (thrust, fuel_needed)
-            } else {
-                (0.0, 0)
-            }
+            out[0] += 0.08 * motion[0];
+            out[1] += thrust * vertical(motion[1]);
+            out[2] += 0.08 * motion[2];
+        }
+        JetpackMode::Vector => {
+            let t = [input.up[0] * thrust, input.up[1] * thrust, input.up[2] * thrust];
+            out[0] += t[0];
+            out[1] += t[1] * vertical(motion[1]);
+            out[2] += t[2];
         }
         JetpackMode::Hover => {
-            bodyarmor.chemical_amount -= fuel_needed;
-            let thrust = if is_jumping {
-                0.15 * (multiplier as f64)
-            } else if is_sneaking {
-                -0.08 * (multiplier as f64)
-            } else {
-                0.0 // maintain altitude
-            };
-            (thrust, fuel_needed)
+            let (ascending, descending) = (input.ascending, input.descending);
+            let vy = motion[1];
+            if ascending == descending {
+                if vy > 0.0 {
+                    out[1] = (vy - thrust).max(0.0);
+                } else if vy < 0.0 && !input.on_ground_or_sleeping {
+                    out[1] = (vy + thrust).min(0.0);
+                }
+            } else if ascending {
+                out[1] = (vy + thrust).min(2.0 * thrust);
+            } else if !input.on_ground_or_sleeping {
+                out[1] = (vy - thrust).max(-2.0 * thrust);
+            }
         }
-        JetpackMode::Disabled => (0.0, 0),
+        JetpackMode::Disabled => {}
     }
+    (out, true)
+}
+
+/// One server tick of the jetpack (`CommonPlayerTickHandler.tickEnd`, lines 104-124): it needs a jetpack that can be used (not a passenger, no cooldown),
+/// the mode the player is in, and then it moves the player and burns the fuel.
+pub fn tick_jetpack(bodyarmor: &mut MekaSuitItemStack, input: &JetpackInput) -> JetpackTick {
+    if input.passenger || input.on_cooldown || !can_use_jetpack(bodyarmor) {
+        return JetpackTick::default();
+    }
+    let mode = player_jetpack_mode(jetpack_mode_of(bodyarmor), input);
+    if mode == JetpackMode::Disabled {
+        return JetpackTick::default();
+    }
+    let thrust = jetpack_thrust(bodyarmor);
+    let (motion, reset_fall) = handle_jetpack_motion(mode, thrust, input);
+    let fuel_used = use_jetpack_fuel(bodyarmor);
+    JetpackTick { mode, thrust, new_motion: Some(motion), reset_fall, fuel_used }
 }
 
 /// Elytra unit flight tick on Bodyarmor (`ItemMekaSuitArmor.java:315-331`).
@@ -1092,12 +1210,14 @@ pub fn tick_magnetic_attraction(
 // -----------------------------------------------------------------------------
 
 /// Context of the player and environment for ticking MekaSuit armor.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PlayerSuitContext {
     pub player_name: String,
     pub is_jumping: bool,
     pub is_sneaking: bool,
     pub is_sprinting: bool,
+    /// What the jetpack needs besides the keys (motion, look, ground, cooldown...).
+    pub jetpack: JetpackInput,
     pub is_flying: bool,
     pub is_boosting: bool,
     pub can_see_sun: bool,
@@ -1160,7 +1280,12 @@ pub fn tick_player_suit(
     // 3. Bodyarmor operations
     if let Some(ref mut body) = pieces[ArmorSlot::Chest as usize] {
         // Jetpack
-        tick_jetpack(body, ctx.is_jumping, ctx.is_sneaking);
+        let jetpack = tick_jetpack(body, &ctx.jetpack);
+        if let Some(m) = jetpack.new_motion {
+            // The motion is a new `deltaMovement`: the host is asked for the difference (FORK-29: host_apply_vector_impulse).
+            let d = ctx.jetpack.motion;
+            host_apply_vector_impulse(&ctx.player_name, m[0] - d[0], m[1] - d[1], m[2] - d[2]);
+        }
 
         // Gravitational modulation
         tick_gravitational_modulation(body, ctx.is_flying, ctx.is_boosting);
@@ -1540,11 +1665,126 @@ mod tests {
         bodyarmor.modules.add_module(BODYARMOR, ModuleType::JetpackUnit, 1);
         bodyarmor.chemical_amount = 100;
 
-        // Normal mode, jumping
-        let (thrust, fuel) = tick_jetpack(&mut bodyarmor, true, false);
-        assert_eq!(thrust, 0.15);
-        assert_eq!(fuel, 1);
+        // Normal mode, holding the ascend key: thrust 0.15 * 1 and 1 mB of hydrogen (`ItemMekaSuitArmor.java:354-384`).
+        let input = JetpackInput { ascending: true, ..JetpackInput::default() };
+        let tick = tick_jetpack(&mut bodyarmor, &input);
+        assert_eq!(tick.mode, JetpackMode::Normal);
+        assert_eq!(tick.thrust, 0.15);
+        assert_eq!(tick.fuel_used, 1);
         assert_eq!(bodyarmor.chemical_amount, 99);
+    }
+
+    fn jetpack_body(count: u8, hydrogen: u64) -> MekaSuitItemStack {
+        let mut body = MekaSuitItemStack::new(BODYARMOR).unwrap();
+        body.modules.add_module(BODYARMOR, ModuleType::JetpackUnit, count);
+        body.chemical_amount = hydrogen;
+        body
+    }
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn java_jetpack_modes_step_normal_hover_vector_disabled() {
+        // `IJetpackItem.JetpackMode`: NORMAL, HOVER, VECTOR, DISABLED, wrapping.
+        assert_eq!(JetpackMode::Normal.adjust(1), JetpackMode::Hover);
+        assert_eq!(JetpackMode::Hover.adjust(1), JetpackMode::Vector);
+        assert_eq!(JetpackMode::Vector.adjust(1), JetpackMode::Disabled);
+        assert_eq!(JetpackMode::Disabled.adjust(1), JetpackMode::Normal);
+        assert_eq!(JetpackMode::Normal.adjust(-1), JetpackMode::Disabled);
+    }
+
+    #[test]
+    fn java_jetpack_thrust_drops_when_the_tank_holds_less_than_the_multiplier_needs() {
+        // `ItemMekaSuitArmor.java:354-370`: neededGas = ceil(multiplier); if it is above 1 and above what is stored, the multiplier becomes what is stored.
+        let mut body = jetpack_body(4, 100);
+        body.modules.get_mut(ModuleType::JetpackUnit).unwrap().thrust_multiplier = ThrustMultiplier::Fastest;
+        assert!(close(jetpack_thrust(&body), 0.15 * 4.0));
+        body.chemical_amount = 2;
+        assert!(close(jetpack_thrust(&body), 0.15 * 2.0), "2 mB left for a x4 jetpack: x2");
+        body.chemical_amount = 1;
+        assert!(close(jetpack_thrust(&body), 0.15));
+        // and the fuel taken is `ceil(multiplier)`, or what is there
+        body.chemical_amount = 3;
+        assert_eq!(use_jetpack_fuel(&mut body), 3);
+        assert_eq!(body.chemical_amount, 0);
+        body.chemical_amount = 10;
+        assert_eq!(use_jetpack_fuel(&mut body), 4);
+        assert_eq!(body.chemical_amount, 6);
+    }
+
+    #[test]
+    fn java_player_jetpack_mode() {
+        // `IJetpackItem.getPlayerJetpackMode`
+        let ground = JetpackInput { on_ground_or_sleeping: true, ..JetpackInput::default() };
+        let air = JetpackInput::default();
+        // Normal and Vector need the ascend key.
+        assert_eq!(player_jetpack_mode(JetpackMode::Normal, &air), JetpackMode::Disabled);
+        assert_eq!(player_jetpack_mode(JetpackMode::Normal, &JetpackInput { ascending: true, ..air }), JetpackMode::Normal);
+        assert_eq!(player_jetpack_mode(JetpackMode::Vector, &JetpackInput { ascending: true, ..air }), JetpackMode::Vector);
+        // Hover works in the air without a key, and on the ground only while ascending and not descending.
+        assert_eq!(player_jetpack_mode(JetpackMode::Hover, &air), JetpackMode::Hover);
+        assert_eq!(player_jetpack_mode(JetpackMode::Hover, &ground), JetpackMode::Disabled);
+        assert_eq!(player_jetpack_mode(JetpackMode::Hover, &JetpackInput { ascending: true, ..ground }), JetpackMode::Hover);
+        assert_eq!(player_jetpack_mode(JetpackMode::Hover, &JetpackInput { ascending: true, descending: true, ..ground }), JetpackMode::Disabled);
+        // A spectator never uses it.
+        assert_eq!(player_jetpack_mode(JetpackMode::Hover, &JetpackInput { spectator: true, ..air }), JetpackMode::Disabled);
+    }
+
+    #[test]
+    fn java_hover_on_the_ground_does_not_burn_hydrogen() {
+        // `CommonPlayerTickHandler.tickEnd`: the fuel is used only when the mode of the player is not DISABLED.
+        let mut body = jetpack_body(1, 100);
+        body.modules.get_mut(ModuleType::JetpackUnit).unwrap().jetpack_mode = JetpackMode::Hover;
+        let idle_on_ground = JetpackInput { on_ground_or_sleeping: true, ..JetpackInput::default() };
+        let tick = tick_jetpack(&mut body, &idle_on_ground);
+        assert_eq!(tick.fuel_used, 0);
+        assert_eq!(tick.new_motion, None);
+        assert_eq!(body.chemical_amount, 100);
+        // In the air it burns 1 mB a tick.
+        let tick = tick_jetpack(&mut body, &JetpackInput::default());
+        assert_eq!(tick.mode, JetpackMode::Hover);
+        assert_eq!(tick.fuel_used, 1);
+    }
+
+    #[test]
+    fn java_jetpack_motion_per_mode() {
+        // `IJetpackItem.handleJetpackMotion`, thrust 0.15
+        let t = 0.15;
+        // NORMAL: (0.08 * vx, thrust * min(1, exp(-vy)), 0.08 * vz) is added.
+        let input = JetpackInput { motion: [0.1, -0.5, -0.2], ascending: true, ..JetpackInput::default() };
+        let (m, reset) = handle_jetpack_motion(JetpackMode::Normal, t, &input);
+        assert!(reset);
+        assert!(close(m[0], 0.1 + 0.008) && close(m[1], -0.5 + 0.15) && close(m[2], -0.2 - 0.016));
+        let up_fast = JetpackInput { motion: [0.0, 1.0, 0.0], ascending: true, ..JetpackInput::default() };
+        let (m, _) = handle_jetpack_motion(JetpackMode::Normal, t, &up_fast);
+        assert!(close(m[1], 1.0 + 0.15 * (-1.0f64).exp()), "the more it already rises, the less it adds");
+        // VECTOR adds the up vector times the thrust (y scaled the same way); sneaking makes it NORMAL.
+        let vec_in = JetpackInput { motion: [0.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ascending: true, ..JetpackInput::default() };
+        let (m, _) = handle_jetpack_motion(JetpackMode::Vector, t, &vec_in);
+        assert!(close(m[0], 0.0) && close(m[1], 0.15) && close(m[2], 0.0));
+        let tilted = JetpackInput { up: [0.5, 0.8, 0.0], ..vec_in };
+        let (m, _) = handle_jetpack_motion(JetpackMode::Vector, t, &tilted);
+        assert!(close(m[0], 0.075) && close(m[1], 0.12));
+        let (m, _) = handle_jetpack_motion(JetpackMode::Vector, t, &JetpackInput { sneaking: true, ..tilted });
+        assert!(close(m[0], 0.0) && close(m[1], 0.15), "sneaking turns VECTOR into NORMAL");
+        // HOVER: ascending raises at most to 2 * thrust, descending lowers at most to -2 * thrust, nothing pressed damps toward 0.
+        let hv = |vy: f64, ascending: bool, descending: bool, ground: bool| {
+            let i = JetpackInput { motion: [0.0, vy, 0.0], ascending, descending, on_ground_or_sleeping: ground, ..JetpackInput::default() };
+            handle_jetpack_motion(JetpackMode::Hover, t, &i).0[1]
+        };
+        assert!(close(hv(0.0, true, false, false), 0.15));
+        assert!(close(hv(0.29, true, false, false), 0.30));
+        assert!(close(hv(0.2, false, false, false), 0.05));
+        assert!(close(hv(-0.2, false, false, false), -0.05));
+        assert!(close(hv(-0.2, false, false, true), -0.2), "on the ground the fall is not slowed");
+        assert!(close(hv(-0.29, false, true, false), -0.30));
+        // Gliding with the elytra (NORMAL/VECTOR): the look direction times the thrust plus a drag toward 1.5 * look; the fall distance is not reset.
+        let glide = JetpackInput { look: [0.0, 0.0, 1.0], fall_flying: true, ascending: true, ..JetpackInput::default() };
+        let (m, reset) = handle_jetpack_motion(JetpackMode::Normal, t, &glide);
+        assert!(!reset);
+        assert!(close(m[2], 0.15 + 0.75) && close(m[0], 0.0) && close(m[1], 0.0));
     }
 
     #[test]

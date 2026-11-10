@@ -402,42 +402,47 @@ impl ModuleType {
 // Module Configuration Enums
 // -----------------------------------------------------------------------------
 
+/// `IJetpackItem.JetpackMode` (in the original's order: NORMAL, HOVER, VECTOR, DISABLED; the order is what changing the mode steps through).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum JetpackMode {
-    Disabled,
     Normal,
     Hover,
+    Vector,
+    Disabled,
 }
 
 impl JetpackMode {
+    /// `IIncrementalEnum.adjust`: steps by `shift` and wraps (`ByIdMap.OutOfBoundsStrategy.WRAP`).
     pub fn adjust(&self, shift: i32) -> Self {
         let current = match self {
-            Self::Disabled => 0,
-            Self::Normal => 1,
-            Self::Hover => 2,
+            Self::Normal => 0,
+            Self::Hover => 1,
+            Self::Vector => 2,
+            Self::Disabled => 3,
         };
-        let count = 3;
-        let next = (current + shift).rem_euclid(count);
-        match next {
-            0 => Self::Disabled,
-            1 => Self::Normal,
-            _ => Self::Hover,
+        match (current + shift).rem_euclid(4) {
+            0 => Self::Normal,
+            1 => Self::Hover,
+            2 => Self::Vector,
+            _ => Self::Disabled,
         }
     }
 
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::Disabled => "disabled",
             Self::Normal => "normal",
             Self::Hover => "hover",
+            Self::Vector => "vector",
+            Self::Disabled => "disabled",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "disabled" => Some(Self::Disabled),
             "normal" => Some(Self::Normal),
             "hover" => Some(Self::Hover),
+            "vector" => Some(Self::Vector),
+            "disabled" => Some(Self::Disabled),
             _ => None,
         }
     }
@@ -453,6 +458,27 @@ pub enum ThrustMultiplier {
 }
 
 impl ThrustMultiplier {
+    /// The place in the original's order (HALF, NORMAL, FAST, FASTER, FASTEST).
+    pub const fn ordinal(&self) -> u8 {
+        match self {
+            Self::Half => 0,
+            Self::Normal => 1,
+            Self::Fast => 2,
+            Self::Faster => 3,
+            Self::Fastest => 4,
+        }
+    }
+
+    pub const fn from_ordinal(index: u8) -> Self {
+        match index {
+            0 => Self::Half,
+            1 => Self::Normal,
+            2 => Self::Fast,
+            3 => Self::Faster,
+            _ => Self::Fastest,
+        }
+    }
+
     pub const fn multiplier(&self) -> f32 {
         match self {
             Self::Half => 0.5,
@@ -739,6 +765,37 @@ pub struct InstalledModule {
 }
 
 impl InstalledModule {
+    /// How many of the thrust multipliers can be chosen: `installed + 1` (`ModuleEnumConfig.createBounded(.., installed + 1)`, `MekanismModules.java:155-160`).
+    pub fn selectable_thrust_count(&self) -> u8 {
+        self.installed.saturating_add(1)
+    }
+
+    /// Chooses the jetpack's thrust multiplier (the hover one when `hover`); refused when it is past the ones the installed units allow.
+    pub fn set_thrust_multiplier(&mut self, hover: bool, value: ThrustMultiplier) -> bool {
+        if self.module_type != ModuleType::JetpackUnit || value.ordinal() >= self.selectable_thrust_count() {
+            return false;
+        }
+        if hover {
+            self.hover_thrust_multiplier = value;
+        } else {
+            self.thrust_multiplier = value;
+        }
+        true
+    }
+
+    /// After units are taken out the choice has to stay among the selectable ones.
+    pub fn clamp_thrust_to_installed(&mut self) {
+        if self.module_type == ModuleType::JetpackUnit {
+            let max = self.installed;
+            if self.thrust_multiplier.ordinal() > max {
+                self.thrust_multiplier = ThrustMultiplier::from_ordinal(max);
+            }
+            if self.hover_thrust_multiplier.ordinal() > max {
+                self.hover_thrust_multiplier = ThrustMultiplier::from_ordinal(max);
+            }
+        }
+    }
+
     pub fn new(module_type: ModuleType, count: u8) -> Self {
         let count = count.min(module_type.max_stack()).max(1);
         let handles = module_type.handles_mode_change_by_default();
@@ -852,6 +909,7 @@ impl ModuleContainer {
             removed
         } else {
             existing.installed -= count;
+            existing.clamp_thrust_to_installed();
             count
         }
     }
@@ -1136,6 +1194,26 @@ impl ModuleContainer {
 // -----------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn java_jetpack_thrust_choices_grow_with_the_installed_units() {
+        // `MekanismModules.java:155-160`: `createBounded(.., ThrustMultiplier.NORMAL, installed + 1)`: the first installed + 1 of HALF, NORMAL, FAST, FASTER, FASTEST.
+        let mut jetpack = InstalledModule::new(ModuleType::JetpackUnit, 1);
+        assert_eq!(jetpack.selectable_thrust_count(), 2);
+        assert!(jetpack.set_thrust_multiplier(false, ThrustMultiplier::Half));
+        assert!(jetpack.set_thrust_multiplier(false, ThrustMultiplier::Normal));
+        assert!(!jetpack.set_thrust_multiplier(false, ThrustMultiplier::Fast), "FAST needs 2 units");
+        let mut four = InstalledModule::new(ModuleType::JetpackUnit, 4);
+        assert!(four.set_thrust_multiplier(false, ThrustMultiplier::Fastest));
+        assert!(four.set_thrust_multiplier(true, ThrustMultiplier::Faster));
+        // Taking a unit out keeps the choice among the selectable ones.
+        let mut container = ModuleContainer::new();
+        container.add_module("mekanism:mekasuit_bodyarmor", ModuleType::JetpackUnit, 4);
+        container.get_mut(ModuleType::JetpackUnit).unwrap().set_thrust_multiplier(false, ThrustMultiplier::Fastest);
+        container.remove_module(ModuleType::JetpackUnit, 1);
+        assert_eq!(container.get(ModuleType::JetpackUnit).unwrap().thrust_multiplier, ThrustMultiplier::Faster);
+    }
+
     use super::*;
 
     #[test]
