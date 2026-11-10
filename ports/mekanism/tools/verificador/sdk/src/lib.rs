@@ -82,6 +82,8 @@ pub mod server {
     pub fn set_blocks<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn set_block_property<A0, A1, A2, A3, A4, A5>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5) -> Result<(), String> { Err(String::new()) }
     pub fn set_item_faces<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
+    pub fn pack_block<A0, A1, A2, A3, A4, A5>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: i32, _r: Option<&str>) -> Result<(), String> { Err(String::new()) }
+    pub fn unpack_block<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> Result<(), String> { Err(String::new()) }
     pub fn spawn_particles<A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6, _a7: A7, _a8: A8, _a9: A9, _a10: A10, _a11: A11, _a12: A12) -> Result<(), String> { Err(String::new()) }
     pub fn set_capabilities_enabled<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> Result<(), String> { Err(String::new()) }
     pub fn set_item_eject<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }

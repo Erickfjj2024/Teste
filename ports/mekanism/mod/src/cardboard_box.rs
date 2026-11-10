@@ -193,29 +193,49 @@ pub fn decode(bytes: &[u8]) -> State {
     }
 }
 
-/// Host API bridge for capturing and restoring world blocks and tile entities.
-// FORK-23: Capture and restoration of generic BlockState and BlockEntity data
-pub fn host_box_block(
-    dimension: &str,
-    pos: BlockPos,
-    target_block: &str,
-    target_data: &[u8],
-) -> Option<PackedBlockData> {
-    let _ = (dimension, pos);
-    let mut data = PackedBlockData::new(target_block.to_string());
-    data.tile_data = target_data.to_vec();
-    Some(data)
+thread_local! {
+    /// Boxes just made by `try_pack` whose data (that they hold a block, and which) is still to be written by their first tick.
+    static FRESH: std::cell::RefCell<HashMap<(String, i32, i32, i32), String>> = std::cell::RefCell::new(HashMap::new());
 }
 
-/// Host API bridge for restoring a boxed block into the world.
-// FORK-23: Reinstantiation of captured BlockState and BlockEntity data
-pub fn host_unbox_block(
-    dimension: &str,
-    pos: BlockPos,
-    packed: &PackedBlockData,
-) -> bool {
-    let _ = (dimension, pos, packed);
+/// `MekanismTags.Blocks.CARDBOARD_BLACKLIST` (`#c:relocation_not_supported`, beds, doors, the trial spawner and the vault), as far as
+/// the game's names say: the blocks that cannot move with their data.
+pub fn blacklisted(block: &str) -> bool {
+    let name = block.strip_prefix("minecraft:").unwrap_or(block);
+    name.ends_with("_bed")
+        || name.ends_with("_door")
+        || matches!(name, "trial_spawner" | "vault" | "spawner" | "budding_amethyst" | "reinforced_deepslate")
+}
+
+/// Blocks nothing can break, which a box cannot take (`state.getDestroySpeed == INDESTRUCTIBLE`), by name: the game gives no hardness to a mod.
+pub fn indestructible(block: &str) -> bool {
+    let name = block.strip_prefix("minecraft:").unwrap_or(block);
+    matches!(
+        name,
+        "bedrock" | "barrier" | "light" | "structure_void" | "end_portal" | "end_portal_frame" | "end_gateway" | "nether_portal" | "command_block"
+            | "chain_command_block" | "repeating_command_block" | "structure_block" | "jigsaw" | "test_block" | "test_instance_block"
+    )
+}
+
+/// `ItemBlockCardboardBox.onItemUseFirst` (`ItemBlockCardboardBox.java:75-100`): a box used on a block packs it: the block, with its block entity,
+/// goes into a box that takes its place (`world.pack-block`, API 32). True when it packed.
+pub fn try_pack(dimension: &str, pos: BlockPos) -> bool {
+    let Some(state) = world::get_block(dimension, pos.x, pos.y, pos.z) else { return false };
+    let name = state.split('[').next().unwrap_or("");
+    let hardness = if indestructible(name) { -1.0 } else { 1.0 };
+    if !can_pack_block(name, hardness, blacklisted(name)) {
+        return false;
+    }
+    if world::pack_block(dimension, pos.x, pos.y, pos.z, pos.x, pos.y, pos.z, Some(BLOCK)).is_err() {
+        return false;
+    }
+    FRESH.with(|f| f.borrow_mut().insert((dimension.to_owned(), pos.x, pos.y, pos.z), name.to_owned()));
     true
+}
+
+/// `BlockCardboardBox.useWithoutItem` (`BlockCardboardBox.java:39-58`): the box at `pos` gives back what it holds, in its own place.
+pub fn host_unbox_block(dimension: &str, pos: BlockPos) -> bool {
+    world::unpack_block(dimension, pos.x, pos.y, pos.z, pos.x, pos.y, pos.z).is_ok()
 }
 
 /// Spawns a dropped item entity at the block location.
@@ -239,10 +259,28 @@ impl Mekanism {
         &mut self,
         boxes: &[&BlockEntity],
     ) -> Vec<BlockEntityUpdate> {
-        let out = Vec::new();
+        let mut out = Vec::new();
         for e in boxes {
             let block = e.state.split('[').next().unwrap_or("");
             if block != BLOCK {
+                continue;
+            }
+            // A box just made holds a block the game packed: its first tick writes that it does (the data is the mod's own).
+            let fresh = FRESH.with(|f| f.borrow_mut().remove(&(e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z)));
+            if let Some(name) = fresh {
+                let state = State { is_storage: true, packed_data: Some(PackedBlockData::new(name)) };
+                out.push(BlockEntityUpdate {
+                    dimension: e.dimension.clone(),
+                    pos: e.pos,
+                    data: encode(&state),
+                    items: None,
+                    energy: None,
+                    energy_faces: None,
+                    tanks: None,
+                    tank_faces: None,
+                    menu_data: None,
+                    transmitter_faces: None,
+                });
                 continue;
             }
 
@@ -253,8 +291,7 @@ impl Mekanism {
                 // Unpack action (Java: BlockCardboardBox.java:39-58)
                 if let Some(ref packed) = state.packed_data {
                     // Restore block into the world
-                    let _ = host_unbox_block(&e.dimension, e.pos, packed);
-                    let _ = crate::fork_utilidades::set_block(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &packed.block_name);
+                    let _ = host_unbox_block(&e.dimension, e.pos);
 
                     // Drop empty cardboard box item
                     drop_item(&e.dimension, e.pos, BLOCK, 1);

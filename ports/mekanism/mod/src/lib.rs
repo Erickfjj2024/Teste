@@ -2413,6 +2413,20 @@ impl ServerMod for Mekanism {
                 return true;
             }
         }
+        // `ItemBlockCardboardBox.onItemUseFirst`: a box used on a block, not sneaking, packs it and is used up (not in creative).
+        if stack.item == cardboard_box::BLOCK
+            && let Some(at) = pos
+            && !player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)
+            && cardboard_box::try_pack(&player.dimension, at)
+        {
+            if player.game_mode != GameMode::Creative
+                && let Some((slot, _)) = Self::find_hotbar_slot(&player.id, &stack)
+            {
+                let rest = (stack.count > 1).then(|| ItemStack { count: stack.count - 1, ..stack.clone() });
+                let _ = player_items::compare_and_set_slot(&player.id, slot, Some(&stack), rest.as_ref());
+            }
+            return true;
+        }
         if self.read_radiation(player, &stack.item) {
             return true;
         }
