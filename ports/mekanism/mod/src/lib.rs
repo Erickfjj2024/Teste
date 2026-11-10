@@ -5,6 +5,34 @@
 //! What runs so far: the crusher, the enrichment chamber and the energized
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
+mod assemblicator;
+mod cardboard_box;
+mod chargepad;
+mod chemical_fluids;
+mod configuration_card;
+mod dimensional_stabilizer;
+mod electric_bow;
+mod fork_equipamento;
+mod fork_qio_calor;
+mod fork_utilidades;
+mod fuelwood_heater;
+mod hdpe_elytra;
+mod heat;
+mod laser_tractor;
+mod meka_tool;
+mod mekasuit;
+mod modification_station;
+mod modules;
+mod oredictionificator;
+mod personal_storage;
+mod qio_dashboard;
+mod qio_transfer;
+mod radioactive_waste_barrel;
+mod resistive_heater;
+mod robit;
+mod security;
+mod seismic_vibrator;
+mod transporter_special;
 mod chem;
 mod continuous;
 mod config;

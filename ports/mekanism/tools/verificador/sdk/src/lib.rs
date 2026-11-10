@@ -97,6 +97,7 @@ pub mod server {
     #[derive(Clone, Debug, Default, PartialEq)] pub struct ContainerSpec { pub slots: u32, pub faces: Vec<Vec<u32>>, pub inputs: Vec<u32>, pub outputs: Vec<u32>, pub menu: bool }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockEntity { pub dimension: String, pub pos: BlockPos, pub state: String, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub energy_faces: Vec<FlowSide>, pub tanks: Vec<Tank>, pub tank_faces: Vec<Vec<FlowSide>>, pub menu_data: Vec<i32>, pub transmitter_faces: Vec<bool> }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockEntityUpdate { pub dimension: String, pub pos: BlockPos, pub data: Vec<u8>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub energy_faces: Option<Vec<FlowSide>>, pub tanks: Option<Vec<Tank>>, pub tank_faces: Option<Vec<Vec<FlowSide>>>, pub menu_data: Option<Vec<i32>>, pub transmitter_faces: Option<Vec<bool>> }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum BlockUse { #[default] Default, Pass, Consume }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum FlowSide { #[default] None, Input, Output, Both }
     #[derive(Clone, Debug, PartialEq)] pub enum ArgumentKind { Word, Text, Integer((Option<i32>,Option<i32>)), Number, Boolean, Player, BlockPos }
     impl Default for ArgumentKind { fn default() -> Self { unimplemented!() } }
@@ -151,6 +152,7 @@ pub mod server {
     fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {}
     fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {}
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool { false }
+    fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse { BlockUse::Default }
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }
     fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> { Vec::new() }
     fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> { Vec::new() }

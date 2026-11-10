@@ -1,6 +1,7 @@
 #!/bin/bash
 # Verificador de compilacao / compile checker for the Mekanism port.
 # Compila o mod INTEIRO (todos os .rs de mod/src) contra um SDK de mentira ("stub") gerado do horizon.wit, e roda os testes unitarios.
+# CHECK_SDK=<fork>/crates/horizon-mod-sdk compila contra o SDK REAL (so check; os testes rodam no SDK de mentira porque o real aborta ao chamar o host) / compiles against the REAL SDK (check only; tests need the stub because the real one aborts on host calls)
 # Compiles the WHOLE mod against a stub SDK made from horizon.wit and runs the unit tests.
 # NAO substitui o build real (cargo-horizon-mod), mas pega erro de tipo, emprestimo e API inventada.
 # Uso / usage: tools/verificador/check.sh <pasta mod/src> [check|test]   (padrao/default: check + test)

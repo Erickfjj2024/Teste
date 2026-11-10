@@ -803,7 +803,10 @@ mod tests {
             items: vec![None; 2],
             energy: 1000,
             tanks: Vec::new(),
-            ..Default::default()
+            energy_faces: Vec::new(),
+            tank_faces: Vec::new(),
+            menu_data: Vec::new(),
+            transmitter_faces: Vec::new(),
         };
         // Set redstone control to 2 (Low)
         crusher_entity.data[37] = 2;
@@ -825,7 +828,10 @@ mod tests {
             items: vec![None; 7],
             energy: 1000,
             tanks: Vec::new(),
-            ..Default::default()
+            energy_faces: Vec::new(),
+            tank_faces: Vec::new(),
+            menu_data: Vec::new(),
+            transmitter_faces: Vec::new(),
         };
         let paste_res = ConfigurationCardItem::use_on("player1", false, "mekanism:basic_crushing_factory", &mut factory_entity, &mut card);
         assert!(matches!(paste_res, CardInteractionResult::Pasted { .. }));
@@ -840,7 +846,10 @@ mod tests {
             items: vec![None; 2],
             energy: 1000,
             tanks: Vec::new(),
-            ..Default::default()
+            energy_faces: Vec::new(),
+            tank_faces: Vec::new(),
+            menu_data: Vec::new(),
+            transmitter_faces: Vec::new(),
         };
         let bad_paste = ConfigurationCardItem::use_on("player1", false, "mekanism:energized_smelter", &mut smelter_entity, &mut card);
         assert!(matches!(bad_paste, CardInteractionResult::Incompatible { .. }));

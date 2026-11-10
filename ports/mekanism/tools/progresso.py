@@ -21,8 +21,10 @@ def modules():
     return sorted(f[:-3] for f in os.listdir(SRC) if f.endswith(".rs") and f != "lib.rs")
 
 def declared():
+    """Modules lib.rs really USES (a path like `name::` outside the `mod` line), not only declares."""
     t = open(os.path.join(SRC, "lib.rs"), encoding="utf-8").read()
-    return set(re.findall(r"^\s*(?:pub )?mod (\w+);", t, re.M))
+    t = re.sub(r"^\s*(?:pub )?mod \w+;\n", "", t, flags=re.M)
+    return {m for m in modules() if re.search(r"\b" + m + r"::", t)}
 
 def inventory_cov():
     p = os.path.join(ROOT, "INVENTARIO.md")
