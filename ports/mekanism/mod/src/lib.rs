@@ -2668,6 +2668,9 @@ impl ServerMod for Mekanism {
         if block == oredictionificator::BLOCK {
             return self.oredictionificator_button(&e, id);
         }
+        if block == seismic_vibrator::BLOCK {
+            return self.seismic_vibrator_button(&e, id);
+        }
         if block == dimensional_stabilizer::BLOCK {
             self.stabilizer_buttons.push((e.dimension.clone(), e.pos, id));
             return None;

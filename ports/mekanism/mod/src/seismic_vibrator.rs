@@ -91,6 +91,24 @@ pub fn encode(state: &State) -> Vec<u8> {
     out
 }
 
+/// The numbers the screen reads: 0 it vibrates, 1-2 energy, 3-4 capacity (low and high 16 bits), 5 the energy a tick (Forge Energy), 6 the redstone
+/// control, 7-8 the energy still needed.
+pub fn menu_numbers(state: &State, energy: u64) -> Vec<i32> {
+    let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
+    let needed = CAPACITY.saturating_sub(energy);
+    vec![
+        i32::from(state.active),
+        half(energy, 0),
+        half(energy, 16),
+        half(CAPACITY, 0),
+        half(CAPACITY, 16),
+        USAGE as i32,
+        state.redstone_control as i32,
+        half(needed, 0),
+        half(needed, 16),
+    ]
+}
+
 /// Computes the absolute block coordinate for a chunk-relative query (Java: `TileEntitySeismicVibrator.java:121-130`).
 pub fn get_vertical_pos(
     base_pos: [i32; 3],
@@ -138,9 +156,20 @@ impl Mekanism {
             let mut state = decode(&e.data);
             let mut energy = e.energy;
 
-            // Check redstone signal
+            // The charge slot turns redstone into energy when it fits (`fillContainerOrConvert`).
+            let mut slot = e.items.first().cloned().flatten();
+            let mut slot_changed = false;
+            if let Some((gain, left)) = crate::cube::fill_from_slot(&slot, energy, CAPACITY) {
+                energy = gain;
+                slot = left;
+                slot_changed = true;
+            }
+
+            // `canFunction`: the redstone control with the signal now and the one of the tick before.
+            let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
             let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
-            let can_function = state.redstone_control.can_function(powered, false);
+            let last = self.last_power.insert(key.clone(), powered).unwrap_or(false);
+            let can_function = state.redstone_control.can_function(powered, last);
 
             let was_active = state.active;
 
@@ -149,7 +178,7 @@ impl Mekanism {
                 state.active = true;
                 state.client_piston = state.client_piston.wrapping_add(1);
 
-                // Dispatch seismic vibration event every 40 ticks (Java: `TileEntitySeismicVibrator.java:78`)
+                // Every two seconds a new vibration is sent (java:78); the game event itself is FORK-31.
                 if tick % VIBRATION_INTERVAL == 0 {
                     emit_seismic_vibration(&e.dimension, e.pos);
                 }
@@ -159,36 +188,66 @@ impl Mekanism {
 
             state.energy = energy;
 
-            let changed = was_active != state.active || energy != e.energy;
+            // The chunk the screen says (`CHUNK`), given once: the strings are the screen's text 0.
+            if self.menu_texts.get(&key).is_none() {
+                let text = format!("Chunk: {}, {}", e.pos.x >> 4, e.pos.z >> 4);
+                let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, std::slice::from_ref(&text));
+                self.menu_texts.insert(key, vec![text]);
+            }
+
+            let numbers = menu_numbers(&state, energy);
+            let changed = was_active != state.active || energy != e.energy || slot_changed || e.menu_data != numbers;
             if changed {
-                let _ = world::set_block_property(
-                    &e.dimension,
-                    e.pos.x,
-                    e.pos.y,
-                    e.pos.z,
-                    "active",
-                    if state.active { "true" } else { "false" },
-                );
+                if was_active != state.active {
+                    let _ = world::set_block_property(
+                        &e.dimension,
+                        e.pos.x,
+                        e.pos.y,
+                        e.pos.z,
+                        "active",
+                        if state.active { "true" } else { "false" },
+                    );
+                }
 
                 out.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos,
                     data: encode(&state),
-                    items: None,
+                    items: if slot_changed { Some(vec![slot]) } else { None },
                     energy: Some(energy),
                     energy_faces: Some(energy_input_faces(facing)),
                     tanks: None,
                     tank_faces: None,
-                    menu_data: Some(vec![
-                        i32::from(state.active),
-                        state.client_piston as i32,
-                        (energy & 0xFFFF_FFFF) as i32,
-                    ]),
+                    menu_data: Some(numbers),
                     transmitter_faces: None,
                 });
             }
         }
         out
+    }
+
+    /// A button of the screen: the redstone tab.
+    pub(crate) fn seismic_vibrator_button(&mut self, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
+        let mut state = decode(&e.data);
+        if id == crate::redstone::NEXT {
+            state.redstone_control = state.redstone_control.next();
+        } else if id == crate::redstone::PREVIOUS {
+            state.redstone_control = state.redstone_control.previous();
+        } else {
+            return None;
+        }
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: encode(&state),
+            items: None,
+            energy: None,
+            energy_faces: None,
+            tanks: None,
+            tank_faces: None,
+            menu_data: Some(menu_numbers(&state, e.energy)),
+            transmitter_faces: None,
+        })
     }
 }
 
@@ -261,5 +320,14 @@ mod tests {
         assert!(decoded.active);
         assert_eq!(decoded.client_piston, 120);
         assert_eq!(decoded.redstone_control, redstone::Control::High);
+    }
+
+    #[test]
+    fn the_screen_numbers_follow_the_state() {
+        let state = State { active: true, ..State::default() };
+        let n = menu_numbers(&state, 5_000);
+        assert_eq!(n.len(), 9);
+        assert_eq!((n[0], n[1], n[5]), (1, 5_000, USAGE as i32));
+        assert_eq!(n[7] + (n[8] << 16), (CAPACITY - 5_000) as i32);
     }
 }

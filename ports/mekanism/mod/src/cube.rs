@@ -18,6 +18,18 @@ pub fn conversion(item: &str) -> Option<u64> {
     }
 }
 
+/// `EnergyInventorySlot.fillOrConvert` for a machine's charge slot: the item in it that turns into energy (`conversion`) gives its energy when the whole of it fits
+/// under `capacity`, and one is taken from the stack. Returns the new energy and the slot's new contents, or none when nothing was converted.
+pub fn fill_from_slot(slot: &Option<horizon_mod_sdk::server::ItemStack>, energy: u64, capacity: u64) -> Option<(u64, Option<horizon_mod_sdk::server::ItemStack>)> {
+    let stack = slot.as_ref()?;
+    let gain = conversion(&stack.item)?;
+    if energy + gain > capacity {
+        return None;
+    }
+    let left = stack.count.saturating_sub(1);
+    Some((energy + gain, if left == 0 { None } else { Some(horizon_mod_sdk::server::ItemStack { count: left, ..stack.clone() }) }))
+}
+
 /// The name of the way a horizontal face looks, as a machine's `facing` says it.
 pub fn facing_name(front: usize) -> &'static str {
     match front {
@@ -188,5 +200,14 @@ mod tests {
         let c = screen(0, 1_000_000_000_000, 1_000_000_000_000, &[Mode::None; 6], NORTH);
         assert_eq!((c[1], c[2]), (0xFFFF, 0xFFFF));
         assert_eq!((c[3], c[4]), (0xFFFF, 0xFFFF));
+    }
+
+    #[test]
+    fn a_charge_slot_converts_one_item_when_it_fits() {
+        let stack = |n| Some(horizon_mod_sdk::server::ItemStack { item: "minecraft:redstone".into(), count: n, components: String::new() });
+        assert_eq!(fill_from_slot(&stack(3), 0, 10_000), Some((4_000, stack(2))));
+        assert_eq!(fill_from_slot(&stack(1), 0, 10_000), Some((4_000, None)));
+        assert_eq!(fill_from_slot(&stack(1), 8_000, 10_000), None, "the whole conversion must fit");
+        assert_eq!(fill_from_slot(&None, 0, 10_000), None);
     }
 }

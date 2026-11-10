@@ -1282,6 +1282,26 @@ pub fn host_broadcast_bulk_qio_data(dimension: &str, pos: [i32; 3], data: &[u8])
     let _ = crate::fork_qio_calor::broadcast_bulk_qio_data(dimension, pos, data);
 }
 
+/// What the drive array's screen shows (`GuiQIOFrequencyDataScreen`): the numbers (0 active, 1 how full the items are and 2 how full the types, in tenths of a
+/// percent, 3 has a frequency) and the strings (0 the frequency's name, 1 the items stored of the capacity, 2 the types).
+pub fn drive_array_screen(state: &DriveArrayState, freq: Option<&QIOFrequency>) -> (Vec<i32>, Vec<String>) {
+    let thousands = |n: u64, d: u64| if d == 0 { 0 } else { (u128::from(n) * 1000 / u128::from(d)).min(1000) as i32 };
+    match freq {
+        Some(f) => {
+            let types = f.item_data_map.len() as u64;
+            (
+                vec![i32::from(state.active), thousands(f.total_count, f.total_count_capacity), thousands(types, f.total_type_capacity as u64), 1],
+                vec![
+                    format!("Frequency: {}", f.name),
+                    format!("Items: {} / {}", f.total_count, f.total_count_capacity),
+                    format!("Types: {} / {}", types, f.total_type_capacity),
+                ],
+            )
+        }
+        None => (vec![i32::from(state.active), 0, 0, 0], vec![String::new(), String::new(), String::new()]),
+    }
+}
+
 // ============================================================================
 // 12. QIO STORAGE RUNNER & MANAGER
 // ============================================================================
@@ -1290,6 +1310,8 @@ pub fn host_broadcast_bulk_qio_data(dimension: &str, pos: [i32; 3], data: &[u8])
 #[derive(Default)]
 pub struct QIOManager {
     pub frequencies: HashMap<String, QIOFrequency>,
+    /// The strings last given to each drive array's screen (`world.set-menu-text`).
+    pub menu_texts: HashMap<(String, i32, i32, i32), Vec<String>>,
     pub drive_array_buttons: Vec<(String, BlockPos, i32)>,
     pub redstone_adapter_buttons: Vec<(String, BlockPos, i32)>,
     pub prev_adapter_emissions: HashMap<(String, i32, i32, i32), bool>,
@@ -1308,7 +1330,13 @@ impl QIOManager {
             let freq = state.frequency_name.as_ref().and_then(|name| self.frequencies.get(name));
 
             let changed = update_drive_array_status(&mut state, freq);
-            if changed || tick % TICKS_PER_HALF_SECOND == 0 {
+            let (numbers, texts) = drive_array_screen(&state, freq);
+            let key = (entity.dimension.clone(), entity.pos.x, entity.pos.y, entity.pos.z);
+            if self.menu_texts.get(&key) != Some(&texts) {
+                let _ = world::set_menu_text(&entity.dimension, entity.pos.x, entity.pos.y, entity.pos.z, &texts);
+                self.menu_texts.insert(key, texts);
+            }
+            if changed || tick % TICKS_PER_HALF_SECOND == 0 || entity.menu_data != numbers {
                 // Update active block property
                 let active_str = if state.active { "true" } else { "false" };
                 let _ = world::set_block_property(&entity.dimension, entity.pos.x, entity.pos.y, entity.pos.z, "active", active_str);
@@ -1322,7 +1350,7 @@ impl QIOManager {
                     energy_faces: None,
                     tanks: None,
                     tank_faces: None,
-                    menu_data: None,
+                    menu_data: Some(numbers),
                     transmitter_faces: None,
                 });
             }
@@ -1671,5 +1699,21 @@ mod tests {
         assert!(freq.can_access(owner, &trusted_list));
         assert!(freq.can_access(friend, &trusted_list));
         assert!(!freq.can_access(stranger, &trusted_list));
+    }
+
+    #[test]
+    fn the_drive_array_screen_says_how_full_the_frequency_is() {
+        let state = DriveArrayState::default();
+        let (n, texts) = drive_array_screen(&state, None);
+        assert_eq!(n, vec![0, 0, 0, 0]);
+        assert!(texts.iter().all(String::is_empty));
+        let mut f = QIOFrequency::new("main", None, "", SecurityMode::Public);
+        f.total_count = 500;
+        f.total_count_capacity = 2_000;
+        f.total_type_capacity = 10;
+        let (n, texts) = drive_array_screen(&state, Some(&f));
+        assert_eq!((n[1], n[3]), (250, 1));
+        assert_eq!(texts[0], "Frequency: main");
+        assert_eq!(texts[1], "Items: 500 / 2000");
     }
 }

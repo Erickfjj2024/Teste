@@ -1764,6 +1764,99 @@ def oredictionificator_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[56, 115], [164, 115]], 'width': width, 'height': height,
                        'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets}}
 
+def seismic_vibrator_menu(m):
+    """GuiSeismicVibrator (176 by 166): the inner screen at 16, 23 (112 by 40: "Vibrating" or "Idle", and the chunk), the charge slot at 143, 35, the power bar,
+    and the energy and redstone tabs. Its numbers are `seismic_vibrator.rs::menu_numbers`; the chunk is the screen's text 0 (`set-menu-text`)."""
+    panel = heater_common(m, (143, 35), (164, 15))
+    panel.alpha_composite(gui_sprite('slot/power'), (142, 34))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 112, 40, 3), (16, 23))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 15))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Seismic Vibrator')
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 165, 'y': 16, 'w': 4, 'h': 52, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 1}}, 'widgets': [
+            {'type': 'text', 'x': 20, 'y': 27, 'text': 'Vibrating', 'color': '#00CD00', 'scale': 85}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 0}}, 'widgets': [
+            {'type': 'text', 'x': 20, 'y': 27, 'text': 'Idle', 'color': '#00CD00', 'scale': 85}]},
+        {'type': 'text', 'x': 20, 'y': 37, 'text': '', 'text_data': 0, 'color': '#00CD00', 'scale': 85},
+        {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+        {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 1}}, 'widgets': [
+            {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Using: {5} FE/t\nNeeded: {7+8} FE\nUnit: Forge Energy'}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 0}}, 'widgets': [
+            {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Using: 0 FE/t\nNeeded: {7+8} FE\nUnit: Forge Energy'}]}]
+    widgets += redstone_widgets(6)
+    return {'slots': 1, 'data_slots': 9, 'results': [],
+            'accepts': [{'slot': 0, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[143, 35]], 'width': 176, 'height': 166, 'widgets': widgets}}
+
+def inventory_panel(width, height, inv_x=8):
+    """A panel with the player's inventory at the bottom (3 rows and the hotbar), for the screens that are a grid of slots."""
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    slot = gui_sprite('slot/normal')
+    inv_y = height - 82
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (inv_x - 1 + 18 * col, inv_y - 1 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (inv_x - 1 + 18 * col, height - 25))
+    return panel, slot, inv_y
+
+def personal_storage_menu(m):
+    """GuiPersonalStorageTile (176 by 222): 6 rows of 9 slots at 8, 18 and the player's inventory under them; the same screen for the chest and the barrel
+    (`PersonalStorageManager.createSlots`)."""
+    width, height = 176, 222
+    panel, slot, inv_y = inventory_panel(width, height)
+    for y in range(6):
+        for x in range(9):
+            panel.paste(slot, (7 + 18 * x, 17 + 18 * y))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
+    widgets = [{'type': 'text', 'x': 8, 'y': 6, 'text': title, 'color': '#404040'},
+               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+               {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+    slots = [[8 + x * 18, 18 + y * 18] for y in range(6) for x in range(9)]
+    return {'slots': 54, 'data_slots': 0, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
+def qio_drive_array_menu(m):
+    """GuiQIODriveArray (176 by 206): the frequency data screen at 15, 19 (144 by 46: the frequency's name, and two bars, the items and the types, with
+    what they hold), the 12 drive slots in two rows of six at 34, 70 and the player's inventory. Its numbers and strings are
+    `qio.rs::drive_array_screen`. The frequency tab (choosing the frequency) needs the text field and the list of FORK-20 and is not here yet."""
+    width, height = 176, 206
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 144, 46, 3), (15, 19))
+    for y in range(2):
+        for x in range(6):
+            panel.alpha_composite(slot, (33 + 18 * x, 69 + 18 * y))
+    for bx in (26, 98):
+        panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 52, 8, 1), (bx, 39))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'QIO Drive Array')
+    widgets = [
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 17, 'y': 24, 'text': '', 'text_data': 0, 'color': '#00CD00', 'scale': 80},
+        {'type': 'bar', 'x': 27, 'y': 40, 'w': 50, 'h': 6, 'value': {'data': 1}, 'max': {'const': 1000}, 'color': '#00CD00', 'direction': 'right',
+         'tooltip': 'Items: {percent}%'},
+        {'type': 'bar', 'x': 99, 'y': 40, 'w': 50, 'h': 6, 'value': {'data': 2}, 'max': {'const': 1000}, 'color': '#00CD00', 'direction': 'right',
+         'tooltip': 'Types: {percent}%'},
+        {'type': 'text', 'x': 26 + 25 - text_width('Items') * 8 // 20, 'y': 51, 'text': 'Items', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 98 + 25 - text_width('Types') * 8 // 20, 'y': 51, 'text': 'Types', 'color': '#00CD00', 'scale': 80},
+        {'type': 'text', 'x': 22, 'y': 58, 'text': '', 'text_data': 1, 'color': '#00CD00', 'scale': 60},
+        {'type': 'text', 'x': 94, 'y': 58, 'text': '', 'text_data': 2, 'color': '#00CD00', 'scale': 60}]
+    slots = [[34 + 18 * x, 70 + 18 * y] for y in range(2) for x in range(6)]
+    drives = [f'{NS}:qio_drive_{k}' for k in ('base', 'hyper_dense', 'time_dilating', 'supermassive')]
+    return {'slots': 12, 'data_slots': 4, 'results': [], 'accepts': [{'slot': i, 'items': drives} for i in range(12)],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -2270,6 +2363,10 @@ put(f'{OUT}/data/{NS}/horizon/menu/dimensional_stabilizer.json', stabilizer_menu
 put(f'{OUT}/data/{NS}/horizon/menu/resistive_heater.json', resistive_heater_menu('resistive_heater'))
 put(f'{OUT}/data/{NS}/horizon/menu/fuelwood_heater.json', fuelwood_heater_menu('fuelwood_heater'))
 put(f'{OUT}/data/{NS}/horizon/menu/oredictionificator.json', oredictionificator_menu('oredictionificator'))
+put(f'{OUT}/data/{NS}/horizon/menu/seismic_vibrator.json', seismic_vibrator_menu('seismic_vibrator'))
+put(f'{OUT}/data/{NS}/horizon/menu/qio_drive_array.json', qio_drive_array_menu('qio_drive_array'))
+for _p in ('personal_chest', 'personal_barrel'):
+    put(f'{OUT}/data/{NS}/horizon/menu/{_p}.json', personal_storage_menu(_p))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))
