@@ -6,7 +6,7 @@
 //! farming units (a use that changes blocks with the tool's own rules). Nothing here charges energy for an effect the
 //! game does not apply.
 
-use horizon_mod_sdk::server::{player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, ItemStack, Player};
+use horizon_mod_sdk::server::{player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, DamageSource, ItemStack, Player};
 
 use crate::{assemblicator, configuration_card, generators, mekasuit, meka_tool, Mekanism};
 
@@ -246,6 +246,119 @@ impl Mekanism {
     }
 }
 
+/// The damage types of `mekanism:mekasuit_always_supported` (the suit absorbs them even when they bypass armour): the jar's list, in case the
+/// game does not hand over the mod's own tags.
+const ALWAYS_SUPPORTED: [&str; 21] = [
+    "minecraft:falling_anvil", "minecraft:cactus", "minecraft:cramming", "minecraft:dragon_breath", "minecraft:dry_out", "minecraft:fall",
+    "minecraft:falling_block", "minecraft:fly_into_wall", "minecraft:generic", "minecraft:hot_floor", "minecraft:in_fire", "minecraft:in_wall",
+    "minecraft:lava", "minecraft:lightning_bolt", "minecraft:on_fire", "minecraft:sweet_berry_bush", "minecraft:wither", "minecraft:freeze",
+    "minecraft:falling_stalactite", "minecraft:stalagmite", "minecraft:sonic_boom",
+];
+
+/// The game's description of a hurt as the suit's own (`mekasuit::DamageSource`).
+pub fn suit_source(source: &DamageSource) -> mekasuit::DamageSource {
+    let has = |tag: &str| source.tags.iter().any(|t| t == tag);
+    mekasuit::DamageSource {
+        name: source.damage_type.clone(),
+        is_fire: source.is_fire,
+        // The inhalation unit takes `mekanism:is_preventable_magic` (magic and indirect magic).
+        is_magic: has("mekanism:is_preventable_magic") || source.damage_type == "minecraft:magic" || source.damage_type == "minecraft:indirect_magic",
+        is_fall: source.is_fall,
+        is_technical: has("c:is_technical") || has("neoforge:is_technical"),
+        bypasses_armor: has("minecraft:bypasses_armor"),
+        always_supported: has("mekanism:mekasuit_always_supported") || ALWAYS_SUPPORTED.contains(&source.damage_type.as_str()),
+    }
+}
+
+/// The attack damage with a Meka-Tool in hand: `damage` (the player's own) plus the tool's attribute; any other item leaves it.
+pub fn hit_damage(stack: &ItemStack, damage: f32) -> f32 {
+    if stack.item != meka_tool::MEKA_TOOL {
+        return damage;
+    }
+    let data = meka_tool::host_read_meka_tool(&stack.components);
+    damage + data.calculate_attack().0 as f32
+}
+
+impl Mekanism {
+    /// The suit a player wears (head, chest, legs, feet), as read from the inventory of the last tick, with the stacks they came from.
+    fn worn_suit(player: &str) -> Option<([Option<mekasuit::MekaSuitItemStack>; 4], [Option<ItemStack>; 4])> {
+        let inv = player_items::get_inventory(player)?;
+        let mut pieces: [Option<mekasuit::MekaSuitItemStack>; 4] = [None, None, None, None];
+        let mut originals: [Option<ItemStack>; 4] = [None, None, None, None];
+        for (i, &s) in [39usize, 38, 37, 36].iter().enumerate() {
+            if let Some(Some(stack)) = inv.get(s) {
+                pieces[i] = mekasuit::MekaSuitItemStack::decode(&stack.item, stack.count, &stack.components);
+                if pieces[i].is_some() {
+                    originals[i] = Some(stack.clone());
+                }
+            }
+        }
+        Some((pieces, originals))
+    }
+
+    /// Writes the pieces that changed back to the armour slots, each only if it is still the stack that was read.
+    fn write_suit(player: &str, before: &[Option<mekasuit::MekaSuitItemStack>; 4], pieces: &[Option<mekasuit::MekaSuitItemStack>; 4], originals: &[Option<ItemStack>; 4]) {
+        for (i, &slot) in [39u32, 38, 37, 36].iter().enumerate() {
+            if pieces[i] == before[i] {
+                continue;
+            }
+            let (Some(piece), Some(original)) = (pieces[i].as_ref(), originals[i].as_ref()) else { continue };
+            let replacement = ItemStack { item: original.item.clone(), count: original.count, components: piece.encode(&original.components) };
+            let _ = player_items::compare_and_set_slot(player, slot, Some(original), Some(&replacement));
+        }
+    }
+
+    /// `CommonPlayerTickHandler.livingFall` then `onEntityAttacked`: the boots take their share of a fall (`mekaSuitFallDamageRatio`, 50 J a point),
+    /// then the suit's modules and pieces take theirs of the damage left (`ItemMekaSuitArmor.getDamageAbsorbed`). Returns the damage to go on
+    /// with. The gas mask's cancel of preventable magic (a scuba tank with gas) is not done yet: it needs the chemical tank of the mask.
+    pub(crate) fn suit_damage(&mut self, player: &Player, source: &DamageSource, amount: f32) -> f32 {
+        if amount <= 0.0 {
+            return amount;
+        }
+        let Some((mut pieces, originals)) = Self::worn_suit(&player.id) else { return amount };
+        if pieces.iter().all(Option::is_none) {
+            return amount;
+        }
+        let before = pieces.clone();
+        let src = suit_source(source);
+        let mut left = amount;
+        if src.is_fall {
+            if let Some(boots) = pieces[mekasuit::ArmorSlot::Feet as usize].as_mut() {
+                let (absorbed, _) = mekasuit::absorb_fall_damage(boots, left);
+                left = (left - absorbed).max(0.0);
+            }
+        }
+        if left > f32::EPSILON {
+            left = mekasuit::calculate_damage_absorbed(&mut pieces, &src, left).damage_remaining;
+        }
+        Self::write_suit(&player.id, &before, &pieces, &originals);
+        if left <= f32::EPSILON { 0.0 } else { left }
+    }
+
+    /// The attack damage of a Meka-Tool blow (`ItemMekaTool.adjustAttributes`: the attribute is the base damage plus the attack amplification
+    /// unit's, at a reduced share when the energy is short), on top of the player's own 1.
+    pub(crate) fn meka_tool_hit_damage(&mut self, stack: &ItemStack, damage: f32) -> f32 {
+        hit_damage(stack, damage)
+    }
+
+    /// `ItemMekaTool.hurtEnemy`: a blow with the attack amplification unit costs its energy (all of what is left if that is less).
+    pub(crate) fn meka_tool_hit(&mut self, player: &Player, stack: &ItemStack) {
+        if stack.item != meka_tool::MEKA_TOOL {
+            return;
+        }
+        let data = meka_tool::host_read_meka_tool(&stack.components);
+        let (_, cost) = data.calculate_attack();
+        if cost == 0 || data.energy == 0 {
+            return;
+        }
+        let Some((slot, components)) = Self::find_hotbar_slot(&player.id, stack) else { return };
+        let Some(written) = with_energy(&components, data.energy.saturating_sub(cost)) else { return };
+        let current = ItemStack { item: stack.item.clone(), count: stack.count, components };
+        let replacement = ItemStack { item: stack.item.clone(), count: stack.count, components: written };
+        let _ = player_items::compare_and_set_slot(&player.id, slot, Some(&current), Some(&replacement));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +399,40 @@ mod tests {
         let c = r#"{"mekanism:energy":{"energy_containers":[1000]},"minecraft:damage":3}"#;
         assert_eq!(with_energy(c, 250).as_deref(), Some(r#"{"mekanism:energy":{"energy_containers":[250]},"minecraft:damage":3}"#));
         assert_eq!(with_energy("{}", 5), None);
+    }
+
+    fn source(damage_type: &str, tags: &[&str]) -> DamageSource {
+        DamageSource {
+            damage_type: damage_type.into(),
+            causing: None,
+            is_magic: false,
+            is_fire: false,
+            is_fall: damage_type == "minecraft:fall",
+            is_explosion: false,
+            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_suit_sees_the_damage_types_as_the_original_tags_do() {
+        let fall = suit_source(&source("minecraft:fall", &["minecraft:bypasses_armor"]));
+        assert!(fall.is_fall && fall.bypasses_armor && fall.always_supported && !fall.is_technical);
+        let void = suit_source(&source("minecraft:out_of_world", &["minecraft:bypasses_armor"]));
+        assert!(!void.always_supported && void.bypasses_armor);
+        let magic = suit_source(&source("minecraft:magic", &[]));
+        assert!(magic.is_magic);
+        let tech = suit_source(&source("mod:odd", &["c:is_technical"]));
+        assert!(tech.is_technical);
+        // Without the tags the jar's list still marks the always-supported types.
+        assert!(suit_source(&source("minecraft:lava", &[])).always_supported);
+    }
+
+    #[test]
+    fn a_meka_tool_blow_adds_the_tools_damage_to_the_players() {
+        let plain = ItemStack { item: meka_tool::MEKA_TOOL.into(), count: 1, components: "{}".into() };
+        // No modules: the attribute is the tool's base damage on top of the player's 1.
+        assert_eq!(hit_damage(&plain, 1.0), 1.0 + meka_tool::BASE_ATTACK_DAMAGE as f32);
+        let other = ItemStack { item: "minecraft:stick".into(), count: 1, components: String::new() };
+        assert_eq!(hit_damage(&other, 1.0), 1.0);
     }
 }

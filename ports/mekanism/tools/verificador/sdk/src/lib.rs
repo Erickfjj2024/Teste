@@ -162,6 +162,7 @@ pub mod server {
     fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {}
     fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {}
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool { false }
+    fn item_hit(&mut self, player: &Player, stack: ItemStack, entity: u32, kind: &str) {}
     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse { BlockUse::Default }
     fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool { true }
     fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 { amount }

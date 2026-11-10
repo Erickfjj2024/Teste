@@ -77,7 +77,7 @@ mod worldgen;
 
 use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, GameMode, ItemStack, Tank, TankSpec,
-    BlockChange, BlockPos, BlockUse, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, entities, player_control, player_items,
+    BlockChange, BlockPos, BlockUse, DamageSource, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, entities, player_control, player_items,
     players, recipe_types, serde_json, world,
 };
 use config::{Config, Data, Layout, ToolMode, Transmission};
@@ -2226,7 +2226,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks().redirect(bounding::BLOCK, 0, 1)))
+        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2372,6 +2372,18 @@ impl ServerMod for Mekanism {
     fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool {
         bounding::can_place(&player.dimension, [pos.x, pos.y, pos.z], state)
     }
+    fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 {
+        self.suit_damage(player, &source, amount)
+    }
+
+    fn item_hit_damage(&mut self, _player: &Player, stack: ItemStack, _kind: &str, damage: f32) -> f32 {
+        self.meka_tool_hit_damage(&stack, damage)
+    }
+
+    fn item_hit(&mut self, player: &Player, stack: ItemStack, _entity: u32, _kind: &str) {
+        self.meka_tool_hit(player, &stack);
+    }
+
     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
         let Some(b) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return BlockUse::Default };
         let name = b.split('[').next().unwrap_or("");
