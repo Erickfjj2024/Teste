@@ -1,0 +1,7 @@
+# Ligação do MekaSuit / Wiring the MekaSuit
+
+**PT-BR.** **Ligado** (`equipment_world.rs`, `suits_tick`, todo tick, todo jogador online): a unidade de recarga solar do capacete (posição da cabeça +0,2, céu aberto, dia, brilho do sol e chuva como no Java: chuva > 0,2 ou trovão > 0,9; 20% sob chuva em bioma que chove) e a distribuição de carga entre as peças vestidas. Cada peça alterada é gravada com `compare-and-set-slot` (só troca se o item ainda for o lido). **Corrigi um erro:** uma peça sem o componente de energia era lida como *cheia*; agora é vazia (peça recém-craftada).
+**Não ligado, de propósito** (nada roda com entrada chutada): jetpack e módulos de movimento (faltam velocidade, teclas, voo, elytra), injeção nutricional (falta alimentar o jogador), respiração (ar), geotérmico (fogo e fluido), absorção de dano (gancho de dano síncrono, em andamento na nuvem), carga dos itens do inventário (energia de outros itens). Lista de API em `ports/api-fork/PROPOSTA-API.wit`.
+**Sem prova:** a leitura dos módulos instalados e da energia usa o formato de componentes do módulo (`mekanism:attached_energy`, `mekanism:modules`), ainda não confirmado contra o item real.
+
+**EN.** Wired: the helmet's solar recharging and charge distribution among worn pieces, written back with compare-and-set. Fixed: a piece with no energy component now reads empty. Not wired (no guessed inputs): jetpack and movement, nutrition, breathing, geothermal, damage absorption, inventory charging. API list in `PROPOSTA-API.wit`.
