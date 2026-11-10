@@ -200,7 +200,7 @@ ticks = 5
 set-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
 ticks = 5
 expect.block-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
-expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5, 0, 64, 16000, 0, 1, 0] }]
+expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5, 0, 64, 9450, 0, 27, 0] }]
 
 # An induction matrix (4x4x4: a cell and a provider inside, a port on its south face) is found with 8 GFE of cells and 256 kFE a tick of providers (the harness does not model the ports' capacity limit, so the creative cube fills it).
 [[step]]

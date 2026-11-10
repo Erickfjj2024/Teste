@@ -30,6 +30,8 @@ pub struct Found {
     pub valid: bool,
     pub volume: u64,
     pub min: [i32; 3],
+    /// The greatest corner of the casing (for the fluid drawn inside, FORK-31).
+    pub max: [i32; 3],
 }
 
 /// What kind of part a member of the dynamic tank group is.
@@ -49,7 +51,7 @@ impl From<bool> for Part {
 /// Whether the members of one candidate make a dynamic tank, given what each is (`Part` or `bool`) and what the inside holds (`inside_empty`).
 pub fn validate<P: Copy + Into<Part>>(members: &[([i32; 3], P)], min: [i32; 3], max: [i32; 3], inside_empty: impl Fn([i32; 3]) -> bool) -> Found {
     let size = [max[0] - min[0] + 1, max[1] - min[1] + 1, max[2] - min[2] + 1];
-    let bad = Found { valid: false, volume: 0, min };
+    let bad = Found { valid: false, volume: 0, min, max };
     if size.iter().any(|s| !(3..=18).contains(s)) {
         return bad;
     }
@@ -81,7 +83,7 @@ pub fn validate<P: Copy + Into<Part>>(members: &[([i32; 3], P)], min: [i32; 3], 
         return bad;
     }
     let volume = (size[0] * size[1] * size[2]) as u64;
-    Found { valid: true, volume, min }
+    Found { valid: true, volume, min, max }
 }
 
 /// What a member keeps of its structure.
@@ -91,6 +93,24 @@ pub fn encode(f: &Found) -> Vec<u8> {
     for c in f.min {
         out.extend(c.to_le_bytes());
     }
+    // The greatest corner follows the least one, so the renderer reads the casing's box in one go (`fluid_volume`, `box_at` 5).
+    for c in f.max {
+        out.extend(c.to_le_bytes());
+    }
+    out
+}
+
+/// Where the renderer reads the fluid's draw flag and how full the tank is, in a valve's data (after the 17 bytes of the structure and the
+/// 12 of its greatest corner).
+pub const DRAW_AT: usize = 29;
+pub const FILL_AT: usize = 30;
+
+/// A valve's data with the two bytes the renderer reads: whether it draws the structure's fluid and how full the tank is (0 to 255).
+pub fn with_fill(data: &[u8], draws: bool, amount: u64, capacity: u64) -> Vec<u8> {
+    let mut out = data[..data.len().min(DRAW_AT)].to_vec();
+    out.resize(DRAW_AT, 0);
+    out.push(u8::from(draws));
+    out.push(if capacity == 0 { 0 } else { (amount.min(capacity) * 255).div_ceil(capacity).min(255) as u8 });
     out
 }
 
@@ -99,7 +119,8 @@ pub fn decode(data: &[u8]) -> Option<Found> {
         return None;
     }
     let int = |at: usize| i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
-    Some(Found { valid: data[0] == 1, volume: u64::from(u32::from_le_bytes([data[1], data[2], data[3], data[4]])), min: [int(5), int(9), int(13)] })
+    let max = if data.len() >= 29 { [int(17), int(21), int(25)] } else { [int(5), int(9), int(13)] };
+    Some(Found { valid: data[0] == 1, volume: u64::from(u32::from_le_bytes([data[1], data[2], data[3], data[4]])), min: [int(5), int(9), int(13)], max })
 }
 
 /// The total after a tick: what the valves held before, changed by what each gained or lost against the mirror it was given.
@@ -258,6 +279,10 @@ impl Mekanism {
                 let items = valve_items.remove(&p);
                 let shown_cap = if chemical.amount > 0 { chem_cap } else if fluid.amount > 0 { fluid_cap } else { chem_cap };
                 let data = dynamic_menu(&v.data, &tanks[0], &tanks[1], shown_cap);
+                // FORK-31: the one valve with the least position draws the fluid inside the casing; the byte after it says how full the tank is.
+                let draws = group.iter().all(|o| (o.pos.x, o.pos.y, o.pos.z) >= (v.pos.x, v.pos.y, v.pos.z));
+                let shown_amount = if chemical.amount > 0 { chemical.amount } else { fluid.amount };
+                let drawn = with_fill(&v.data, draws, shown_amount, shown_cap);
                 let filter_0 = if fluid.amount >= fluid_cap || chemical.amount > 0 {
                     vec![NOTHING.to_owned()]
                 } else if fluid.amount > 0 {
@@ -277,7 +302,7 @@ impl Mekanism {
                 out.push(BlockEntityUpdate {
                     dimension: v.dimension.clone(),
                     pos: v.pos,
-                    data: v.data.clone(),
+                    data: drawn,
                     items,
                     energy: None,
                     energy_faces: None,
@@ -373,14 +398,14 @@ mod tests {
 
     #[test]
     fn a_member_remembers_its_structure() {
-        let f = Found { valid: true, volume: 27, min: [-5, 64, 300] };
+        let f = Found { valid: true, volume: 27, min: [-5, 64, 300], max: [-3, 66, 302] };
         assert_eq!(decode(&encode(&f)), Some(f));
         assert_eq!(decode(&[1, 2]), None);
     }
 
     #[test]
     fn tank_capacity_fluid_vs_chemical() {
-        let f = Found { valid: true, volume: 10, min: [0; 3] };
+        let f = Found { valid: true, volume: 10, min: [0; 3], max: [2; 3] };
         assert_eq!(f.volume * FLUID_PER_BLOCK, 3_500_000);
         assert_eq!(f.volume * CHEMICAL_PER_BLOCK, 160_000_000);
     }
@@ -460,5 +485,21 @@ mod tests {
         let synchronized_given = [11_000u64, 11_000u64];
         let untouched_now = [11_000u64, 11_000u64];
         assert_eq!(merge(new_total, &synchronized_given, &untouched_now, 1_000_000), 11_000);
+    }
+
+    #[test]
+    fn a_valve_keeps_the_casing_and_tells_how_full_the_tank_is() {
+        let f = Found { valid: true, volume: 27, min: [10, 64, 20], max: [12, 66, 22] };
+        let data = encode(&f);
+        assert_eq!(data.len(), 29);
+        assert_eq!(decode(&data), Some(f));
+        // The structure's key is unchanged by the bytes the renderer reads.
+        let drawn = with_fill(&data, true, 500, 1000);
+        assert_eq!((drawn.len(), drawn[DRAW_AT], drawn[FILL_AT]), (31, 1, 128));
+        assert_eq!(decode(&drawn), Some(f));
+        assert_eq!(with_fill(&drawn, false, 0, 1000)[FILL_AT], 0);
+        assert_eq!(with_fill(&drawn, true, 2000, 1000)[FILL_AT], 255);
+        // A tank with a tenth of a bucket still shows (rounded up from empty).
+        assert_eq!(with_fill(&data, true, 1, 1_000_000)[FILL_AT], 1);
     }
 }

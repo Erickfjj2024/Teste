@@ -2055,6 +2055,17 @@ def tank_renderers():
              'tints': tints}]})
 tank_renderers()
 
+# FORK-31: the fluid or chemical of a dynamic tank, drawn inside its casing (`MultiblockTileEntityRenderer`): the valve with the least
+# position draws it, from the casing's box (`box_at` 5: least and greatest corners) and a fill byte the mod writes (dynamic.rs `with_fill`)
+def volume_renderers():
+    tints = {ty_id: ty['tint'] for ty_id, ty in zip(CHEMICALS, GAUGE_TYPES)}
+    volume = {'box_at': 5, 'draw_at': 29, 'fill_at': 30}
+    put(f'{OUT}/data/{NS}/horizon/renderer/dynamic_valve.json', {'elements': [
+        {'type': 'fluid_volume', 'tank': 0, **volume, 'sprites': {'minecraft:lava': 'minecraft:block/lava_still'},
+         'default_sprite': f'{NS}:block/chem_liquid', 'tints': {k: v for k, v in tints.items() if k != 'minecraft:lava'}},
+        {'type': 'fluid_volume', 'tank': 1, **volume, 'default_sprite': f'{NS}:block/chem_liquid', 'tints': tints}]})
+volume_renderers()
+
 # ---- the energy cube's screen (GuiEnergyCube): the discharge slot (17, 35) with its minus, the charge slot (143, 35) with its
 # plus, the wide energy gauge at 55, 18, the config tab and the energy tab at the left
 def energy_cube_panel(name):
