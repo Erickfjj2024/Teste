@@ -20,6 +20,7 @@
 //! - Installs modules into gear item data components over 10 ticks consuming 160 FE/t.
 //! - Uninstalls modules (`PacketRemoveModule.java`) returning module items to player.
 use super::*;
+use horizon_mod_sdk::server::{player_items, world, BlockEntity, BlockEntityUpdate, ItemStack, Player};
 use std::collections::HashMap;
 
 pub const BLOCK: &str = "mekanism:modification_station";
@@ -486,6 +487,248 @@ pub fn decode_modification_station(data: &[u8]) -> Option<ModificationStationSta
 // Unit Tests (Comparing with Java reference sources)
 // ============================================================================
 
+
+// ============================================================================
+// In the world: the block entity (`onUpdateServer`, `removeModule`), on the module system of `modules.rs`
+// (the one the MekaSuit and the Meka-Tool read), not on the container of this file's own pure model above.
+// ============================================================================
+
+use crate::modules::{ModuleContainer, ModuleType};
+
+/// The buttons of its screen: the redstone tab, a row of the module list (`BUTTON_REMOVE_ONE_BASE + row`: take one out) and the same with Shift
+/// (`BUTTON_REMOVE_ALL_BASE + row`: take them all out). The original selects a module in a scrolling list and presses "Remove" (Shift removes all).
+pub const BUTTON_REMOVE_ONE_BASE: i32 = 7800;
+pub const BUTTON_REMOVE_ALL_BASE: i32 = 7820;
+/// How many rows of the list the screen shows.
+pub const LIST_ROWS: usize = 6;
+
+/// The name a module shows (`module_energy` -> `Energy`, `module_electrolytic_breathing` -> `Electrolytic Breathing`).
+pub fn module_title(t: ModuleType) -> String {
+    let id = t.item_id();
+    let path = id.split(':').nth(1).unwrap_or(id).trim_start_matches("module_");
+    path.split('_')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or_else(String::new, |f| f.to_uppercase().collect::<String>() + c.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The modules installed on a gear item, in the order the list shows them (by item id).
+pub fn installed_list(container: &ModuleContainer) -> Vec<(ModuleType, u8)> {
+    let mut v: Vec<(ModuleType, u8)> = container.modules.iter().map(|(t, m)| (*t, m.installed)).collect();
+    v.sort_by_key(|(t, _)| t.item_id());
+    v
+}
+
+/// The strings of the screen, one per row of the list (`GuiModuleScrollList`): the module and how many are installed.
+pub fn list_texts(container_stack: Option<&ItemStack>) -> Vec<String> {
+    let list = container_stack.map(|s| installed_list(&ModuleContainer::decode_from_components(&s.components))).unwrap_or_default();
+    (0..LIST_ROWS).map(|i| list.get(i).map_or_else(String::new, |(t, n)| format!("{} x{}", module_title(*t), n))).collect()
+}
+
+/// The numbers of the screen: 0 ticks worked, 1 ticks an installation takes, 2-3 energy, 4-5 capacity, 6 the redstone control, 7-8 the energy still
+/// needed, 9 the energy a tick while it works, 10 how many different modules the gear holds.
+pub fn menu_numbers(ticks: u32, control: u8, energy: u64, working: bool, installed: usize) -> Vec<i32> {
+    let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
+    let needed = ENERGY_CAPACITY.saturating_sub(energy);
+    vec![
+        ticks as i32,
+        TICKS_REQUIRED as i32,
+        half(energy, 0),
+        half(energy, 16),
+        half(ENERGY_CAPACITY, 0),
+        half(ENERGY_CAPACITY, 16),
+        i32::from(control),
+        half(needed, 0),
+        half(needed, 16),
+        if working { ENERGY_USAGE as i32 } else { 0 },
+        installed as i32,
+    ]
+}
+
+/// The station's saved bytes: ticks worked (u32) and the redstone control.
+fn station_data(ticks: u32, control: Control) -> Vec<u8> {
+    let mut v = vec![1u8];
+    v.extend(ticks.to_le_bytes());
+    v.push(control as u8);
+    v
+}
+
+fn read_station(data: &[u8]) -> (u32, Control) {
+    if data.len() >= 6 && data[0] == 1 {
+        (u32::from_le_bytes([data[1], data[2], data[3], data[4]]), Control::from_byte(data[5]))
+    } else {
+        (0, Control::Disabled)
+    }
+}
+
+/// One tick of the installation (`onUpdateServer`, java:92-118), without the block entity: returns what happened to the slots.
+/// `slots` are the module, the gear and the charge slot. Says whether it worked this tick, and gives the new ticks.
+pub fn step_station(slots: &mut [Option<ItemStack>], energy: &mut u64, ticks: &mut u32, can_function: bool) -> bool {
+    let mut operated = false;
+    if can_function && *energy >= ENERGY_USAGE {
+        if let (Some(module), Some(gear)) = (slots[MODULE_SLOT].clone(), slots[CONTAINER_SLOT].clone()) {
+            if let Some(kind) = ModuleType::from_item(&module.item) {
+                let mut container = ModuleContainer::decode_from_components(&gear.components);
+                // The gear takes this module and has room for one more of it (`canInstall`).
+                if container.can_install(&gear.item, kind) {
+                    operated = true;
+                    *ticks += 1;
+                    *energy -= ENERGY_USAGE;
+                    if *ticks == TICKS_REQUIRED {
+                        *ticks = 0;
+                        let added = container.add_module(&gear.item, kind, module.count.min(255) as u8);
+                        if added > 0 {
+                            let mut new_gear = gear.clone();
+                            new_gear.components = container.encode_to_components(&gear.components);
+                            slots[CONTAINER_SLOT] = Some(new_gear);
+                            let left = module.count - u32::from(added);
+                            slots[MODULE_SLOT] = if left == 0 { None } else { Some(ItemStack { count: left, ..module }) };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !operated {
+        *ticks = 0;
+    }
+    operated
+}
+
+impl Mekanism {
+    /// A tick of the modification stations.
+    pub(crate) fn run_modification_stations(&mut self, stations: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
+        let mut out = Vec::new();
+        for e in stations {
+            let (mut ticks, control) = read_station(&e.data);
+            let mut slots: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
+            let mut energy = e.energy;
+            let mut slot_changed = false;
+            // The charge slot (`fillContainerOrConvert`).
+            if let Some((gain, left)) = crate::cube::fill_from_slot(&slots[ENERGY_SLOT], energy, ENERGY_CAPACITY) {
+                energy = gain;
+                slots[ENERGY_SLOT] = left;
+                slot_changed = true;
+            }
+            let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+            let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
+            let last = self.last_power.insert(key.clone(), powered).unwrap_or(false);
+            let before = slots.clone();
+            let operated = step_station(&mut slots, &mut energy, &mut ticks, control.can_function(powered, last));
+            slot_changed |= slots != before;
+
+            let texts = list_texts(slots[CONTAINER_SLOT].as_ref());
+            if self.menu_texts.get(&key) != Some(&texts) {
+                let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+                self.menu_texts.insert(key, texts.clone());
+            }
+            let installed = texts.iter().filter(|t| !t.is_empty()).count();
+            let numbers = menu_numbers(ticks, control as u8, energy, operated, installed);
+            if slot_changed || energy != e.energy || e.menu_data != numbers || e.data != station_data(ticks, control) {
+                out.push(BlockEntityUpdate {
+                    dimension: e.dimension.clone(),
+                    pos: e.pos,
+                    data: station_data(ticks, control),
+                    items: if slot_changed { Some(slots) } else { None },
+                    energy: Some(energy),
+                    energy_faces: Some(crate::seismic_vibrator::energy_input_faces(crate::sides::property(&e.state, "facing").unwrap_or("north"))),
+                    tanks: None,
+                    tank_faces: None,
+                    menu_data: Some(numbers),
+                    transmitter_faces: None,
+                });
+            }
+        }
+        out
+    }
+
+    /// A button of the screen: the redstone tab, or a row of the list taken off the gear (`PacketRemoveModule`, `removeModule`). The module items go to
+    /// the player's inventory (`Inventory.add`); with no room for all of them nothing is removed.
+    pub(crate) fn modification_station_button(&mut self, player: &Player, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
+        let (ticks, mut control) = read_station(&e.data);
+        let mut slots: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
+        let mut slot_changed = false;
+        if id == crate::redstone::NEXT {
+            control = control.next();
+        } else if id == crate::redstone::PREVIOUS {
+            control = control.previous();
+        } else {
+            let (row, all) = if (BUTTON_REMOVE_ALL_BASE..BUTTON_REMOVE_ALL_BASE + LIST_ROWS as i32).contains(&id) {
+                ((id - BUTTON_REMOVE_ALL_BASE) as usize, true)
+            } else if (BUTTON_REMOVE_ONE_BASE..BUTTON_REMOVE_ONE_BASE + LIST_ROWS as i32).contains(&id) {
+                ((id - BUTTON_REMOVE_ONE_BASE) as usize, false)
+            } else {
+                return None;
+            };
+            let gear = slots[CONTAINER_SLOT].clone()?;
+            let mut container = ModuleContainer::decode_from_components(&gear.components);
+            let (kind, installed) = *installed_list(&container).get(row)?;
+            let count = if all { installed } else { 1 };
+            if !give_to_player(&player.id, kind.item_id(), u32::from(count), u32::from(kind.max_stack())) {
+                return None;
+            }
+            container.remove_module(kind, count);
+            let mut new_gear = gear.clone();
+            new_gear.components = container.encode_to_components(&gear.components);
+            slots[CONTAINER_SLOT] = Some(new_gear);
+            slot_changed = true;
+        }
+        let numbers = menu_numbers(ticks, control as u8, e.energy, false, list_texts(slots[CONTAINER_SLOT].as_ref()).iter().filter(|t| !t.is_empty()).count());
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: station_data(ticks, control),
+            items: if slot_changed { Some(slots) } else { None },
+            energy: None,
+            energy_faces: None,
+            tanks: None,
+            tank_faces: None,
+            menu_data: Some(numbers),
+            transmitter_faces: None,
+        })
+    }
+}
+
+/// Puts `count` of `item` in the player's inventory like `Inventory.add`: onto stacks of it with room first, then empty slots; all or nothing. The slots are written
+/// with `compare-and-set-slot`, so a slot that changed since it was read is left alone (and the whole thing is then not done).
+fn give_to_player(player: &str, item: &str, count: u32, max_stack: u32) -> bool {
+    let Some(inv) = player_items::get_inventory(player) else { return false };
+    let mut left = count;
+    let mut writes: Vec<(u32, Option<ItemStack>, ItemStack)> = Vec::new();
+    for (i, s) in inv.iter().enumerate().take(36) {
+        if left == 0 {
+            break;
+        }
+        if let Some(stack) = s {
+            if stack.item == item && stack.components.trim().is_empty() && stack.count < max_stack {
+                let add = left.min(max_stack - stack.count);
+                writes.push((i as u32, Some(stack.clone()), ItemStack { count: stack.count + add, ..stack.clone() }));
+                left -= add;
+            }
+        }
+    }
+    for (i, s) in inv.iter().enumerate().take(36) {
+        if left == 0 {
+            break;
+        }
+        if s.is_none() {
+            let add = left.min(max_stack);
+            writes.push((i as u32, None, ItemStack { item: item.to_owned(), count: add, components: String::new() }));
+            left -= add;
+        }
+    }
+    if left > 0 {
+        return false;
+    }
+    for (slot, expected, new) in writes {
+        let _ = player_items::compare_and_set_slot(player, slot, expected.as_ref(), Some(&new));
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,5 +879,61 @@ mod tests {
         assert_eq!(state.used_energy, decoded.used_energy);
         assert_eq!(state.facing, decoded.facing);
         assert_eq!(state.slots, decoded.slots);
+    }
+
+    fn gear_with(components: &str) -> ItemStack {
+        ItemStack { item: "mekanism:meka_tool".into(), count: 1, components: components.into() }
+    }
+
+    fn module(item: &str, count: u32) -> ItemStack {
+        ItemStack { item: item.into(), count, components: String::new() }
+    }
+
+    #[test]
+    fn a_module_goes_into_the_gear_after_ten_ticks_of_energy() {
+        let mut slots = vec![Some(module("mekanism:module_attack_amplification", 2)), Some(gear_with("{}")), None];
+        let (mut energy, mut ticks) = (ENERGY_CAPACITY, 0u32);
+        for _ in 0..(TICKS_REQUIRED - 1) {
+            assert!(step_station(&mut slots, &mut energy, &mut ticks, true));
+        }
+        assert_eq!(ticks, TICKS_REQUIRED - 1);
+        assert_eq!(slots[MODULE_SLOT].as_ref().map(|s| s.count), Some(2), "nothing yet");
+        assert!(step_station(&mut slots, &mut energy, &mut ticks, true));
+        assert_eq!(ticks, 0);
+        // Both modules went in (the unit takes four), the slot is empty, the gear carries them in the format the tool reads.
+        assert!(slots[MODULE_SLOT].is_none());
+        let installed = ModuleContainer::decode_from_components(&slots[CONTAINER_SLOT].as_ref().unwrap().components);
+        assert_eq!(installed.installed_count(ModuleType::AttackAmplificationUnit), 2);
+        assert_eq!(ENERGY_CAPACITY - energy, ENERGY_USAGE * u64::from(TICKS_REQUIRED));
+    }
+
+    #[test]
+    fn the_station_stops_when_it_cannot_install_or_cannot_function() {
+        // A module that does not go on this gear, a gear that is full of it, no energy, redstone off: the count starts over.
+        let mut slots = vec![Some(module("mekanism:module_jetpack", 1)), Some(gear_with("{}")), None];
+        let (mut energy, mut ticks) = (ENERGY_CAPACITY, 3u32);
+        assert!(!step_station(&mut slots, &mut energy, &mut ticks, true), "a jetpack unit does not go on a tool");
+        assert_eq!(ticks, 0);
+        let mut slots = vec![Some(module("mekanism:module_teleportation", 1)), Some(gear_with("{}")), None];
+        let (mut energy, mut ticks) = (ENERGY_USAGE - 1, 2u32);
+        assert!(!step_station(&mut slots, &mut energy, &mut ticks, true));
+        assert_eq!(ticks, 0);
+        let (mut energy, mut ticks) = (ENERGY_CAPACITY, 2u32);
+        assert!(!step_station(&mut slots, &mut energy, &mut ticks, false));
+        assert_eq!(ticks, 0);
+    }
+
+    #[test]
+    fn the_list_shows_what_is_installed_by_name() {
+        let mut c = ModuleContainer::new();
+        c.add_module("mekanism:meka_tool", ModuleType::FortuneUnit, 2);
+        c.add_module("mekanism:meka_tool", ModuleType::TeleportationUnit, 1);
+        let stack = ItemStack { item: "mekanism:meka_tool".into(), count: 1, components: c.encode_to_components("{}") };
+        let texts = list_texts(Some(&stack));
+        assert_eq!(texts.len(), LIST_ROWS);
+        assert_eq!(texts[0], "Fortune x2");
+        assert_eq!(texts[1], "Teleportation x1");
+        assert!(texts[2].is_empty());
+        assert_eq!(module_title(ModuleType::ElectrolyticBreathingUnit), "Electrolytic Breathing");
     }
 }

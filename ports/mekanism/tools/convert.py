@@ -191,7 +191,7 @@ for m in HEAT_CONDUCTORS + HEAT_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 OPEN_MACHINES |= set(HEAT_CONDUCTORS + HEAT_MACHINES)
 # Utilities: machines with a screen or a charge slot, the personal storages, the cardboard box (hardness/resistance of the original blocks).
-UTILITY_MACHINES = ['formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel']
+UTILITY_MACHINES = ['modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel']
 for m in UTILITY_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 BLOCKS['cardboard_box'] = ('minecraft:beacon', {'hardness': 0.5, 'explosion_resistance': 0.6, 'requires_tool': False}, 'machine')
@@ -1857,6 +1857,53 @@ def qio_drive_array_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
+# the module items: the ids `modules.rs::ModuleType::item_id` gives (`mekanism:module_energy`...), read from the mod's own source so the two never differ
+_modules_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'mod', 'src', 'modules.rs'), encoding='utf-8').read()
+_item_id_fn = _modules_src[_modules_src.index('pub const fn item_id'):_modules_src.index('pub fn from_item')]
+MODULE_ITEMS = sorted(set(re.findall(r'"mekanism:module_([a-z_]+)"', _item_id_fn)))
+
+def modification_station_menu(m):
+    """GuiModificationStation (176 by 230): the list of the modules the gear holds (28, 20; here six rows, each a button: a click takes one out, Shift takes all
+    out, which is the original's "Remove" button on a selected row), the module slot at 35, 118, the gear slot at 125, 118, the charge slot at 151, 21, the
+    large progress arrow at 65, 123, the power bar at 156, 40, and the energy and redstone tabs. Its numbers and strings are
+    `modification_station.rs::menu_numbers` and `list_texts`. The original's scrolling list and its Remove button need FORK-20's list widget."""
+    width, height = 176, 230
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 120, 74, 2), (27, 19))
+    panel.alpha_composite(gui_sprite('slot/normal'), (34, 117))
+    panel.alpha_composite(gui_sprite('slot/overlay/module'), (34, 117))
+    panel.alpha_composite(gui_sprite('slot/normal'), (124, 117))
+    panel.alpha_composite(gui_sprite('slot/power'), (150, 20))
+    panel.alpha_composite(gui_sprite('progress/large_right/empty'), (65, 123))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (156, 40))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Modification Station')
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 157, 'y': 41, 'w': 4, 'h': 52, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+        {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 65, 'y': 123, 'w': 48, 'h': 8,
+         'value': {'data': 0}, 'max': {'data': 1}, 'direction': 'right', 'tooltip': 'Installing: {percent}%'},
+        {'type': 'text', 'x': (width - text_width(title)) // 2 + 12, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'}]
+    for i in range(6):
+        widgets.append({'type': 'text', 'x': 31, 'y': 22 + 12 * i, 'text': '', 'text_data': i, 'color': '#404040', 'scale': 90})
+        for count in range(i + 1, 7):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 10}, 'eq': count}}, 'widgets': [
+                {'type': 'button', 'x': 28, 'y': 21 + 12 * i, 'w': 118, 'h': 12, 'id': 7800 + i, 'shift_id': 7820 + i,
+                 'tooltip': 'Click to take one out. Shift + click takes them all out.'}]})
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'show', 'when': {'data': {'value': {'data': 9}, 'eq': 0}}, 'widgets': [
+                    {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Using: 0 FE/t\nNeeded: {7+8} FE\nUnit: Forge Energy'}]},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Using: {9} FE/t\nNeeded: {7+8} FE\nUnit: Forge Energy'}]
+    widgets += redstone_widgets(6)
+    gear = [f'{NS}:mekasuit_helmet', f'{NS}:mekasuit_bodyarmor', f'{NS}:mekasuit_pants', f'{NS}:mekasuit_boots', f'{NS}:meka_tool']
+    modules = [f'{NS}:module_{n}' for n in MODULE_ITEMS]
+    return {'slots': 3, 'data_slots': 11, 'results': [],
+            'accepts': [{'slot': 0, 'items': modules}, {'slot': 1, 'items': gear}, {'slot': 2, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[35, 118], [125, 118], [151, 21]], 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -2364,6 +2411,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/resistive_heater.json', resistive_heater_menu
 put(f'{OUT}/data/{NS}/horizon/menu/fuelwood_heater.json', fuelwood_heater_menu('fuelwood_heater'))
 put(f'{OUT}/data/{NS}/horizon/menu/oredictionificator.json', oredictionificator_menu('oredictionificator'))
 put(f'{OUT}/data/{NS}/horizon/menu/seismic_vibrator.json', seismic_vibrator_menu('seismic_vibrator'))
+put(f'{OUT}/data/{NS}/horizon/menu/modification_station.json', modification_station_menu('modification_station'))
 put(f'{OUT}/data/{NS}/horizon/menu/qio_drive_array.json', qio_drive_array_menu('qio_drive_array'))
 for _p in ('personal_chest', 'personal_barrel'):
     put(f'{OUT}/data/{NS}/horizon/menu/{_p}.json', personal_storage_menu(_p))

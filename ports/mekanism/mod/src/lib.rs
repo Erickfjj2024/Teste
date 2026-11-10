@@ -1899,6 +1899,11 @@ impl ServerMod for Mekanism {
         });
         assemblicator_kind.energy = Some(energy(assemblicator::BASE_STORAGE, assemblicator::BASE_STORAGE, FlowSide::Both));
         r = r.block_entity_kind(assemblicator_kind);
+        // The modification station: the module slot, the gear slot and the charge slot, on the back for energy; it takes in only (hoppers fill all three).
+        let mut station = kind(modification_station::BLOCK, true);
+        station.container = Some(ContainerSpec { slots: modification_station::TOTAL_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: vec![0, 1, 2], outputs: Vec::new(), menu: true });
+        station.energy = Some(EnergySpec { capacity: modification_station::ENERGY_CAPACITY, max_receive: modification_station::ENERGY_CAPACITY, max_extract: 0, faces: seismic_vibrator::energy_input_faces("north") });
+        r = r.block_entity_kind(station);
         // The heat: conductors only keep their heat; the resistive heater takes energy (its screen has no slots), the fuelwood heater one fuel slot.
         for tier in heat::ConductorTier::ALL {
             r = r.block_entity_kind(kind(tier.block_name(), true));
@@ -2641,7 +2646,7 @@ impl ServerMod for Mekanism {
     }
 
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
-    fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
+    fn menu_button(&mut self, player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
         if block == miner::MINER {
             self.miner_buttons.push((e.dimension.clone(), e.pos, id));
@@ -2664,6 +2669,9 @@ impl ServerMod for Mekanism {
         }
         if block == resistive_heater::BLOCK {
             return self.resistive_button(&e, id);
+        }
+        if block == modification_station::BLOCK {
+            return self.modification_station_button(player, &e, id);
         }
         if block == oredictionificator::BLOCK {
             return self.oredictionificator_button(&e, id);
@@ -2956,6 +2964,10 @@ impl ServerMod for Mekanism {
         let assemblicators: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(assemblicator::BLOCK)).collect();
         if !assemblicators.is_empty() {
             out.extend(self.run_assemblicators(&assemblicators, tick));
+        }
+        let stations: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(modification_station::BLOCK)).collect();
+        if !stations.is_empty() {
+            out.extend(self.run_modification_stations(&stations));
         }
         let heat_blocks: Vec<&BlockEntity> = entities.iter().filter(|e| heat_world::is_heat_block(e.state.split('[').next().unwrap_or(""))).collect();
         if !heat_blocks.is_empty() {
