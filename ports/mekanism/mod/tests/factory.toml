@@ -266,7 +266,10 @@ blocks = [
     { x = 301, y = 65, z = 304, state = "mekanism:creative_energy_cube" },
 ]
 ticks = 60
-expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [3200, 0, 3200, 0, 102, 0, 1, 1] }]
+# MatrixEnergyContainer.insert (MatrixEnergyContainer.java:162-194) takes at most `transferCap - queuedInput` a tick: the providers' rates summed, 256 000 J
+# = 102 400 FE with one basic provider (data 4 = 102 thousand FE). The structure forms in the first two ticks, so the cell has 58 ticks of that, 5.94 MFE,
+# shown as 5 (checked at 100 ticks -> 10 and 200 ticks -> 20: 102 400 FE x (ticks - 2)). The cell holds 3 200 MFE.
+expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [5, 0, 3200, 0, 102, 0, 1, 1] }]
 
 [[step]]
 # A sneak click with the configurator on the matrix's port toggles it to output (Alex's tool is fresh in this run,
