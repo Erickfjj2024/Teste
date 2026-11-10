@@ -415,6 +415,8 @@ Cada escopo foi refeito por uma conta diferente da rodada 1 (`revisao2/`). Erros
 | 21.6.1 | Tools: encantabilidade do paxel = a do material (bronze 10, lápis 32…), velocidade de ataque do paxel -2,4 (`IPaxelMaterial`), glow panel com luz 15 (`AdditionsBlockTypes.GLOW_PANEL.withLight(15)`); Wind Generator fica ativo quando pode funcionar / paxel enchantability and attack speed, glow panel light, wind generator active state | CORRIGIDO (não compilado / not compiled) |
 Tarefas sem bloco próprio (r1, r3, r5): ver `revisao2/REVISAO_*.md` / tasks without own block: see the review files.
 
+| 19.12 | FORK-29 `server-events.block-used` (default/pass/consume): o clique em bloco de multibloco só abre a tela se formado e sem agachar; senão o bloco da mão é colocado. Exige APK novo; export novo (sem nível de API, mod novo não carrega em Horizon antigo) | feito no fork, sem teste em jogo |
+
 ## 5. Fork do Horizon (precisam de APK novo)
 
 | # | Mudança | Estado |

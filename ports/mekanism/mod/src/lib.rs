@@ -44,7 +44,7 @@ mod worldgen;
 
 use horizon_mod_sdk::server::{
     BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, EnergySpec, FlowSide, GameMode, ItemStack, Tank, TankSpec,
-    BlockChange, BlockPos, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, entities, player_control, player_items,
+    BlockChange, BlockPos, BlockUse, Player, Registration, ServerMod, TransmitterMedium, TransmitterSpec, entities, player_control, player_items,
     players, recipe_types, serde_json, world,
 };
 use config::{Config, Data, Layout, ToolMode, Transmission};
@@ -2260,6 +2260,19 @@ impl ServerMod for Mekanism {
         }
     }
 
+    /// `TileEntityMultiblock.onActivate` (`TileEntityMultiblock.java:218-229`), FORK-29: the structure's own use (its screen) only when
+    /// it is formed and the player is not sneaking; otherwise the click passes to the held item (a block in hand is placed against it).
+    /// A casing never takes the click.
+    fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
+        let Some(b) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return BlockUse::Default };
+        let name = b.split('[').next().unwrap_or("");
+        if !is_multiblock_block(name) || stack.is_some_and(|s| s.item == CONFIGURATOR) {
+            return BlockUse::Default;
+        }
+        let formed = self.formed_blocks.contains(&(player.dimension.clone(), pos.x, pos.y, pos.z));
+        if sneaking || !formed || !is_multiblock_port_or_valve(name) { BlockUse::Pass } else { BlockUse::Default }
+    }
+
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if self.read_radiation(player, &stack.item) {
             return true;
@@ -2290,23 +2303,6 @@ impl ServerMod for Mekanism {
             }
             None => None,
         };
-
-        // Java TileEntityMultiblock.onActivate (TileEntityMultiblock.java:218-229):
-        // If the multiblock is unformed, or if the player is sneaking, clicking on a multiblock block
-        // passes to default block interaction (placing the held block). Casing never consumes the click.
-        if let Some(p) = pos {
-            if let Some(b) = world::get_block(&player.dimension, p.x, p.y, p.z) {
-                let name = b.split('[').next().unwrap_or("");
-                if is_multiblock_block(name) && stack.item != CONFIGURATOR {
-                    let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
-                    let formed = self.formed_blocks.contains(&(player.dimension.clone(), p.x, p.y, p.z));
-                    if sneaking || !formed || !is_multiblock_port_or_valve(name) {
-                        // FORK-29: Conditional block menu - pass through to block placement
-                        return false;
-                    }
-                }
-            }
-        }
 
         if let Some(k) = upgrades::type_of(&stack.item) {
             // `ItemUpgrade.useOn`: sneaking on a machine that takes the type puts the whole stack in, as far as it fits.
