@@ -8,7 +8,7 @@
 
 use horizon_mod_sdk::server::{player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, ItemStack, Player};
 
-use crate::{assemblicator, configuration_card, meka_tool, Mekanism};
+use crate::{assemblicator, configuration_card, generators, mekasuit, meka_tool, Mekanism};
 
 /// Whether a ray passes through the block: air and fluids (`ClipContext.Fluid.NONE` skips fluids; a plant or a torch has an outline and is hit).
 pub fn passes_ray(block: Option<&str>) -> bool {
@@ -190,6 +190,59 @@ impl Mekanism {
             }
         }
         out
+    }
+}
+
+impl Mekanism {
+    /// The MekaSuit worn by every player online, one tick (`ItemMekaSuitArmor.tickServer` via `CommonPlayerTickHandler`): what the
+    /// game tells the mod today is enough for the solar recharging unit (the head's sun and weather) and for the charge distribution
+    /// among the worn pieces. The rest of the suit (the jetpack and the movement modules need the velocity and the keys, the
+    /// nutritional injection a way to feed, the breathing the air supply, the geothermal unit the fire, the damage absorption a
+    /// damage hook, the charge of inventory items the other items' energy) waits for the API listed in `PROPOSTA-API.wit`; nothing of
+    /// it runs on guessed inputs, so no energy is spent for an effect the game does not apply.
+    pub(crate) fn suits_tick(&mut self, tick: u64) {
+        for p in players::online() {
+            let Some(inv) = player_items::get_inventory(&p.id) else { continue };
+            // Slots 36 feet, 37 legs, 38 chest, 39 head; the suit's pieces are head, chest, legs, feet.
+            let slots = [39usize, 38, 37, 36];
+            let mut pieces: [Option<mekasuit::MekaSuitItemStack>; 4] = [None, None, None, None];
+            let mut originals: [Option<ItemStack>; 4] = [None, None, None, None];
+            for (i, &s) in slots.iter().enumerate() {
+                if let Some(Some(stack)) = inv.get(s) {
+                    pieces[i] = mekasuit::MekaSuitItemStack::decode(&stack.item, stack.count, &stack.components);
+                    if pieces[i].is_some() {
+                        originals[i] = Some(stack.clone());
+                    }
+                }
+            }
+            if pieces.iter().all(Option::is_none) {
+                continue;
+            }
+            let before = pieces.clone();
+
+            // The solar recharging unit: the position roughly where the panel is, the eye and 0.2 above (`ModuleSolarRechargingUnit`).
+            if let Some(helmet) = pieces[mekasuit::ArmorSlot::Helmet as usize].as_mut() {
+                if let Some(env) = world::get_environment(&p.dimension, p.x.floor() as i32, (p.y + 1.62 + 0.2).floor() as i32, p.z.floor() as i32) {
+                    let (brightness, darken) = generators::sky(env.day_time, env.rain, env.thunder);
+                    let pos = [p.x.floor() as i32, (p.y + 1.62 + 0.2).floor() as i32, p.z.floor() as i32];
+                    let sees = env.has_skylight && darken < 4 && self.sky_clear_at(&p.dimension, pos, tick);
+                    // `isRaining` is a rain level above 0.2, `isThundering` a thunder level above 0.9.
+                    let raining = env.rain > 0.2 || env.thunder > 0.9;
+                    mekasuit::tick_solar_recharging(helmet, sees, env.temperature, env.downfall, env.precipitation, raining, brightness);
+                }
+            }
+            // Charge distribution among the pieces (inventory items' charge needs their energy, not readable yet: 0).
+            mekasuit::tick_charge_distribution(&mut pieces, 0);
+
+            for i in 0..4 {
+                if pieces[i] == before[i] {
+                    continue;
+                }
+                let (Some(piece), Some(original)) = (pieces[i].as_ref(), originals[i].as_ref()) else { continue };
+                let replacement = ItemStack { item: original.item.clone(), count: original.count, components: piece.encode(&original.components) };
+                let _ = player_items::compare_and_set_slot(&p.id, slots[i] as u32, Some(original), Some(&replacement));
+            }
+        }
     }
 }
 

@@ -231,19 +231,30 @@ pub fn energy_faces(kind: GenKind, facing: &str) -> Vec<FlowSide> {
     faces
 }
 
+struct SkyAt<'a> {
+    dimension: &'a str,
+    pos: [i32; 3],
+}
+
 /// How the generators tick: the world-dependent half (the sun, the lava beside, the items in the slots).
 impl Mekanism {
     /// Whether nothing but air is above `pos` (`level.canSeeSky`: the world-surface heightmap is under the position).
     pub(crate) fn sky_clear(&mut self, e: &BlockEntity, tick: u64) -> bool {
-        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        self.sky_clear_at(&e.dimension, [e.pos.x, e.pos.y, e.pos.z], tick)
+    }
+
+    /// `sky_clear` for any position (the MekaSuit's solar unit asks it at the player's head).
+    pub(crate) fn sky_clear_at(&mut self, dimension: &str, pos: [i32; 3], tick: u64) -> bool {
+        let e = SkyAt { dimension, pos };
+        let key = (e.dimension.to_owned(), e.pos[0], e.pos[1], e.pos[2]);
         if let Some((at, clear)) = self.suns.get(&key)
             && tick.saturating_sub(*at) < 10
         {
             return *clear;
         }
         let mut clear = true;
-        for y in e.pos.y + 1..320 {
-            match world::get_block(&e.dimension, e.pos.x, y, e.pos.z) {
+        for y in e.pos[1] + 1..320 {
+            match world::get_block(e.dimension, e.pos[0], y, e.pos[2]) {
                 Some(b) if !matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air" | "mekanism:bounding_block") => {
                     clear = false;
                     break;

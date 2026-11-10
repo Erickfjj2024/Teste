@@ -346,6 +346,8 @@ impl MekaSuitItemStack {
         }
         let mut stack = Self::new(item)?;
         stack.count = count;
+        // `new` makes a full suit for the tests; an item without the energy component has none (a crafted piece is empty).
+        stack.energy = 0;
         stack.modules = ModuleContainer::decode_from_components(components);
 
         // Parse energy: {"mekanism:attached_energy":6400000} or inside array
@@ -2087,5 +2089,13 @@ mod tests {
         // Both pieces should now have equal energy (3,200,000 FE each)
         assert_eq!(pieces[0].as_ref().unwrap().energy, 3_200_000);
         assert_eq!(pieces[1].as_ref().unwrap().energy, 3_200_000);
+    }
+
+    #[test]
+    fn a_piece_without_the_energy_component_is_empty() {
+        let fresh = MekaSuitItemStack::decode(HELMET, 1, "{}").unwrap();
+        assert_eq!(fresh.energy, 0);
+        let charged = MekaSuitItemStack::decode(HELMET, 1, r#"{"mekanism:attached_energy":1000}"#).unwrap();
+        assert_eq!(charged.energy, 1000);
     }
 }

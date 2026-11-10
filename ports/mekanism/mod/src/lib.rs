@@ -2288,6 +2288,7 @@ impl ServerMod for Mekanism {
     fn tick(&mut self, tick: u64) {
         self.run_radiation(tick);
         self.check_tool_writes(tick);
+        self.suits_tick(tick);
     }
 
     /// The answer to an EMPTY's `summon`: the drop exists (`Some` id) or it could not be made (`None`). A confirmed

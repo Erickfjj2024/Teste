@@ -557,3 +557,12 @@ set-hud-line: func(player: string, id: string, icon: string, text: string, fract
 open-radial-menu: func(player: string, item: string, entries: list<string>) -> result<_, string>;
 // Quebra de vários blocos por energia (blasting/vein mining) e agricultura com regras próprias / multi-block mining
 break-blocks: func(player: string, dimension: string, positions: list<tuple<s32,s32,s32>>, tool: item-stack) -> result<u32, string>;
+
+// ---- Estado do jogador para o MekaSuit (mekanism/revisao_numeros/REVISAO_mekasuit_ligacao.md) ----
+// `player-control.motion` hoje só tem sneaking/on-ground/jumps/xp. O MekaSuit precisa, por tick:
+// velocidade (deltaMovement), teclas (pulo mantido, descer, sprint, boost), voando, planando (elytra), em água/fluido,
+// ar restante e máximo, em chamas, fluido em que está submerso (temperatura), efeitos nocivos ativos, passageiro, dormindo,
+// cooldown de itens; e alimentar o jogador (comida/saturação), itens de energia no inventário (ler e inserir energia).
+// player-state: func(player: string) -> option<player-state>;   // record com os campos acima
+// set-food: func(player: string, food: u32, saturation: f32) -> result<_, string>;
+// energy-of-stack / insert-energy-in-stack (itens com energia do mod ou de outros mods)
