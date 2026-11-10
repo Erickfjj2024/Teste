@@ -76,3 +76,6 @@ tools/build.sh /tmp/base /caminho/do/fork /caminho/do/cargo-horizon-mod
 **Atenção:** os 25 módulos da rodada 3 (`qio*`, `meka_tool`, `mekasuit`, `robit`, `heat*`, etc.) **ainda não estão declarados no `lib.rs` real**: o verificador os declara sozinho. Eles precisam ser ligados (registro dos blocos e itens, `convert.py`, `horizon-mod.toml`) seguindo os `INTEGRACAO_*.md` em `rodada3/`.
 
 **EN.** `tools/verificador/check.sh mod/src` compiles the whole mod against a stub SDK and runs the unit tests (today: **0 errors, 404 tests**). **Note:** the 25 round-3 modules are **not declared in the real `lib.rs` yet**; the checker declares them itself. They still have to be wired in following the `INTEGRACAO_*.md` files.
+
+## Fork publicado / Published fork
+Erickfjj2024/horizon, branch `mekanism-api` (commit-raiz único com o estado completo do fork: base android 368bd1e + API 22–23 + trabalho pendente). / single root commit with the fork's full state. Não há histórico em comum com `android-port`; é um snapshot, não um merge. / No shared history with `android-port`: a snapshot, not a merge.
