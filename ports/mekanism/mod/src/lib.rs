@@ -2226,7 +2226,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks()))
+        }, r.on_chunks().on_items().on_tick().on_blocks().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2368,6 +2368,10 @@ impl ServerMod for Mekanism {
     /// `TileEntityMultiblock.onActivate` (`TileEntityMultiblock.java:218-229`), FORK-29: the structure's own use (its screen) only when
     /// it is formed and the player is not sneaking; otherwise the click passes to the held item (a block in hand is placed against it).
     /// A casing never takes the click.
+    /// FORK-35 `BlockItem.canPlace`: a machine whose model fills the blocks around it is placed only where they are free.
+    fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool {
+        bounding::can_place(&player.dimension, [pos.x, pos.y, pos.z], state)
+    }
     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
         let Some(b) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return BlockUse::Default };
         let name = b.split('[').next().unwrap_or("");

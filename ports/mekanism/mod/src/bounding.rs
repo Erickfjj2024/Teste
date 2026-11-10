@@ -71,6 +71,45 @@ pub fn is_bounded(block: &str) -> bool {
     block == "mekanism:modification_station" || !offsets(block).is_empty()
 }
 
+/// Whether a block can be built over (`BlockState.canBeReplaced`): air, fluids, the plants and layers that give way.
+pub fn replaceable(block: &str) -> bool {
+    let name = block.split('[').next().unwrap_or("");
+    matches!(
+        name,
+        "minecraft:air"
+            | "minecraft:cave_air"
+            | "minecraft:void_air"
+            | "minecraft:water"
+            | "minecraft:lava"
+            | "minecraft:short_grass"
+            | "minecraft:tall_grass"
+            | "minecraft:fern"
+            | "minecraft:large_fern"
+            | "minecraft:snow"
+            | "minecraft:vine"
+            | "minecraft:dead_bush"
+            | "minecraft:seagrass"
+            | "minecraft:tall_seagrass"
+            | "minecraft:light"
+            | "mekanism:bounding_block"
+    )
+}
+
+/// `BlockItem.canPlace` for a machine with bounding blocks (`AttributeHasBounding.canPlace`): every block its model fills has to be free.
+pub fn can_place(dimension: &str, pos: [i32; 3], state: &str) -> bool {
+    let name = state.split('[').next().unwrap_or("");
+    if !is_bounded(name) {
+        return true;
+    }
+    let facing = state
+        .split_once('[')
+        .and_then(|(_, p)| p.trim_end_matches(']').split(',').find_map(|kv| kv.strip_prefix("facing=")))
+        .unwrap_or("north");
+    offsets_with_facing(name, facing).into_iter().all(|o| {
+        world::get_block(dimension, pos[0] + o[0], pos[1] + o[1], pos[2] + o[2]).is_none_or(|b| replaceable(&b))
+    })
+}
+
 pub fn encode(main: [i32; 3]) -> Vec<u8> {
     let mut out = vec![1];
     for c in main {

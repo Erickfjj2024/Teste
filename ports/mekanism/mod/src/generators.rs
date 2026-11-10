@@ -107,7 +107,10 @@ pub fn heat_tick(heat: f64, boost: f64, burning: bool, ambient: f64) -> HeatOut 
 
 /// The lava a heat generator takes from a fuel item: the bucket's volume by the item's share of a lava bucket's burn time.
 pub fn lava_of(item: &str) -> Option<u64> {
-    // Ticks in a furnace (`FuelValues`); a lava bucket burns 20000.
+    // Ticks in a furnace (`FuelValues`); a lava bucket burns 20000. The game's own registry answers when it can (FORK-32).
+    if let Some(ticks) = horizon_mod_sdk::server::recipe_types::burn_time(item) {
+        return Some(1_000 * u64::from(ticks) / 20_000);
+    }
     let burn: u64 = match item {
         "minecraft:coal" | "minecraft:charcoal" => 1_600,
         "minecraft:coal_block" => 16_000,

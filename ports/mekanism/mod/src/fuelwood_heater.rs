@@ -46,8 +46,11 @@ pub const ACTIVE_LIGHT_LEVEL: u8 = 8;
 /// Returns standard burn duration in ticks for furnace fuels.
 /// Java: `Vanilla ItemStack.getBurnTime(null)`.
 pub fn fuel_burn_duration(item: &str) -> Option<u32> {
-    // The original asks the game's fuel registry (`FuelInventorySlot` -> `ItemStack.getBurnTime`); the port cannot, so this is the vanilla 1.21.1 table
-    // for the common fuels (FORK-32: `item-types.burn-time(item)` makes it exact, with data-pack and other-mod fuels).
+    // The original asks the game's fuel registry (`FuelInventorySlot` -> `ItemStack.getBurnTime`): FORK-32 `recipe-types.burn-time` does, with
+    // data-pack and other-mod fuels. The table below is the vanilla 1.21.1 one for the common fuels, for when the game does not answer.
+    if let Some(ticks) = horizon_mod_sdk::server::recipe_types::burn_time(item) {
+        return Some(ticks);
+    }
     let name = item.strip_prefix("minecraft:").unwrap_or(item);
     // Only the Overworld woods burn: crimson and warped (Nether) planks, stems and slabs do not.
     const WOODS: [&str; 8] = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry"];

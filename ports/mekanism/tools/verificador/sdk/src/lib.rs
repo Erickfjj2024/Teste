@@ -19,6 +19,7 @@ pub mod server {
     pub fn play_sound<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> () { Default::default() }
   }
   pub mod recipe_types { use super::*;
+    pub fn burn_time<A0>(_a0: A0) -> Option<u32> { None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CustomRecipe { pub id: String, pub json: String }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CookingRecipe { pub inputs: Vec<String>, pub output: String, pub count: u32, pub experience: f32, pub time: u32 }
     pub fn recipes_of_type<A0>(_a0: A0) -> Vec<CustomRecipe> { Default::default() }
@@ -90,7 +91,7 @@ pub mod server {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)] pub struct BlockPos { pub x: i32, pub y: i32, pub z: i32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Argument { pub name: String, pub kind: ArgumentKind, pub optional: bool }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct ServerCommand { pub name: String, pub arguments: Vec<Argument> }
-    #[derive(Clone, Debug, Default, PartialEq)] pub struct Registration { pub commands: Vec<ServerCommand>, pub tick: bool, pub joins: bool, pub chat: bool, pub blocks: bool, pub block_entities: Vec<BlockEntityKind>, pub net: bool, pub items: bool, pub chunks: bool, pub damage: bool }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct Registration { pub commands: Vec<ServerCommand>, pub tick: bool, pub joins: bool, pub chat: bool, pub blocks: bool, pub block_entities: Vec<BlockEntityKind>, pub net: bool, pub items: bool, pub chunks: bool, pub damage: bool, pub redirects: Vec<RedirectSpec> }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockEntityKind { pub block: String, pub ticks: bool, pub container: Option<ContainerSpec>, pub energy: Option<EnergySpec>, pub tanks: Vec<TankSpec>, pub keep_data: bool, pub transmitter: Option<TransmitterSpec>, pub multiblock: Option<MultiblockSpec> }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct MultiblockSpec { pub group: String }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct MultiblockMember { pub pos: BlockPos, pub state: String }
@@ -102,6 +103,7 @@ pub mod server {
     #[derive(Clone, Debug, Default, PartialEq)] pub struct ContainerSpec { pub slots: u32, pub faces: Vec<Vec<u32>>, pub inputs: Vec<u32>, pub outputs: Vec<u32>, pub menu: bool }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockEntity { pub dimension: String, pub pos: BlockPos, pub state: String, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub energy_faces: Vec<FlowSide>, pub tanks: Vec<Tank>, pub tank_faces: Vec<Vec<FlowSide>>, pub menu_data: Vec<i32>, pub transmitter_faces: Vec<bool> }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockEntityUpdate { pub dimension: String, pub pos: BlockPos, pub data: Vec<u8>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub energy_faces: Option<Vec<FlowSide>>, pub tanks: Option<Vec<Tank>>, pub tank_faces: Option<Vec<Vec<FlowSide>>>, pub menu_data: Option<Vec<i32>>, pub transmitter_faces: Option<Vec<bool>> }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct RedirectSpec { pub block: String, pub flag_at: u32, pub pos_at: u32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct DamageSource { pub damage_type: String, pub causing: Option<u32>, pub is_magic: bool, pub is_fire: bool, pub is_fall: bool, pub is_explosion: bool, pub tags: Vec<String> }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum BlockUse { #[default] Default, Pass, Consume }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum FlowSide { #[default] None, Input, Output, Both }
@@ -149,6 +151,7 @@ pub mod server {
     pub fn on_chunks(self) -> Self { self }
     pub fn on_blocks(self) -> Self { self }
     pub fn on_damage(self) -> Self { self }
+    pub fn redirect(self, _block: &str, _flag_at: u32, _pos_at: u32) -> Self { self }
     pub fn new() -> Self { Self::default() }
   }
   pub trait ServerMod: Sized {
@@ -160,6 +163,7 @@ pub mod server {
     fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {}
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool { false }
     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse { BlockUse::Default }
+    fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool { true }
     fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 { amount }
     fn item_hit_damage(&mut self, player: &Player, stack: ItemStack, kind: &str, damage: f32) -> f32 { damage }
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }
