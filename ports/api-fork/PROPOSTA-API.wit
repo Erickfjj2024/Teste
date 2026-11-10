@@ -607,3 +607,12 @@ remove-attribute-modifier: func(player: string, attribute: string, id: string) -
 // Mensagem na barra de ação (displayClientMessage(.., true)), como o cartão e outros itens do Mekanism mostram; hoje `players.tell` é bate-papo.
 tell-overlay: func(player: string, text: string) -> bool;
 // Segurança de blocos (IBlockSecurityUtils.canAccessOrDisplayError) já é do mod (security.rs); falta só o dono do bloco colocado (player-placed owner).
+
+// ---- Electric Bow (mekanism/revisao_numeros/REVISAO_electric_bow_hdpe_elytra.md) ----
+// O arco elétrico gasta energia ao soltar a corda e só atira com energia; no modo de fogo a flecha tem Flame. O jogo hoje não avisa o mod.
+// registration.item-release
+// export item-released: func(player: player, stack: item-stack, hand: string, ticks-held: s32) -> bool;   // false cancela o tiro (ItemElectricBow.releaseUsing)
+// export item-shot: func(player: player, stack: item-stack, projectiles: list<u32>);                        // depois que as flechas existem (shoot): cobrar a energia
+set-entity-fire: func(dimension: string, id: u32, ticks: s32) -> result<_, string>;                        // flecha com Flame no modo de fogo
+// Troca de modo de itens (IAttachmentBasedModeItem.changeMode: tecla de modo e rolagem com sneak): o Android não tem a tecla.
+// export item-mode-changed: func(player: player, stack: item-stack, shift: s32) -> option<item-stack>;

@@ -239,12 +239,20 @@ WORN = {'mekasuit_helmet': 'head', 'mekasuit_bodyarmor': 'chest', 'mekasuit_pant
         'hazmat_mask': 'head', 'hazmat_gown': 'chest', 'hazmat_pants': 'legs', 'hazmat_boots': 'feet',
         'jetpack': 'chest', 'jetpack_armored': 'chest', 'free_runners': 'feet', 'free_runners_armored': 'feet',
         'scuba_mask': 'head', 'scuba_tank': 'chest'}
+# Items that behave like a vanilla item of the game: the game does the work (the HDPE elytra is an `ElytraItem`; the electric bow a `BowItem` with no
+# durability: its energy is the mod's, still to be charged per shot by the mod once the game tells it a bow was released).
+ITEM_LIKE = {
+    'hdpe_elytra': {'template': 'minecraft:elytra', 'max_stack_size': 1, 'rarity': 'rare',
+                    'components': {'minecraft:max_damage': 648, 'minecraft:repairable': {'items': [f'{NS}:hdpe_sheet']}}},
+    'electric_bow': {'template': 'minecraft:bow', 'max_stack_size': 1, 'rarity': 'rare',
+                     'components': {'!minecraft:max_damage': {}, '!minecraft:repairable': {}}},
+}
 kept_items = []
 for n, model in items.items():
     if not copy_model(model):
         continue
     kept_items.append(n)
-    item = {'template': 'minecraft:stick'}
+    item = dict(ITEM_LIKE.get(n, {'template': 'minecraft:stick'}))
     if n in WORN:
         # Equippable(slot): a player wears it in its armor slot, one at a time (the worn model is still to do)
         item['max_stack_size'] = 1
