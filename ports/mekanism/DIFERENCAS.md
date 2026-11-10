@@ -430,6 +430,7 @@ Tarefas sem bloco próprio (r1, r3, r5): ver `revisao2/REVISAO_*.md` / tasks wit
 | 19.24 | **Energia em itens:** o Horizon não tem capacidade de energia de item (nem FE de outros mods). Itens do Mekanism guardam energia num componente e o mod lê e escreve com `player-items.get-inventory` + `compare-and-set-slot` (API 25), então não foi criada função nova; carregar itens de outros mods não existe | DECISÃO |
 | 19.25 | **Chunks por mod e caixa de entidades:** já existem (capability `chunks` com `set-forced`; capability `entities` e `players.online` com posições, filtradas pelo mod); o Dimensional Stabilizer e o Chargepad usam essas | DECISÃO |
 | 19.26 | Ainda sem API: meio de calor (FORK-4), captura e restauração de bloco com a entidade (Cardboard Box), HUD de módulos e menu radial, quebra de vários blocos por energia (`break-blocks`), entidades próprias (Robit, FORK-10), `set-comparator-output` e o resto de `PROPOSTA-API.wit` | ABERTA |
+| 19.27 | API 31: `players.tell-overlay` (barra de ação, como `displayClientMessage(.., true)`), `player-control.set-air`, `reduce-effect`, `reset-fall-distance`, `set-attribute-modifier` / `remove-attribute-modifier` (transitórios, não salvos, como os do MekaSuit/itens no Java). Em jogo-em-quadro (caminho obsoleto) o overlay vira linha de bate-papo | feito no fork, sem teste em jogo |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

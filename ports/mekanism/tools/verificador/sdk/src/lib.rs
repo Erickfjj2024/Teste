@@ -2,6 +2,7 @@
 pub mod server {
   pub use serde_json;
   pub mod players { use super::*;
+    pub fn tell_overlay<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Player { pub id: String, pub name: String, pub x: f64, pub y: f64, pub z: f64, pub dimension: String, pub game_mode: GameMode, pub health: f32 }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum GameMode { #[default] Survival, Creative, Adventure, Spectator }
     pub fn online<>() -> Vec<Player> { Default::default() }
@@ -16,6 +17,11 @@ pub mod server {
     pub fn take_xp<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct EffectState { pub id: String, pub duration: i32, pub amplifier: i32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct PlayerState { pub velocity_x: f64, pub velocity_y: f64, pub velocity_z: f64, pub jumping: bool, pub sprinting: bool, pub flying: bool, pub may_fly: bool, pub fall_flying: bool, pub swimming: bool, pub in_water: bool, pub eyes_in_water: bool, pub in_lava: bool, pub air: i32, pub max_air: i32, pub fire_ticks: i32, pub passenger: bool, pub sleeping: bool, pub food: u32, pub saturation: f32, pub effects: Vec<EffectState> }
+    pub fn set_air<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
+    pub fn reduce_effect<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
+    pub fn reset_fall_distance<A0>(_a0: A0) -> Result<(), String> { Err(String::new()) }
+    pub fn set_attribute_modifier<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
+    pub fn remove_attribute_modifier<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn get_state<A0>(_a0: A0) -> Option<PlayerState> { None }
     pub fn set_food<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn set_motion<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
