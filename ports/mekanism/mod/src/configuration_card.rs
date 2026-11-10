@@ -226,11 +226,7 @@ impl ConfigurationData {
     /// Emits "Data: <name>" or "Data: None".
     pub fn card_tooltip(&self) -> String {
         if self.has_data() {
-            let name = if self.data_name.is_empty() {
-                self.data_type.split(':').nth(1).unwrap_or(&self.data_type)
-            } else {
-                &self.data_name
-            };
+            let name = display_name(if self.data_name.is_empty() { &self.data_type } else { &self.data_name });
             format!("Data: {name}")
         } else {
             "Data: None".to_string()
@@ -333,76 +329,44 @@ pub fn is_compatible(source_type: &str, target_type: &str) -> bool {
         }
     }
 
-    // 3. Energy Cube tiers
-    const CUBES: &[&str] = &[
-        "mekanism:basic_energy_cube",
-        "mekanism:advanced_energy_cube",
-        "mekanism:elite_energy_cube",
-        "mekanism:ultimate_energy_cube",
-        "mekanism:creative_energy_cube",
-    ];
-    if CUBES.contains(&source_type) && CUBES.contains(&target_type) {
-        return true;
-    }
-
-    // 4. Chemical Tank tiers
-    const CHEM_TANKS: &[&str] = &[
-        "mekanism:basic_chemical_tank",
-        "mekanism:advanced_chemical_tank",
-        "mekanism:elite_chemical_tank",
-        "mekanism:ultimate_chemical_tank",
-        "mekanism:creative_chemical_tank",
-    ];
-    if CHEM_TANKS.contains(&source_type) && CHEM_TANKS.contains(&target_type) {
-        return true;
-    }
-
-    // 5. Fluid Tank tiers
-    const FLUID_TANKS: &[&str] = &[
-        "mekanism:basic_fluid_tank",
-        "mekanism:advanced_fluid_tank",
-        "mekanism:elite_fluid_tank",
-        "mekanism:ultimate_fluid_tank",
-        "mekanism:creative_fluid_tank",
-    ];
-    if FLUID_TANKS.contains(&source_type) && FLUID_TANKS.contains(&target_type) {
-        return true;
-    }
-
-    // 6. Bin tiers
-    const BINS: &[&str] = &[
-        "mekanism:basic_bin",
-        "mekanism:advanced_bin",
-        "mekanism:elite_bin",
-        "mekanism:ultimate_bin",
-        "mekanism:creative_bin",
-    ];
-    if BINS.contains(&source_type) && BINS.contains(&target_type) {
-        return true;
-    }
-
-    // 7. Transmitters of the same medium
-    let is_cable = |s: &str| s.ends_with("_universal_cable");
-    let is_pipe = |s: &str| s.ends_with("_mechanical_pipe");
-    let is_tube = |s: &str| s.ends_with("_pressurized_tube");
-    let is_transporter = |s: &str| s.ends_with("_logistical_transporter");
-    let is_conductor = |s: &str| s.ends_with("_thermodynamic_conductor");
-
-    if is_cable(source_type) && is_cable(target_type)
-        || is_pipe(source_type) && is_pipe(target_type)
-        || is_tube(source_type) && is_tube(target_type)
-        || is_transporter(source_type) && is_transporter(target_type)
-        || is_conductor(source_type) && is_conductor(target_type)
-    {
-        return true;
-    }
-
+    // Nothing else: the original's `isConfigurationDataCompatible` is the same block, plus `isSameTypeFactory` in the factories and the machines that have
+    // one (electric machines, the combiner, the infuser, the sawmill). Energy cubes, tanks, bins and transmitters of other tiers are not compatible.
     false
 }
 
 // ============================================================================
 // 3. MACHINE CONFIGURATION EXTRACTION & INJECTION
 // ============================================================================
+
+/// The machines the card works on besides the assemblicator and the resistive heater: those whose data starts with the configuration (kinds with the
+/// sides at byte 2 and the control where `redstone::offset` says).
+pub fn card_machine(block: &str) -> Option<&'static crate::Def> {
+    crate::MACHINES.iter().find(|d| {
+        d.block == block && matches!(d.kind, crate::Kind::Electric | crate::Kind::Process | crate::Kind::Sawmill | crate::Kind::Factory | crate::Kind::Continuous | crate::Kind::Reaction | crate::Kind::Pump)
+    })
+}
+
+/// Whether the card does anything on this block (`Capabilities.CONFIG_CARD`).
+pub fn supports(block: &str) -> bool {
+    block == assemblicator::BLOCK || block == crate::resistive_heater::BLOCK || card_machine(block).is_some()
+}
+
+/// The English name a card shows for a stored translation key (`block.mekanism.enrichment_chamber` -> `Enrichment Chamber`): the port has no language
+/// files at hand, but the original's block names are the id in title case. A name already written out is kept.
+pub fn display_name(key_or_name: &str) -> String {
+    let path = key_or_name.strip_prefix("block.mekanism.").or_else(|| key_or_name.strip_prefix("mekanism:"));
+    match path {
+        Some(p) if !p.contains(' ') => p
+            .split('_')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next().map_or_else(String::new, |f| f.to_uppercase().collect::<String>() + c.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => key_or_name.to_owned(),
+    }
+}
 
 /// Translates a block id to its default translation key / title.
 pub fn block_translation_key(block_id: &str) -> String {
@@ -443,8 +407,18 @@ pub fn extract_configuration(block_name: &str, e: &BlockEntity) -> Configuration
         }
     }
 
-    // Otherwise standard configurable machine
-    if let Some(cfg) = Config::decode(e.data.get(2..).unwrap_or(&[]), Layout::Electric) {
+    // The resistive heater: the redstone control and the energy it uses (`TileEntityResistiveHeater.getConfigurationData`).
+    if block_name == crate::resistive_heater::BLOCK {
+        if let Some(h) = crate::resistive_heater::ResistiveHeater::decode(&e.data, 300.0) {
+            data.control_type = Some(h.redstone as u8);
+            data.extra.insert("energy_usage".into(), h.energy_usage_joules.to_string());
+        }
+        return data;
+    }
+
+    // A configurable machine: the control, then the sides and eject flags of its configuration (`configComponent.write`).
+    if let Some(def) = card_machine(block_name) {
+        let cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), def.layout).unwrap_or_else(|| config::default_config(def.layout));
         let mut sides = [[0u8; 6]; 5];
         for (t, s_arr) in cfg.sides.iter().enumerate() {
             for (s, d) in s_arr.iter().enumerate() {
@@ -453,11 +427,7 @@ pub fn extract_configuration(block_name: &str, e: &BlockEntity) -> Configuration
         }
         data.side_config = Some(sides);
         data.eject = Some(cfg.eject);
-    }
-
-    // Redstone control if present in data bytes
-    if e.data.len() > 37 {
-        data.control_type = Some(e.data[37]);
+        data.control_type = e.data.get(crate::redstone::offset(def.kind)).copied();
     }
 
     data
@@ -496,9 +466,24 @@ pub fn apply_configuration(target_block: &str, e: &mut BlockEntity, data: &Confi
         return true;
     }
 
-    // Standard machine
+    // The resistive heater: the control and the energy usage (`setLegacyEnergyIfPresent` -> `updateEnergyUsage`).
+    if target_block == crate::resistive_heater::BLOCK {
+        if let Some(mut h) = crate::resistive_heater::ResistiveHeater::decode(&e.data, 300.0) {
+            if let Some(ctrl) = data.control_type {
+                h.redstone = crate::resistive_heater::RedstoneMode::from_u8(ctrl);
+            }
+            if let Some(usage) = data.extra.get("energy_usage").and_then(|u| u.parse::<u64>().ok()) {
+                h.set_energy_usage(usage);
+            }
+            e.data = h.encode();
+        }
+        return true;
+    }
+
+    // A configurable machine: the sides and eject flags, then the control at the place its kind keeps it.
+    let Some(def) = card_machine(target_block) else { return false };
     if let Some(sides) = &data.side_config {
-        let mut cfg = config::default_config(Layout::Electric);
+        let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), def.layout).unwrap_or_else(|| config::default_config(def.layout));
         for (t, s_arr) in sides.iter().enumerate() {
             for (s, d) in s_arr.iter().enumerate() {
                 cfg.sides[t][s] = Data::from_byte(*d);
@@ -507,21 +492,18 @@ pub fn apply_configuration(target_block: &str, e: &mut BlockEntity, data: &Confi
         if let Some(ejects) = &data.eject {
             cfg.eject = *ejects;
         }
-        let encoded_cfg = cfg.encode();
-        if e.data.len() >= 2 + encoded_cfg.len() {
-            e.data[2..2 + encoded_cfg.len()].copy_from_slice(&encoded_cfg);
-        } else {
-            let mut new_data = e.data.clone();
-            new_data.resize(2, 0);
-            new_data.extend(encoded_cfg);
-            e.data = new_data;
+        let encoded = cfg.encode();
+        if e.data.len() < 2 + encoded.len() {
+            e.data.resize(2 + encoded.len(), 0);
         }
+        e.data[2..2 + encoded.len()].copy_from_slice(&encoded);
     }
-
     if let Some(ctrl) = data.control_type {
-        if e.data.len() > 37 {
-            e.data[37] = ctrl;
+        let at = crate::redstone::offset(def.kind);
+        if e.data.len() <= at {
+            e.data.resize(at + 1, 0);
         }
+        e.data[at] = Control::from_byte(ctrl) as u8;
     }
 
     true
@@ -610,11 +592,7 @@ impl ConfigurationCardItem {
             // Shift + Right-Click: COPY
             let data = extract_configuration(block_name, block_entity);
             Self::set_data(card_stack, &data);
-            let display_name = if data.data_name.is_empty() {
-                block_name.strip_prefix("mekanism:").unwrap_or(block_name).to_string()
-            } else {
-                data.data_name.clone()
-            };
+            let display_name = display_name(if data.data_name.is_empty() { block_name } else { &data.data_name });
             let msg = format!("Retrieved configuration data from {display_name}");
             let _ = players::tell(player_id, &msg);
 
@@ -630,11 +608,7 @@ impl ConfigurationCardItem {
 
             if is_compatible(&card_data.data_type, block_name) {
                 apply_configuration(block_name, block_entity, &card_data);
-                let display_name = if card_data.data_name.is_empty() {
-                    card_data.data_type.strip_prefix("mekanism:").unwrap_or(&card_data.data_type).to_string()
-                } else {
-                    card_data.data_name.clone()
-                };
+                let display_name = display_name(if card_data.data_name.is_empty() { &card_data.data_type } else { &card_data.data_name });
                 let msg = format!("Injected configuration data of type {display_name}");
                 let _ = players::tell(player_id, &msg);
 
@@ -735,16 +709,85 @@ mod tests {
         assert!(!is_compatible("mekanism:crusher", "mekanism:basic_enriching_factory"));
     }
 
-    /// Test: Energy Cube tiers and Tank tiers are compatible within their family.
+    /// Cubes, tanks, bins and transmitters of other tiers are NOT compatible: the original only compares the block (and the factory type).
+    /// Java: `IConfigCardAccess.isConfigurationDataCompatible` default and the six overrides.
     #[test]
-    fn test_cube_and_tank_compatibility() {
-        assert!(is_compatible("mekanism:basic_energy_cube", "mekanism:ultimate_energy_cube"));
-        assert!(is_compatible("mekanism:basic_chemical_tank", "mekanism:creative_chemical_tank"));
-        assert!(is_compatible("mekanism:basic_fluid_tank", "mekanism:elite_fluid_tank"));
-        assert!(is_compatible("mekanism:basic_bin", "mekanism:ultimate_bin"));
-
+    fn test_other_tiers_are_not_compatible() {
+        assert!(is_compatible("mekanism:basic_energy_cube", "mekanism:basic_energy_cube"));
+        assert!(!is_compatible("mekanism:basic_energy_cube", "mekanism:ultimate_energy_cube"));
+        assert!(!is_compatible("mekanism:basic_chemical_tank", "mekanism:creative_chemical_tank"));
+        assert!(!is_compatible("mekanism:basic_fluid_tank", "mekanism:elite_fluid_tank"));
+        assert!(!is_compatible("mekanism:basic_bin", "mekanism:ultimate_bin"));
+        assert!(!is_compatible("mekanism:basic_universal_cable", "mekanism:elite_universal_cable"));
         assert!(!is_compatible("mekanism:basic_energy_cube", "mekanism:basic_chemical_tank"));
-        assert!(!is_compatible("mekanism:basic_bin", "mekanism:basic_energy_cube"));
+    }
+
+    fn machine_entity(block: &str, data: Vec<u8>) -> BlockEntity {
+        BlockEntity {
+            dimension: "minecraft:overworld".into(),
+            pos: BlockPos { x: 1, y: 64, z: 1 },
+            state: block.into(),
+            data,
+            items: Vec::new(),
+            energy: 0,
+            energy_faces: Vec::new(),
+            tanks: Vec::new(),
+            tank_faces: Vec::new(),
+            menu_data: Vec::new(),
+            transmitter_faces: Vec::new(),
+        }
+    }
+
+    /// The card copies and pastes the sides, the eject flags and the control of a machine at the offsets its kind keeps them in.
+    #[test]
+    fn test_card_roundtrip_on_two_kinds_of_machines() {
+        for (block, control_at) in [("mekanism:enrichment_chamber", 37usize), ("mekanism:chemical_infuser", 39usize)] {
+            let def = card_machine(block).expect("a configurable machine");
+            assert_eq!(crate::redstone::offset(def.kind), control_at);
+            let mut cfg = config::default_config(def.layout);
+            cfg.eject[0] = true;
+            cfg.sides[0][1] = Data::Output;
+            let mut data = vec![0u8; control_at + 1];
+            data[2..37].copy_from_slice(&cfg.encode());
+            data[control_at] = Control::Low as u8;
+            let source = machine_entity(block, data);
+            let card = extract_configuration(block, &source);
+            assert_eq!(card.control_type, Some(Control::Low as u8));
+            assert_eq!(card.eject.map(|e| e[0]), Some(true));
+
+            let mut target = machine_entity(block, vec![0u8; control_at + 1]);
+            assert!(apply_configuration(block, &mut target, &card));
+            assert_eq!(target.data[control_at], Control::Low as u8);
+            let back = Config::decode(&target.data[2..], def.layout).unwrap();
+            assert!(back.eject[0]);
+            assert_eq!(back.sides[0][1], Data::Output);
+        }
+    }
+
+    /// The card does something only on blocks that have the capability.
+    #[test]
+    fn test_card_supports_only_configurable_blocks() {
+        assert!(supports("mekanism:enrichment_chamber"));
+        assert!(supports(assemblicator::BLOCK));
+        assert!(supports("mekanism:resistive_heater"));
+        assert!(!supports("mekanism:basic_energy_cube"));
+        assert!(!supports("minecraft:stone"));
+    }
+
+    /// The resistive heater keeps its control and its energy usage on the card.
+    #[test]
+    fn test_card_resistive_heater() {
+        let mut h = crate::resistive_heater::ResistiveHeater::new(300.0);
+        h.set_energy_usage(5_000);
+        h.redstone = crate::resistive_heater::RedstoneMode::from_u8(2);
+        let source = machine_entity("mekanism:resistive_heater", h.encode());
+        let card = extract_configuration("mekanism:resistive_heater", &source);
+        assert_eq!(card.extra.get("energy_usage").map(String::as_str), Some("5000"));
+        let mut target = machine_entity("mekanism:resistive_heater", crate::resistive_heater::ResistiveHeater::new(300.0).encode());
+        assert!(apply_configuration("mekanism:resistive_heater", &mut target, &card));
+        let got = crate::resistive_heater::ResistiveHeater::decode(&target.data, 300.0).unwrap();
+        assert_eq!(got.energy_usage_joules, 5_000);
+        assert_eq!(got.redstone as u8, 2);
     }
 
     /// Test: Card tooltip presentation.
@@ -853,5 +896,12 @@ mod tests {
         };
         let bad_paste = ConfigurationCardItem::use_on("player1", false, "mekanism:energized_smelter", &mut smelter_entity, &mut card);
         assert!(matches!(bad_paste, CardInteractionResult::Incompatible { .. }));
+    }
+
+    #[test]
+    fn test_display_names_are_the_english_ones() {
+        assert_eq!(display_name("block.mekanism.enrichment_chamber"), "Enrichment Chamber");
+        assert_eq!(display_name("mekanism:formulaic_assemblicator"), "Formulaic Assemblicator");
+        assert_eq!(display_name("Enrichment Chamber"), "Enrichment Chamber");
     }
 }

@@ -111,9 +111,8 @@ pub struct CardClick {
 }
 
 impl Mekanism {
-    /// The configuration card and the crafting formula. The card is wired for the formulaic assemblicator only: `apply_configuration`
-    /// for the other machines assumes a layout and offsets that are not checked against each machine's data yet, and a wrong
-    /// write would corrupt the machine. Answers whether the mod took the use.
+    /// The configuration card and the crafting formula. The card works on the formulaic assemblicator, the resistive heater and the
+    /// configurable machines (`configuration_card::supports`). Answers whether the mod took the use.
     pub(crate) fn card_or_formula_used(&mut self, player: &Player, stack: &ItemStack, pos: Option<BlockPos>) -> bool {
         let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
         let original = stack.clone();
@@ -137,9 +136,9 @@ impl Mekanism {
                 false
             }
             Some(p) => {
-                let on_assemblicator = world::get_block(&player.dimension, p.x, p.y, p.z)
-                    .is_some_and(|b| b.split('[').next() == Some(assemblicator::BLOCK));
-                if !on_assemblicator {
+                let supported = world::get_block(&player.dimension, p.x, p.y, p.z)
+                    .is_some_and(|b| configuration_card::supports(b.split('[').next().unwrap_or("")));
+                if !supported {
                     return false;
                 }
                 self.card_clicks.push(CardClick { player: player.id.clone(), dimension: player.dimension.clone(), pos: p, sneaking, stack });

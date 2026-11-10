@@ -602,3 +602,8 @@ reset-fall-distance: func(player: string) -> result<_, string>;                 
 // Modificadores de atributo do jogador por mod (velocidade de movimento, altura de degrau, eficiência na água, dano de ataque), com id e remoção
 set-attribute-modifier: func(player: string, attribute: string, id: string, amount: f64, operation: string) -> result<_, string>;
 remove-attribute-modifier: func(player: string, attribute: string, id: string) -> result<_, string>;
+
+// ---- Cartão de configuração e mensagens (mekanism/revisao_numeros/REVISAO_cartao_configuracao.md) ----
+// Mensagem na barra de ação (displayClientMessage(.., true)), como o cartão e outros itens do Mekanism mostram; hoje `players.tell` é bate-papo.
+tell-overlay: func(player: string, text: string) -> bool;
+// Segurança de blocos (IBlockSecurityUtils.canAccessOrDisplayError) já é do mod (security.rs); falta só o dono do bloco colocado (player-placed owner).
