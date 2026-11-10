@@ -8,6 +8,7 @@ mod combiner;
 mod assemblicator;
 mod capmask;
 mod cardboard_box;
+mod sparkle;
 mod chargepad;
 mod chemical_fluids;
 mod configuration_card;
@@ -2764,15 +2765,14 @@ impl ServerMod for Mekanism {
                         (s.min.y as f64 + s.max.y as f64) / 2.0,
                         (s.min.z as f64 + s.max.z as f64) / 2.0,
                     ];
-                    for p in players::online() {
-                        if p.dimension == dimension {
-                            let d2 = (p.x - center[0]).powi(2) + (p.y - center[1]).powi(2) + (p.z - center[2]).powi(2);
-                            if d2 <= 1600.0 {
-                                let _ = players::tell(&p.id, "§9Multiblock Formed");
-                            }
-                        }
+                    // `enableMultiblockFormationParticles` (default true): the sparkle on the six faces of the box, otherwise the
+                    // indigo "Multiblock formed" action-bar line. Only if a player is within 40 blocks of the structure.
+                    let near = players::online().iter().any(|p| {
+                        p.dimension == dimension && (p.x - center[0]).powi(2) + (p.y - center[1]).powi(2) + (p.z - center[2]).powi(2) <= 1600.0
+                    });
+                    if near {
+                        sparkle::show(dimension, [s.min.x, s.min.y, s.min.z], [s.max.x, s.max.y, s.max.z], self.now.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (s.min.x as u64) << 20 ^ (s.min.z as u64));
                     }
-                    // FORK-30: world.spawn-particles (redstone dust sparkle along the 12 edges)
                     // FORK-31: render.multiblock-fluid
                 }
             } else {
