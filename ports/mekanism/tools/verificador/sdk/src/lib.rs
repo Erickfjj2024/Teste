@@ -14,6 +14,8 @@ pub mod server {
     pub fn get_look<A0>(_a0: A0) -> Option<(f32,f32)> { None }
     pub fn teleport<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: Option<f32>, _a6: Option<f32>) -> Result<(), String> { Err(String::new()) }
     pub fn take_xp<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
+    pub fn set_motion<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
+    pub fn set_allow_flight<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn play_sound<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> () { Default::default() }
   }
   pub mod recipe_types { use super::*;
@@ -42,6 +44,7 @@ pub mod server {
   pub mod player_items { use super::*;
     pub fn get_inventory<A0>(_a0: A0) -> Option<Vec<Option<ItemStack>>> { None }
     pub fn set_slot<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
+    pub fn compare_and_set_slot<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
     pub fn hurt<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn add_effect<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
   }

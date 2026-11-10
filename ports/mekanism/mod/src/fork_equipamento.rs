@@ -116,22 +116,15 @@ pub fn write_stack_components(_player: &str, _slot: u32, _components: &str) -> R
 // -----------------------------------------------------------------------------
 // FORK-29: 3D vector movement impulse and flight ability
 // -----------------------------------------------------------------------------
-#[cfg(feature = "fork")]
-pub fn apply_vector_impulse(_player: &str, _vx: f64, _vy: f64, _vz: f64) -> Result<(), String> {
-    Ok(())
-}
-#[cfg(not(feature = "fork"))]
-pub fn apply_vector_impulse(_player: &str, _vx: f64, _vy: f64, _vz: f64) -> Result<(), String> {
-    Err("FORK-29 pendente".into())
+/// Sets the player's velocity in blocks a tick (`player-control.set-motion`, API 25): the caller gives the whole velocity it wants,
+/// not an increment.
+pub fn apply_vector_impulse(player: &str, vx: f64, vy: f64, vz: f64) -> Result<(), String> {
+    horizon_mod_sdk::server::player_control::set_motion(player, vx, vy, vz)
 }
 
-#[cfg(feature = "fork")]
-pub fn set_creative_flight(_player: &str, _enabled: bool) -> Result<(), String> {
-    Ok(())
-}
-#[cfg(not(feature = "fork"))]
-pub fn set_creative_flight(_player: &str, _enabled: bool) -> Result<(), String> {
-    Err("FORK-29 pendente".into())
+/// Lets the player fly whatever their game mode (`player-control.set-allow-flight`, API 25).
+pub fn set_creative_flight(player: &str, enabled: bool) -> Result<(), String> {
+    horizon_mod_sdk::server::player_control::set_allow_flight(player, enabled)
 }
 
 // -----------------------------------------------------------------------------
