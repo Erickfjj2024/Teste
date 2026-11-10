@@ -621,3 +621,8 @@ set-entity-fire: func(dimension: string, id: u32, ticks: s32) -> result<_, strin
 // BlockEntityUpdate.menu-text: option<list<string>>
 // widget textfield { x, y, w, h, max-length, validator, id } -> export menu-text-input: func(player: player, dimension: string, pos: block-pos, id: s32, text: string) -> option<block-entity-update>;
 // widget list { x, y, w, h, row-height, rows, source, first, count, on-click }
+
+// ---- Laser Tractor Beam (mekanism: laser_tractor.rs, TileEntityLaserReceptor/LaserTractorBeam) ----
+// `world.mine-block` já faz o que a quebra do trator faz (drops no contêiner de destino); falta a dureza para o custo em energia (100 000 J por ponto de dureza)
+// e os itens soltos atingidos pelo feixe (items-in-box / take-dropped-item do FORK-10, passo 6).
+block-hardness: func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>;   // Block.defaultDestroyTime; none for unloaded; negative for unbreakable
