@@ -1489,6 +1489,92 @@ def factory_menu(m):
     menu['accepts'] = menu.get('accepts', []) + [{'slot': charge_at, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}]
     return menu
 
+def assemblicator_menu(m):
+    """GuiFormulaicAssemblicator (176 by 230): the formula slot, 18 input slots, the 3 by 3 grid, the large output frame with its 6 slots, the charge
+    slot, the tall progress arrow, the check or the cross, the six buttons, and the energy and redstone tabs. The screen's numbers are
+    `assemblicator.rs::menu_numbers`: 0 ticks worked, 1 ticks a craft takes, 2-3 energy, 4-5 capacity, 6 auto mode, 7 stock control, 8 valid formula,
+    9 recipe in the grid, 10 redstone control, 11-12 energy still needed, 13 can encode, 14 energy a tick while working."""
+    width, height = 176, 230
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    slot = gui_sprite('slot/normal')
+    inv_y = height - 82
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (7 + 18 * col, inv_y - 1 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (7 + 18 * col, height - 25))
+    panel.alpha_composite(gui_sprite('slot/normal'), (5, 25))
+    panel.alpha_composite(gui_sprite('slot/overlay/formula'), (5, 25))
+    for y in range(2):
+        for x in range(9):
+            panel.alpha_composite(slot, (7 + 18 * x, 97 + 18 * y))
+    for y in range(3):
+        for x in range(3):
+            panel.alpha_composite(gui_sprite('slot/normal'), (25 + 18 * x, 16 + 18 * y))
+    # SlotType.OUTPUT_LARGE: the original's own 36 by 54 image (found in the 1.21.1 assets; the 26.3 sprites do not have it)
+    from PIL import Image
+    large = Image.open(find('gui/slot/output_large.png', ASSET_DIRS)).convert('RGBA')
+    panel.alpha_composite(large, (115, 16))
+    panel.alpha_composite(gui_sprite('slot/power'), (151, 75))
+    panel.alpha_composite(gui_sprite('progress/tall_right/empty'), (86, 43))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (159, 15))
+    texture = save_gui(panel, m)
+    slots = [[6, 26]]
+    slots += [[8 + x * 18, 98 + y * 18] for y in range(2) for x in range(9)]
+    slots += [[26 + x * 18, 17 + y * 18] for y in range(3) for x in range(3)]
+    slots += [[116 + x * 18, 17 + y * 18] for y in range(3) for x in range(2)]
+    slots += [[152, 76]]
+    results = list(range(28, 34))
+    title = MACHINE_NAMES.get(m, 'Formulaic Assemblicator')
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 160, 'y': 16, 'w': 4, 'h': 52, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
+        {'type': 'sprite', 'texture': copy_gui('progress/tall_right/full', 'progress_tall_right_full'), 'x': 86, 'y': 43, 'w': 22, 'h': 15,
+         'value': {'data': 0}, 'max': {'data': 1}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'},
+        {'type': 'show', 'when': {'data': {'value': {'data': 9}, 'eq': 1}}, 'widgets': [
+            {'type': 'sprite', 'texture': copy_gui('slot/overlay/check', 'overlay_check'), 'x': 88, 'y': 22, 'w': 18, 'h': 18}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 9}, 'eq': 0}}, 'widgets': [
+            {'type': 'sprite', 'texture': copy_gui('slot/overlay/x', 'overlay_x'), 'x': 88, 'y': 22, 'w': 18, 'h': 18}]},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+    def button(icon, name, x, y, size, bid, tip, enabled, tips=None):
+        """An image button: the icon always, the button itself only while its `enabled` condition holds (the original greys it out), with a tooltip
+        that follows a switch when `tips` is `(data, on, off)`."""
+        out = [{'type': 'sprite', 'texture': copy_gui(icon, name), 'x': x, 'y': y, 'w': size, 'h': size}]
+        def live(tooltip):
+            return {'type': 'button', 'x': x, 'y': y, 'w': size, 'h': size, 'id': bid, 'tooltip': tooltip}
+        inner = []
+        if tips:
+            d, on, off = tips
+            inner += [{'type': 'show', 'when': {'data': {'value': {'data': d}, 'eq': 1}}, 'widgets': [live(on)]},
+                      {'type': 'show', 'when': {'data': {'value': {'data': d}, 'eq': 0}}, 'widgets': [live(off)]}]
+        else:
+            inner.append(live(tip))
+        out.append({'type': 'show', 'when': {'data': {'value': {'data': enabled[0]}, 'eq': enabled[1]}}, 'widgets': inner})
+        return out
+    # the buttons' icons are the 1.21.1 ones; the encode button is 14 wide, the others 16 (7900 encode, 7901 stock, 7902 fill or empty, 7903 and
+    # 7904 craft, 7905 auto)
+    widgets += button('button/encode_formula', 'btn_encode_formula', 7, 45, 14, 7900, 'Encode Formula', (13, 1))
+    widgets += button('button/stock_control', 'btn_stock_control', 26, 75, 16, 7901, '', (8, 1), tips=(7, 'Stock Control: on', 'Stock Control: off'))
+    # ToggleButton(empty, fill, formula.isEmpty()): with no formula the icon is the "fill" one (the original's own pairing) and the action empties the grid
+    widgets += [{'type': 'show', 'when': {'data': {'value': {'data': 8}, 'eq': 0}}, 'widgets':
+                 button('button/fill', 'btn_fill', 44, 75, 16, 7902, 'Empty Grid', (6, 0))},
+                {'type': 'show', 'when': {'data': {'value': {'data': 8}, 'eq': 1}}, 'widgets':
+                 button('button/empty', 'btn_empty', 44, 75, 16, 7902, 'Fill Grid', (6, 0))}]
+    widgets += button('button/craft_single', 'btn_craft_single', 71, 75, 16, 7903, 'Craft Single Item', (9, 1))
+    widgets += button('button/craft_available', 'btn_craft_available', 89, 75, 16, 7904, 'Craft Available Items', (9, 1))
+    widgets += button('button/auto_toggle', 'btn_auto_toggle', 107, 75, 16, 7905, '', (8, 1), tips=(6, 'Auto-Mode: on', 'Auto-Mode: off'))
+    # the energy tab (GuiEnergyTab at -26, 137) and the redstone tab (GuiRedstoneControlTab at the screen's width, 137)
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
+                 'tooltip': 'Using: {14} FE/t\nNeeded: {11}+{12} FE\nUnit: Forge Energy'}]
+    widgets += redstone_widgets(10)
+    return {'slots': len(slots), 'data_slots': 15, 'results': results,
+            'accepts': [{'slot': 0, 'items': [f'{NS}:crafting_formula']}, {'slot': 34, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -1990,6 +2076,7 @@ def pump_menu(m):
                                      'widgets': widgets, 'windows': [window]}}, m, 3, 24)
 
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
+put(f'{OUT}/data/{NS}/horizon/menu/formulaic_assemblicator.json', assemblicator_menu('formulaic_assemblicator'))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))

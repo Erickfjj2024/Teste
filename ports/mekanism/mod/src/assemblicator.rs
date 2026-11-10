@@ -1092,6 +1092,44 @@ pub fn load_formula(items: &mut [Option<ItemStack>]) -> (RecipeFormula, FormulaA
     (RecipeFormula::EMPTY, att, true)
 }
 
+/// The numbers the screen reads (`menu_data`), in this order: 0 ticks worked, 1 ticks a craft takes, 2-3 energy (low and high 16 bits), 4-5 capacity,
+/// 6 auto mode, 7 stock control, 8 a valid formula, 9 a recipe in the grid, 10 the redstone control, 11-12 energy still needed, 13 the formula can be
+/// encoded, 14 the energy a tick it uses while it works.
+pub fn menu_numbers(state: &AssemblicatorState, items: &[Option<ItemStack>], energy: u64) -> Vec<i32> {
+    let mut copy = items.to_vec();
+    let (formula, _, _) = load_formula(&mut copy);
+    let mut grid: [Option<ItemStack>; 9] = Default::default();
+    for i in 0..9 {
+        grid[i] = items.get(SLOT_CRAFT_START + i).cloned().flatten();
+    }
+    // `hasRecipe`: the grid makes what the formula says, or, with no formula, any recipe of the game.
+    let has_recipe = if formula.is_empty() { RecipeResolver::find_recipe(&grid).is_some() } else { formula.matches(&grid) };
+    // `canEncode`: no valid formula, and a crafting formula without one in its slot.
+    let can_encode = formula.is_empty()
+        && items.get(SLOT_FORMULA).cloned().flatten().is_some_and(|s| s.item == CRAFTING_FORMULA && CraftingFormulaItem::get_attachment(&s).is_empty());
+    let capacity = upgrades::max_energy(BASE_STORAGE, state.energy_upgrades);
+    let needed = capacity.saturating_sub(energy);
+    let used = if state.auto_mode && state.operating_ticks > 0 { upgrades::energy_per_tick(BASE_ENERGY_USAGE, state.speed_upgrades, state.energy_upgrades) } else { 0 };
+    let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
+    vec![
+        state.operating_ticks as i32,
+        state.ticks_required as i32,
+        half(energy, 0),
+        half(energy, 16),
+        half(capacity, 0),
+        half(capacity, 16),
+        i32::from(state.auto_mode),
+        i32::from(state.stock_control),
+        i32::from(!formula.is_empty()),
+        i32::from(has_recipe),
+        state.control as i32,
+        half(needed, 0),
+        half(needed, 16),
+        i32::from(can_encode),
+        used as i32,
+    ]
+}
+
 /// Ticks a single Formulaic Assemblicator block entity.
 /// Java: `TileEntityFormulaicAssemblicator.java:213-267`.
 pub fn tick_assemblicator(
@@ -1213,7 +1251,8 @@ impl Mekanism {
 
             let changed = tick_assemblicator(e, &mut state, &mut items, &mut energy, powered, last_powered);
 
-            if changed || first {
+            let numbers = menu_numbers(&state, &items, energy);
+            if changed || first || e.menu_data != numbers {
                 let encoded_data = state.encode();
                 updates.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
@@ -1221,13 +1260,7 @@ impl Mekanism {
                     data: encoded_data,
                     items: Some(items),
                     energy: Some(energy),
-                    menu_data: Some(vec![
-                        state.auto_mode as i32,
-                        state.stock_control as i32,
-                        state.operating_ticks as i32,
-                        state.ticks_required as i32,
-                        state.control as i32,
-                    ]),
+                    menu_data: Some(numbers),
                     tanks: None,
                     tank_faces: None,
                     energy_faces: None,
@@ -1282,6 +1315,15 @@ impl Mekanism {
                     changed |= craft_all(&mut items, &formula) > 0;
                 }
             }
+            // The redstone tab (`RedstoneControl`): the next control on a left click, the one before on a right click.
+            crate::redstone::NEXT => {
+                state.control = state.control.next();
+                changed = true;
+            }
+            crate::redstone::PREVIOUS => {
+                state.control = state.control.previous();
+                changed = true;
+            }
             BUTTON_AUTO_MODE => {
                 // `nextMode`: on to off always; off to on only with a formula, and the grid's strangers go back to the inputs first.
                 if state.auto_mode {
@@ -1298,19 +1340,14 @@ impl Mekanism {
         }
 
         if changed {
+            let numbers = menu_numbers(&state, &items, e.energy);
             Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos.clone(),
                 data: state.encode(),
                 items: Some(items),
                 energy: Some(e.energy),
-                menu_data: Some(vec![
-                    state.auto_mode as i32,
-                    state.stock_control as i32,
-                    state.operating_ticks as i32,
-                    state.ticks_required as i32,
-                    state.control as i32,
-                ]),
+                menu_data: Some(numbers),
                 tanks: None,
                 tank_faces: None,
                 energy_faces: None,
