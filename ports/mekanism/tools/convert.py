@@ -3205,6 +3205,20 @@ for k, u in enumerate(UPGRADES):
 # Item and block names the lang file keeps under other keys: block items use block.*
 put(f'{OUT}/assets/{NS}/lang/en_us.json', out)
 
+# the sounds: the events (`sounds.json`) and their files, as the original has them (a mod's own sounds are played by id from the mod's code)
+_sounds_json = f'{GEN}/assets/{NS}/sounds.json'
+if os.path.exists(_sounds_json):
+    put(f'{OUT}/assets/{NS}/sounds.json', src=_sounds_json)
+_sounds_dir = f'{RES}/assets/{NS}/sounds'
+nsounds = 0
+for _dp, _dn, _fs in os.walk(_sounds_dir):
+    for _f in _fs:
+        if _f.endswith('.ogg'):
+            _rel = os.path.relpath(os.path.join(_dp, _f), _sounds_dir)
+            put(f'{OUT}/assets/{NS}/sounds/{_rel}', src=os.path.join(_dp, _f))
+            nsounds += 1
+print(f'sounds {nsounds}')
+
 print(f'items {len(kept_items)}, blocks {len(kept_blocks)}, textures {len(copied_textures)}, '
       f'models {len(copied_models)}, recipes {nrec}')
 print('warnings:', len(warnings))
