@@ -594,3 +594,11 @@ spawn-mod-entity: func(dimension: string, kind: string, x: f64, y: f64, z: f64, 
 record dropped-item { id: u32, stack: item-stack, x: f64, y: f64, z: f64 }
 items-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>;
 take-dropped-item: func(dimension: string, id: u32, count: u32) -> result<_, string>;
+
+// ---- Pedidos novos do MekaSuit depois da API 29 (mekanism/revisao_numeros/REVISAO_mekasuit_ligacao.md) ----
+set-air: func(player: string, air: s32) -> result<_, string>;                       // eletrolítico: restaurar ar
+reduce-effect: func(player: string, effect: string, ticks: s32) -> result<_, string>; // purificação de inalação: encurtar efeito (ou remover)
+reset-fall-distance: func(player: string) -> result<_, string>;                      // jetpack: handleJetpackMotion -> fallDistance = 0
+// Modificadores de atributo do jogador por mod (velocidade de movimento, altura de degrau, eficiência na água, dano de ataque), com id e remoção
+set-attribute-modifier: func(player: string, attribute: string, id: string, amount: f64, operation: string) -> result<_, string>;
+remove-attribute-modifier: func(player: string, attribute: string, id: string) -> result<_, string>;

@@ -6,7 +6,7 @@
 //! farming units (a use that changes blocks with the tool's own rules). Nothing here charges energy for an effect the
 //! game does not apply.
 
-use horizon_mod_sdk::server::{player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, DamageSource, ItemStack, Player};
+use horizon_mod_sdk::server::{GameMode, player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, DamageSource, ItemStack, Player};
 
 use crate::{assemblicator, configuration_card, generators, mekasuit, meka_tool, Mekanism};
 
@@ -194,12 +194,12 @@ impl Mekanism {
 }
 
 impl Mekanism {
-    /// The MekaSuit worn by every player online, one tick (`ItemMekaSuitArmor.tickServer` via `CommonPlayerTickHandler`): what the
-    /// game tells the mod today is enough for the solar recharging unit (the head's sun and weather) and for the charge distribution
-    /// among the worn pieces. The rest of the suit (the jetpack and the movement modules need the velocity and the keys, the
-    /// nutritional injection a way to feed, the breathing the air supply, the geothermal unit the fire, the damage absorption a
-    /// damage hook, the charge of inventory items the other items' energy) waits for the API listed in `PROPOSTA-API.wit`; nothing of
-    /// it runs on guessed inputs, so no energy is spent for an effect the game does not apply.
+    /// The MekaSuit worn by every player online, one tick (`ItemMekaSuitArmor.tickServer` via `CommonPlayerTickHandler`): the solar
+    /// recharging unit, the nutritional injection, the geothermal unit, the jetpack and the charge distribution among the worn pieces.
+    /// Still missing, because the game gives the mod no way: the breathing (set the air), the inhalation purification (shorten an effect),
+    /// the locomotive boost and the step assist (attributes), the magnetic attraction (dropped items), the fall distance the jetpack
+    /// resets, the elytra glide and the charge of inventory items. Nothing runs on guessed inputs: no energy is spent for an effect
+    /// the game does not apply.
     pub(crate) fn suits_tick(&mut self, tick: u64) {
         for p in players::online() {
             let Some(inv) = player_items::get_inventory(&p.id) else { continue };
@@ -229,6 +229,46 @@ impl Mekanism {
                     // `isRaining` is a rain level above 0.2, `isThundering` a thunder level above 0.9.
                     let raining = env.rain > 0.2 || env.thunder > 0.9;
                     mekasuit::tick_solar_recharging(helmet, sees, env.temperature, env.downfall, env.precipitation, raining, brightness);
+                }
+            }
+            // The player's body (API 29): what the nutrition, the geothermal unit and the jetpack read.
+            let state = player_control::get_state(&p.id);
+            let playing = p.game_mode != GameMode::Creative && p.game_mode != GameMode::Spectator;
+            if let Some(st) = &state {
+                // Nutritional injection: only in playing mode and when the player can eat (`canEat(false)`: food below 20).
+                if playing {
+                    if let Some(helmet) = pieces[mekasuit::ArmorSlot::Helmet as usize].as_mut() {
+                        let (eaten, modifier, _) = mekasuit::tick_nutritional_injection(helmet, st.food as i32);
+                        if eaten > 0 {
+                            let (food, saturation) = eat(st.food, st.saturation, eaten as u32, modifier);
+                            let _ = player_control::set_food(&p.id, food, saturation);
+                        }
+                    }
+                }
+                // Geothermal unit: lava (1300 K, taken as fully up the legs) or fire (the original's 200 degrees).
+                if let Some(pants) = pieces[mekasuit::ArmorSlot::Legs as usize].as_mut() {
+                    mekasuit::tick_geothermal_generator(pants, st.fire_ticks > 0, if st.in_lava { 1300.0 } else { 0.0 });
+                }
+                // The jetpack: the keys, the velocity and the look; the new velocity is set whole.
+                if let (Some(body), Some((yaw, pitch))) = (pieces[mekasuit::ArmorSlot::Chest as usize].as_mut(), player_control::get_look(&p.id)) {
+                    let input = mekasuit::JetpackInput {
+                        ascending: st.jumping,
+                        descending: player_control::get_motion(&p.id).is_some_and(|m| m.sneaking),
+                        on_ground_or_sleeping: mekasuit::is_on_ground_or_sleeping(player_control::get_motion(&p.id).is_some_and(|m| m.on_ground), st.sleeping, st.flying),
+                        sneaking: player_control::get_motion(&p.id).is_some_and(|m| m.sneaking),
+                        fall_flying: st.fall_flying,
+                        spectator: p.game_mode == GameMode::Spectator,
+                        passenger: st.passenger,
+                        on_cooldown: false,
+                        motion: [st.velocity_x, st.velocity_y, st.velocity_z],
+                        look: crate::sides::look(yaw, pitch),
+                        // `Player.getUpVector(1F)`: the view vector of the same yaw with the pitch turned up by 90 degrees.
+                        up: crate::sides::look(yaw, pitch - 90.0),
+                    };
+                    let jet = mekasuit::tick_jetpack(body, &input);
+                    if let Some(m) = jet.new_motion {
+                        let _ = player_control::set_motion(&p.id, m[0], m[1], m[2]);
+                    }
                 }
             }
             // Charge distribution among the pieces (inventory items' charge needs their energy, not readable yet: 0).
@@ -268,6 +308,13 @@ pub fn suit_source(source: &DamageSource) -> mekasuit::DamageSource {
         bypasses_armor: has("minecraft:bypasses_armor"),
         always_supported: has("mekanism:mekasuit_always_supported") || ALWAYS_SUPPORTED.contains(&source.damage_type.as_str()),
     }
+}
+
+/// `FoodData.eat(food, saturationModifier)`: the level rises (at most 20), the saturation by `food * modifier * 2` (at most the level).
+pub fn eat(food_level: u32, saturation: f32, food: u32, modifier: f32) -> (u32, f32) {
+    let level = (food_level + food).min(20);
+    let sat = (saturation + food as f32 * modifier * 2.0).min(level as f32);
+    (level, sat)
 }
 
 /// The attack damage with a Meka-Tool in hand: `damage` (the player's own) plus the tool's attribute; any other item leaves it.
@@ -434,5 +481,13 @@ mod tests {
         assert_eq!(hit_damage(&plain, 1.0), 1.0 + meka_tool::BASE_ATTACK_DAMAGE as f32);
         let other = ItemStack { item: "minecraft:stick".into(), count: 1, components: String::new() };
         assert_eq!(hit_damage(&other, 1.0), 1.0);
+    }
+
+    #[test]
+    fn eating_follows_the_food_data() {
+        // 15 food, 2 saturation, 5 eaten at 0.8: 20 food, saturation up by 5 * 0.8 * 2 = 8, cut to the level.
+        assert_eq!(eat(15, 2.0, 5, 0.8), (20, 10.0));
+        // The level never passes 20 and the saturation never the level.
+        assert_eq!(eat(18, 19.0, 5, 0.8), (20, 20.0));
     }
 }

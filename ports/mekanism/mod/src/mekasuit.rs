@@ -705,10 +705,10 @@ pub fn tick_electrolytic_breathing(
     (oxygen_used as i32, energy_used)
 }
 
-/// Nutritional injection unit tick on Helmet (`ModuleNutritionalInjectionUnit.java:30-46`).
-/// Drains nutritional paste and feeds player automatically when food level < 20.
-/// 50 mB per food level, 0.8 saturation.
-/// Energy cost = 20,000 J = 8,000 FE per food level.
+/// Nutritional injection unit tick on Helmet (`ModuleNutritionalInjectionUnit.tickServer`, java:30-46). `food_level` below 20 only.
+/// `needed = min(20 - food, paste / 50 mB)`, `toFeed = min(energy / 8 000 FE, needed)`; it pays `toFeed` food levels of energy and paste but the
+/// player eats `needed` (the original's own arithmetic: with little energy the player is fed more than was paid for). Returns
+/// `(food eaten, saturation modifier, energy used)`.
 pub fn tick_nutritional_injection(
     helmet: &mut MekaSuitItemStack,
     food_level: i32,
@@ -722,15 +722,16 @@ pub fn tick_nutritional_injection(
 
     let needed_food = (20 - food_level) as u64;
     let paste_available_food = helmet.fluid_amount / NUTRITIONAL_PASTE_MB_PER_FOOD;
+    let needed = needed_food.min(paste_available_food);
     let energy_available_food = helmet.energy / ENERGY_USAGE_NUTRITIONAL;
-    let to_feed = needed_food.min(paste_available_food).min(energy_available_food);
+    let to_feed = needed.min(energy_available_food);
 
     if to_feed > 0 {
         let paste_used = to_feed * NUTRITIONAL_PASTE_MB_PER_FOOD;
         let energy_used = to_feed * ENERGY_USAGE_NUTRITIONAL;
         helmet.fluid_amount -= paste_used;
         helmet.energy -= energy_used;
-        (to_feed as i32, NUTRITIONAL_PASTE_SATURATION, energy_used)
+        (needed as i32, NUTRITIONAL_PASTE_SATURATION, energy_used)
     } else {
         (0, 0.0, 0)
     }
@@ -2097,5 +2098,21 @@ mod tests {
         assert_eq!(fresh.energy, 0);
         let charged = MekaSuitItemStack::decode(HELMET, 1, r#"{"mekanism:attached_energy":1000}"#).unwrap();
         assert_eq!(charged.energy, 1000);
+    }
+
+    #[test]
+    fn nutritional_injection_feeds_what_was_needed_not_what_was_paid() {
+        // Enough paste for 20 food, energy for only 1 (8 000 FE): it pays 1 and the player eats the whole 5 (java:36-43).
+        let mut helmet = MekaSuitItemStack::new(HELMET).unwrap();
+        helmet.modules.add_module(HELMET, ModuleType::NutritionalInjectionUnit, 1);
+        helmet.fluid_amount = 1_000;
+        helmet.energy = ENERGY_USAGE_NUTRITIONAL;
+        let (food, _, energy) = tick_nutritional_injection(&mut helmet, 15);
+        assert_eq!(food, 5);
+        assert_eq!(energy, ENERGY_USAGE_NUTRITIONAL);
+        assert_eq!(helmet.fluid_amount, 1_000 - 50);
+        assert_eq!(helmet.energy, 0);
+        // No energy: nothing is fed.
+        assert_eq!(tick_nutritional_injection(&mut helmet, 15).0, 0);
     }
 }
