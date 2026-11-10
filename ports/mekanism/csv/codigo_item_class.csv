@@ -1,62 +1,62 @@
 item,estado,nota
 mekanism/common/item/ItemAlloy.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/ItemConfigurationCard.java,FALTA?,
+mekanism/common/item/ItemConfigurationCard.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemConfigurator.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/ItemCraftingFormula.java,FALTA?,
-mekanism/common/item/ItemDictionary.java,FALTA?,
+mekanism/common/item/ItemCraftingFormula.java,?,match heurístico por nome / name heuristic
+mekanism/common/item/ItemDictionary.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemDosimeter.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemEnergized.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemGaugeDropper.java,FALTA?,
 mekanism/common/item/ItemGeigerCounter.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/ItemModule.java,FALTA?,
+mekanism/common/item/ItemModule.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemNetworkReader.java,FALTA?,
 mekanism/common/item/ItemNutritionalPasteBucket.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemPortableQIODashboard.java,FALTA?,
 mekanism/common/item/ItemPortableTeleporter.java,FALTA?,
 mekanism/common/item/ItemQIODrive.java,FALTA?,
 mekanism/common/item/ItemRefinedGlowstoneIngot.java,FALTA?,
-mekanism/common/item/ItemRobit.java,FALTA?,
+mekanism/common/item/ItemRobit.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/ItemSeismicReader.java,FALTA?,
 mekanism/common/item/ItemTierInstaller.java,FALTA?,
 mekanism/common/item/ItemUpgrade.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockBin.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/block/ItemBlockCardboardBox.java,FALTA?,
+mekanism/common/item/block/ItemBlockCardboardBox.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockChemicalTank.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockEnergyCube.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockInductionCell.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockInductionProvider.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockLaserAmplifier.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/ItemBlockMekanism.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/block/ItemBlockPersonalStorage.java,FALTA?,
-mekanism/common/item/block/ItemBlockRadioactiveWasteBarrel.java,FALTA?,
-mekanism/common/item/block/ItemBlockSecurityDesk.java,FALTA?,
-mekanism/common/item/block/ItemBlockTooltip.java,FALTA?,
+mekanism/common/item/block/ItemBlockPersonalStorage.java,?,match heurístico por nome / name heuristic
+mekanism/common/item/block/ItemBlockRadioactiveWasteBarrel.java,?,match heurístico por nome / name heuristic
+mekanism/common/item/block/ItemBlockSecurityDesk.java,?,match heurístico por nome / name heuristic
+mekanism/common/item/block/ItemBlockTooltip.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/machine/ItemBlockFactory.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/machine/ItemBlockFluidTank.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/block/machine/ItemBlockLaserTractorBeam.java,FALTA?,
+mekanism/common/item/block/machine/ItemBlockLaserTractorBeam.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/machine/ItemBlockQIOComponent.java,FALTA?,
 mekanism/common/item/block/machine/ItemBlockQuantumEntangloporter.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/block/machine/ItemBlockResistiveHeater.java,FALTA?,
+mekanism/common/item/block/machine/ItemBlockResistiveHeater.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/machine/ItemBlockTeleporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/transmitter/ItemBlockLogisticalTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/transmitter/ItemBlockMechanicalPipe.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/transmitter/ItemBlockPressurizedTube.java,?,match heurístico por nome / name heuristic
-mekanism/common/item/block/transmitter/ItemBlockThermodynamicConductor.java,FALTA?,
+mekanism/common/item/block/transmitter/ItemBlockThermodynamicConductor.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/transmitter/ItemBlockTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/block/transmitter/ItemBlockUniversalCable.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemArmoredFreeRunners.java,FALTA?,
 mekanism/common/item/gear/ItemArmoredJetpack.java,FALTA?,
-mekanism/common/item/gear/ItemAtomicDisassembler.java,FALTA?,
+mekanism/common/item/gear/ItemAtomicDisassembler.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemCanteen.java,FALTA?,
 mekanism/common/item/gear/ItemChemicalArmor.java,FALTA?,
-mekanism/common/item/gear/ItemElectricBow.java,FALTA?,
+mekanism/common/item/gear/ItemElectricBow.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemFlamethrower.java,FALTA?,
-mekanism/common/item/gear/ItemFreeRunners.java,FALTA?,
+mekanism/common/item/gear/ItemFreeRunners.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemHDPEElytra.java,FALTA?,
 mekanism/common/item/gear/ItemHazmatSuitArmor.java,FALTA?,
-mekanism/common/item/gear/ItemJetpack.java,FALTA?,
+mekanism/common/item/gear/ItemJetpack.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemMekaSuitArmor.java,FALTA?,
-mekanism/common/item/gear/ItemMekaTool.java,FALTA?,
+mekanism/common/item/gear/ItemMekaTool.java,?,match heurístico por nome / name heuristic
 mekanism/common/item/gear/ItemScubaMask.java,FALTA?,
 mekanism/common/item/gear/ItemScubaTank.java,FALTA?,
 mekanism/common/item/gear/ItemSpecialArmor.java,FALTA?,

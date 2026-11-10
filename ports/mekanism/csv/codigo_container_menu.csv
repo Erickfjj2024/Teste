@@ -22,7 +22,7 @@ mekanism/common/inventory/container/item/PortableQIODashboardContainer.java,FALT
 mekanism/common/inventory/container/item/PortableTeleporterContainer.java,FALTA?,
 mekanism/common/inventory/container/item/QIOFrequencySelectItemContainer.java,FALTA?,
 mekanism/common/inventory/container/item/SeismicReaderContainer.java,FALTA?,
-mekanism/common/inventory/container/slot/ArmorSlot.java,FALTA?,
+mekanism/common/inventory/container/slot/ArmorSlot.java,?,match heurístico por nome / name heuristic
 mekanism/common/inventory/container/slot/ContainerSlotType.java,FALTA?,
 mekanism/common/inventory/container/slot/HotBarSlot.java,FALTA?,
 mekanism/common/inventory/container/slot/IHasExtraData.java,FALTA?,

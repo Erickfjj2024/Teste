@@ -9,7 +9,7 @@ mekanism/client/gui/GuiFilterHolder.java,FALTA?,
 mekanism/client/gui/GuiFluidTank.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiInductionMatrix.java,FALTA?,
 mekanism/client/gui/GuiLaserAmplifier.java,?,match heurístico por nome / name heuristic
-mekanism/client/gui/GuiLaserTractorBeam.java,FALTA?,
+mekanism/client/gui/GuiLaserTractorBeam.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiLogisticalSorter.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiMatrixStats.java,FALTA?,
 mekanism/client/gui/GuiMekanism.java,?,match heurístico por nome / name heuristic
@@ -20,7 +20,7 @@ mekanism/client/gui/GuiPersonalStorageTile.java,FALTA?,
 mekanism/client/gui/GuiQuantumEntangloporter.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiRadialSelector.java,FALTA?,
 mekanism/client/gui/GuiSPS.java,FALTA?,
-mekanism/client/gui/GuiSecurityDesk.java,FALTA?,
+mekanism/client/gui/GuiSecurityDesk.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiTeleporter.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiThermalEvaporationController.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/GuiThermoelectricBoiler.java,FALTA?,
@@ -100,9 +100,9 @@ mekanism/client/gui/element/gauge/GuiMergedTankGauge.java,FALTA?,
 mekanism/client/gui/element/gauge/GuiNumberGauge.java,FALTA?,
 mekanism/client/gui/element/gauge/GuiTankGauge.java,FALTA?,
 mekanism/client/gui/element/graph/GuiDoubleGraph.java,FALTA?,
-mekanism/client/gui/element/graph/GuiGraph.java,FALTA?,
+mekanism/client/gui/element/graph/GuiGraph.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/graph/GuiLongGraph.java,FALTA?,
-mekanism/client/gui/element/progress/GuiFlame.java,FALTA?,
+mekanism/client/gui/element/progress/GuiFlame.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/progress/GuiProgress.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/progress/IProgressInfoHandler.java,FALTA?,
 mekanism/client/gui/element/progress/ProgressType.java,FALTA?,
@@ -123,7 +123,7 @@ mekanism/client/gui/element/tab/GuiAmplifierTab.java,FALTA?,
 mekanism/client/gui/element/tab/GuiBoilerTab.java,FALTA?,
 mekanism/client/gui/element/tab/GuiConfigTypeTab.java,FALTA?,
 mekanism/client/gui/element/tab/GuiContainerEditModeTab.java,FALTA?,
-mekanism/client/gui/element/tab/GuiEnergyTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiEnergyTab.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/tab/GuiHeatTab.java,FALTA?,
 mekanism/client/gui/element/tab/GuiInsetToggleElement.java,FALTA?,
 mekanism/client/gui/element/tab/GuiMatrixTab.java,FALTA?,
@@ -148,7 +148,7 @@ mekanism/client/gui/element/text/GuiTextField.java,FALTA?,
 mekanism/client/gui/element/text/IconType.java,FALTA?,
 mekanism/client/gui/element/window/GuiColorWindow.java,FALTA?,
 mekanism/client/gui/element/window/GuiConfirmationDialog.java,FALTA?,
-mekanism/client/gui/element/window/GuiCraftingWindow.java,FALTA?,
+mekanism/client/gui/element/window/GuiCraftingWindow.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/window/GuiMekaSuitHelmetOptions.java,FALTA?,
 mekanism/client/gui/element/window/GuiRobitRename.java,FALTA?,
 mekanism/client/gui/element/window/GuiRobitSkinSelect.java,FALTA?,
@@ -162,7 +162,7 @@ mekanism/client/gui/element/window/filter/GuiFilterSelect.java,FALTA?,
 mekanism/client/gui/element/window/filter/GuiItemStackFilter.java,FALTA?,
 mekanism/client/gui/element/window/filter/GuiModIDFilter.java,FALTA?,
 mekanism/client/gui/element/window/filter/GuiOredictionificatorFilter.java,FALTA?,
-mekanism/client/gui/element/window/filter/GuiTagFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiTagFilter.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/element/window/filter/GuiTextFilter.java,FALTA?,
 mekanism/client/gui/element/window/filter/miner/GuiMinerFilerSelect.java,FALTA?,
 mekanism/client/gui/element/window/filter/miner/GuiMinerFilterHelper.java,FALTA?,
@@ -178,7 +178,7 @@ mekanism/client/gui/element/window/filter/transporter/GuiSorterFilterHelper.java
 mekanism/client/gui/element/window/filter/transporter/GuiSorterItemStackFilter.java,FALTA?,
 mekanism/client/gui/element/window/filter/transporter/GuiSorterModIDFilter.java,FALTA?,
 mekanism/client/gui/element/window/filter/transporter/GuiSorterTagFilter.java,FALTA?,
-mekanism/client/gui/item/GuiDictionary.java,FALTA?,
+mekanism/client/gui/item/GuiDictionary.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/item/GuiPersonalStorageItem.java,FALTA?,
 mekanism/client/gui/item/GuiPortableTeleporter.java,FALTA?,
 mekanism/client/gui/item/GuiSeismicReader.java,FALTA?,
@@ -198,17 +198,17 @@ mekanism/client/gui/machine/GuiElectrolyticSeparator.java,?,match heurístico po
 mekanism/client/gui/machine/GuiFactory.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiFluidicPlenisher.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiFormulaicAssemblicator.java,?,match heurístico por nome / name heuristic
-mekanism/client/gui/machine/GuiFuelwoodHeater.java,FALTA?,
+mekanism/client/gui/machine/GuiFuelwoodHeater.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiIsotopicCentrifuge.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiMetallurgicInfuser.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiNutritionalLiquifier.java,?,match heurístico por nome / name heuristic
-mekanism/client/gui/machine/GuiOredictionificator.java,FALTA?,
+mekanism/client/gui/machine/GuiOredictionificator.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiPRC.java,FALTA?,
 mekanism/client/gui/machine/GuiPaintingMachine.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiPigmentExtractor.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiPigmentMixer.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiPrecisionSawmill.java,?,match heurístico por nome / name heuristic
-mekanism/client/gui/machine/GuiResistiveHeater.java,FALTA?,
+mekanism/client/gui/machine/GuiResistiveHeater.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiRotaryCondensentrator.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiSeismicVibrator.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/machine/GuiSolarNeutronActivator.java,?,match heurístico por nome / name heuristic
@@ -223,11 +223,11 @@ mekanism/client/gui/qio/GuiQIOItemFrequencySelect.java,FALTA?,
 mekanism/client/gui/qio/GuiQIOItemViewer.java,FALTA?,
 mekanism/client/gui/qio/GuiQIORedstoneAdapter.java,FALTA?,
 mekanism/client/gui/qio/GuiQIOTileFrequencySelect.java,FALTA?,
-mekanism/client/gui/robit/GuiRobit.java,FALTA?,
+mekanism/client/gui/robit/GuiRobit.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/robit/GuiRobitCrafting.java,FALTA?,
 mekanism/client/gui/robit/GuiRobitInventory.java,FALTA?,
 mekanism/client/gui/robit/GuiRobitMain.java,FALTA?,
 mekanism/client/gui/robit/GuiRobitRepair.java,FALTA?,
-mekanism/client/gui/robit/GuiRobitSmelting.java,FALTA?,
+mekanism/client/gui/robit/GuiRobitSmelting.java,?,match heurístico por nome / name heuristic
 mekanism/client/gui/tooltip/MultiLineTooltip.java,FALTA?,
 mekanism/client/gui/tooltip/TooltipUtils.java,FALTA?,

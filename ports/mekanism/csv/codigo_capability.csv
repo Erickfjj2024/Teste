@@ -1,5 +1,5 @@
 item,estado,nota
-mekanism/common/capabilities/Capabilities.java,FALTA?,
+mekanism/common/capabilities/Capabilities.java,?,match heurístico por nome / name heuristic
 mekanism/common/capabilities/CapabilityCache.java,FALTA?,
 mekanism/common/capabilities/DynamicHandler.java,FALTA?,
 mekanism/common/capabilities/GenericTankSpec.java,FALTA?,

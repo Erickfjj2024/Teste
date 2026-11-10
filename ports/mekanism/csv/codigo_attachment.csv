@@ -1,10 +1,10 @@
 item,estado,nota
 mekanism/common/attachments/BlockData.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/FilterAware.java,FALTA?,
-mekanism/common/attachments/FormulaAttachment.java,FALTA?,
+mekanism/common/attachments/FormulaAttachment.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/FrequencyAware.java,FALTA?,
 mekanism/common/attachments/IAttachmentAware.java,FALTA?,
-mekanism/common/attachments/LockData.java,FALTA?,
+mekanism/common/attachments/LockData.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/OverflowAware.java,FALTA?,
 mekanism/common/attachments/StabilizedChunks.java,FALTA?,
 mekanism/common/attachments/component/AttachedEjector.java,FALTA?,
@@ -15,7 +15,7 @@ mekanism/common/attachments/containers/ComponentBackedHandler.java,FALTA?,
 mekanism/common/attachments/containers/ContainerType.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/containers/ContainsRecipe.java,FALTA?,
 mekanism/common/attachments/containers/IAttachedContainers.java,FALTA?,
-mekanism/common/attachments/containers/chemical/AttachedChemicals.java,FALTA?,
+mekanism/common/attachments/containers/chemical/AttachedChemicals.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/containers/chemical/ChemicalTanksBuilder.java,FALTA?,
 mekanism/common/attachments/containers/chemical/ComponentBackedChemicalHandler.java,FALTA?,
 mekanism/common/attachments/containers/chemical/ComponentBackedChemicalTank.java,FALTA?,
@@ -24,14 +24,14 @@ mekanism/common/attachments/containers/chemical/merged/MergedTankCreator.java,FA
 mekanism/common/attachments/containers/creator/BaseContainerCreator.java,FALTA?,
 mekanism/common/attachments/containers/creator/IBasicContainerCreator.java,FALTA?,
 mekanism/common/attachments/containers/creator/IContainerCreator.java,FALTA?,
-mekanism/common/attachments/containers/energy/AttachedEnergy.java,FALTA?,
+mekanism/common/attachments/containers/energy/AttachedEnergy.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/containers/energy/ComponentBackedEnergyContainer.java,FALTA?,
 mekanism/common/attachments/containers/energy/ComponentBackedEnergyCubeContainer.java,FALTA?,
 mekanism/common/attachments/containers/energy/ComponentBackedEnergyHandler.java,FALTA?,
 mekanism/common/attachments/containers/energy/ComponentBackedNoClampEnergyContainer.java,FALTA?,
 mekanism/common/attachments/containers/energy/ComponentBackedResistiveEnergyContainer.java,FALTA?,
 mekanism/common/attachments/containers/energy/EnergyContainersBuilder.java,FALTA?,
-mekanism/common/attachments/containers/fluid/AttachedFluids.java,FALTA?,
+mekanism/common/attachments/containers/fluid/AttachedFluids.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/containers/fluid/ComponentBackedFluidHandler.java,FALTA?,
 mekanism/common/attachments/containers/fluid/ComponentBackedFluidTank.java,FALTA?,
 mekanism/common/attachments/containers/fluid/ComponentBackedFluidTankFluidTank.java,FALTA?,
@@ -46,6 +46,6 @@ mekanism/common/attachments/containers/item/ComponentBackedBinInventorySlot.java
 mekanism/common/attachments/containers/item/ComponentBackedInventorySlot.java,FALTA?,
 mekanism/common/attachments/containers/item/ComponentBackedItemHandler.java,FALTA?,
 mekanism/common/attachments/containers/item/ItemSlotsBuilder.java,FALTA?,
-mekanism/common/attachments/qio/DriveContents.java,FALTA?,
-mekanism/common/attachments/qio/DriveMetadata.java,FALTA?,
+mekanism/common/attachments/qio/DriveContents.java,?,match heurístico por nome / name heuristic
+mekanism/common/attachments/qio/DriveMetadata.java,?,match heurístico por nome / name heuristic
 mekanism/common/attachments/qio/PortableDashboardContents.java,FALTA?,

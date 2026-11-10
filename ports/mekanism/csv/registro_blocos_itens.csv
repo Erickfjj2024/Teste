@@ -17,7 +17,7 @@ block:advanced_pressurized_tube,OK,Advanced Pressurized Tube
 block:advanced_purifying_factory,OK,Advanced Purifying Factory
 block:advanced_sawing_factory,OK,Advanced Sawing Factory
 block:advanced_smelting_factory,OK,Advanced Smelting Factory
-block:advanced_thermodynamic_conductor,FALTA,Advanced Thermodynamic Conductor
+block:advanced_thermodynamic_conductor,OK,Advanced Thermodynamic Conductor
 block:advanced_universal_cable,OK,Advanced Universal Cable
 block:antiprotonic_nucleosynthesizer,OK,Antiprotonic Nucleosynthesizer
 block:basic_bin,OK,Basic Bin
@@ -38,7 +38,7 @@ block:basic_pressurized_tube,OK,Basic Pressurized Tube
 block:basic_purifying_factory,OK,Basic Purifying Factory
 block:basic_sawing_factory,OK,Basic Sawing Factory
 block:basic_smelting_factory,OK,Basic Smelting Factory
-block:basic_thermodynamic_conductor,FALTA,Basic Thermodynamic Conductor
+block:basic_thermodynamic_conductor,OK,Basic Thermodynamic Conductor
 block:basic_universal_cable,OK,Basic Universal Cable
 block:block_bio_fuel,OK,Block of Bio Fuel
 block:block_bronze,OK,Block of Bronze
@@ -60,8 +60,8 @@ block:boiler_casing,OK,Boiler Casing
 block:boiler_valve,OK,Boiler Valve
 block:bounding_block,OK,Bounding Block
 block:brine,FALTA,Brine
-block:cardboard_box,FALTA,Cardboard Box
-block:chargepad,FALTA,Chargepad
+block:cardboard_box,OK,Cardboard Box
+block:chargepad,OK,Chargepad
 block:chemical_crystallizer,OK,Chemical Crystallizer
 block:chemical_dissolution_chamber,OK,Chemical Dissolution Chamber
 block:chemical_infuser,OK,Chemical Infuser
@@ -81,7 +81,7 @@ block:deepslate_osmium_ore,OK,Deepslate Osmium Ore
 block:deepslate_tin_ore,OK,Deepslate Tin Ore
 block:deepslate_uranium_ore,OK,Deepslate Uranium Ore
 block:digital_miner,OK,Digital Miner
-block:dimensional_stabilizer,FALTA,Dimensional Stabilizer
+block:dimensional_stabilizer,OK,Dimensional Stabilizer
 block:diversion_transporter,FALTA,Diversion Transporter
 block:dynamic_tank,OK,Dynamic Tank
 block:dynamic_valve,OK,Dynamic Valve
@@ -105,15 +105,15 @@ block:elite_pressurized_tube,OK,Elite Pressurized Tube
 block:elite_purifying_factory,OK,Elite Purifying Factory
 block:elite_sawing_factory,OK,Elite Sawing Factory
 block:elite_smelting_factory,OK,Elite Smelting Factory
-block:elite_thermodynamic_conductor,FALTA,Elite Thermodynamic Conductor
+block:elite_thermodynamic_conductor,OK,Elite Thermodynamic Conductor
 block:elite_universal_cable,OK,Elite Universal Cable
 block:energized_smelter,OK,Energized Smelter
 block:enrichment_chamber,OK,Enrichment Chamber
 block:ethene,FALTA,Liquid Ethene
 block:fluidic_plenisher,OK,Fluidic Plenisher
 block:fluorite_ore,OK,Fluorite Ore
-block:formulaic_assemblicator,FALTA,Formulaic Assemblicator
-block:fuelwood_heater,FALTA,Fuelwood Heater
+block:formulaic_assemblicator,OK,Formulaic Assemblicator
+block:fuelwood_heater,OK,Fuelwood Heater
 block:heavy_water,FALTA,Heavy Water
 block:hydrofluoric_acid,FALTA,Liquid Hydrofluoric Acid
 block:hydrogen,FALTA,Liquid Hydrogen
@@ -129,16 +129,16 @@ block:lead_ore,OK,Lead Ore
 block:lithium,FALTA,Liquid Lithium
 block:logistical_sorter,OK,Logistical Sorter
 block:metallurgic_infuser,OK,Metallurgic Infuser
-block:modification_station,FALTA,Modification Station
+block:modification_station,OK,Modification Station
 block:nutritional_liquifier,OK,Nutritional Liquifier
 block:nutritional_paste,FALTA,Nutritional Paste
-block:oredictionificator,FALTA,Oredictionificator
+block:oredictionificator,OK,Oredictionificator
 block:osmium_compressor,OK,Osmium Compressor
 block:osmium_ore,OK,Osmium Ore
 block:oxygen,FALTA,Liquid Oxygen
 block:painting_machine,OK,Painting Machine
-block:personal_barrel,FALTA,Personal Barrel
-block:personal_chest,FALTA,Personal Chest
+block:personal_barrel,OK,Personal Barrel
+block:personal_chest,OK,Personal Chest
 block:pigment_extractor,OK,Pigment Extractor
 block:pigment_mixer,OK,Pigment Mixer
 block:precision_sawmill,OK,Precision Sawmill
@@ -146,17 +146,17 @@ block:pressure_disperser,OK,Pressure Disperser
 block:pressurized_reaction_chamber,OK,Pressurized Reaction Chamber
 block:purification_chamber,OK,Purification Chamber
 block:qio_dashboard,FALTA,QIO Dashboard
-block:qio_drive_array,FALTA,QIO Drive Array
+block:qio_drive_array,OK,QIO Drive Array
 block:qio_exporter,FALTA,QIO Exporter
 block:qio_importer,FALTA,QIO Importer
-block:qio_redstone_adapter,FALTA,QIO Redstone Adapter
+block:qio_redstone_adapter,OK,QIO Redstone Adapter
 block:quantum_entangloporter,OK,Quantum Entangloporter
-block:radioactive_waste_barrel,FALTA,Radioactive Waste Barrel
-block:resistive_heater,FALTA,Resistive Heater
+block:radioactive_waste_barrel,OK,Radioactive Waste Barrel
+block:resistive_heater,OK,Resistive Heater
 block:restrictive_transporter,FALTA,Restrictive Transporter
 block:rotary_condensentrator,OK,Rotary Condensentrator
 block:security_desk,FALTA,Security Desk
-block:seismic_vibrator,FALTA,Seismic Vibrator
+block:seismic_vibrator,OK,Seismic Vibrator
 block:sodium,FALTA,Liquid Sodium
 block:solar_neutron_activator,OK,Solar Neutron Activator
 block:sps_casing,OK,SPS Casing
@@ -194,7 +194,7 @@ block:ultimate_pressurized_tube,OK,Ultimate Pressurized Tube
 block:ultimate_purifying_factory,OK,Ultimate Purifying Factory
 block:ultimate_sawing_factory,OK,Ultimate Sawing Factory
 block:ultimate_smelting_factory,OK,Ultimate Smelting Factory
-block:ultimate_thermodynamic_conductor,FALTA,Ultimate Thermodynamic Conductor
+block:ultimate_thermodynamic_conductor,OK,Ultimate Thermodynamic Conductor
 block:ultimate_universal_cable,OK,Ultimate Universal Cable
 block:uranium_hexafluoride,FALTA,Liquid Uranium Hexafluoride
 block:uranium_ore,OK,Uranium Ore
@@ -220,9 +220,9 @@ item:clump_lead,OK,Lead Clump
 item:clump_osmium,OK,Osmium Clump
 item:clump_tin,OK,Tin Clump
 item:clump_uranium,OK,Uranium Clump
-item:configuration_card,FALTA,Configuration Card
+item:configuration_card,OK,Configuration Card
 item:configurator,OK,Configurator
-item:crafting_formula,FALTA,Crafting Formula
+item:crafting_formula,OK,Crafting Formula
 item:crystal_copper,OK,Copper Crystal
 item:crystal_gold,OK,Gold Crystal
 item:crystal_iron,OK,Iron Crystal
@@ -262,7 +262,7 @@ item:dust_sulfur,OK,Sulfur Dust
 item:dust_tin,OK,Tin Dust
 item:dust_uranium,OK,Uranium Dust
 item:dye_base,OK,Dye Base
-item:electric_bow,FALTA,Electric Bow
+item:electric_bow,OK,Electric Bow
 item:electrolytic_core,OK,Electrolytic Core
 item:elite_control_circuit,OK,Elite Control Circuit
 item:elite_tier_installer,OK,Elite Tier Installer
@@ -280,12 +280,12 @@ item:fluorite_gem,OK,Fluorite
 item:free_runners,OK,Free Runners
 item:free_runners_armored,OK,Armored Free Runners
 item:gauge_dropper,OK,Gauge Dropper
-item:geiger_counter,FALTA,Geiger Counter
+item:geiger_counter,OK,Geiger Counter
 item:hazmat_boots,OK,Hazmat Boots
 item:hazmat_gown,OK,Hazmat Gown
 item:hazmat_mask,OK,Hazmat Mask
 item:hazmat_pants,OK,Hazmat Pants
-item:hdpe_elytra,FALTA,HDPE Reinforced Elytra
+item:hdpe_elytra,OK,HDPE Reinforced Elytra
 item:hdpe_pellet,OK,HDPE Pellet
 item:hdpe_rod,OK,HDPE Rod
 item:hdpe_sheet,OK,HDPE Sheet
@@ -305,7 +305,7 @@ item:ingot_uranium,OK,Uranium Ingot
 item:jetpack,OK,Jetpack
 item:jetpack_armored,OK,Armored Jetpack
 item:lithium_bucket,OK,Liquid Lithium Bucket
-item:meka_tool,FALTA,Meka-Tool
+item:meka_tool,OK,Meka-Tool
 item:mekasuit_bodyarmor,OK,MekaSuit Bodyarmor
 item:mekasuit_boots,OK,MekaSuit Boots
 item:mekasuit_helmet,OK,MekaSuit Helmet
@@ -336,7 +336,7 @@ item:raw_osmium,OK,Raw Osmium
 item:raw_tin,OK,Raw Tin
 item:raw_uranium,OK,Raw Uranium
 item:reprocessed_fissile_fragment,OK,Reprocessed Fissile Fragment
-item:robit,FALTA,Robit
+item:robit,OK,Robit
 item:salt,OK,Salt
 item:sawdust,OK,Sawdust
 item:scuba_mask,OK,Scuba Mask

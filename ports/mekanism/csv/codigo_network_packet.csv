@@ -42,7 +42,7 @@ mekanism/common/network/to_server/PacketAddTrusted.java,FALTA?,
 mekanism/common/network/to_server/PacketDropperUse.java,FALTA?,
 mekanism/common/network/to_server/PacketGearStateUpdate.java,FALTA?,
 mekanism/common/network/to_server/PacketGuiInteract.java,FALTA?,
-mekanism/common/network/to_server/PacketGuiSetEnergy.java,FALTA?,
+mekanism/common/network/to_server/PacketGuiSetEnergy.java,?,match heurístico por nome / name heuristic
 mekanism/common/network/to_server/PacketItemGuiInteract.java,FALTA?,
 mekanism/common/network/to_server/PacketKey.java,FALTA?,
 mekanism/common/network/to_server/PacketModeChange.java,FALTA?,

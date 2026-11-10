@@ -3222,7 +3222,8 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/**/*.json', recursive=True)):
         continue
     res = r.get('result', {})
     rid = res.get('id', '') if isinstance(res, dict) else ''
-    if rid.startswith(NS + ':') and rid.split(':')[1] in have:
+    # Mekanism also makes vanilla things (paper from sawdust, rails, charcoal, yellow dye): those count too, with the same check of the ingredients.
+    if (rid.startswith(NS + ':') and rid.split(':')[1] in have) or rid.startswith('minecraft:'):
         # every ingredient must be vanilla, a tag, or ours
         ok = True
         for s in refs(r.get('key', r.get('ingredients', []))):

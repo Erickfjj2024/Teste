@@ -12,7 +12,7 @@ mekanism/common/content/entangloporter/InventoryFrequency.java,FALTA?,
 mekanism/common/content/evaporation/EvaporationMultiblockData.java,FALTA?,
 mekanism/common/content/evaporation/EvaporationValidator.java,FALTA?,
 mekanism/common/content/filter/BaseFilter.java,FALTA?,
-mekanism/common/content/filter/FilterManager.java,FALTA?,
+mekanism/common/content/filter/FilterManager.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/filter/FilterType.java,FALTA?,
 mekanism/common/content/filter/IFilter.java,FALTA?,
 mekanism/common/content/filter/IItemStackFilter.java,FALTA?,
@@ -25,36 +25,36 @@ mekanism/common/content/gear/IModuleContainerItem.java,FALTA?,
 mekanism/common/content/gear/IModuleItem.java,FALTA?,
 mekanism/common/content/gear/IRadialModuleContainerItem.java,FALTA?,
 mekanism/common/content/gear/MekaSuitDispenseBehavior.java,FALTA?,
-mekanism/common/content/gear/Module.java,FALTA?,
-mekanism/common/content/gear/ModuleContainer.java,FALTA?,
+mekanism/common/content/gear/Module.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/ModuleContainer.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/gear/ModuleDispenseBehavior.java,FALTA?,
 mekanism/common/content/gear/ModuleHelper.java,FALTA?,
-mekanism/common/content/gear/mekasuit/GyroscopicStabilizationUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleChargeDistributionUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleDosimeterUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleElectrolyticBreathingUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleElytraUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleGeigerUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleGravitationalModulatingUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleHydraulicPropulsionUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleHydrostaticRepulsorUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleInhalationPurificationUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleJetpackUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleLocomotiveBoostingUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleMagneticAttractionUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleNutritionalInjectionUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/ModuleVisionEnhancementUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/MotorizedServoUnit.java,FALTA?,
-mekanism/common/content/gear/mekasuit/SoulSurferUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleAttackAmplificationUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleBlastingUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleExcavationEscalationUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleFarmingUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleShearingUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleTeleportationUnit.java,FALTA?,
-mekanism/common/content/gear/mekatool/ModuleVeinMiningUnit.java,FALTA?,
-mekanism/common/content/gear/shared/ModuleColorModulationUnit.java,FALTA?,
-mekanism/common/content/gear/shared/ModuleEnergyUnit.java,FALTA?,
+mekanism/common/content/gear/mekasuit/GyroscopicStabilizationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleChargeDistributionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleDosimeterUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleElectrolyticBreathingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleElytraUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleGeigerUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleGravitationalModulatingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleHydraulicPropulsionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleHydrostaticRepulsorUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleInhalationPurificationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleJetpackUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleLocomotiveBoostingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleMagneticAttractionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleNutritionalInjectionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleVisionEnhancementUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/MotorizedServoUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/SoulSurferUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleAttackAmplificationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleBlastingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleExcavationEscalationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleFarmingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleShearingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleTeleportationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleVeinMiningUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/shared/ModuleColorModulationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/shared/ModuleEnergyUnit.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/matrix/MatrixEnergyContainer.java,FALTA?,
 mekanism/common/content/matrix/MatrixMultiblockData.java,FALTA?,
 mekanism/common/content/matrix/MatrixValidator.java,FALTA?,
@@ -77,18 +77,18 @@ mekanism/common/content/network/distribution/EnergyTransmitterSaveTarget.java,FA
 mekanism/common/content/network/distribution/FluidHandlerTarget.java,FALTA?,
 mekanism/common/content/network/distribution/FluidTransmitterSaveTarget.java,FALTA?,
 mekanism/common/content/network/transmitter/BufferedTransmitter.java,FALTA?,
-mekanism/common/content/network/transmitter/DiversionTransporter.java,FALTA?,
+mekanism/common/content/network/transmitter/DiversionTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/network/transmitter/IUpgradeableTransmitter.java,FALTA?,
 mekanism/common/content/network/transmitter/LogisticalTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/network/transmitter/LogisticalTransporterBase.java,FALTA?,
 mekanism/common/content/network/transmitter/MechanicalPipe.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/network/transmitter/PressurizedTube.java,?,match heurístico por nome / name heuristic
-mekanism/common/content/network/transmitter/RestrictiveTransporter.java,FALTA?,
-mekanism/common/content/network/transmitter/ThermodynamicConductor.java,FALTA?,
+mekanism/common/content/network/transmitter/RestrictiveTransporter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/ThermodynamicConductor.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/network/transmitter/Transmitter.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/network/transmitter/UniversalCable.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/oredictionificator/OredictionificatorFilter.java,FALTA?,
-mekanism/common/content/oredictionificator/OredictionificatorItemFilter.java,FALTA?,
+mekanism/common/content/oredictionificator/OredictionificatorItemFilter.java,?,match heurístico por nome / name heuristic
 mekanism/common/content/qio/IQIOCraftingWindowHolder.java,FALTA?,
 mekanism/common/content/qio/IQIODriveHolder.java,FALTA?,
 mekanism/common/content/qio/IQIODriveItem.java,FALTA?,

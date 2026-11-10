@@ -1,21 +1,21 @@
 item,estado,nota
 mekanism/common/tile/TileEntityBin.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityBoundingBlock.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/TileEntityCardboardBox.java,FALTA?,
-mekanism/common/tile/TileEntityChargepad.java,FALTA?,
+mekanism/common/tile/TileEntityCardboardBox.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/TileEntityChargepad.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityChemicalTank.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityEnergyCube.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityFluidTank.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityIndustrialAlarm.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityLogisticalSorter.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityModificationStation.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/TileEntityPersonalBarrel.java,FALTA?,
-mekanism/common/tile/TileEntityPersonalChest.java,FALTA?,
-mekanism/common/tile/TileEntityPersonalStorage.java,FALTA?,
+mekanism/common/tile/TileEntityPersonalBarrel.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/TileEntityPersonalChest.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/TileEntityPersonalStorage.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityPressureDisperser.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityQuantumEntangloporter.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/TileEntityRadioactiveWasteBarrel.java,FALTA?,
-mekanism/common/tile/TileEntitySecurityDesk.java,FALTA?,
+mekanism/common/tile/TileEntityRadioactiveWasteBarrel.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/TileEntitySecurityDesk.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/TileEntityTeleporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/base/CapabilityTileEntity.java,FALTA?,
 mekanism/common/tile/base/TileEntityMekanism.java,?,match heurístico por nome / name heuristic
@@ -66,8 +66,8 @@ mekanism/common/tile/interfaces/IUpgradeTile.java,FALTA?,
 mekanism/common/tile/laser/TileEntityBasicLaser.java,FALTA?,
 mekanism/common/tile/laser/TileEntityLaser.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/laser/TileEntityLaserAmplifier.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/laser/TileEntityLaserReceptor.java,FALTA?,
-mekanism/common/tile/laser/TileEntityLaserTractorBeam.java,FALTA?,
+mekanism/common/tile/laser/TileEntityLaserReceptor.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/laser/TileEntityLaserTractorBeam.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityAntiprotonicNucleosynthesizer.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityChemicalCrystallizer.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityChemicalDissolutionChamber.java,?,match heurístico por nome / name heuristic
@@ -85,11 +85,11 @@ mekanism/common/tile/machine/TileEntityEnergizedSmelter.java,?,match heurístico
 mekanism/common/tile/machine/TileEntityEnrichmentChamber.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityFluidicPlenisher.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityFormulaicAssemblicator.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/machine/TileEntityFuelwoodHeater.java,FALTA?,
+mekanism/common/tile/machine/TileEntityFuelwoodHeater.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityIsotopicCentrifuge.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityMetallurgicInfuser.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityNutritionalLiquifier.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/machine/TileEntityOredictionificator.java,FALTA?,
+mekanism/common/tile/machine/TileEntityOredictionificator.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityOsmiumCompressor.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityPaintingMachine.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityPigmentExtractor.java,?,match heurístico por nome / name heuristic
@@ -97,7 +97,7 @@ mekanism/common/tile/machine/TileEntityPigmentMixer.java,?,match heurístico por
 mekanism/common/tile/machine/TileEntityPrecisionSawmill.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityPressurizedReactionChamber.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityPurificationChamber.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/machine/TileEntityResistiveHeater.java,FALTA?,
+mekanism/common/tile/machine/TileEntityResistiveHeater.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntityRotaryCondensentrator.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntitySeismicVibrator.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/machine/TileEntitySolarNeutronActivator.java,?,match heurístico por nome / name heuristic
@@ -132,12 +132,12 @@ mekanism/common/tile/qio/TileEntityQIOExporter.java,FALTA?,
 mekanism/common/tile/qio/TileEntityQIOFilterHandler.java,FALTA?,
 mekanism/common/tile/qio/TileEntityQIOImporter.java,FALTA?,
 mekanism/common/tile/qio/TileEntityQIORedstoneAdapter.java,FALTA?,
-mekanism/common/tile/transmitter/TileEntityDiversionTransporter.java,FALTA?,
+mekanism/common/tile/transmitter/TileEntityDiversionTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/transmitter/TileEntityLogisticalTransporter.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/transmitter/TileEntityLogisticalTransporterBase.java,FALTA?,
 mekanism/common/tile/transmitter/TileEntityMechanicalPipe.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/transmitter/TileEntityPressurizedTube.java,?,match heurístico por nome / name heuristic
-mekanism/common/tile/transmitter/TileEntityRestrictiveTransporter.java,FALTA?,
-mekanism/common/tile/transmitter/TileEntityThermodynamicConductor.java,FALTA?,
+mekanism/common/tile/transmitter/TileEntityRestrictiveTransporter.java,?,match heurístico por nome / name heuristic
+mekanism/common/tile/transmitter/TileEntityThermodynamicConductor.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/transmitter/TileEntityTransmitter.java,?,match heurístico por nome / name heuristic
 mekanism/common/tile/transmitter/TileEntityUniversalCable.java,?,match heurístico por nome / name heuristic

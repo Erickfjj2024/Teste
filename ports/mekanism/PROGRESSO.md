@@ -4,14 +4,14 @@
 
 | Componente / Component | Peso / Weight | Nota / Score | Contribuição / Contribution |
 |---|---:|---:|---:|
-| Dados e recursos (receitas, texturas, lang, tags…) / data and assets | 15 | 18.2% | 2.7 |
+| Dados e recursos (receitas, texturas, lang, tags…) / data and assets | 15 | 32.3% | 4.8 |
 | Lógica Rust conferida com o Java / logic checked against Java | 25 | 48.6% | 12.1 |
 | Módulos ligados ao lib.rs / modules wired in | 10 | 75.7% | 7.6 |
 | API nova do Horizon (FORK-n) implementada / new Horizon API implemented | 25 | 22.9% | 5.7 |
 | Build real, .hmod e APK / real build, .hmod and APK | 10 | 0.0% | 0.0 |
 | Testado em jogo contra o original / tested in game | 15 | 0.0% | 0.0 |
 
-**TOTAL: 28.2%**
+**TOTAL: 30.3%**
 
 Módulos Rust: 70; conferidos: 34; ligados ao lib.rs: 53. FORK-n implementados: 8/35.
 

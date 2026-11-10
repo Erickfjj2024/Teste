@@ -352,7 +352,7 @@ block.mekanism.advanced_purifying_factory,OK,
 block.mekanism.advanced_sawing_factory,OK,
 block.mekanism.advanced_smelting_factory,OK,
 block.mekanism.advanced_solar_generator,EXTRA,Advanced Solar Generator
-block.mekanism.advanced_thermodynamic_conductor,FALTA,Advanced Thermodynamic Conductor
+block.mekanism.advanced_thermodynamic_conductor,OK,
 block.mekanism.advanced_universal_cable,OK,
 block.mekanism.antiprotonic_nucleosynthesizer,OK,
 block.mekanism.aqua_glow_panel,EXTRA,Aqua Glow Panel
@@ -388,7 +388,7 @@ block.mekanism.basic_pressurized_tube,OK,
 block.mekanism.basic_purifying_factory,OK,
 block.mekanism.basic_sawing_factory,OK,
 block.mekanism.basic_smelting_factory,OK,
-block.mekanism.basic_thermodynamic_conductor,FALTA,Basic Thermodynamic Conductor
+block.mekanism.basic_thermodynamic_conductor,OK,
 block.mekanism.basic_universal_cable,OK,
 block.mekanism.bio_generator,EXTRA,Bio-Generator
 block.mekanism.black_glow_panel,EXTRA,Black Glow Panel
@@ -456,8 +456,8 @@ block.mekanism.brown_plastic_transparent_slab,EXTRA,Brown Transparent Plastic Sl
 block.mekanism.brown_plastic_transparent_stairs,EXTRA,Brown Transparent Plastic Stairs
 block.mekanism.brown_reinforced_plastic,EXTRA,Brown Reinforced Plastic Block
 block.mekanism.brown_slick_plastic,EXTRA,Brown Slick Plastic Block
-block.mekanism.cardboard_box,FALTA,Cardboard Box
-block.mekanism.chargepad,FALTA,Chargepad
+block.mekanism.cardboard_box,OK,
+block.mekanism.chargepad,OK,
 block.mekanism.chemical_crystallizer,OK,
 block.mekanism.chemical_dissolution_chamber,OK,
 block.mekanism.chemical_infuser,OK,
@@ -508,7 +508,7 @@ block.mekanism.deepslate_osmium_ore,OK,
 block.mekanism.deepslate_tin_ore,OK,
 block.mekanism.deepslate_uranium_ore,OK,
 block.mekanism.digital_miner,OK,
-block.mekanism.dimensional_stabilizer,FALTA,Dimensional Stabilizer
+block.mekanism.dimensional_stabilizer,OK,
 block.mekanism.diversion_transporter,FALTA,Diversion Transporter
 block.mekanism.dynamic_tank,OK,
 block.mekanism.dynamic_valve,OK,
@@ -533,7 +533,7 @@ block.mekanism.elite_pressurized_tube,OK,
 block.mekanism.elite_purifying_factory,OK,
 block.mekanism.elite_sawing_factory,OK,
 block.mekanism.elite_smelting_factory,OK,
-block.mekanism.elite_thermodynamic_conductor,FALTA,Elite Thermodynamic Conductor
+block.mekanism.elite_thermodynamic_conductor,OK,
 block.mekanism.elite_universal_cable,OK,
 block.mekanism.energized_smelter,OK,
 block.mekanism.enrichment_chamber,OK,
@@ -544,8 +544,8 @@ block.mekanism.fission_reactor_logic_adapter,EXTRA,Fission Reactor Logic Adapter
 block.mekanism.fission_reactor_port,EXTRA,Fission Reactor Port
 block.mekanism.fluidic_plenisher,OK,
 block.mekanism.fluorite_ore,OK,
-block.mekanism.formulaic_assemblicator,FALTA,Formulaic Assemblicator
-block.mekanism.fuelwood_heater,FALTA,Fuelwood Heater
+block.mekanism.formulaic_assemblicator,OK,
+block.mekanism.fuelwood_heater,OK,
 block.mekanism.fusion_reactor_controller,EXTRA,Fusion Reactor Controller
 block.mekanism.fusion_reactor_frame,EXTRA,Fusion Reactor Frame
 block.mekanism.fusion_reactor_logic_adapter,EXTRA,Fusion Reactor Logic Adapter
@@ -658,7 +658,7 @@ block.mekanism.magenta_plastic_transparent_stairs,EXTRA,Magenta Transparent Plas
 block.mekanism.magenta_reinforced_plastic,EXTRA,Magenta Reinforced Plastic Block
 block.mekanism.magenta_slick_plastic,EXTRA,Magenta Slick Plastic Block
 block.mekanism.metallurgic_infuser,OK,
-block.mekanism.modification_station,FALTA,Modification Station
+block.mekanism.modification_station,OK,
 block.mekanism.nutritional_liquifier,OK,
 block.mekanism.nutritional_paste,FALTA,Nutritional Paste
 block.mekanism.orange_glow_panel,EXTRA,Orange Glow Panel
@@ -676,13 +676,13 @@ block.mekanism.orange_plastic_transparent_slab,EXTRA,Orange Transparent Plastic 
 block.mekanism.orange_plastic_transparent_stairs,EXTRA,Orange Transparent Plastic Stairs
 block.mekanism.orange_reinforced_plastic,EXTRA,Orange Reinforced Plastic Block
 block.mekanism.orange_slick_plastic,EXTRA,Orange Slick Plastic Block
-block.mekanism.oredictionificator,FALTA,Oredictionificator
+block.mekanism.oredictionificator,OK,
 block.mekanism.osmium_compressor,OK,
 block.mekanism.osmium_ore,OK,
 block.mekanism.oxygen,FALTA,Liquid Oxygen
 block.mekanism.painting_machine,OK,
-block.mekanism.personal_barrel,FALTA,Personal Barrel
-block.mekanism.personal_chest,FALTA,Personal Chest
+block.mekanism.personal_barrel,OK,
+block.mekanism.personal_chest,OK,
 block.mekanism.pigment_extractor,OK,
 block.mekanism.pigment_mixer,OK,
 block.mekanism.pink_glow_panel,EXTRA,Pink Glow Panel
@@ -720,12 +720,12 @@ block.mekanism.purple_plastic_transparent_stairs,EXTRA,Purple Transparent Plasti
 block.mekanism.purple_reinforced_plastic,EXTRA,Purple Reinforced Plastic Block
 block.mekanism.purple_slick_plastic,EXTRA,Purple Slick Plastic Block
 block.mekanism.qio_dashboard,FALTA,QIO Dashboard
-block.mekanism.qio_drive_array,FALTA,QIO Drive Array
+block.mekanism.qio_drive_array,OK,
 block.mekanism.qio_exporter,FALTA,QIO Exporter
 block.mekanism.qio_importer,FALTA,QIO Importer
-block.mekanism.qio_redstone_adapter,FALTA,QIO Redstone Adapter
+block.mekanism.qio_redstone_adapter,OK,
 block.mekanism.quantum_entangloporter,OK,
-block.mekanism.radioactive_waste_barrel,FALTA,Radioactive Waste Barrel
+block.mekanism.radioactive_waste_barrel,OK,
 block.mekanism.reactor_glass,EXTRA,Reactor Glass
 block.mekanism.red_glow_panel,EXTRA,Red Glow Panel
 block.mekanism.red_plastic,EXTRA,Red Plastic Block
@@ -742,13 +742,13 @@ block.mekanism.red_plastic_transparent_slab,EXTRA,Red Transparent Plastic Slab
 block.mekanism.red_plastic_transparent_stairs,EXTRA,Red Transparent Plastic Stairs
 block.mekanism.red_reinforced_plastic,EXTRA,Red Reinforced Plastic Block
 block.mekanism.red_slick_plastic,EXTRA,Red Slick Plastic Block
-block.mekanism.resistive_heater,FALTA,Resistive Heater
+block.mekanism.resistive_heater,OK,
 block.mekanism.restrictive_transporter,FALTA,Restrictive Transporter
 block.mekanism.rotary_condensentrator,OK,
 block.mekanism.rotational_complex,EXTRA,Rotational Complex
 block.mekanism.saturating_condenser,EXTRA,Saturating Condenser
 block.mekanism.security_desk,FALTA,Security Desk
-block.mekanism.seismic_vibrator,FALTA,Seismic Vibrator
+block.mekanism.seismic_vibrator,OK,
 block.mekanism.sodium,FALTA,Liquid Sodium
 block.mekanism.solar_generator,EXTRA,Solar Generator
 block.mekanism.solar_neutron_activator,OK,
@@ -791,7 +791,7 @@ block.mekanism.ultimate_pressurized_tube,OK,
 block.mekanism.ultimate_purifying_factory,OK,
 block.mekanism.ultimate_sawing_factory,OK,
 block.mekanism.ultimate_smelting_factory,OK,
-block.mekanism.ultimate_thermodynamic_conductor,FALTA,Ultimate Thermodynamic Conductor
+block.mekanism.ultimate_thermodynamic_conductor,OK,
 block.mekanism.ultimate_universal_cable,OK,
 block.mekanism.uranium_hexafluoride,FALTA,Liquid Uranium Hexafluoride
 block.mekanism.uranium_ore,OK,
@@ -2767,9 +2767,9 @@ item.mekanism.clump_lead,OK,
 item.mekanism.clump_osmium,OK,
 item.mekanism.clump_tin,OK,
 item.mekanism.clump_uranium,OK,
-item.mekanism.configuration_card,FALTA,Configuration Card
+item.mekanism.configuration_card,OK,
 item.mekanism.configurator,OK,
-item.mekanism.crafting_formula,FALTA,Crafting Formula
+item.mekanism.crafting_formula,OK,
 item.mekanism.crystal_copper,OK,
 item.mekanism.crystal_gold,OK,
 item.mekanism.crystal_iron,OK,
@@ -2810,7 +2810,7 @@ item.mekanism.dust_sulfur,OK,
 item.mekanism.dust_tin,OK,
 item.mekanism.dust_uranium,OK,
 item.mekanism.dye_base,OK,
-item.mekanism.electric_bow,FALTA,Electric Bow
+item.mekanism.electric_bow,OK,
 item.mekanism.electrolytic_core,OK,
 item.mekanism.elite_control_circuit,OK,
 item.mekanism.elite_tier_installer,OK,
@@ -2828,13 +2828,13 @@ item.mekanism.fluorite_gem,OK,
 item.mekanism.free_runners,OK,
 item.mekanism.free_runners_armored,OK,
 item.mekanism.gauge_dropper,OK,
-item.mekanism.geiger_counter,FALTA,Geiger Counter
+item.mekanism.geiger_counter,OK,
 item.mekanism.gold_paxel,EXTRA,Gold Paxel
 item.mekanism.hazmat_boots,OK,
 item.mekanism.hazmat_gown,OK,
 item.mekanism.hazmat_mask,OK,
 item.mekanism.hazmat_pants,OK,
-item.mekanism.hdpe_elytra,FALTA,HDPE Reinforced Elytra
+item.mekanism.hdpe_elytra,OK,
 item.mekanism.hdpe_pellet,OK,
 item.mekanism.hdpe_rod,OK,
 item.mekanism.hdpe_sheet,OK,
@@ -2866,12 +2866,45 @@ item.mekanism.lapis_lazuli_pickaxe,EXTRA,Lapis Lazuli Pickaxe
 item.mekanism.lapis_lazuli_shovel,EXTRA,Lapis Lazuli Shovel
 item.mekanism.lapis_lazuli_sword,EXTRA,Lapis Lazuli Sword
 item.mekanism.lithium_bucket,OK,
-item.mekanism.meka_tool,FALTA,Meka-Tool
+item.mekanism.meka_tool,OK,
 item.mekanism.mekasuit_bodyarmor,OK,
 item.mekanism.mekasuit_boots,OK,
 item.mekanism.mekasuit_helmet,OK,
 item.mekanism.mekasuit_pants,OK,
+item.mekanism.module_attack_amplification_unit,EXTRA,Attack Amplification Unit
 item.mekanism.module_base,OK,
+item.mekanism.module_blasting_unit,EXTRA,Blasting Unit
+item.mekanism.module_charge_distribution_unit,EXTRA,Charge Distribution Unit
+item.mekanism.module_color_modulation_unit,EXTRA,Color Modulation Unit
+item.mekanism.module_dosimeter_unit,EXTRA,Dosimeter Unit
+item.mekanism.module_electrolytic_breathing_unit,EXTRA,Electrolytic Breathing Unit
+item.mekanism.module_elytra_unit,EXTRA,Elytra Unit
+item.mekanism.module_energy_unit,EXTRA,Energy Unit
+item.mekanism.module_excavation_escalation_unit,EXTRA,Excavation Escalation Unit
+item.mekanism.module_farming_unit,EXTRA,Farming Unit
+item.mekanism.module_fortune_unit,EXTRA,Ore Refinement Unit
+item.mekanism.module_frost_walker_unit,EXTRA,Frost Walker Unit
+item.mekanism.module_geiger_unit,EXTRA,Geiger Unit
+item.mekanism.module_geothermal_generator_unit,EXTRA,Geothermal Generator Unit
+item.mekanism.module_gravitational_modulating_unit,EXTRA,Gravitational Modulating Unit
+item.mekanism.module_gyroscopic_stabilization_unit,EXTRA,Gyroscopic Stabilization Unit
+item.mekanism.module_hydraulic_propulsion_unit,EXTRA,Hydraulic Propulsion Unit
+item.mekanism.module_hydrostatic_repulsor_unit,EXTRA,Hydrostatic Repulsor Unit
+item.mekanism.module_inhalation_purification_unit,EXTRA,Inhalation Purification Unit
+item.mekanism.module_jetpack_unit,EXTRA,Jetpack Unit
+item.mekanism.module_laser_dissipation_unit,EXTRA,Laser Dissipation Unit
+item.mekanism.module_locomotive_boosting_unit,EXTRA,Locomotive Boosting Unit
+item.mekanism.module_magnetic_attraction_unit,EXTRA,Magnetic Attraction Unit
+item.mekanism.module_motorized_servo_unit,EXTRA,Motorized Servo Unit
+item.mekanism.module_nutritional_injection_unit,EXTRA,Nutritional Injection Unit
+item.mekanism.module_radiation_shielding_unit,EXTRA,Radiation Shielding Unit
+item.mekanism.module_shearing_unit,EXTRA,Shearing Unit
+item.mekanism.module_silk_touch_unit,EXTRA,Silk Touch Unit
+item.mekanism.module_solar_recharging_unit,EXTRA,Solar Recharging Unit
+item.mekanism.module_soul_surfer_unit,EXTRA,Soul Surfer Unit
+item.mekanism.module_teleportation_unit,EXTRA,Teleportation Unit
+item.mekanism.module_vein_mining_unit,EXTRA,Vein Mining Unit
+item.mekanism.module_vision_enhancement_unit,EXTRA,Vision Enhancement Unit
 item.mekanism.netherite_paxel,EXTRA,Netherite Paxel
 item.mekanism.network_reader,OK,
 item.mekanism.nugget_bronze,OK,
@@ -2928,7 +2961,7 @@ item.mekanism.refined_obsidian_pickaxe,EXTRA,Refined Obsidian Pickaxe
 item.mekanism.refined_obsidian_shovel,EXTRA,Refined Obsidian Shovel
 item.mekanism.refined_obsidian_sword,EXTRA,Refined Obsidian Sword
 item.mekanism.reprocessed_fissile_fragment,OK,
-item.mekanism.robit,FALTA,Robit
+item.mekanism.robit,OK,
 item.mekanism.salt,OK,
 item.mekanism.sawdust,OK,
 item.mekanism.scuba_mask,OK,
@@ -2970,7 +3003,6 @@ item.mekanism.upgrade_filter,OK,
 item.mekanism.upgrade_muffling,OK,
 item.mekanism.upgrade_speed,OK,
 item.mekanism.upgrade_stone_generator,OK,
-item.mekanism.upgrade_xp_containment,EXTRA,Xp Containment Upgrade
 item.mekanism.uranium_hexafluoride_bucket,OK,
 item.mekanism.uranium_oxide_bucket,OK,
 item.mekanism.wood_paxel,EXTRA,Wood Paxel
