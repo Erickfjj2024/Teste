@@ -1881,6 +1881,36 @@ impl ServerMod for Mekanism {
         let mut fuelwood = kind(fuelwood_heater::BLOCK, true);
         fuelwood.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(fuelwood);
+        // The utilities: the chargepad takes energy at its back and underside and has no screen; the stabilizer and the seismic
+        // vibrator have one charge slot; the oredictionificator an input (top) and an output (right); the personal chest and
+        // barrel 54 slots open to hoppers (the security mode is checked in their own tick); the cardboard box only keeps its data.
+        let mut pad = kind(chargepad::BLOCK, true);
+        pad.energy = Some(EnergySpec { capacity: chargepad::CAPACITY, max_receive: chargepad::CAPACITY, max_extract: 0, faces: chargepad::energy_input_faces("north") });
+        r = r.block_entity_kind(pad);
+        let mut stabilizer = kind(dimensional_stabilizer::BLOCK, true);
+        stabilizer.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
+        stabilizer.energy = Some(energy(dimensional_stabilizer::BASE_CAPACITY, dimensional_stabilizer::BASE_CAPACITY, FlowSide::Input));
+        r = r.block_entity_kind(stabilizer);
+        let mut vibrator = kind(seismic_vibrator::BLOCK, true);
+        vibrator.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
+        vibrator.energy = Some(EnergySpec { capacity: seismic_vibrator::CAPACITY, max_receive: seismic_vibrator::CAPACITY, max_extract: 0, faces: seismic_vibrator::energy_input_faces("north") });
+        r = r.block_entity_kind(vibrator);
+        let mut ore = kind(oredictionificator::BLOCK, true);
+        ore.container = Some(ContainerSpec {
+            slots: oredictionificator::TOTAL_SLOTS as u32,
+            faces: oredictionificator::default_item_faces("north"),
+            inputs: vec![oredictionificator::INPUT_SLOT as u32],
+            outputs: vec![oredictionificator::OUTPUT_SLOT as u32],
+            menu: true,
+        });
+        r = r.block_entity_kind(ore);
+        for block in [personal_storage::CHEST_BLOCK, personal_storage::BARREL_BLOCK] {
+            let mut storage = kind(block, true);
+            let all: Vec<u32> = (0..personal_storage::TOTAL_SLOTS as u32).collect();
+            storage.container = Some(ContainerSpec { slots: personal_storage::TOTAL_SLOTS as u32, faces: vec![all.clone(); 6], inputs: all.clone(), outputs: all, menu: true });
+            r = r.block_entity_kind(storage);
+        }
+        r = r.block_entity_kind(kind(cardboard_box::BLOCK, true));
         // The QIO drive array holds twelve drives (one per slot, none moved by hoppers); the redstone adapter's one slot is its ghost target.
         let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
@@ -2810,6 +2840,33 @@ impl ServerMod for Mekanism {
         let heat_blocks: Vec<&BlockEntity> = entities.iter().filter(|e| heat_world::is_heat_block(e.state.split('[').next().unwrap_or(""))).collect();
         if !heat_blocks.is_empty() {
             out.extend(heat_world::run(&heat_blocks));
+        }
+        let chargepads: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(chargepad::BLOCK)).collect();
+        if !chargepads.is_empty() {
+            out.extend(self.run_chargepads(&chargepads));
+        }
+        let stabilizers: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dimensional_stabilizer::BLOCK)).collect();
+        if !stabilizers.is_empty() {
+            out.extend(self.run_dimensional_stabilizers(&stabilizers, tick));
+        }
+        let cardboard_boxes: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(cardboard_box::BLOCK)).collect();
+        if !cardboard_boxes.is_empty() {
+            out.extend(self.run_cardboard_boxes(&cardboard_boxes));
+        }
+        let personal: Vec<&BlockEntity> = entities
+            .iter()
+            .filter(|e| matches!(e.state.split('[').next(), Some(personal_storage::CHEST_BLOCK | personal_storage::BARREL_BLOCK)))
+            .collect();
+        if !personal.is_empty() {
+            out.extend(self.run_personal_storages(&personal));
+        }
+        let vibrators: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(seismic_vibrator::BLOCK)).collect();
+        if !vibrators.is_empty() {
+            out.extend(self.run_seismic_vibrators(&vibrators, tick));
+        }
+        let oredictionificators: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(oredictionificator::BLOCK)).collect();
+        if !oredictionificators.is_empty() {
+            out.extend(self.run_oredictionificators(&oredictionificators));
         }
         let drive_arrays: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_DRIVE_ARRAY)).collect();
         if !drive_arrays.is_empty() {
