@@ -46,13 +46,14 @@ pub struct CraftMatch {
     pub remaining: Vec<horizon_mod_sdk::server::ItemStack>,
 }
 
-/// FORK (`crafting-find`, `ports/api-fork/PROPOSTA-API.wit`): the first crafting recipe of the game (vanilla and mods) that the 3x3
-/// grid makes, `RecipeManager.getRecipeFor(RecipeType.CRAFTING, input, level)`. None until the game offers it.
-pub fn crafting_find(_grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> Option<CraftMatch> {
-    None
+/// `crafting-find` (API 28): the first crafting recipe of the game (vanilla and mods) that the 3x3 grid makes,
+/// `RecipeManager.getRecipeFor(RecipeType.CRAFTING, input, level)`.
+pub fn crafting_find(grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> Option<CraftMatch> {
+    let m = horizon_mod_sdk::server::recipe_types::crafting_find(&grid.to_vec())?;
+    Some(CraftMatch { id: m.id, output: m.output, remaining: m.remaining.into_iter().flatten().collect() })
 }
 
-/// FORK (`crafting-matches`): whether the recipe `id` accepts the grid (`recipe.matches(input, level)`). False until the game offers it.
-pub fn crafting_matches(_id: &str, _grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> bool {
-    false
+/// `crafting-matches` (API 28): whether the recipe `id` accepts the grid (`recipe.matches(input, level)`).
+pub fn crafting_matches(id: &str, grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> bool {
+    horizon_mod_sdk::server::recipe_types::crafting_matches(id, &grid.to_vec())
 }

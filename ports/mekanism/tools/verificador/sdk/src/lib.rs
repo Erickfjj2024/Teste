@@ -19,6 +19,10 @@ pub mod server {
     pub fn play_sound<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> () { Default::default() }
   }
   pub mod recipe_types { use super::*;
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct CraftMatch { pub id: String, pub output: ItemStack, pub remaining: Vec<Option<ItemStack>> }
+    pub fn crafting_find(_a0: &Vec<Option<ItemStack>>) -> Option<CraftMatch> { None }
+    pub fn crafting_matches<A0>(_a0: A0, _a1: &Vec<Option<ItemStack>>) -> bool { false }
+    pub fn item_max_stack_size<A0>(_a0: A0) -> Option<u32> { None }
     pub fn burn_time<A0>(_a0: A0) -> Option<u32> { None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CustomRecipe { pub id: String, pub json: String }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CookingRecipe { pub inputs: Vec<String>, pub output: String, pub count: u32, pub experience: f32, pub time: u32 }

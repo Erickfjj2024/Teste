@@ -52,9 +52,13 @@ pub fn decode(data: &[u8]) -> Option<Bin> {
     Some(Bin { item, count: u64::from_le_bytes(c), locked: data[1] == 1, active: data[2] == 1 })
 }
 
-/// How many of an item a stack holds at most (a guess from its name: the port cannot ask the game): 64 for the materials and blocks, 1 for
-/// tools, armor and the like, so that no stack the bin shows is cut short by the game.
+/// How many of an item a stack holds at most: the game's own answer (`item-max-stack-size`, API 28: the `max_stack_size` component), and when
+/// it does not answer a guess from the name: 64 for the materials and blocks, 1 for tools, armor and the like, so that no stack the bin
+/// shows is cut short by the game.
 pub fn stack_size(item: &str) -> u64 {
+    if let Some(n) = horizon_mod_sdk::server::recipe_types::item_max_stack_size(item) {
+        return u64::from(n.max(1));
+    }
     let name = item.split(':').nth(1).unwrap_or(item);
     const ONE: [&str; 17] = ["_sword", "_pickaxe", "_axe", "_shovel", "_hoe", "_helmet", "_chestplate", "_leggings", "_boots", "bow", "shield", "elytra", "_boat", "minecart", "potion", "saddle", "_bucket"];
     if ONE.iter().any(|s| name.contains(s)) || name == "bucket" || name.contains("enchanted_book") {

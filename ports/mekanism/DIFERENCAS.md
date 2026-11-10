@@ -425,6 +425,7 @@ Tarefas sem bloco próprio (r1, r3, r5): ver `revisao2/REVISAO_*.md` / tasks wit
 | 19.19 | FORK-32 `recipe-types.burn-time` (API 27): o Fuelwood Heater e o gerador de calor leem o registro de combustíveis do jogo; a tabela vanilla antiga ficou só como reserva quando o jogo não responde | feito no fork e ligado no mod, sem teste em jogo |
 | 19.20 | FORK-33 vários grupos por bloco (`group = "a,b"`): já existia; agora com teste (`examples/multiblock-demo`) | feito |
 | 19.21 | FORK-35 `registration.redirects` + `can-place`: clicar num bounding block é clicar na máquina e quebrá-lo quebra a máquina; uma máquina cujo modelo precisa de blocos livres é recusada (o bloco é desfeito, nada é gasto). Diferenças: a dureza e o tempo de quebra são os do bounding block, não os da máquina; o "pick block" (botão do meio) ainda dá o bounding block; a recusa roda depois de o jogo colocar o bloco (sons e atualizações de vizinhos já correram) | feito no fork e ligado no mod, sem teste em jogo |
+| 19.22 | API 28 `crafting-find`, `crafting-matches`, `item-max-stack-size`: o Formulaic Assemblicator passa a conhecer todas as receitas de crafting do jogo (não só 3) e o Bin usa o limite de pilha do jogo. Consultas síncronas, só com o mundo emprestado (em tick, comando ou gancho do servidor); o mapa preenchido não lê os dados do mapa (`map_scale` vazio) | feito no fork e ligado no mod, sem teste em jogo |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 
