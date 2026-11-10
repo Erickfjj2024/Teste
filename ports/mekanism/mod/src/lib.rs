@@ -380,6 +380,8 @@ struct Mekanism {
     conts: HashMap<&'static str, continuous::Book>,
     /// Clicks of the configurator waiting for their machine's next tick (a use can't change a block entity).
     pending: Vec<Click>,
+    /// Configuration card clicks waiting for the machine's next tick (a use can't change a block entity).
+    card_clicks: Vec<equipment_world::CardClick>,
     /// Empties waiting for the game to confirm their drops exist, by block and by summon ticket, and empties whose
     /// drops all spawned, waiting for the block's next tick to clear the slots they came from (see `empty_block`).
     empty: HashMap<EmptyKey, EmptyPending>,
@@ -1876,6 +1878,17 @@ impl ServerMod for Mekanism {
             }
             r = r.block_entity_kind(k);
         }
+        // The formulaic assemblicator: the formula, 18 inputs, the 3x3 grid, 6 outputs and the charge slot (35), on the faces of its configuration.
+        let mut assemblicator_kind = kind(assemblicator::BLOCK, true);
+        assemblicator_kind.container = Some(ContainerSpec {
+            slots: assemblicator::TOTAL_SLOTS as u32,
+            faces: assemblicator::assemblicator_item_faces("north", config::default_config(Layout::Electric).items()),
+            inputs: (assemblicator::SLOT_INPUT_START..assemblicator::SLOT_INPUT_START + assemblicator::INPUT_SLOTS).map(|i| i as u32).collect(),
+            outputs: (assemblicator::SLOT_OUTPUT_START..assemblicator::SLOT_OUTPUT_START + assemblicator::OUTPUT_SLOTS).map(|i| i as u32).collect(),
+            menu: true,
+        });
+        assemblicator_kind.energy = Some(energy(assemblicator::BASE_STORAGE, assemblicator::BASE_STORAGE, FlowSide::Both));
+        r = r.block_entity_kind(assemblicator_kind);
         // The heat: conductors only keep their heat; the resistive heater takes energy (its screen has no slots), the fuelwood heater one fuel slot.
         for tier in heat::ConductorTier::ALL {
             r = r.block_entity_kind(kind(tier.block_name(), true));
@@ -2154,6 +2167,7 @@ impl ServerMod for Mekanism {
             conts: HashMap::new(),
             filtered: HashSet::new(),
             pending: Vec::new(),
+            card_clicks: Vec::new(),
             empty: HashMap::new(),
             empty_tickets: HashMap::new(),
             empty_ready: HashMap::new(),
@@ -2366,6 +2380,11 @@ impl ServerMod for Mekanism {
         if stack.item == meka_tool::MEKA_TOOL && self.meka_tool_used(player, &stack) {
             return true;
         }
+        if stack.item == configuration_card::ITEM || stack.item == assemblicator::CRAFTING_FORMULA {
+            if self.card_or_formula_used(player, &stack, pos) {
+                return true;
+            }
+        }
         if self.read_radiation(player, &stack.item) {
             return true;
         }
@@ -2572,6 +2591,9 @@ impl ServerMod for Mekanism {
         if block == entangloporter::BLOCK {
             self.qe_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
+        }
+        if block == assemblicator::BLOCK {
+            return self.assemblicator_button(&e, id);
         }
         if block == sorter::SORTER {
             self.sorter_buttons.push((e.dimension.clone(), e.pos, id));
@@ -2791,6 +2813,7 @@ impl ServerMod for Mekanism {
         let mut out = Vec::new();
         // The configurator clicks that act on the block itself go first, before the machines' own ticks.
         out.extend(self.tool_clicks(&mut entities));
+        out.extend(self.card_clicks_tick(&mut entities));
         // Empties whose drops the game confirmed clear their slots now.
         out.extend(self.apply_empty_ready(&mut entities));
         // Unformed multiblock ports/valves must NOT expose capabilities or act as standalone tanks (S3)
@@ -2850,6 +2873,10 @@ impl ServerMod for Mekanism {
         let alarms: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(alarm::ALARM)).collect();
         if !alarms.is_empty() {
             out.extend(self.run_alarms(&alarms));
+        }
+        let assemblicators: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(assemblicator::BLOCK)).collect();
+        if !assemblicators.is_empty() {
+            out.extend(self.run_assemblicators(&assemblicators, tick));
         }
         let heat_blocks: Vec<&BlockEntity> = entities.iter().filter(|e| heat_world::is_heat_block(e.state.split('[').next().unwrap_or(""))).collect();
         if !heat_blocks.is_empty() {

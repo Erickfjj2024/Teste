@@ -6,9 +6,9 @@
 //! farming units (a use that changes blocks with the tool's own rules). Nothing here charges energy for an effect the
 //! game does not apply.
 
-use horizon_mod_sdk::server::{player_control, player_items, world, ItemStack, Player};
+use horizon_mod_sdk::server::{player_control, player_items, players, world, BlockEntity, BlockEntityUpdate, BlockPos, ItemStack, Player};
 
-use crate::{meka_tool, Mekanism};
+use crate::{assemblicator, configuration_card, meka_tool, Mekanism};
 
 /// Whether a ray passes through the block: air and fluids (`ClipContext.Fluid.NONE` skips fluids; a plant or a torch has an outline and is hit).
 pub fn passes_ray(block: Option<&str>) -> bool {
@@ -97,6 +97,99 @@ impl Mekanism {
         }
         let _ = player_items::set_slot(&player.id, slot, Some(&ItemStack { item: stack.item.clone(), count: stack.count, components: written }));
         true
+    }
+}
+
+/// A configuration card used on a block, until the block's next tick (a use cannot change a block entity).
+#[derive(Clone, Debug)]
+pub struct CardClick {
+    pub player: String,
+    pub dimension: String,
+    pub pos: BlockPos,
+    pub sneaking: bool,
+    pub stack: ItemStack,
+}
+
+impl Mekanism {
+    /// The configuration card and the crafting formula. The card is wired for the formulaic assemblicator only: `apply_configuration`
+    /// for the other machines assumes a layout and offsets that are not checked against each machine's data yet, and a wrong
+    /// write would corrupt the machine. Answers whether the mod took the use.
+    pub(crate) fn card_or_formula_used(&mut self, player: &Player, stack: &ItemStack, pos: Option<BlockPos>) -> bool {
+        let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+        let original = stack.clone();
+        let mut stack = stack.clone();
+        if stack.item == assemblicator::CRAFTING_FORMULA {
+            // Shift + use in the air clears the formula (`ItemCraftingFormula.use`).
+            if pos.is_none() && sneaking {
+                assemblicator::CraftingFormulaItem::clear(&mut stack);
+                self.write_held(player, &original, &stack);
+                let _ = players::tell(&player.id, "Crafting Formula cleared");
+                return true;
+            }
+            return false;
+        }
+        match pos {
+            None => {
+                if configuration_card::ConfigurationCardItem::use_air(&player.id, sneaking, &mut stack) {
+                    self.write_held(player, &original, &stack);
+                    return true;
+                }
+                false
+            }
+            Some(p) => {
+                let on_assemblicator = world::get_block(&player.dimension, p.x, p.y, p.z)
+                    .is_some_and(|b| b.split('[').next() == Some(assemblicator::BLOCK));
+                if !on_assemblicator {
+                    return false;
+                }
+                self.card_clicks.push(CardClick { player: player.id.clone(), dimension: player.dimension.clone(), pos: p, sneaking, stack });
+                true
+            }
+        }
+    }
+
+    /// Writes `stack` over the held item it came from (found again in the hotbar; never guessed).
+    fn write_held(&mut self, player: &Player, original: &ItemStack, written: &ItemStack) {
+        // The stack to replace is the one the player held before the change, found by its item, count and components.
+        let Some(inv) = player_items::get_inventory(&player.id) else { return };
+        let slot = inv.iter().take(9).position(|s| {
+            s.as_ref().is_some_and(|s| s.item == original.item && s.count == original.count && crate::config::same_components(&original.components, &s.components))
+        });
+        if let Some(slot) = slot {
+            let _ = player_items::set_slot(&player.id, slot as u32, Some(written));
+        }
+    }
+
+    /// The card clicks whose machine ticks now: copy reads the machine, paste rewrites its data.
+    pub(crate) fn card_clicks_tick(&mut self, entities: &mut [BlockEntity]) -> Vec<BlockEntityUpdate> {
+        let mut out = Vec::new();
+        for click in std::mem::take(&mut self.card_clicks) {
+            let Some(e) = entities.iter_mut().find(|e| e.dimension == click.dimension && e.pos == click.pos) else { continue };
+            let block = e.state.split('[').next().unwrap_or("").to_owned();
+            let before = e.data.clone();
+            let mut card = click.stack.clone();
+            let res = configuration_card::ConfigurationCardItem::use_on(&click.player, click.sneaking, &block, e, &mut card);
+            if card != click.stack {
+                if let Some((slot, _)) = Self::find_hotbar_slot(&click.player, &click.stack) {
+                    let _ = player_items::set_slot(&click.player, slot, Some(&card));
+                }
+            }
+            if e.data != before && matches!(res, configuration_card::CardInteractionResult::Pasted { .. }) {
+                out.push(BlockEntityUpdate {
+                    dimension: e.dimension.clone(),
+                    pos: e.pos,
+                    data: e.data.clone(),
+                    items: None,
+                    energy: None,
+                    energy_faces: None,
+                    tanks: None,
+                    tank_faces: None,
+                    menu_data: None,
+                    transmitter_faces: None,
+                });
+            }
+        }
+        out
     }
 }
 

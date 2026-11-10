@@ -1112,7 +1112,7 @@ impl Mekanism {
             let mut items: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
             let mut energy = e.energy;
 
-            let powered = crate::fork_utilidades::has_neighbor_signal(&e.dimension, e.pos.x, e.pos.y, e.pos.z);
+            let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
             let last_powered = self.last_power.insert(at.clone(), powered).unwrap_or(false);
 
             let changed = tick_assemblicator(e, &mut state, &mut items, &mut energy, powered, last_powered);
