@@ -13,7 +13,7 @@ SRC = os.path.join(ROOT, "mod", "src")
 REVISADOS = {
     "heat", "fuelwood_heater", "resistive_heater", "qio", "qio_transfer", "qio_dashboard",
     "dynamic", "boiler", "evaporation", "sps", "fission", "fusion", "turbine", "induction", "bounding",
-    "mekasuit", "modules", "meka_tool", "robit", "chargepad", "assemblicator", "configuration_card", "electric_bow", "hdpe_elytra",
+    "mekasuit", "modules", "meka_tool", "robit", "chargepad", "assemblicator", "configuration_card", "electric_bow", "hdpe_elytra", "dimensional_stabilizer",
     "entangloporter", "laser", "miner", "pump", "cube", "generators", "plus", "transmitter",
 }
 

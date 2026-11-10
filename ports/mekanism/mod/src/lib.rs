@@ -387,6 +387,9 @@ struct Mekanism {
     suit_step: HashMap<String, f32>,
     /// The waste barrels whose tank filter was set.
     waste_filtered: HashSet<(String, i32, i32, i32)>,
+    /// The buttons pressed on the dimensional stabilizers' screens, and the chunks each holds forced.
+    stabilizer_buttons: Vec<(String, BlockPos, i32)>,
+    stabilizer_tickets: HashMap<(String, i32, i32, i32), HashSet<(i32, i32)>>,
     /// Empties waiting for the game to confirm their drops exist, by block and by summon ticket, and empties whose
     /// drops all spawned, waiting for the block's next tick to clear the slots they came from (see `empty_block`).
     empty: HashMap<EmptyKey, EmptyPending>,
@@ -2182,6 +2185,8 @@ impl ServerMod for Mekanism {
             card_clicks: Vec::new(),
             suit_step: HashMap::new(),
             waste_filtered: HashSet::new(),
+            stabilizer_buttons: Vec::new(),
+            stabilizer_tickets: HashMap::new(),
             empty: HashMap::new(),
             empty_tickets: HashMap::new(),
             empty_ready: HashMap::new(),
@@ -2332,6 +2337,9 @@ impl ServerMod for Mekanism {
 
     fn block_broken(&mut self, player: &Player, pos: BlockPos, state: &str) {
         let name = state.split('[').next().unwrap_or("");
+        if name == dimensional_stabilizer::BLOCK {
+            self.release_stabilizer_tickets(&player.dimension, pos);
+        }
         if name == bounding::BLOCK {
             // Java BlockBounding.java:140-148 & 162-177: Breaking a bounding block destroys the main machine!
             let main = self
@@ -2639,6 +2647,10 @@ impl ServerMod for Mekanism {
         }
         if block == assemblicator::BLOCK {
             return self.assemblicator_button(&e, id);
+        }
+        if block == dimensional_stabilizer::BLOCK {
+            self.stabilizer_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
         }
         if block == sorter::SORTER {
             self.sorter_buttons.push((e.dimension.clone(), e.pos, id));

@@ -14,6 +14,7 @@
 //! - `StorageConfig.java`: `dimensionalStabilizer = 40_000L` J = 16_000 FE (`fe(40_000)`)
 
 use super::*;
+use horizon_mod_sdk::server::chunks;
 
 pub const BLOCK: &str = "mekanism:dimensional_stabilizer";
 
@@ -31,10 +32,10 @@ pub const BASE_CAPACITY: u64 = fe(40_000);
 pub const ENERGY_SLOT: usize = 0;
 
 /// GUI action buttons.
-pub const BUTTON_TOGGLE_CHUNK_BASE: i32 = 7500; // 7500 + x * 5 + z
-pub const BUTTON_RADIUS_1: i32 = 7530; // 3x3 (9 chunks)
-pub const BUTTON_RADIUS_2: i32 = 7531; // 5x5 (25 chunks)
-pub const BUTTON_TOGGLE_ALL: i32 = 7532;
+pub const BUTTON_TOGGLE_CHUNK_BASE: i32 = 7500; // 7500 + x * 5 + z (`toggleChunkLoadingAt(extra / 5, extra % 5)`)
+/// `adjustChunkLoadingRadius(radius, true)` is 7530 + radius, `adjustChunkLoadingRadius(radius, false)` 7540 + radius (the three packets of `PacketGuiInteract`).
+pub const BUTTON_RING_ENABLE_BASE: i32 = 7530;
+pub const BUTTON_RING_DISABLE_BASE: i32 = 7540;
 
 /// A chunk coordinate pair (chunk_x, chunk_z).
 pub type ChunkPos = (i32, i32);
@@ -48,6 +49,8 @@ pub struct State {
     pub energy: u64,
     pub active: bool,
     pub energy_upgrades: u8,
+    /// The redstone control (`canFunction`).
+    pub control: Control,
 }
 
 impl Default for State {
@@ -60,6 +63,7 @@ impl Default for State {
             energy: 0,
             active: false,
             energy_upgrades: 0,
+            control: Control::Disabled,
         }
     }
 }
@@ -84,26 +88,32 @@ impl State {
         true
     }
 
-    /// Sets all chunks within a given radius (1 = 3x3, 2 = 5x5) to the given loaded state.
-    pub fn set_radius(&mut self, radius: i32, load: bool) {
-        let r = radius.clamp(1, MAX_LOAD_RADIUS);
-        for dx in -r..=r {
-            for dz in -r..=r {
+    /// `adjustChunkLoadingRadius(radius, load)` (java:122-146): only the ring of chunks at that distance from the middle (the border of the square of that
+    /// radius, not what is inside it) is set to `load`; the middle one is never touched. Says whether anything changed.
+    pub fn adjust_radius(&mut self, radius: i32, load: bool) -> bool {
+        if radius <= 0 || radius > MAX_LOAD_RADIUS {
+            return false;
+        }
+        let mut changed = false;
+        for dx in -radius..=radius {
+            let skip_inner = dx > -radius && dx < radius;
+            let mut dz = -radius;
+            while dz <= radius {
                 let x = (dx + MAX_LOAD_RADIUS) as usize;
                 let z = (dz + MAX_LOAD_RADIUS) as usize;
-                if x == 2 && z == 2 {
-                    continue; // Skip center chunk
-                }
-                if self.loading_chunks[x][z] != load {
+                if !(x == MAX_LOAD_RADIUS as usize && z == MAX_LOAD_RADIUS as usize) && self.loading_chunks[x][z] != load {
                     self.loading_chunks[x][z] = load;
                     if load {
                         self.chunks_loaded += 1;
                     } else {
                         self.chunks_loaded = self.chunks_loaded.saturating_sub(1);
                     }
+                    changed = true;
                 }
+                dz += if skip_inner { 2 * radius } else { 1 };
             }
         }
+        changed
     }
 
     /// Calculates energy capacity scaled by energy upgrades (up to 8 upgrades).
@@ -172,6 +182,7 @@ pub fn decode(data: &[u8]) -> State {
         energy,
         active,
         energy_upgrades,
+        control: Control::from_byte(data.get(10 + MAX_LOAD_DIAMETER * MAX_LOAD_DIAMETER).copied().unwrap_or(0)),
     }
 }
 
@@ -187,18 +198,30 @@ pub fn encode(state: &State) -> Vec<u8> {
     out
 }
 
-/// Host API bridge for requesting chunk loading tickets in the game world.
-// FORK-14: Chunk ticket loading API in Horizon host (`IChunkLoader`)
-pub fn sync_chunk_tickets(
-    dimension: &str,
-    chunks: &[ChunkPos],
-    active: bool,
-) {
-    let _ = (dimension, chunks, active);
-    // In WASM without host API support, chunk tickets are simulated purely in state
-}
-
 impl Mekanism {
+    /// Keeps exactly the chunks the stabilizer loads forced (`TileComponentChunkLoader.refreshChunkTickets`, which only holds tickets while it is active):
+    /// the new ones are asked for, the ones it no longer loads (or all of them when it stops) are let go. The game keeps at most 256 a mod.
+    fn sync_stabilizer_tickets(&mut self, key: &(String, i32, i32, i32), wanted: &[ChunkPos], active: bool) {
+        let want: std::collections::HashSet<ChunkPos> = if active { wanted.iter().copied().collect() } else { std::collections::HashSet::new() };
+        let held = self.stabilizer_tickets.entry(key.clone()).or_default();
+        for c in want.difference(held).copied().collect::<Vec<_>>() {
+            let _ = chunks::set_forced(&key.0, c.0, c.1, true);
+        }
+        for c in held.difference(&want).copied().collect::<Vec<_>>() {
+            let _ = chunks::set_forced(&key.0, c.0, c.1, false);
+        }
+        *held = want;
+    }
+
+    /// A stabilizer that is gone lets go of its chunks (`TileComponentChunkLoader.removed`).
+    pub(crate) fn release_stabilizer_tickets(&mut self, dimension: &str, pos: BlockPos) {
+        if let Some(held) = self.stabilizer_tickets.remove(&(dimension.to_owned(), pos.x, pos.y, pos.z)) {
+            for c in held {
+                let _ = chunks::set_forced(dimension, c.0, c.1, false);
+            }
+        }
+    }
+
     /// Server tick handler for Dimensional Stabilizers.
     pub(crate) fn run_dimensional_stabilizers(
         &mut self,
@@ -216,41 +239,49 @@ impl Mekanism {
             let mut state = decode(&e.data);
             let mut energy = e.energy;
 
-            // Handle GUI button clicks
-            for (_, p, id) in self.sorter_buttons.iter().filter(|(d, pos, _)| {
-                *d == e.dimension && (pos.x, pos.y, pos.z) == (e.pos.x, e.pos.y, e.pos.z)
-            }) {
-                let _ = p;
-                if *id >= BUTTON_TOGGLE_CHUNK_BASE && *id < BUTTON_TOGGLE_CHUNK_BASE + 25 {
-                    let offset = (*id - BUTTON_TOGGLE_CHUNK_BASE) as usize;
-                    let x = offset / 5;
-                    let z = offset % 5;
-                    state.toggle_chunk(x, z);
-                } else if *id == BUTTON_RADIUS_1 {
-                    state.set_radius(1, true);
-                } else if *id == BUTTON_RADIUS_2 {
-                    state.set_radius(2, true);
-                } else if *id == BUTTON_TOGGLE_ALL {
-                    let any_off = state.chunks_loaded < 25;
-                    state.set_radius(2, any_off);
+            // The buttons of its screen since the last tick (`PacketGuiInteract`): a chunk, or a ring of chunks on or off.
+            let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+            let mut pressed: Vec<i32> = Vec::new();
+            self.stabilizer_buttons.retain(|(d, p, id)| {
+                if *d == e.dimension && (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z) {
+                    pressed.push(*id);
+                    false
+                } else {
+                    true
+                }
+            });
+            for id in pressed {
+                if (BUTTON_TOGGLE_CHUNK_BASE..BUTTON_TOGGLE_CHUNK_BASE + 25).contains(&id) {
+                    let offset = (id - BUTTON_TOGGLE_CHUNK_BASE) as usize;
+                    state.toggle_chunk(offset / MAX_LOAD_DIAMETER, offset % MAX_LOAD_DIAMETER);
+                } else if (BUTTON_RING_ENABLE_BASE + 1..=BUTTON_RING_ENABLE_BASE + MAX_LOAD_RADIUS).contains(&id) {
+                    state.adjust_radius(id - BUTTON_RING_ENABLE_BASE, true);
+                } else if (BUTTON_RING_DISABLE_BASE + 1..=BUTTON_RING_DISABLE_BASE + MAX_LOAD_RADIUS).contains(&id) {
+                    state.adjust_radius(id - BUTTON_RING_DISABLE_BASE, false);
                 }
             }
 
-            // Energy drain: 2_000 FE/t per loaded chunk (Java: `TileEntityDimensionalStabilizer.java:93-99`)
+            // It works when the config allows chunk loading and the redstone says so (`canFunction`), and takes the energy of every chunk each tick.
+            let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
+            let last = self.last_power.insert(key.clone(), powered).unwrap_or(false);
+            let can_function = state.control.can_function(powered, last);
             let needed = state.energy_per_tick();
             let was_active = state.active;
-            if energy >= needed && needed > 0 {
+            if can_function && energy >= needed {
                 energy -= needed;
                 state.active = true;
             } else {
                 state.active = false;
+            }
+            if was_active != state.active {
+                let _ = world::set_block_property(&e.dimension, e.pos.x, e.pos.y, e.pos.z, "active", if state.active { "true" } else { "false" });
             }
 
             state.energy = energy;
 
             // Sync chunk tickets with host
             let loaded_chunks = state.get_loaded_chunk_set(e.pos.x, e.pos.z);
-            sync_chunk_tickets(&e.dimension, &loaded_chunks, state.active);
+            self.sync_stabilizer_tickets(&key, &loaded_chunks, state.active);
 
             let changed = was_active != state.active || energy != e.energy;
             if changed {
@@ -327,22 +358,25 @@ mod tests {
     }
 
     #[test]
-    fn test_radius_shortcuts() {
+    fn test_rings_change_only_their_own_chunks() {
         let mut state = State::default();
-        // Radius 1: 3x3 = 9 chunks
-        state.set_radius(1, true);
+        // Ring 1: the 8 chunks around the middle, so 9 loaded.
+        assert!(state.adjust_radius(1, true));
         assert_eq!(state.chunks_loaded, 9);
         assert_eq!(state.energy_per_tick(), 18_000); // 9 * 2_000 FE/t
-
-        // Radius 2: 5x5 = 25 chunks
-        state.set_radius(2, true);
+        // Ring 2: the 16 chunks of the outer border, so 25.
+        assert!(state.adjust_radius(2, true));
         assert_eq!(state.chunks_loaded, 25);
-        assert_eq!(state.energy_per_tick(), 50_000); // 25 * 2_000 FE/t
-
-        // Unload radius 2 (keeps center loaded)
-        state.set_radius(2, false);
+        assert_eq!(state.energy_per_tick(), 50_000);
+        // Turning ring 2 off leaves ring 1 (java:122-146 only touches the border), and the middle one is never turned off.
+        assert!(state.adjust_radius(2, false));
+        assert_eq!(state.chunks_loaded, 9);
+        assert!(state.loading_chunks[1][1] && state.loading_chunks[2][2] && !state.loading_chunks[0][0]);
+        assert!(state.adjust_radius(1, false));
         assert_eq!(state.chunks_loaded, 1);
         assert!(state.loading_chunks[2][2]);
+        // A radius out of range, or a ring already as asked, changes nothing.
+        assert!(!state.adjust_radius(3, true) && !state.adjust_radius(0, true) && !state.adjust_radius(1, false));
     }
 
     #[test]
@@ -373,7 +407,8 @@ mod tests {
         state.energy = 12_500;
         state.active = true;
         state.energy_upgrades = 3;
-        state.set_radius(1, true);
+        state.adjust_radius(1, true);
+        state.control = Control::Low;
 
         let encoded = encode(&state);
         let decoded = decode(&encoded);
