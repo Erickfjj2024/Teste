@@ -14,6 +14,10 @@ pub mod server {
     pub fn get_look<A0>(_a0: A0) -> Option<(f32,f32)> { None }
     pub fn teleport<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: Option<f32>, _a6: Option<f32>) -> Result<(), String> { Err(String::new()) }
     pub fn take_xp<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct EffectState { pub id: String, pub duration: i32, pub amplifier: i32 }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct PlayerState { pub velocity_x: f64, pub velocity_y: f64, pub velocity_z: f64, pub jumping: bool, pub sprinting: bool, pub flying: bool, pub may_fly: bool, pub fall_flying: bool, pub swimming: bool, pub in_water: bool, pub eyes_in_water: bool, pub in_lava: bool, pub air: i32, pub max_air: i32, pub fire_ticks: i32, pub passenger: bool, pub sleeping: bool, pub food: u32, pub saturation: f32, pub effects: Vec<EffectState> }
+    pub fn get_state<A0>(_a0: A0) -> Option<PlayerState> { None }
+    pub fn set_food<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn set_motion<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
     pub fn set_allow_flight<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn play_sound<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> () { Default::default() }
@@ -22,6 +26,7 @@ pub mod server {
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CraftMatch { pub id: String, pub output: ItemStack, pub remaining: Vec<Option<ItemStack>> }
     pub fn crafting_find(_a0: &Vec<Option<ItemStack>>) -> Option<CraftMatch> { None }
     pub fn crafting_matches<A0>(_a0: A0, _a1: &Vec<Option<ItemStack>>) -> bool { false }
+    pub fn item_tags<A0>(_a0: A0) -> Vec<String> { Vec::new() }
     pub fn item_max_stack_size<A0>(_a0: A0) -> Option<u32> { None }
     pub fn burn_time<A0>(_a0: A0) -> Option<u32> { None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CustomRecipe { pub id: String, pub json: String }

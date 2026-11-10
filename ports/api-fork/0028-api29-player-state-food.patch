@@ -1,0 +1,634 @@
+From e48a4a4f75b899246debb83190cae0dcb91f085f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 13:08:10 +0000
+Subject: [PATCH] API 29: player-control.get-state (the player's body) and
+ set-food
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 ++
+ Cargo.toml                                    |  1 +
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ crates/horizon-client/src/game/mods.rs        |  2 +
+ crates/horizon-client/src/game/server_mods.rs | 86 +++++++++++++++++++
+ .../examples/body-probe/Cargo.toml            | 16 ++++
+ .../examples/body-probe/horizon-mod.toml      |  9 ++
+ .../examples/body-probe/src/lib.rs            | 29 +++++++
+ .../examples/body-probe/tests/body.toml       |  7 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 51 +++++++++++
+ crates/horizon-mods/src/api_level.rs          |  6 +-
+ crates/horizon-mods/src/runtime.rs            | 28 +++++-
+ crates/horizon-mods/src/testing.rs            | 61 +++++++++++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    | 39 +++++++++
+ 15 files changed, 342 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/body-probe/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/body-probe/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/body-probe/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/body-probe/tests/body.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 07dca020a..50c99d637 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -383,6 +383,13 @@ dependencies = [
+  "objc2 0.6.5",
+ ]
+ 
++[[package]]
++name = "body-probe"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "bumpalo"
+ version = "3.20.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index d754a416a..e8f5219ba 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -44,6 +44,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/damage-mods",
+     "crates/horizon-mod-sdk/examples/fuel-demo",
+     "crates/horizon-mod-sdk/examples/crafting-probe",
++    "crates/horizon-mod-sdk/examples/body-probe",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 36b866439..72ef36657 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -279,6 +279,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+                 format!("teleported a player to {} {} {} in {dimension}", pos[0], pos[1], pos[2])
+             }
+             Output::SpawnParticles { particle, count, .. } => format!("{count} {particle} particle(s)"),
++            Output::SetFood { food, saturation, .. } => format!("set food to {food} and saturation to {saturation}"),
+             Output::SetMotion { velocity, .. } => format!("set a player's motion to {velocity:?}"),
+             Output::SetAllowFlight { allowed, .. } => format!("allowed flight: {allowed}"),
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 2f1bdc533..c3f1fc824 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -632,6 +632,7 @@ impl Game<'_> {
+             font_widths: self.mods.font_widths.clone(),
+             players,
+             motions: Vec::new(),
++            states: Vec::new(),
+             looks: Vec::new(),
+             mobs: Vec::new(),
+             mobs_dimension: String::new(),
+@@ -869,6 +870,7 @@ impl Game<'_> {
+                 | Output::Teleport { .. }
+                 | Output::TakeXp { .. }
+                 | Output::SetMotion { .. }
++                | Output::SetFood { .. }
+                 | Output::SetAllowFlight { .. }
+                 | Output::PlaySound { .. }
+                 | Output::NetSend { .. }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 894fcc6e4..fb3c48853 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -397,6 +397,7 @@ mod run {
+             let mut snapshot = self.mod_snapshot_with(players.clone());
+             if self.mods.world {
+                 snapshot.motions = self.server_motions();
++                snapshot.states = self.server_states();
+                 snapshot.looks = self.server_looks();
+             }
+             if self.mods.mods.wants_player_items() {
+@@ -668,6 +669,74 @@ mod run {
+             }
+         }
+ 
++        /// This player's body as `player-control.get-state` reads it.
++        fn own_state(&self) -> horizon_mods::PlayerState {
++            let effects = self
++                .potions
++                .effects
++                .saved()
++                .into_iter()
++                .map(|(id, duration, amplifier, _, _)| horizon_mods::EffectState {
++                    id: if id.contains(':') { id } else { format!("minecraft:{id}") },
++                    duration,
++                    amplifier,
++                })
++                .collect();
++            let Some(p) = self.player.as_ref() else {
++                return horizon_mods::PlayerState {
++                    velocity_x: 0.0, velocity_y: 0.0, velocity_z: 0.0, jumping: false, sprinting: false, flying: false, may_fly: false,
++                    fall_flying: false, swimming: false, in_water: false, eyes_in_water: false, in_lava: false, air: 300, max_air: 300,
++                    fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects,
++                };
++            };
++            horizon_mods::PlayerState {
++                velocity_x: p.velocity.x,
++                velocity_y: p.velocity.y,
++                velocity_z: p.velocity.z,
++                jumping: p.jumping,
++                sprinting: p.sprinting,
++                flying: p.flying,
++                may_fly: p.may_fly,
++                fall_flying: p.fall_flying,
++                swimming: p.swimming,
++                in_water: p.fluids.was_touching_water,
++                eyes_in_water: p.is_under_water(),
++                in_lava: p.is_in_lava(),
++                air: p.air,
++                max_air: 300,
++                fire_ticks: p.fire_ticks.max(0),
++                passenger: p.is_passenger,
++                sleeping: p.sleeping,
++                food: p.health.food.food.clamp(0, 20) as u32,
++                saturation: p.health.food.saturation,
++                effects,
++            }
++        }
++
++        /// What every player's body is doing, as `player-control.get-state` reads it (as `server_motions`).
++        fn server_states(&mut self) -> Vec<(String, horizon_mods::PlayerState)> {
++            let mut out = Vec::new();
++            if self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++            {
++                out.push((uuid_string(self.player_uuid()), self.own_state()));
++            }
++            let guests: Vec<(u32, u128, bool, bool)> = self
++                .lan
++                .iter()
++                .flat_map(|h| &h.hub.guests)
++                .filter(|g| g.placed)
++                .map(|g| (g.conn, g.uuid, g.sneaking, g.mod_may_fly))
++                .collect();
++            for (conn, uuid, _, _) in guests {
++                if let Some(s) = self.for_player(Target::Guest(conn), |g| g.own_state()) {
++                    out.push((uuid_string(uuid), s));
++                }
++            }
++            out
++        }
++
+         /// Who a server mod's player id names: the window's own player in-frame,
+         /// or a guest by connection (the owner of a single-player world is one
+         /// when the server runs on its own thread, the default). Also the
+@@ -2104,6 +2173,23 @@ mod run {
+                     });
+                     self.teleport_to_in_level(target, pos, rotation);
+                 }
++                Output::SetFood { name, player, food, saturation } => {
++                    let Some((target, _)) = self.mod_player(&player) else {
++                        return;
++                    };
++                    let done = self
++                        .for_player(target, |g| {
++                            if let Some(p) = g.player.as_mut() {
++                                p.health.food.food = food.min(20) as i32;
++                                // FoodData.setSaturation: within the food level.
++                                p.health.food.saturation = saturation.clamp(0.0, p.health.food.food as f32);
++                            }
++                        })
++                        .is_some();
++                    if !done {
++                        log::debug!("Horizon: mod {name} set the food of a player that is not here");
++                    }
++                }
+                 Output::SetMotion { name, player, velocity } => {
+                     let Some((Target::Guest(conn), _)) = self.mod_player(&player) else {
+                         log::debug!("Horizon: mod {name} set the motion of a player that is not a guest");
+diff --git a/crates/horizon-mod-sdk/examples/body-probe/Cargo.toml b/crates/horizon-mod-sdk/examples/body-probe/Cargo.toml
+new file mode 100644
+index 000000000..4da4363b9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/body-probe/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "body-probe"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: reading a player's body and feeding them"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/body-probe/horizon-mod.toml b/crates/horizon-mod-sdk/examples/body-probe/horizon-mod.toml
+new file mode 100644
+index 000000000..c77217322
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/body-probe/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "bodyprobe"
++name = "Body Probe"
++version = "0.1.0"
++description = "Test mod for player-control's get-state and set-food: using bodyprobe:probe tells what the player's body is doing and feeds them."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "player-control"]
++experimental = ["player-control"]
+diff --git a/crates/horizon-mod-sdk/examples/body-probe/src/lib.rs b/crates/horizon-mod-sdk/examples/body-probe/src/lib.rs
+new file mode 100644
+index 000000000..b15656230
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/body-probe/src/lib.rs
+@@ -0,0 +1,29 @@
++//! Body Probe (`player-control.get-state`, `set-food`): using `bodyprobe:probe` tells the player how fast they move, whether the jump
++//! key is held, their air, whether they burn, their effects, and tops their food up.
++use horizon_mod_sdk::server::{BlockPos, ItemStack, Player, Registration, ServerMod, player_control, players};
++
++struct Probe;
++
++impl ServerMod for Probe {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Probe, Registration::new().on_items()))
++    }
++    fn item_used(&mut self, player: &Player, stack: ItemStack, _pos: Option<BlockPos>) -> bool {
++        if stack.item != "bodyprobe:probe" {
++            return false;
++        }
++        let Some(s) = player_control::get_state(&player.id) else { return false };
++        let effects: Vec<String> = s.effects.iter().map(|e| format!("{}:{}:{}", e.id, e.duration, e.amplifier)).collect();
++        let _ = players::tell(
++            &player.id,
++            &format!(
++                "vy {} jump {} air {}/{} fire {} food {} effects [{}]",
++                s.velocity_y, s.jumping, s.air, s.max_air, s.fire_ticks, s.food, effects.join(",")
++            ),
++        );
++        let _ = player_control::set_food(&player.id, 20, 5.0);
++        true
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Probe);
+diff --git a/crates/horizon-mod-sdk/examples/body-probe/tests/body.toml b/crates/horizon-mod-sdk/examples/body-probe/tests/body.toml
+new file mode 100644
+index 000000000..032e40933
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/body-probe/tests/body.toml
+@@ -0,0 +1,7 @@
++[[step]]
++join = "Alex"
++state = { velocity = [0.0, -0.5, 0.0], jumping = true, air = 120, fire-ticks = 40, food = 7, effects = ["minecraft:poison 100 1"] }
++use-item = { stack = "bodyprobe:probe*1" }
++expect.claimed = true
++expect.told = ["Alex: vy -0.5 jump true air 120/300 fire 40 food 7 effects [minecraft:poison:100:1]"]
++expect.player-items = ["set-food Alex 20 5"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 15c60fd97..4159eb3de 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -814,8 +814,59 @@ interface player-control {
+         /// (`Player.experienceProgress`).
+         xp-progress: f32,
+     }
++    /// One effect on a player.
++    record effect-state {
++        /// `minecraft:speed`, a content mod's own `mymod:radiation`.
++        id: string,
++        /// Ticks left; -1 is infinite.
++        duration: s32,
++        /// 0 is level I.
++        amplifier: s32,
++    }
++    /// What a player's body is doing as of the last server tick: what
++    /// equipment that reacts to the player (a jetpack, a suit that breathes
++    /// for them) needs and `motion` does not hold.
++    record player-state {
++        /// The velocity (`deltaMovement`), blocks a tick.
++        velocity-x: f64,
++        velocity-y: f64,
++        velocity-z: f64,
++        /// The jump key is held.
++        jumping: bool,
++        sprinting: bool,
++        /// Creative flight is on.
++        flying: bool,
++        /// The player may fly (`Abilities.mayfly`).
++        may-fly: bool,
++        /// Gliding with an elytra.
++        fall-flying: bool,
++        swimming: bool,
++        /// Touching water (`isInWater`).
++        in-water: bool,
++        /// The eyes are in water (`isUnderWater`).
++        eyes-in-water: bool,
++        in-lava: bool,
++        /// Air left, in ticks (300 is full), and the most they hold.
++        air: s32,
++        max-air: s32,
++        /// Ticks of burning left (0 when not on fire).
++        fire-ticks: s32,
++        /// Riding a vehicle.
++        passenger: bool,
++        sleeping: bool,
++        /// Food level 0 to 20 and saturation.
++        food: u32,
++        saturation: f32,
++        effects: list<effect-state>,
++    }
+     /// What the player with this id is doing; none for an id that is not online.
+     get-motion: func(player: string) -> option<motion>;
++    /// The body of the player with this id; none for an id that is not online. API 29.
++    get-state: func(player: string) -> option<player-state>;
++    /// Sets the player's food level (0 to 20) and saturation (at most the
++    /// food level, as vanilla's), made after this call returns. An error for a
++    /// player not online. API 29.
++    set-food: func(player: string, food: u32, saturation: f32) -> result<_, string>;
+     /// Where the player with this id looks, `(yaw, pitch)` in degrees as F3
+     /// shows them (yaw 0 faces south, pitch -90 looks straight up); none for
+     /// an id that is not online. With the eye (the feet and 1.62 blocks, 1.27
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 98e11ca36..e76dc8874 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 28;
++pub const LEVEL: u32 = 29;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 91] = [
++pub const FUNCTIONS: [(&str, u32); 93] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -102,6 +102,8 @@ pub const FUNCTIONS: [(&str, u32); 91] = [
+     ("recipe-types.crafting-find", 28),
+     ("recipe-types.crafting-matches", 28),
+     ("recipe-types.item-max-stack-size", 28),
++    ("player-control.get-state", 29),
++    ("player-control.set-food", 29),
+     ("player-items.compare-and-set-slot", 25),
+     ("player-control.set-motion", 25),
+     ("player-control.set-allow-flight", 25),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 03a76b258..609a2b1c5 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -56,7 +56,7 @@ pub use server_bindings::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+         BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+-    horizon::mods::player_control::Motion,
++    horizon::mods::player_control::{EffectState, Motion, PlayerState},
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+     horizon::mods::world::{BlockChange, CollisionBox, Environment},
+ };
+@@ -254,6 +254,8 @@ pub struct Snapshot {
+     /// What each of those players is doing, by player id, for capability
+     /// `player-control`'s `motion`.
+     pub motions: Vec<(String, Motion)>,
++    /// The body of each of those players, by player id, for `player-control`'s `get-state`.
++    pub states: Vec<(String, PlayerState)>,
+     /// Where each of those players looks, `(yaw, pitch)`, by player id.
+     pub looks: Vec<(String, (f32, f32))>,
+     /// The living mobs of the level in place (`mobs_dimension`), for
+@@ -350,6 +352,13 @@ pub enum Output {
+         yaw: Option<f32>,
+         pitch: Option<f32>,
+     },
++    /// `player-control.set-food`: the player's food level and saturation.
++    SetFood {
++        name: String,
++        player: String,
++        food: u32,
++        saturation: f32,
++    },
+     /// `player-control.set-motion`: the player's velocity, in blocks a tick.
+     SetMotion {
+         name: String,
+@@ -3016,6 +3025,23 @@ impl player_control::Host for State {
+             .find(|(id, _)| *id == player)
+             .map(|(_, m)| m.clone())
+     }
++    fn get_state(&mut self, player: String) -> Option<PlayerState> {
++        self.snapshot.states.iter().find(|(id, _)| *id == player).map(|(_, s)| s.clone())
++    }
++    fn set_food(&mut self, player: String, food: u32, saturation: f32) -> Result<(), String> {
++        if food > 20 || !saturation.is_finite() || saturation < 0.0 {
++            return Err("a food level of 0 to 20 and a saturation of 0 or more".into());
++        }
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        let queued = self.out.iter().filter(|o| matches!(o, Output::SetFood { .. })).count();
++        if queued >= CONTROL_PER_CALL {
++            return Err(format!("at most {CONTROL_PER_CALL} food changes per call"));
++        }
++        self.out.push(Output::SetFood { name: self.name.clone(), player, food, saturation });
++        Ok(())
++    }
+     fn get_look(&mut self, player: String) -> Option<(f32, f32)> {
+         self.snapshot
+             .looks
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 2ff6a663d..26c555fa5 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -30,6 +30,8 @@ pub struct TestGame {
+     /// What each of those players is doing, by player id (capability
+     /// `player-control`); a player with no entry is standing still with no experience.
+     pub motions: Vec<(String, Motion)>,
++    /// The body of each player, by player id (`player-control.get-state`); none listed is the standing still default.
++    pub states: Vec<(String, crate::PlayerState)>,
+     /// Where each player looks, `(yaw, pitch)`, by player id; none listed looks south, level.
+     pub looks: Vec<(String, (f32, f32))>,
+     /// Every name that joined, for their id.
+@@ -238,6 +240,7 @@ impl TestGame {
+             }),
+             players: Vec::new(),
+             motions: Vec::new(),
++            states: Vec::new(),
+             looks: Vec::new(),
+             names: Vec::new(),
+             tick: 0,
+@@ -287,6 +290,7 @@ impl TestGame {
+             clock: self.clock,
+             players: self.players.clone(),
+             motions: self.motions.clone(),
++            states: self.states.clone(),
+             looks: self.looks.clone(),
+             mobs: self.mobs.clone(),
+             mobs_dimension: "minecraft:overworld".into(),
+@@ -911,6 +915,23 @@ impl From<Mode> for GameMode {
+ /// the others keep their values.
+ #[derive(Debug, Default, Deserialize)]
+ #[serde(deny_unknown_fields, rename_all = "kebab-case")]
++pub struct StateSet {
++    velocity: Option<[f64; 3]>,
++    jumping: Option<bool>,
++    flying: Option<bool>,
++    fall_flying: Option<bool>,
++    in_water: Option<bool>,
++    in_lava: Option<bool>,
++    air: Option<i32>,
++    fire_ticks: Option<i32>,
++    food: Option<u32>,
++    saturation: Option<f32>,
++    /// `"minecraft:poison 100 0"`: id, ticks, amplifier.
++    effects: Option<Vec<String>>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub struct MotionSet {
+     sneaking: Option<bool>,
+     on_ground: Option<bool>,
+@@ -1165,6 +1186,8 @@ pub struct Step {
+     player: Option<PlayerSet>,
+     /// Server mods: what the player is doing, for `player-control`.
+     motion: Option<MotionSet>,
++    /// Server mods (`player-control.get-state`): what the actor's body is doing, from now on.
++    state: Option<StateSet>,
+     clock: Option<ClockSet>,
+     #[serde(default)]
+     ticks: u64,
+@@ -1516,6 +1539,7 @@ impl Step {
+             || self.press.is_some()
+             || self.net.is_some()
+             || self.motion.is_some()
++            || self.state.is_some()
+             || self.chat.is_some()
+             || self.command.is_some()
+             || self.broken.is_some()
+@@ -1546,6 +1570,42 @@ impl Step {
+                 None => set.apply(game.player.get_or_insert_with(default_player)),
+             }
+         }
++        if let (Some(set), Some(i)) = (&self.state, actor) {
++            let id = game.players[i].id.clone();
++            let at = match game.states.iter().position(|(p, _)| *p == id) {
++                Some(at) => at,
++                None => {
++                    game.states.push((id, crate::PlayerState {
++                        velocity_x: 0.0, velocity_y: 0.0, velocity_z: 0.0, jumping: false, sprinting: false, flying: false, may_fly: false,
++                        fall_flying: false, swimming: false, in_water: false, eyes_in_water: false, in_lava: false, air: 300, max_air: 300,
++                        fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects: Vec::new(),
++                    }));
++                    game.states.len() - 1
++                }
++            };
++            let s = &mut game.states[at].1;
++            if let Some(v) = set.velocity {
++                (s.velocity_x, s.velocity_y, s.velocity_z) = (v[0], v[1], v[2]);
++            }
++            s.jumping = set.jumping.unwrap_or(s.jumping);
++            s.flying = set.flying.unwrap_or(s.flying);
++            s.fall_flying = set.fall_flying.unwrap_or(s.fall_flying);
++            s.in_water = set.in_water.unwrap_or(s.in_water);
++            s.in_lava = set.in_lava.unwrap_or(s.in_lava);
++            s.air = set.air.unwrap_or(s.air);
++            s.fire_ticks = set.fire_ticks.unwrap_or(s.fire_ticks);
++            s.food = set.food.unwrap_or(s.food);
++            s.saturation = set.saturation.unwrap_or(s.saturation);
++            if let Some(list) = &set.effects {
++                s.effects = list
++                    .iter()
++                    .filter_map(|t| {
++                        let mut p = t.split_whitespace();
++                        Some(crate::EffectState { id: p.next()?.into(), duration: p.next()?.parse().ok()?, amplifier: p.next()?.parse().ok()? })
++                    })
++                    .collect();
++            }
++        }
+         if let (Some(set), Some(i)) = (&self.motion, actor) {
+             let id = game.players[i].id.clone();
+             set.apply(game.motion_of(&id));
+@@ -1923,6 +1983,7 @@ impl Step {
+             let got: Vec<String> = out
+                 .iter()
+                 .filter_map(|o| match o {
++                    Output::SetFood { player, food, saturation, .. } => Some(format!("set-food {} {food} {saturation}", name(player))),
+                     Output::SetMotion { player, velocity, .. } => {
+                         Some(format!("set-motion {} {} {} {}", name(player), velocity[0], velocity[1], velocity[2]))
+                     }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index d6e61ea6b..143cdc7dd 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 28);
++    assert_eq!(LEVEL, 29);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 7dd36b582..763b2163f 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -758,9 +758,48 @@ What a player is doing as of the last server tick.
+ | `xp-level` | `s32` | The experience level (`Player.experienceLevel`). |
+ | `xp-progress` | `f32` | The progress toward the next level, 0 up to (not including) 1 (`Player.experienceProgress`). |
+ 
++### record `effect-state`
++
++One effect on a player.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `minecraft:speed`, a content mod's own `mymod:radiation`. |
++| `duration` | `s32` | Ticks left; -1 is infinite. |
++| `amplifier` | `s32` | 0 is level I. |
++
++### record `player-state`
++
++What a player's body is doing as of the last server tick: what equipment that reacts to the player (a jetpack, a suit that breathes for them) needs and `motion` does not hold.
++
++| Field | Type | |
++| --- | --- | --- |
++| `velocity-x` | `f64` | The velocity (`deltaMovement`), blocks a tick. |
++| `velocity-y` | `f64` |  |
++| `velocity-z` | `f64` |  |
++| `jumping` | `bool` | The jump key is held. |
++| `sprinting` | `bool` |  |
++| `flying` | `bool` | Creative flight is on. |
++| `may-fly` | `bool` | The player may fly (`Abilities.mayfly`). |
++| `fall-flying` | `bool` | Gliding with an elytra. |
++| `swimming` | `bool` |  |
++| `in-water` | `bool` | Touching water (`isInWater`). |
++| `eyes-in-water` | `bool` | The eyes are in water (`isUnderWater`). |
++| `in-lava` | `bool` |  |
++| `air` | `s32` | Air left, in ticks (300 is full), and the most they hold. |
++| `max-air` | `s32` |  |
++| `fire-ticks` | `s32` | Ticks of burning left (0 when not on fire). |
++| `passenger` | `bool` | Riding a vehicle. |
++| `sleeping` | `bool` |  |
++| `food` | `u32` | Food level 0 to 20 and saturation. |
++| `saturation` | `f32` |  |
++| `effects` | `list<effect-state>` |  |
++
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
++| `get-state` | `func(player: string) -> option<player-state>` | The body of the player with this id; none for an id that is not online. API 29. |
++| `set-food` | `func(player: string, food: u32, saturation: f32) -> result<_, string>` | Sets the player's food level (0 to 20) and saturation (at most the food level, as vanilla's), made after this call returns. An error for a player not online. API 29. |
+ | `get-look` | `func(player: string) -> option<tuple<f32, f32>>` | Where the player with this id looks, `(yaw, pitch)` in degrees as F3 shows them (yaw 0 faces south, pitch -90 looks straight up); none for an id that is not online. With the eye (the feet and 1.62 blocks, 1.27 sneaking) it gives the face of a block a use met. API 16. |
+ | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
+ | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
+-- 
+2.43.0
+
