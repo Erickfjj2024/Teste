@@ -56,6 +56,7 @@ pub mod server {
     pub fn set_mob_health<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn kill_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn remove_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
+    pub fn set_entity_fire<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
   }
   pub mod player_items { use super::*;
     pub fn get_inventory<A0>(_a0: A0) -> Option<Vec<Option<ItemStack>>> { None }
@@ -168,6 +169,7 @@ pub mod server {
     pub fn on_chunks(self) -> Self { self }
     pub fn on_blocks(self) -> Self { self }
     pub fn on_damage(self) -> Self { self }
+    pub fn on_item_release(self) -> Self { self }
     pub fn redirect(self, _block: &str, _flag_at: u32, _pos_at: u32) -> Self { self }
     pub fn new() -> Self { Self::default() }
   }
@@ -184,6 +186,8 @@ pub mod server {
     fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool { true }
     fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 { amount }
     fn item_hit_damage(&mut self, player: &Player, stack: ItemStack, kind: &str, damage: f32) -> f32 { damage }
+    fn item_released(&mut self, player: &Player, stack: ItemStack, hand: &str, ticks_held: u32) -> bool { true }
+    fn item_shot(&mut self, player: &Player, stack: ItemStack, projectiles: Vec<u32>) {}
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }
     fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> { Vec::new() }
     fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> { Vec::new() }
