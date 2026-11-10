@@ -184,6 +184,12 @@ OPEN_MACHINES |= set(BINS)
 for m in LASERS:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 OPEN_MACHINES |= set(LASERS)
+# Heat: the conductors only keep their heat for now (the heat medium of the fork carries it later); the heaters take energy or fuel.
+HEAT_CONDUCTORS = [f'{t}_thermodynamic_conductor' for t in ('basic', 'advanced', 'elite', 'ultimate')]
+HEAT_MACHINES = ['resistive_heater', 'fuelwood_heater']
+for m in HEAT_CONDUCTORS + HEAT_MACHINES:
+    BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
+OPEN_MACHINES |= set(HEAT_CONDUCTORS + HEAT_MACHINES)
 for m in DYNAMIC:
     BLOCKS[m] = ('minecraft:furnace', {'hardness': 3.5, 'explosion_resistance': 9.0, 'requires_tool': True}, 'machine')
 TRANSMITTERS = [('universal_cable', 'energy'), ('pressurized_tube', 'chemical'), ('mechanical_pipe', 'fluid'),
@@ -196,7 +202,7 @@ items = {}
 # 1.21.1: the item definitions are made from the item models (base_1211.py), which also hold the variants of an item
 # (the geiger counter's levels, the bow's pulling frames...) and block models: only what the lang names as an item is one
 # blocks the port has only as items so far (their blocks are not made yet): the heat conductors, two transporters, the chest, the vibrator
-ITEM_ONLY_BLOCKS = {f'{t}_thermodynamic_conductor' for t in ('basic', 'advanced', 'elite', 'ultimate')} | {'diversion_transporter', 'restrictive_transporter', 'personal_chest', 'seismic_vibrator'}
+ITEM_ONLY_BLOCKS = {'diversion_transporter', 'restrictive_transporter', 'personal_chest', 'seismic_vibrator'}
 ITEM_LANG = {k[len('item.mekanism.'):] for k in read_json(f'{GEN}/assets/{NS}/lang/en_us.json') if k.startswith('item.mekanism.')}
 for p in sorted(glob.glob(f'{GEN}/assets/{NS}/items/*.json')):
     n = os.path.basename(p)[:-5]

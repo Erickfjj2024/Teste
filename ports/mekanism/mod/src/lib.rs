@@ -52,6 +52,7 @@ mod fusion;
 mod induction;
 mod factory;
 mod pump;
+mod heat_world;
 mod qio;
 mod radiation;
 mod reaction;
@@ -1868,6 +1869,18 @@ impl ServerMod for Mekanism {
             }
             r = r.block_entity_kind(k);
         }
+        // The heat: conductors only keep their heat; the resistive heater takes energy (its screen has no slots), the fuelwood heater one fuel slot.
+        for tier in heat::ConductorTier::ALL {
+            r = r.block_entity_kind(kind(tier.block_name(), true));
+        }
+        let mut resistive = kind(resistive_heater::BLOCK, true);
+        let resistive_cap = resistive_heater::ResistiveHeater::default().max_energy_fe();
+        resistive.container = Some(ContainerSpec { slots: 0, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        resistive.energy = Some(energy(resistive_cap, resistive_cap, FlowSide::Input));
+        r = r.block_entity_kind(resistive);
+        let mut fuelwood = kind(fuelwood_heater::BLOCK, true);
+        fuelwood.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(fuelwood);
         // The QIO drive array holds twelve drives (one per slot, none moved by hoppers); the redstone adapter's one slot is its ghost target.
         let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
@@ -2793,6 +2806,10 @@ impl ServerMod for Mekanism {
         let alarms: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(alarm::ALARM)).collect();
         if !alarms.is_empty() {
             out.extend(self.run_alarms(&alarms));
+        }
+        let heat_blocks: Vec<&BlockEntity> = entities.iter().filter(|e| heat_world::is_heat_block(e.state.split('[').next().unwrap_or(""))).collect();
+        if !heat_blocks.is_empty() {
+            out.extend(heat_world::run(&heat_blocks));
         }
         let drive_arrays: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_DRIVE_ARRAY)).collect();
         if !drive_arrays.is_empty() {
