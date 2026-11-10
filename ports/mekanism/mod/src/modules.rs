@@ -521,6 +521,29 @@ pub enum SprintBoost {
 }
 
 impl SprintBoost {
+    /// The place in the original's order.
+    pub const fn ordinal(&self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Med => 2,
+            Self::High => 3,
+            Self::Ultra => 4,
+        }
+    }
+
+    pub const fn from_ordinal(index: u8) -> Self {
+        match index {
+            0 => Self::Off,
+            1 => Self::Low,
+            2 => Self::Med,
+            3 => Self::High,
+            _ => Self::Ultra,
+        }
+    }
+}
+
+impl SprintBoost {
     pub const fn boost(&self) -> f32 {
         match self {
             Self::Off => 0.0,
@@ -560,6 +583,29 @@ pub enum JumpBoost {
     Med,   // 1.0
     High,  // 3.0
     Ultra, // 5.0
+}
+
+impl JumpBoost {
+    /// The place in the original's order.
+    pub const fn ordinal(&self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Med => 2,
+            Self::High => 3,
+            Self::Ultra => 4,
+        }
+    }
+
+    pub const fn from_ordinal(index: u8) -> Self {
+        match index {
+            0 => Self::Off,
+            1 => Self::Low,
+            2 => Self::Med,
+            3 => Self::High,
+            _ => Self::Ultra,
+        }
+    }
 }
 
 impl JumpBoost {
@@ -605,6 +651,29 @@ pub enum StepAssist {
 }
 
 impl StepAssist {
+    /// The place in the original's order.
+    pub const fn ordinal(&self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Med => 2,
+            Self::High => 3,
+            Self::Ultra => 4,
+        }
+    }
+
+    pub const fn from_ordinal(index: u8) -> Self {
+        match index {
+            0 => Self::Off,
+            1 => Self::Low,
+            2 => Self::Med,
+            3 => Self::High,
+            _ => Self::Ultra,
+        }
+    }
+}
+
+impl StepAssist {
     pub const fn height(&self) -> f32 {
         match self {
             Self::Off => 0.0,
@@ -644,6 +713,29 @@ pub enum MagneticRange {
     Med,   // 3.0
     High,  // 5.0
     Ultra, // 10.0
+}
+
+impl MagneticRange {
+    /// The place in the original's order.
+    pub const fn ordinal(&self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Med => 2,
+            Self::High => 3,
+            Self::Ultra => 4,
+        }
+    }
+
+    pub const fn from_ordinal(index: u8) -> Self {
+        match index {
+            0 => Self::Off,
+            1 => Self::Low,
+            2 => Self::Med,
+            3 => Self::High,
+            _ => Self::Ultra,
+        }
+    }
 }
 
 impl MagneticRange {
@@ -765,6 +857,42 @@ pub struct InstalledModule {
 }
 
 impl InstalledModule {
+    /// Chooses the sprint boost; refused when past the `installed + 1` first ones (`LocomotiveBoosting`, `MekanismModules.java:184-191`).
+    pub fn set_sprint_boost(&mut self, value: SprintBoost) -> bool {
+        if self.module_type != ModuleType::LocomotiveBoostingUnit || value.ordinal() >= self.selectable_thrust_count() {
+            return false;
+        }
+        self.sprint_boost = value;
+        true
+    }
+
+    /// Chooses the jump boost (`HydraulicPropulsion`, `MekanismModules.java:210-213`).
+    pub fn set_jump_boost(&mut self, value: JumpBoost) -> bool {
+        if self.module_type != ModuleType::HydraulicPropulsionUnit || value.ordinal() >= self.selectable_thrust_count() {
+            return false;
+        }
+        self.jump_boost = value;
+        true
+    }
+
+    /// Chooses the step assist (`HydraulicPropulsion`, `MekanismModules.java:214-217`).
+    pub fn set_step_assist(&mut self, value: StepAssist) -> bool {
+        if self.module_type != ModuleType::HydraulicPropulsionUnit || value.ordinal() >= self.selectable_thrust_count() {
+            return false;
+        }
+        self.step_assist = value;
+        true
+    }
+
+    /// Chooses the magnetic range (`MagneticAttraction`, `MekanismModules.java:220-226`).
+    pub fn set_magnetic_range(&mut self, value: MagneticRange) -> bool {
+        if self.module_type != ModuleType::MagneticAttractionUnit || value.ordinal() >= self.selectable_thrust_count() {
+            return false;
+        }
+        self.magnetic_range = value;
+        true
+    }
+
     /// How many of the thrust multipliers can be chosen: `installed + 1` (`ModuleEnumConfig.createBounded(.., installed + 1)`, `MekanismModules.java:155-160`).
     pub fn selectable_thrust_count(&self) -> u8 {
         self.installed.saturating_add(1)
@@ -785,6 +913,28 @@ impl InstalledModule {
 
     /// After units are taken out the choice has to stay among the selectable ones.
     pub fn clamp_thrust_to_installed(&mut self) {
+        let max = self.installed;
+        match self.module_type {
+            ModuleType::LocomotiveBoostingUnit => {
+                if self.sprint_boost.ordinal() > max {
+                    self.sprint_boost = SprintBoost::from_ordinal(max);
+                }
+            }
+            ModuleType::HydraulicPropulsionUnit => {
+                if self.jump_boost.ordinal() > max {
+                    self.jump_boost = JumpBoost::from_ordinal(max);
+                }
+                if self.step_assist.ordinal() > max {
+                    self.step_assist = StepAssist::from_ordinal(max);
+                }
+            }
+            ModuleType::MagneticAttractionUnit => {
+                if self.magnetic_range.ordinal() > max {
+                    self.magnetic_range = MagneticRange::from_ordinal(max);
+                }
+            }
+            _ => {}
+        }
         if self.module_type == ModuleType::JetpackUnit {
             let max = self.installed;
             if self.thrust_multiplier.ordinal() > max {

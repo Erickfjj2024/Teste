@@ -54,7 +54,8 @@ pub const ENERGY_USAGE_FALL: u64 = fe(50); // 20 FE per point of fall damage
 pub const MEKASUIT_FALL_DAMAGE_RATIO: f32 = 1.0;
 
 /// Base jump energy usage: 1,000 Joules = 400 FE (`GearConfig.java:268`).
-pub const ENERGY_USAGE_JUMP: u64 = fe(1_000); // 400 FE
+pub const ENERGY_USAGE_JUMP_JOULES: u64 = 1_000;
+pub const ENERGY_USAGE_JUMP: u64 = fe(ENERGY_USAGE_JUMP_JOULES); // 400 FE
 
 /// Elytra energy usage per second: 32,000 Joules = 12,800 FE (`GearConfig.java:269`).
 pub const ENERGY_USAGE_ELYTRA: u64 = fe(32_000); // 12_800 FE
@@ -81,7 +82,10 @@ pub const ENERGY_USAGE_HYDROSTATIC: u64 = fe(500); // 200 FE/t
 pub const ENERGY_USAGE_NUTRITIONAL: u64 = fe(20_000); // 8_000 FE
 
 /// Energy usage item attraction base: 250 Joules/t = 100 FE/t (`GearConfig.java:277`).
-pub const ENERGY_USAGE_ITEM_ATTRACTION: u64 = fe(250); // 100 FE/t
+pub const ENERGY_USAGE_ITEM_ATTRACTION_JOULES: u64 = 250;
+pub const ENERGY_USAGE_ITEM_ATTRACTION: u64 = fe(ENERGY_USAGE_ITEM_ATTRACTION_JOULES); // 100 FE per item
+/// `ModuleHydrostaticRepulsorUnit.BOOST_STACKS`: units needed for the swim boost.
+pub const HYDROSTATIC_BOOST_STACKS: u8 = 4;
 
 /// Geothermal charging rate: 10 Joules/t = 4 FE/t per degree above ambient (`GeneratorsGearConfig.java:24`).
 pub const GEOTHERMAL_CHARGING_RATE: u64 = fe(10); // 4 FE/t
@@ -828,7 +832,7 @@ pub struct JetpackInput {
     pub ascending: bool,
     /// `Player.isDescending()`.
     pub descending: bool,
-    /// `CommonPlayerTickHandler.isOnGroundOrSleeping`.
+    /// `CommonPlayerTickHandler.isOnGroundOrSleeping`: on the ground, sleeping **or flying** (see `is_on_ground_or_sleeping`).
     pub on_ground_or_sleeping: bool,
     /// `Player.isShiftKeyDown()`.
     pub sneaking: bool,
@@ -991,127 +995,174 @@ pub fn tick_jetpack(bodyarmor: &mut MekaSuitItemStack, input: &JetpackInput) -> 
     JetpackTick { mode, thrust, new_motion: Some(motion), reset_fall, fuel_used }
 }
 
-/// Elytra unit flight tick on Bodyarmor (`ItemMekaSuitArmor.java:315-331`).
-/// Consumes 32,000 J = 12,800 FE every 20 ticks (1 second).
-pub fn tick_elytra(bodyarmor: &mut MekaSuitItemStack, flight_ticks: u32) -> (bool, u64) {
-    if bodyarmor.item != BODYARMOR {
-        return (false, 0);
-    }
-    if !bodyarmor.modules.is_enabled(ModuleType::ElytraUnit) {
-        return (false, 0);
-    }
-    if bodyarmor.energy < ENERGY_USAGE_ELYTRA {
-        return (false, 0);
-    }
 
+
+
+
+/// What the player is doing, for the movement modules (`CommonPlayerTickHandler`, `ModuleLocomotiveBoostingUnit.canFunction`, ...).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MoveInput {
+    pub sprinting: bool,
+    pub fall_flying: bool,
+    pub on_ground: bool,
+    pub in_water: bool,
+    /// `!player.getMaxHeightFluidType().isAir()`: in any fluid.
+    pub in_fluid: bool,
+    pub sneaking: bool,
+    /// `getAbilities().flying`: actually flying, not just allowed to.
+    pub flying: bool,
+    /// The boost key (`KeySync.BOOST`).
+    pub boost_key: bool,
+    /// Creative or spectator: not `MekanismUtils.isPlayingMode`. Modules that `useEnergy(.., freeCreative = true)` cost nothing then.
+    pub creative_or_spectator: bool,
+}
+
+/// `ItemMekaSuitArmor.canElytraFly` (lines 296-313): the chestplate, not sneaking, the elytra unit enabled with energy for one second of flight, and
+/// the jetpack (if it is enabled) not hovering with hydrogen in the tank.
+pub fn can_elytra_fly(body: &MekaSuitItemStack, input: &MoveInput) -> bool {
+    if body.item != BODYARMOR || input.sneaking {
+        return false;
+    }
+    if !body.modules.is_enabled(ModuleType::ElytraUnit) || body.energy < ENERGY_USAGE_ELYTRA {
+        return false;
+    }
+    match body.modules.get(ModuleType::JetpackUnit).filter(|m| m.enabled) {
+        None => true,
+        Some(jetpack) => jetpack.jetpack_mode != JetpackMode::Hover || body.chemical_amount == 0,
+    }
+}
+
+/// Elytra flight tick on the server (`ItemMekaSuitArmor.elytraFlightTick`, lines 315-331). It answers true (`canElytraFly` was checked before) and takes
+/// 32 000 J (12 800 FE) every 20 flight ticks (`nextFlightTicks % 20 == 0`; the glide game event is every 10), nothing in creative.
+pub fn tick_elytra(bodyarmor: &mut MekaSuitItemStack, flight_ticks: u32, input: &MoveInput) -> (bool, u64) {
     let next = flight_ticks + 1;
     let mut drained = 0u64;
-    if next % 20 == 0 {
-        bodyarmor.energy -= ENERGY_USAGE_ELYTRA;
-        drained = ENERGY_USAGE_ELYTRA;
+    if next % 20 == 0 && bodyarmor.modules.is_enabled(ModuleType::ElytraUnit) && !input.creative_or_spectator {
+        drained = ENERGY_USAGE_ELYTRA.min(bodyarmor.energy);
+        bodyarmor.energy -= drained;
     }
     (true, drained)
 }
 
-/// Gravitational modulating unit tick on Bodyarmor (`ModuleGravitationalModulatingUnit.java:85-100`).
-/// Creative flight: base cost 1,000 J/t = 400 FE/t (`ENERGY_USAGE_GRAVITATIONAL`).
-/// Boost mode (boost key held): 4x energy cost = 1,600 FE/t, adds relative velocity `boost`.
-pub fn tick_gravitational_modulation(
-    bodyarmor: &mut MekaSuitItemStack,
-    is_flying: bool,
-    is_boosting: bool,
-) -> (bool, f32, u64) {
-    if bodyarmor.item != BODYARMOR || !is_flying {
+/// `CommonPlayerTickHandler.isOnGroundOrSleeping`: on the ground, sleeping, **or flying** (so a player flying with the gravitational unit counts as on the ground
+/// for the jetpack's hover). The host fills `JetpackInput::on_ground_or_sleeping` with this.
+pub fn is_on_ground_or_sleeping(on_ground: bool, sleeping: bool, flying: bool) -> bool {
+    on_ground || sleeping || flying
+}
+
+/// `CommonPlayerTickHandler.getStepBoost` (lines 72-90): the step height the player gains. Sneaking gives none; boots with the hydraulic unit enabled decide
+/// (even at 0); otherwise the free runners' step mode gives 0.5.
+pub fn step_boost(boots: Option<&MekaSuitItemStack>, sneaking: bool, free_runners_step_boost: bool) -> f32 {
+    if sneaking {
+        return 0.0;
+    }
+    let Some(boots) = boots else { return 0.0 };
+    if boots.item == BOOTS {
+        if let Some(m) = boots.modules.get(ModuleType::HydraulicPropulsionUnit).filter(|m| m.enabled) {
+            return m.step_assist.height();
+        }
+    }
+    if free_runners_step_boost { 0.5 } else { 0.0 }
+}
+
+/// Gravitational modulating unit tick on the chestplate (`ModuleGravitationalModulatingUnit.tickServer`, lines 80-96). Only for a player that is flying
+/// (not just allowed to) and in a playing mode, with energy for one tick. With the boost key, a boost above 0 and energy for 4 ticks it takes
+/// 4 x the energy and moves the player; otherwise the base energy. Returns whether it worked, the boost, and the energy taken.
+pub fn tick_gravitational_modulation(bodyarmor: &mut MekaSuitItemStack, input: &MoveInput) -> (bool, f32, u64) {
+    if bodyarmor.item != BODYARMOR || !input.flying || input.creative_or_spectator {
         return (false, 0.0, 0);
     }
-    let Some(m) = bodyarmor.modules.get(ModuleType::GravitationalModulatingUnit) else {
+    let Some(m) = bodyarmor.modules.get(ModuleType::GravitationalModulatingUnit).filter(|m| m.enabled) else {
         return (false, 0.0, 0);
     };
-    if !m.enabled {
+    let base_cost = ENERGY_USAGE_GRAVITATIONAL;
+    // `hasEnoughEnergy`: the cost is zero or the container holds it.
+    if base_cost != 0 && bodyarmor.energy < base_cost {
         return (false, 0.0, 0);
     }
-
-    let base_cost = ENERGY_USAGE_GRAVITATIONAL; // 400 FE
-    let boost_cost = base_cost * GRAVITATIONAL_BOOST_MULTIPLIER; // 1,600 FE
-
-    if is_boosting && bodyarmor.energy >= boost_cost {
+    let boost = m.sprint_boost.boost();
+    let boost_cost = base_cost * GRAVITATIONAL_BOOST_MULTIPLIER;
+    if boost > 0.0 && input.boost_key && bodyarmor.energy >= boost_cost {
         bodyarmor.energy -= boost_cost;
-        (true, m.sprint_boost.boost(), boost_cost)
-    } else if bodyarmor.energy >= base_cost {
-        bodyarmor.energy -= base_cost;
-        (true, 0.0, base_cost)
+        (true, boost, boost_cost)
     } else {
-        (false, 0.0, 0)
+        let taken = base_cost.min(bodyarmor.energy);
+        bodyarmor.energy -= taken;
+        (true, 0.0, taken)
     }
 }
 
-/// Locomotive boosting unit tick on Pants (`ModuleLocomotiveBoostingUnit.java:50-75`).
-/// Sprint speed boost (0.05 to 0.50).
-/// Energy cost: 40 FE * boost / 0.1 per tick.
-/// Throttled by 5x in air/water.
-pub fn tick_locomotive_boost(
-    pants: &mut MekaSuitItemStack,
-    is_sprinting: bool,
-    in_air: bool,
-    in_water: bool,
-) -> (f32, u64) {
-    if pants.item != PANTS || !is_sprinting {
+/// The energy of a tick of the locomotive boost in Joules: `clampToLong(sprintBoostUsage * boost / 0.1D)`; the product of the `long` and the `float`
+/// is a float (`ModuleLocomotiveBoostingUnit.java:50,64`).
+fn locomotive_usage_joules(boost: f32) -> u64 {
+    let product = 100.0f32 * boost;
+    let joules = f64::from(product) / 0.1;
+    if joules <= 0.0 { 0 } else { joules as u64 }
+}
+
+/// Locomotive boosting unit on the pants (`ModuleLocomotiveBoostingUnit.tick`, lines 47-71). It works when the player is not gliding with the elytra, is
+/// sprinting and the pants hold the energy; the boost drops to a fifth in the air (`!onGround`) and again in water. Returns the boost and the energy taken
+/// (nothing in creative: `useEnergy` frees it there).
+pub fn tick_locomotive_boost(pants: &mut MekaSuitItemStack, input: &MoveInput) -> (f32, u64) {
+    if pants.item != PANTS || input.fall_flying || !input.sprinting {
         return (0.0, 0);
     }
-    let Some(m) = pants.modules.get(ModuleType::LocomotiveBoostingUnit) else {
+    let Some(m) = pants.modules.get(ModuleType::LocomotiveBoostingUnit).filter(|m| m.enabled) else {
         return (0.0, 0);
     };
-    if !m.enabled || m.sprint_boost == SprintBoost::Off {
-        return (0.0, 0);
-    }
-
-    let mut boost = m.sprint_boost.boost();
-    let cost = ((ENERGY_USAGE_SPRINT_BOOST as f32) * boost / 0.1).ceil() as u64;
-
+    let base = m.sprint_boost.boost();
+    let cost = fe(locomotive_usage_joules(base));
+    // `canUseEnergy` still looks at the container in creative (not spectator): without the energy the unit does not work.
     if pants.energy < cost {
         return (0.0, 0);
     }
-
-    pants.energy -= cost;
-    if in_air {
+    let mut boost = base;
+    if !input.on_ground {
         boost /= 5.0;
     }
-    if in_water {
+    if input.in_water {
         boost /= 5.0;
     }
-    (boost, cost)
+    let taken = if input.creative_or_spectator { 0 } else { cost };
+    pants.energy -= taken;
+    (boost, taken)
 }
 
-/// Hydraulic propulsion unit jump on Boots (`CommonPlayerTickHandler.java:272-292`).
-/// Boost impulse 0.5 to 5.0.
-/// Energy cost: 400 FE * boost / 0.1.
-/// If sprinting with locomotive boost, height impulse is sqrt(boost).
-pub fn calculate_hydraulic_jump(
-    boots: &mut MekaSuitItemStack,
-    is_sprint_boosted: bool,
-) -> (f32, u64) {
-    if boots.item != BOOTS {
+/// The jump of the hydraulic propulsion unit (`CommonPlayerTickHandler.onLivingJump`, lines 272-292). It needs the boost key, an enabled unit on the boots
+/// and the boots holding `ceil(baseJump * boost / 0.1F)` (a float product). With the locomotive unit working the height is the square root of the boost.
+/// **As in the original, the energy is taken from the leggings** (`useEnergy(player, legs, usage, true)`), not from the boots that were checked.
+/// Returns the impulse and the energy taken.
+pub fn calculate_hydraulic_jump(boots: &MekaSuitItemStack, legs: Option<&mut MekaSuitItemStack>, input: &MoveInput) -> (f32, u64) {
+    if boots.item != BOOTS || !input.boost_key {
         return (0.0, 0);
     }
-    let Some(m) = boots.modules.get(ModuleType::HydraulicPropulsionUnit) else {
+    let Some(m) = boots.modules.get(ModuleType::HydraulicPropulsionUnit).filter(|m| m.enabled) else {
         return (0.0, 0);
     };
-    if !m.enabled || m.jump_boost == JumpBoost::Off {
-        return (0.0, 0);
-    }
-
     let mut boost = m.jump_boost.boost();
-    let cost = ((ENERGY_USAGE_JUMP as f32) * boost / 0.1).ceil() as u64;
-
-    if boots.energy < cost {
+    let usage = fe(((ENERGY_USAGE_JUMP_JOULES as f32 * boost) / 0.1f32).ceil() as u64);
+    // `canUseEnergy(player, boots, usage)`: the boots' container has to hold it (a spectator never can).
+    if boots.energy < usage {
         return (0.0, 0);
     }
-
-    boots.energy -= cost;
-    if is_sprint_boosted {
+    let mut locomotive_works = false;
+    if let Some(legs) = legs.as_deref() {
+        if legs.item == PANTS && legs.modules.is_enabled(ModuleType::LocomotiveBoostingUnit) {
+            let cost = fe(locomotive_usage_joules(legs.modules.get(ModuleType::LocomotiveBoostingUnit).map_or(0.0, |l| l.sprint_boost.boost())));
+            locomotive_works = !input.fall_flying && input.sprinting && legs.energy >= cost;
+        }
+    }
+    if locomotive_works {
         boost = boost.sqrt();
     }
-    (boost, cost)
+    let mut taken = 0;
+    if !input.creative_or_spectator {
+        if let Some(legs) = legs {
+            taken = usage.min(legs.energy);
+            legs.energy -= taken;
+        }
+    }
+    (boost, taken)
 }
 
 /// Geothermal generator tick on Pants (`ModuleGeothermalGeneratorUnit.java:48-93`).
@@ -1147,63 +1198,73 @@ pub fn tick_geothermal_generator(
     }
 }
 
-/// Hydrostatic repulsor tick on Pants (`ModuleHydrostaticRepulsorUnit.java:42-50`).
-/// Consumes 500 J/t = 200 FE/t when swim boost is active in fluid.
-pub fn tick_hydrostatic_repulsor(pants: &mut MekaSuitItemStack, in_fluid: bool) -> u64 {
-    if pants.item != PANTS || !in_fluid {
+/// Hydrostatic repulsor on the pants (`ModuleHydrostaticRepulsorUnit.tickServer`, lines 30-34): with the swim boost on, 4 units installed and energy for a
+/// tick, the player in any fluid takes 500 J (200 FE) a tick (nothing in creative).
+pub fn tick_hydrostatic_repulsor(pants: &mut MekaSuitItemStack, input: &MoveInput) -> u64 {
+    if pants.item != PANTS || !input.in_fluid {
         return 0;
     }
-    let Some(m) = pants.modules.get(ModuleType::HydrostaticRepulsorUnit) else {
+    let Some(m) = pants.modules.get(ModuleType::HydrostaticRepulsorUnit).filter(|m| m.enabled) else {
         return 0;
     };
-    if !m.enabled || !m.swim_boost || m.installed < 4 {
+    // `isSwimBoost`: the option on, `BOOST_STACKS` (4) installed, and `hasEnoughEnergy`.
+    if !m.swim_boost || m.installed < HYDROSTATIC_BOOST_STACKS || pants.energy < ENERGY_USAGE_HYDROSTATIC {
         return 0;
     }
-
-    let cost = ENERGY_USAGE_HYDROSTATIC; // 200 FE
-    if pants.energy >= cost {
-        pants.energy -= cost;
-        cost
-    } else {
-        0
+    if input.creative_or_spectator {
+        return 0;
     }
+    pants.energy -= ENERGY_USAGE_HYDROSTATIC;
+    ENERGY_USAGE_HYDROSTATIC
 }
 
-/// Magnetic attraction unit tick on Boots (`ModuleMagneticAttractionUnit.java:44-74`).
-/// Range: 4 + range blocks (up to 14 blocks).
-/// Energy cost: 100 FE * range per item pulled.
-pub fn tick_magnetic_attraction(
-    boots: &mut MekaSuitItemStack,
-    items_in_range_count: usize,
-) -> (usize, u64) {
+/// The water movement efficiency the repulsor adds to the pants (`ModuleHydrostaticRepulsorUnit.adjustAttributes`): `min(1, 0.33333334 * installed)`,
+/// the value of depth strider.
+pub fn water_movement_efficiency(installed: u8) -> f32 {
+    (0.33333334f32 * f32::from(installed)).min(1.0)
+}
+
+
+/// Magnetic attraction on the boots (`ModuleMagneticAttractionUnit.tickServer`, lines 25-55). It looks for dropped items within `4 + range` blocks (the host
+/// finds them: the ones without a pick-up delay and farther than 0.001) and pulls each for `ceil(250 J * range)`. In creative, or when that is zero, it
+/// is free. It starts only if the boots hold the cost of one pull, stops when one cannot be paid or when the rest is below the cost. Returns how many
+/// it pulled and the energy taken.
+pub fn tick_magnetic_attraction(boots: &mut MekaSuitItemStack, items_in_range_count: usize, input: &MoveInput) -> (usize, u64) {
     if boots.item != BOOTS || items_in_range_count == 0 {
         return (0, 0);
     }
-    let Some(m) = boots.modules.get(ModuleType::MagneticAttractionUnit) else {
+    let Some(m) = boots.modules.get(ModuleType::MagneticAttractionUnit).filter(|m| m.enabled) else {
         return (0, 0);
     };
-    if !m.enabled || m.magnetic_range == MagneticRange::Off {
+    if m.magnetic_range == MagneticRange::Off {
         return (0, 0);
     }
-
-    let range_val = m.magnetic_range.range();
-    let cost_per_item = ((ENERGY_USAGE_ITEM_ATTRACTION as f32) * range_val).ceil() as u64;
-
+    let range = m.magnetic_range.range();
+    let usage = fe((ENERGY_USAGE_ITEM_ATTRACTION_JOULES as f32 * range).ceil() as u64);
+    let free = usage == 0 || input.creative_or_spectator;
+    if free {
+        return (items_in_range_count, 0);
+    }
+    if boots.energy < usage {
+        return (0, 0);
+    }
     let mut pulled = 0;
-    let mut total_cost = 0;
-
+    let mut total = 0;
     for _ in 0..items_in_range_count {
-        if boots.energy >= cost_per_item {
-            boots.energy -= cost_per_item;
-            total_cost += cost_per_item;
-            pulled += 1;
-        } else {
+        let taken = usage.min(boots.energy);
+        if taken == 0 {
+            break;
+        }
+        boots.energy -= taken;
+        total += taken;
+        pulled += 1;
+        if boots.energy < usage {
             break;
         }
     }
-
-    (pulled, total_cost)
+    (pulled, total)
 }
+
 
 // -----------------------------------------------------------------------------
 // Player Armor Ticking & Host Integration (FORK-n)
@@ -1215,11 +1276,10 @@ pub struct PlayerSuitContext {
     pub player_name: String,
     pub is_jumping: bool,
     pub is_sneaking: bool,
-    pub is_sprinting: bool,
+    /// What the movement modules need (sprinting, flying, ground, water, boost key, creative...).
+    pub movement: MoveInput,
     /// What the jetpack needs besides the keys (motion, look, ground, cooldown...).
     pub jetpack: JetpackInput,
-    pub is_flying: bool,
-    pub is_boosting: bool,
     pub can_see_sun: bool,
     pub sun_brightness: f32,
     pub biome_temp: f32,
@@ -1230,7 +1290,6 @@ pub struct PlayerSuitContext {
     pub is_in_rain: bool,
     pub is_on_fire: bool,
     pub submerged_fluid_temp_k: f64,
-    pub in_fluid: bool,
     pub food_level: i32,
     pub air_supply: i32,
     pub max_air_supply: i32,
@@ -1288,7 +1347,7 @@ pub fn tick_player_suit(
         }
 
         // Gravitational modulation
-        tick_gravitational_modulation(body, ctx.is_flying, ctx.is_boosting);
+        tick_gravitational_modulation(body, &ctx.movement);
     }
 
     // Charge distribution across suit pieces
@@ -1297,19 +1356,19 @@ pub fn tick_player_suit(
     // 4. Pants operations
     if let Some(ref mut pants) = pieces[ArmorSlot::Legs as usize] {
         // Locomotive boost
-        tick_locomotive_boost(pants, ctx.is_sprinting, !ctx.in_fluid && ctx.is_flying, ctx.in_fluid);
+        tick_locomotive_boost(pants, &ctx.movement);
 
         // Geothermal generator
         tick_geothermal_generator(pants, ctx.is_on_fire, ctx.submerged_fluid_temp_k);
 
         // Hydrostatic repulsor
-        tick_hydrostatic_repulsor(pants, ctx.in_fluid);
+        tick_hydrostatic_repulsor(pants, &ctx.movement);
     }
 
     // 5. Boots operations
     if let Some(ref mut boots) = pieces[ArmorSlot::Feet as usize] {
         // Magnetic attraction
-        tick_magnetic_attraction(boots, ctx.items_in_magnetic_range);
+        tick_magnetic_attraction(boots, ctx.items_in_magnetic_range, &ctx.movement);
     }
 }
 
@@ -1787,29 +1846,219 @@ mod tests {
         assert!(close(m[2], 0.15 + 0.75) && close(m[0], 0.0) && close(m[1], 0.0));
     }
 
+    fn suit_piece(item: &str, module: ModuleType, count: u8, energy: u64) -> MekaSuitItemStack {
+        let mut piece = MekaSuitItemStack::new(item).unwrap();
+        piece.modules.add_module(item, module, count);
+        piece.energy = energy;
+        piece
+    }
+
+    #[test]
+    fn java_gravitational_unit_only_works_while_flying_in_a_playing_mode() {
+        // ModuleGravitationalModulatingUnit.java:80-96, GearConfig 1_000 J (400 FE) a tick, boost 4 x.
+        let flying = MoveInput { flying: true, ..MoveInput::default() };
+        let mut body = suit_piece(BODYARMOR, ModuleType::GravitationalModulatingUnit, 1, 100_000);
+        assert_eq!(tick_gravitational_modulation(&mut body, &MoveInput::default()), (false, 0.0, 0), "allowed to fly is not flying");
+        assert_eq!(tick_gravitational_modulation(&mut body, &MoveInput { creative_or_spectator: true, ..flying }), (false, 0.0, 0));
+        assert_eq!(tick_gravitational_modulation(&mut body, &flying), (true, 0.0, 400));
+        assert_eq!(body.energy, 99_600);
+        // Boost key held, boost LOW (0.05) > 0 and energy for 4 ticks: 1 600 FE and the boost.
+        let boosting = MoveInput { boost_key: true, ..flying };
+        let (works, boost, cost) = tick_gravitational_modulation(&mut body, &boosting);
+        assert!(works && cost == 1_600 && (boost - 0.05).abs() < 1e-6);
+        // With the boost OFF (0) the key changes nothing: the original takes the base energy, not 4 x (the port took 4 x).
+        body.modules.get_mut(ModuleType::GravitationalModulatingUnit).unwrap().sprint_boost = SprintBoost::Off;
+        assert_eq!(tick_gravitational_modulation(&mut body, &boosting), (true, 0.0, 400));
+        // Energy for one tick but not for four: the base energy.
+        body.modules.get_mut(ModuleType::GravitationalModulatingUnit).unwrap().sprint_boost = SprintBoost::Low;
+        body.energy = 1_000;
+        assert_eq!(tick_gravitational_modulation(&mut body, &boosting), (true, 0.0, 400));
+        // Without energy for one tick it does not process at all.
+        body.energy = 399;
+        assert_eq!(tick_gravitational_modulation(&mut body, &boosting), (false, 0.0, 0));
+    }
+
+    #[test]
+    fn java_locomotive_boost_costs_and_throttles() {
+        // ModuleLocomotiveBoostingUnit.java:50-71: clampToLong(100 J * boost / 0.1): LOW 50 J, MED 100, HIGH 250, ULTRA 500 (20, 40, 100, 200 FE).
+        let ground = MoveInput { sprinting: true, on_ground: true, ..MoveInput::default() };
+        let mut pants = suit_piece(PANTS, ModuleType::LocomotiveBoostingUnit, 4, 1_000_000);
+        for (level, fe_cost, boost) in [(SprintBoost::Low, 20, 0.05f32), (SprintBoost::Med, 40, 0.1), (SprintBoost::High, 100, 0.25), (SprintBoost::Ultra, 200, 0.5)] {
+            pants.modules.get_mut(ModuleType::LocomotiveBoostingUnit).unwrap().sprint_boost = level;
+            assert_eq!(tick_locomotive_boost(&mut pants, &ground), (boost, fe_cost));
+        }
+        // Not gliding with the elytra, and it has to be sprinting.
+        assert_eq!(tick_locomotive_boost(&mut pants, &MoveInput { fall_flying: true, ..ground }), (0.0, 0));
+        assert_eq!(tick_locomotive_boost(&mut pants, &MoveInput { sprinting: false, ..ground }), (0.0, 0));
+        // A fifth in the air (`!onGround`), another fifth in the water.
+        let (air, _) = tick_locomotive_boost(&mut pants, &MoveInput { on_ground: false, ..ground });
+        assert!((air - 0.5 / 5.0).abs() < 1e-6);
+        let (both, _) = tick_locomotive_boost(&mut pants, &MoveInput { on_ground: false, in_water: true, ..ground });
+        assert!((both - 0.5 / 25.0).abs() < 1e-6);
+        // In creative `useEnergy` is free, but `canUseEnergy` still looks at the container.
+        pants.energy = 1_000;
+        assert_eq!(tick_locomotive_boost(&mut pants, &MoveInput { creative_or_spectator: true, ..ground }), (0.5, 0));
+        assert_eq!(pants.energy, 1_000);
+        pants.energy = 199;
+        assert_eq!(tick_locomotive_boost(&mut pants, &MoveInput { creative_or_spectator: true, ..ground }), (0.0, 0));
+    }
+
+    #[test]
+    fn java_hydraulic_jump_needs_the_boost_key_and_takes_energy_from_the_legs() {
+        // CommonPlayerTickHandler.java:272-292: usage = ceil(1000 J * boost / 0.1F): LOW 5 000 J, MED 10 000, HIGH 30 000, ULTRA 50 000 (2 000 / 4 000 / 12 000 / 20 000 FE).
+        let mut boots = suit_piece(BOOTS, ModuleType::HydraulicPropulsionUnit, 4, 1_000_000);
+        let mut legs = suit_piece(PANTS, ModuleType::LocomotiveBoostingUnit, 1, 1_000_000);
+        let key = MoveInput { boost_key: true, ..MoveInput::default() };
+        for (level, impulse, fe_cost) in [(JumpBoost::Low, 0.5f32, 2_000), (JumpBoost::Med, 1.0, 4_000), (JumpBoost::High, 3.0, 12_000), (JumpBoost::Ultra, 5.0, 20_000)] {
+            assert!(boots.modules.get_mut(ModuleType::HydraulicPropulsionUnit).unwrap().set_jump_boost(level));
+            assert_eq!(calculate_hydraulic_jump(&boots, Some(&mut legs), &key), (impulse, fe_cost));
+        }
+        // Without the boost key nothing happens.
+        assert_eq!(calculate_hydraulic_jump(&boots, Some(&mut legs), &MoveInput::default()), (0.0, 0));
+        // Sprinting with the locomotive unit working limits the height to the square root of the boost.
+        let sprint = MoveInput { boost_key: true, sprinting: true, on_ground: true, ..MoveInput::default() };
+        let (impulse, _) = calculate_hydraulic_jump(&boots, Some(&mut legs), &sprint);
+        assert!((impulse - 5.0f32.sqrt()).abs() < 1e-6);
+        // The boots must hold the energy; in creative the legs are not charged.
+        boots.energy = 19_999;
+        assert_eq!(calculate_hydraulic_jump(&boots, Some(&mut legs), &key), (0.0, 0));
+        boots.energy = 1_000_000;
+        let legs_before = legs.energy;
+        assert_eq!(calculate_hydraulic_jump(&boots, Some(&mut legs), &MoveInput { creative_or_spectator: true, ..key }).1, 0);
+        assert_eq!(legs.energy, legs_before);
+    }
+
+    #[test]
+    fn java_hydrostatic_repulsor_swim_boost_needs_four_units() {
+        // ModuleHydrostaticRepulsorUnit.java: BOOST_STACKS = 4; 500 J (200 FE) a tick in any fluid; water movement min(1, 0.33333334 * installed).
+        let fluid = MoveInput { in_fluid: true, ..MoveInput::default() };
+        let mut three = suit_piece(PANTS, ModuleType::HydrostaticRepulsorUnit, 3, 10_000);
+        assert_eq!(tick_hydrostatic_repulsor(&mut three, &fluid), 0);
+        let mut four = suit_piece(PANTS, ModuleType::HydrostaticRepulsorUnit, 4, 10_000);
+        assert_eq!(tick_hydrostatic_repulsor(&mut four, &fluid), 200);
+        assert_eq!(tick_hydrostatic_repulsor(&mut four, &MoveInput::default()), 0, "not in a fluid");
+        assert_eq!(tick_hydrostatic_repulsor(&mut four, &MoveInput { creative_or_spectator: true, ..fluid }), 0);
+        assert_eq!(four.energy, 9_800);
+        assert!((water_movement_efficiency(1) - 0.33333334).abs() < 1e-7);
+        assert!((water_movement_efficiency(2) - 0.6666667).abs() < 1e-7);
+        assert_eq!(water_movement_efficiency(3), 1.0);
+        assert_eq!(water_movement_efficiency(4), 1.0);
+    }
+
+    #[test]
+    fn java_magnetic_attraction_pays_per_item_and_stops_when_it_cannot() {
+        // ModuleMagneticAttractionUnit.java:25-55: usage = ceil(250 J * range) per item: LOW 1 -> 100 FE, MED 3 -> 300, HIGH 5 -> 500, ULTRA 10 -> 1 000.
+        let none = MoveInput::default();
+        let mut boots = suit_piece(BOOTS, ModuleType::MagneticAttractionUnit, 4, 250);
+        // LOW: 100 FE per item, energy 250: two items (250 -> 150 -> 50, then below the cost: stop).
+        assert_eq!(tick_magnetic_attraction(&mut boots, 5, &none), (2, 200));
+        assert_eq!(boots.energy, 50);
+        // Less than the cost of one pull: it does not start.
+        assert_eq!(tick_magnetic_attraction(&mut boots, 5, &none), (0, 0));
+        // Creative is free.
+        assert_eq!(tick_magnetic_attraction(&mut boots, 5, &MoveInput { creative_or_spectator: true, ..none }), (5, 0));
+        // Range OFF does nothing.
+        boots.energy = 10_000;
+        boots.modules.get_mut(ModuleType::MagneticAttractionUnit).unwrap().magnetic_range = MagneticRange::Off;
+        assert_eq!(tick_magnetic_attraction(&mut boots, 5, &none), (0, 0));
+        boots.modules.get_mut(ModuleType::MagneticAttractionUnit).unwrap().magnetic_range = MagneticRange::Ultra;
+        assert_eq!(tick_magnetic_attraction(&mut boots, 3, &none), (3, 3_000));
+    }
+
+    #[test]
+    fn java_elytra_conditions_and_energy() {
+        // ItemMekaSuitArmor.java:296-331: not sneaking, unit enabled with energy for a second; not with a hovering jetpack that has hydrogen;
+        // 32 000 J (12 800 FE) every 20 flight ticks.
+        let fly = MoveInput::default();
+        let mut body = suit_piece(BODYARMOR, ModuleType::ElytraUnit, 1, 100_000);
+        assert!(can_elytra_fly(&body, &fly));
+        assert!(!can_elytra_fly(&body, &MoveInput { sneaking: true, ..fly }), "sneaking lets the player leave the flight");
+        body.energy = 12_799;
+        assert!(!can_elytra_fly(&body, &fly));
+        body.energy = 100_000;
+        // With the jetpack in hover mode and hydrogen in the tank the elytra does not work; with no hydrogen, or in normal mode, it does.
+        body.modules.add_module(BODYARMOR, ModuleType::JetpackUnit, 1);
+        body.modules.get_mut(ModuleType::JetpackUnit).unwrap().jetpack_mode = JetpackMode::Hover;
+        body.chemical_amount = 10;
+        assert!(!can_elytra_fly(&body, &fly));
+        body.chemical_amount = 0;
+        assert!(can_elytra_fly(&body, &fly));
+        body.chemical_amount = 10;
+        body.modules.get_mut(ModuleType::JetpackUnit).unwrap().jetpack_mode = JetpackMode::Normal;
+        assert!(can_elytra_fly(&body, &fly));
+        // Energy is taken only at flight tick 20, 40...
+        assert_eq!(tick_elytra(&mut body, 18, &fly), (true, 0));
+        assert_eq!(tick_elytra(&mut body, 19, &fly), (true, 12_800));
+        assert_eq!(body.energy, 87_200);
+        assert_eq!(tick_elytra(&mut body, 39, &MoveInput { creative_or_spectator: true, ..fly }), (true, 0));
+    }
+
+    #[test]
+    fn java_step_boost_and_on_ground_rules() {
+        // `CommonPlayerTickHandler.java:62-90`
+        assert!(is_on_ground_or_sleeping(false, false, true), "flying counts as on the ground");
+        assert!(is_on_ground_or_sleeping(false, true, false));
+        assert!(!is_on_ground_or_sleeping(false, false, false));
+        let mut boots = suit_piece(BOOTS, ModuleType::HydraulicPropulsionUnit, 4, 1_000);
+        for (level, height) in [(StepAssist::Off, 0.0f32), (StepAssist::Low, 0.5), (StepAssist::Med, 1.0), (StepAssist::High, 1.5), (StepAssist::Ultra, 2.0)] {
+            assert!(boots.modules.get_mut(ModuleType::HydraulicPropulsionUnit).unwrap().set_step_assist(level));
+            assert_eq!(step_boost(Some(&boots), false, false), height);
+        }
+        // The unit decides even at 0 (the free runners are not looked at); sneaking turns it off; free runners give 0.5 when there is no unit.
+        boots.modules.get_mut(ModuleType::HydraulicPropulsionUnit).unwrap().step_assist = StepAssist::Off;
+        assert_eq!(step_boost(Some(&boots), false, true), 0.0);
+        assert_eq!(step_boost(Some(&boots), true, false), 0.0);
+        assert_eq!(step_boost(Some(&MekaSuitItemStack::new(BOOTS).unwrap()), false, true), 0.5);
+        assert_eq!(step_boost(None, false, true), 0.0);
+    }
+
+    #[test]
+    fn java_bounded_choices_of_the_movement_modules() {
+        // `createBounded(.., installed + 1)`: sprint boost, jump boost, step assist and magnetic range only offer the first installed + 1 values.
+        let mut loco = InstalledModule::new(ModuleType::LocomotiveBoostingUnit, 1);
+        assert!(loco.set_sprint_boost(SprintBoost::Low) && !loco.set_sprint_boost(SprintBoost::Med));
+        let mut hydraulic = InstalledModule::new(ModuleType::HydraulicPropulsionUnit, 2);
+        assert!(hydraulic.set_jump_boost(JumpBoost::Med) && !hydraulic.set_jump_boost(JumpBoost::High));
+        assert!(hydraulic.set_step_assist(StepAssist::Med) && !hydraulic.set_step_assist(StepAssist::High));
+        let mut magnet = InstalledModule::new(ModuleType::MagneticAttractionUnit, 3);
+        assert!(magnet.set_magnetic_range(MagneticRange::High) && !magnet.set_magnetic_range(MagneticRange::Ultra));
+        // Taking a unit out lowers a choice that is no longer selectable.
+        let mut container = ModuleContainer::new();
+        container.add_module(BOOTS, ModuleType::MagneticAttractionUnit, 4);
+        assert!(container.get_mut(ModuleType::MagneticAttractionUnit).unwrap().set_magnetic_range(MagneticRange::Ultra));
+        container.remove_module(ModuleType::MagneticAttractionUnit, 1);
+        assert_eq!(container.get(ModuleType::MagneticAttractionUnit).unwrap().magnetic_range, MagneticRange::High);
+    }
+
     #[test]
     fn test_locomotive_boost_and_hydraulic_jump() {
         // GearConfig.java:271 - mekaSuitEnergyUsageSprintBoost = 100 J = 40 FE
         let mut pants = MekaSuitItemStack::new(PANTS).unwrap();
         pants.modules.add_module(PANTS, ModuleType::LocomotiveBoostingUnit, 2);
         // Set to Med (0.1 boost)
-        pants.modules.get_mut(ModuleType::LocomotiveBoostingUnit).unwrap().sprint_boost = SprintBoost::Med;
-        let (boost, cost) = tick_locomotive_boost(&mut pants, true, false, false);
+        assert!(pants.modules.get_mut(ModuleType::LocomotiveBoostingUnit).unwrap().set_sprint_boost(SprintBoost::Med));
+        let ground = MoveInput { sprinting: true, on_ground: true, ..MoveInput::default() };
+        let (boost, cost) = tick_locomotive_boost(&mut pants, &ground);
         assert_eq!(boost, 0.1);
         assert_eq!(cost, 40); // 40 FE
 
         // In water: boost throttled by 5x (ModuleLocomotiveBoostingUnit.java:69)
-        let (boost_water, _) = tick_locomotive_boost(&mut pants, true, false, true);
+        let (boost_water, _) = tick_locomotive_boost(&mut pants, &MoveInput { in_water: true, ..ground });
         assert_eq!(boost_water, 0.1 / 5.0);
 
         // GearConfig.java:268 - mekaSuitBaseJumpEnergyUsage = 1,000 J = 400 FE
         let mut boots = MekaSuitItemStack::new(BOOTS).unwrap();
         boots.modules.add_module(BOOTS, ModuleType::HydraulicPropulsionUnit, 2);
-        boots.modules.get_mut(ModuleType::HydraulicPropulsionUnit).unwrap().jump_boost = JumpBoost::Med; // 1.0 boost
-        let (jump_impulse, jump_cost) = calculate_hydraulic_jump(&mut boots, false);
+        assert!(boots.modules.get_mut(ModuleType::HydraulicPropulsionUnit).unwrap().set_jump_boost(JumpBoost::Med)); // 1.0 boost
+        let mut legs = MekaSuitItemStack::new(PANTS).unwrap();
+        let before = legs.energy;
+        let jump = MoveInput { boost_key: true, ..MoveInput::default() };
+        let (jump_impulse, jump_cost) = calculate_hydraulic_jump(&boots, Some(&mut legs), &jump);
         assert_eq!(jump_impulse, 1.0);
         assert_eq!(jump_cost, 4_000); // 400 * 1.0 / 0.1 = 4,000 FE
+        assert_eq!(legs.energy, before - 4_000, "the original takes the jump energy from the leggings");
     }
+
 
     #[test]
     fn test_geothermal_and_charge_distribution() {
