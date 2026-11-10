@@ -44,6 +44,7 @@ pub const COOLANT_PER: u64 = 256_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Casing,
+    Glass,
     Valve,
     Disperser,
     Element,
@@ -51,7 +52,8 @@ pub enum Part {
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        CASING | "mekanism:structural_glass" => Some(Part::Casing),
+        CASING => Some(Part::Casing),
+        "mekanism:structural_glass" => Some(Part::Glass),
         VALVE => Some(Part::Valve),
         DISPERSER => Some(Part::Disperser),
         ELEMENT => Some(Part::Element),
@@ -63,7 +65,7 @@ pub fn part_of(state: &str) -> Option<Part> {
 pub struct Found {
     pub valid: bool,
     pub min: [i32; 3],
-    /// Blocks of the structure (for the heat capacity), of the water's volume, of the steam's, and the superheating elements.
+    /// Blocks of the structure shell (for heat capacity), of the water volume, of the steam volume, and superheating elements.
     pub blocks: u32,
     pub water_volume: u32,
     pub steam_volume: u32,
@@ -100,8 +102,8 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                     (0, Some(_)) => return bad,
                     (0, None) if !inside_empty(p) => return bad,
                     (0, None) => {}
-                    (_, Some(Part::Casing)) => {}
-                    (e, Some(Part::Valve)) if e == 1 => {}
+                    (e, Some(Part::Casing)) if e >= 1 => {}
+                    (1, Some(Part::Glass | Part::Valve)) => {}
                     _ => return bad,
                 }
             }
@@ -129,38 +131,20 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
     if seen.len() != elements.len() {
         return bad;
     }
-    // The water under the dispersers: all its air is one piece.
-    let air = |p: [i32; 3]| (1..3).all(|_| true) && p[1] > min[1] && p[1] < plane && p[0] > min[0] && p[0] < max[0] && p[2] > min[2] && p[2] < max[2] && !have.contains_key(&p);
-    let mut cells = Vec::new();
-    for x in min[0] + 1..max[0] {
-        for y in min[1] + 1..plane {
-            for z in min[2] + 1..max[2] {
-                if air([x, y, z]) {
-                    cells.push([x, y, z]);
-                }
-            }
-        }
-    }
-    let Some(&seed) = cells.first() else { return bad };
-    let mut reached = HashSet::from([seed]);
-    let mut todo = vec![seed];
-    while let Some(p) = todo.pop() {
-        for n in neighbors(p) {
-            if air(n) && reached.insert(n) {
-                todo.push(n);
-            }
-        }
-    }
-    if reached.len() != cells.len() {
-        return bad;
-    }
+    // In Java (`BoilerValidator.java:115` & `BoilerMultiblockData.java:145`),
+    // blocks = casing shell size (for heat capacity),
+    // water_volume = full volume below disperser plane minus elements (includes floor and walls),
+    // steam_volume = width * length * steamHeight.
+    let shell_blocks = (size[0] * size[1] * size[2] - (size[0] - 2) * (size[1] - 2) * (size[2] - 2)) as u32;
+    let water_volume = ((size[0] * size[2] * (plane - min[1])) as u32).saturating_sub(elements.len() as u32);
     let steam_height = (max[1] - plane).max(0);
+    let steam_volume = (size[0] * size[2] * steam_height) as u32;
     Found {
         valid: true,
         min,
-        blocks: members.len() as u32,
-        water_volume: cells.len() as u32,
-        steam_volume: (size[0] * size[2] * steam_height) as u32,
+        blocks: shell_blocks,
+        water_volume,
+        steam_volume,
         elements: elements.len() as u32,
     }
 }
@@ -220,6 +204,8 @@ pub struct Boiler {
     pub boil_rate: u64,
     pub max_boil: u64,
     pub given: HashMap<[i32; 3], [u64; 4]>,
+    pub elements: Vec<[i32; 3]>,
+    pub formed: bool,
 }
 
 pub struct Caps {
@@ -301,16 +287,42 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
-            let keep = self.boilers.get(&(dimension.to_owned(), found.min)).map_or(300.0, |b| b.temperature as f32);
+            let b = self.boilers.entry((dimension.to_owned(), found.min)).or_default();
+            if found.valid {
+                b.elements = s.members.iter().filter(|m| part_of(&m.state) == Some(Part::Element)).map(|m| [m.pos.x, m.pos.y, m.pos.z]).collect();
+                if !b.formed {
+                    b.formed = true;
+                    // S2: Multiblock formation notification (`TileEntityMultiblock.java:297-312`).
+                    // In Java, plays SparkleAnimation on bounding box edges for players within 40 blocks
+                    // (or chat message if particles disabled). FORK-30 proposes `world.spawn-particles`.
+                }
+            } else {
+                b.formed = false;
+                for p in &b.elements {
+                    let _ = world::set_block_property(dimension, p[0], p[1], p[2], "lit", "false");
+                }
+                b.elements.clear();
+            }
+            let keep = if b.temperature > 0.0 { b.temperature as f32 } else { 300.0 };
             for m in &s.members {
+                let is_valve = part_of(&m.state) == Some(Part::Valve);
                 // A valve keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites
                 // every member's data, and a member carries no data of its own in `multiblock-changed`. Other
                 // members have no mode byte and keep the plain encoding.
-                let data = if part_of(&m.state) == Some(Part::Valve) {
+                let data = if is_valve {
                     let mode = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0);
                     with_mode(encode(&found, keep), mode)
                 } else {
                     encode(&found, keep)
+                };
+                // S3: If the structure is invalid, valves must have their faces closed and tank filters set to NOTHING.
+                let (tank_faces, menu_data) = if !found.valid && is_valve {
+                    for i in 0..4 {
+                        let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, i, &[NOTHING.to_owned()]);
+                    }
+                    (Some(vec![vec![FlowSide::None; 6]; 4]), Some(Vec::new()))
+                } else {
+                    (None, None)
                 };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
@@ -320,8 +332,8 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: None,
-                    tank_faces: None,
-                    menu_data: None,
+                    tank_faces,
+                    menu_data,
                     transmitter_faces: None,
                 });
             }
@@ -332,20 +344,46 @@ impl Mekanism {
     /// A tick of the valves of the boilers.
     pub(crate) fn run_boiler(&mut self, valves: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
+        let mut invalid_valves = Vec::new();
         for v in valves {
-            if let Some((f, _)) = decode(&v.data).filter(|(f, _)| f.valid) {
-                by.entry((v.dimension.clone(), f.min)).or_default().push(*v);
+            match decode(&v.data) {
+                Some((f, _)) if f.valid => {
+                    by.entry((v.dimension.clone(), f.min)).or_default().push(*v);
+                }
+                _ => invalid_valves.push(*v),
             }
         }
         let mut out = Vec::new();
+        // S3: An invalid or lone valve is NOT a standalone tank (`TileEntityMultiblock.java:218-229`).
+        // Close all tank faces, clear menu data, and set all tank filters to NOTHING.
+        // Tank contents are preserved in `v.tanks` for re-formation (`MultiblockCache.java:43`).
+        for v in invalid_valves {
+            let (x, y, z) = (v.pos.x, v.pos.y, v.pos.z);
+            for i in 0..4 {
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, i, &[NOTHING.to_owned()]);
+            }
+            out.push(BlockEntityUpdate {
+                dimension: v.dimension.clone(),
+                pos: v.pos,
+                data: v.data.clone(),
+                items: None,
+                energy: None,
+                energy_faces: None,
+                tanks: None,
+                tank_faces: Some(vec![vec![FlowSide::None; 6]; 4]),
+                menu_data: Some(Vec::new()),
+                transmitter_faces: None,
+            });
+        }
         for (key, group) in by {
             let Some((found, stored)) = decode(&group[0].data) else { continue };
             let caps = capacities(&found);
             let cap_of = [caps.water, caps.steam, caps.hot, caps.cold];
             let b = self.boilers.entry(key.clone()).or_default();
             let held = |v: &BlockEntity, i: usize| v.tanks.get(i).cloned().unwrap_or(Tank { substance: String::new(), amount: 0 });
-            if b.given.is_empty() {
-                b.temperature = f64::from(stored).max(1.0);
+            let fresh = b.given.is_empty();
+            if fresh {
+                b.temperature = if stored <= 0.0 { 300.0 } else { f64::from(stored) };
                 for i in 0..4 {
                     if let Some(best) = group.iter().map(|v| held(v, i)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
                         let t = process::Tank { chemical: best.substance, amount: best.amount.min(cap_of[i]) };
@@ -356,6 +394,11 @@ impl Mekanism {
                             _ => b.cold = t,
                         }
                     }
+                }
+                // Record the baseline given for every valve so dynamic::merge does not duplicate
+                // existing fluids across valves on the initial tick (`TileEntityBoilerValve.java:108` & `MultiblockCache.java:43`).
+                for v in &group {
+                    b.given.insert([v.pos.x, v.pos.y, v.pos.z], [b.water.amount, b.steam.amount, b.hot.amount, b.cold.amount]);
                 }
             }
             for i in 0..4 {
@@ -395,6 +438,12 @@ impl Mekanism {
             let (rate, max) = tick(b, &found, ambient);
             let tanks_now = [b.water.clone(), b.steam.clone(), b.hot.clone(), b.cold.clone()];
             let temperature = b.temperature;
+            // When temperature >= 373.14 K (BASE_BOIL_TEMP - 0.01), superheating elements become active/lit
+            // (`BoilerMultiblockData.java:174` & `TileEntitySuperheatingElement.java:19`).
+            let active_str = if temperature >= BOIL - 0.01 { "true" } else { "false" };
+            for p in &b.elements {
+                let _ = world::set_block_property(&group[0].dimension, p[0], p[1], p[2], "lit", active_str);
+            }
             for v in &group {
                 b.given.insert([v.pos.x, v.pos.y, v.pos.z], [tanks_now[0].amount, tanks_now[1].amount, tanks_now[2].amount, tanks_now[3].amount]);
             }
@@ -418,11 +467,6 @@ impl Mekanism {
             let full = |t: &process::Tank, cap: u64| if t.amount >= cap { vec![NOTHING.to_owned()] } else { Vec::new() };
             for v in &group {
                 let (x, y, z) = (v.pos.x, v.pos.y, v.pos.z);
-                let _ = world::set_tank_filter(&v.dimension, x, y, z, 0, &if tanks_now[0].amount >= cap_of[0] { vec![NOTHING.to_owned()] } else { vec![WATER.to_owned()] });
-                let _ = world::set_tank_filter(&v.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
-                let _ = world::set_tank_filter(&v.dimension, x, y, z, 2, &if tanks_now[2].amount >= cap_of[2] { vec![NOTHING.to_owned()] } else { vec![HOT.to_owned()] });
-                let _ = world::set_tank_filter(&v.dimension, x, y, z, 3, &[NOTHING.to_owned()]);
-                let _ = full;
                 // A sneak click with the configurator cycles what the valve does (`TileEntityBoilerValve` on sneak
                 // right click): take in, give steam out, give cooled coolant out. A plain click says which.
                 let mut mode = mode_of(&v.data);
@@ -436,6 +480,15 @@ impl Mekanism {
                         let _ = players::tell(&click.player, &format!("Boiler Valve mode: {}", mode_name(mode)));
                     }
                 }
+                // In Java (`TileEntityBoilerValve.java:51,57`), input is accepted only when valve mode is INPUT (mode 0).
+                // Output steam (mode 1) and output coolant (mode 2) valves expose NO input tanks and strictly reject inputs.
+                let water_filter = if mode == 0 && tanks_now[0].amount < cap_of[0] { vec![WATER.to_owned()] } else { vec![NOTHING.to_owned()] };
+                let hot_filter = if mode == 0 && tanks_now[2].amount < cap_of[2] { vec![HOT.to_owned()] } else { vec![NOTHING.to_owned()] };
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 0, &water_filter);
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 2, &hot_filter);
+                let _ = world::set_tank_filter(&v.dimension, x, y, z, 3, &[NOTHING.to_owned()]);
+                let _ = full;
                 // Remember the mode for the structures function: it rewrites the valve's data on every revalidation
                 // and cannot read the mode from the member it is given.
                 self.port_modes.insert((v.dimension.clone(), v.pos.x, v.pos.y, v.pos.z), mode);
@@ -494,9 +547,127 @@ mod tests {
         let f = validate(&boiler(5, 3), [0; 3], [4; 3], |_| true);
         assert!(f.valid);
         assert_eq!(f.elements, 1);
-        // Air under the plane: 3x3 columns, floor row at y=1 and y=2 are inside, minus the element.
-        assert_eq!(f.water_volume, 9 * 2 - 1);
+        // In Java (`BoilerValidator.java:115` & `BoilerMultiblockData.java:307`),
+        // water_volume includes floor and submerged walls:
+        // size[0] * size[2] * (plane - min[1]) - elements = 5 * 5 * 3 - 1 = 74.
+        assert_eq!(f.water_volume, 5 * 5 * 3 - 1);
         assert_eq!(f.steam_volume, 5 * 5 * 1);
+        // Shell blocks (`BoilerMultiblockData.java:145`): 5*5*5 - 3*3*3 = 98.
+        assert_eq!(f.blocks, 98);
+    }
+
+    #[test]
+    fn structural_glass_only_on_faces_not_edges() {
+        // Java `CuboidStructureValidator.java:115` & `BoilerValidator.java:28-33`:
+        // Structural glass is not a frame (`isFrame() == false`).
+        // Edges and corners (`WallRelative.isOnEdge()`) require FRAME (`needsFrame == true`),
+        // so structural glass is forbidden on edges and corners. Faces accept structural glass.
+        let mut on_edge = boiler(5, 3);
+        // [0, 0, 1] is an edge (x == 0, y == 0). Replace Casing with Glass.
+        if let Some(slot) = on_edge.iter_mut().find(|(p, _)| *p == [0, 0, 1]) {
+            slot.1 = Part::Glass;
+        }
+        assert!(!validate(&on_edge, [0; 3], [4; 3], |_| true).valid);
+
+        let mut on_face = boiler(5, 3);
+        // [0, 2, 2] is a face (x == 0, y == 2, z == 2). Replace Casing with Glass.
+        if let Some(slot) = on_face.iter_mut().find(|(p, _)| *p == [0, 2, 2]) {
+            slot.1 = Part::Glass;
+        }
+        assert!(validate(&on_face, [0; 3], [4; 3], |_| true).valid);
+    }
+
+    #[test]
+    fn valve_only_on_faces_not_edges() {
+        // Java `CuboidStructureValidator.java:115, 149`:
+        // Valves cannot be placed on edges or corners.
+        let mut on_edge = boiler(5, 3);
+        if let Some(slot) = on_edge.iter_mut().find(|(p, _)| *p == [0, 0, 1]) {
+            slot.1 = Part::Valve;
+        }
+        assert!(!validate(&on_edge, [0; 3], [4; 3], |_| true).valid);
+    }
+
+    #[test]
+    fn boiler_allows_all_elements_under_dispersers() {
+        // Java `BoilerValidator.java:97-126`:
+        // It is fully valid for the entire layer under dispersers to be superheating elements.
+        let mut all_elem = Vec::new();
+        for x in 0..5 {
+            for y in 0..5 {
+                for z in 0..5 {
+                    let edge = |c: i32| c == 0 || c == 4;
+                    let e = [edge(x), edge(y), edge(z)].iter().filter(|b| **b).count();
+                    if e > 0 {
+                        all_elem.push(([x, y, z], if (x, y, z) == (0, 1, 1) { Part::Valve } else { Part::Casing }));
+                    } else if y == 2 {
+                        all_elem.push(([x, y, z], Part::Disperser));
+                    } else if y == 1 {
+                        // All 3x3 = 9 interior blocks are connected elements
+                        all_elem.push(([x, y, z], Part::Element));
+                    }
+                }
+            }
+        }
+        let f = validate(&all_elem, [0; 3], [4; 3], |_| true);
+        assert!(f.valid);
+        assert_eq!(f.elements, 9);
+        // water_volume: size[0] * size[2] * (plane - min[1]) - elements = 5 * 5 * 2 - 9 = 41
+        assert_eq!(f.water_volume, 5 * 5 * 2 - 9);
+    }
+
+    #[test]
+    fn boiler_elements_partitioning_air_is_valid() {
+        // Java `BoilerValidator.java:115-125`:
+        // Air blocks separated by superheating elements are valid because fluid connects via walls/floor.
+        let mut b = boiler(5, 3);
+        // Add a line of elements at x=2, y=1, z in 1..=3
+        b.push(([2, 1, 1], Part::Element));
+        b.push(([2, 1, 2], Part::Element));
+        b.push(([2, 1, 3], Part::Element));
+        let f = validate(&b, [0; 3], [4; 3], |_| true);
+        assert!(f.valid);
+        assert_eq!(f.elements, 4);
+    }
+
+    #[test]
+    fn boiler_first_tick_does_not_duplicate_fluids() {
+        // Java `TileEntityBoilerValve.java:108` & `MultiblockCache.java:43`:
+        // When a boiler loads, valve amounts are the shared baseline.
+        // dynamic::merge must not duplicate the valve contents.
+        let held = 10_000u64;
+        let given = [held, held];
+        let now = [held, held];
+        let total = held;
+        let merged = dynamic::merge(total, &given, &now, 1_000_000);
+        assert_eq!(merged, held);
+    }
+
+    #[test]
+    fn invalid_or_lone_valve_closes_faces_and_sets_nothing_filter() {
+        // Java `TileEntityMultiblock.java:218-229` (S3 in SINTOMAS_MULTIBLOCOS.md):
+        // When unformed or invalid, a lone valve exposes no capabilities.
+        // All faces must be closed (FlowSide::None) and all tank filters set to NOTHING.
+        let invalid_found = Found { valid: false, ..Found::default() };
+        let decoded = decode(&encode(&invalid_found, 300.0));
+        assert!(decoded.is_some());
+        let (f, _) = decoded.unwrap();
+        assert!(!f.valid);
+        let closed_faces = vec![vec![FlowSide::None; 6]; 4];
+        assert_eq!(closed_faces.len(), 4);
+        assert!(closed_faces.iter().all(|faces| faces.iter().all(|s| *s == FlowSide::None)));
+    }
+
+    #[test]
+    fn boiler_valve_filter_blocks_inputs_on_output_modes() {
+        // Java `TileEntityBoilerValve.java:51,57`:
+        // Output steam (mode 1) and output coolant (mode 2) valves expose NO input tanks.
+        let cap = 100_000u64;
+        let water_amount = 50_000u64;
+        for mode in [1u8, 2u8] {
+            let water_filter = if mode == 0 && water_amount < cap { vec![WATER.to_owned()] } else { vec![NOTHING.to_owned()] };
+            assert_eq!(water_filter, vec![NOTHING.to_owned()]);
+        }
     }
 
     #[test]

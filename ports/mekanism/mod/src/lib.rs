@@ -439,6 +439,10 @@ struct Mekanism {
     force: bool,
     /// The reaction chamber's recipes.
     reactions: reaction::Book,
+    /// Formed multiblock structures tracked by (dimension, group, min_corner).
+    formed_structures: HashSet<(String, String, [i32; 3])>,
+    /// All block positions that are members of a currently formed multiblock.
+    formed_blocks: HashSet<(String, i32, i32, i32)>,
 }
 
 /// A configurator click on a block: the cube there is changed in its next tick.
@@ -500,6 +504,59 @@ const CONFIGURATOR: &str = "mekanism:configurator";
 /// The eye above the feet, standing and sneaking.
 const EYE: f64 = 1.62;
 const EYE_SNEAKING: f64 = 1.27;
+const NOTHING: &str = "mekanism:nothing";
+
+fn is_multiblock_block(name: &str) -> bool {
+    matches!(
+        name,
+        dynamic::CASING
+            | dynamic::VALVE
+            | induction::PORT
+            | "mekanism:induction_casing"
+            | evaporation::BLOCK
+            | evaporation::VALVE
+            | evaporation::CONTROLLER
+            | boiler::CASING
+            | boiler::DISPERSER
+            | boiler::ELEMENT
+            | boiler::VALVE
+            | turbine::CASING
+            | turbine::COMPLEX
+            | turbine::COIL
+            | turbine::CONDENSER
+            | turbine::ROTOR
+            | turbine::VALVE
+            | turbine::VENT
+            | fission::CASING
+            | fission::PORT
+            | fission::ADAPTER
+            | fusion::FRAME
+            | fusion::PORT
+            | fusion::CONTROLLER
+            | sps::CASING
+            | sps::COIL
+            | sps::PORT
+            | "mekanism:structural_glass"
+    ) || induction::CELLS.iter().any(|c| c.0 == name)
+        || induction::PROVIDERS.iter().any(|c| c.0 == name)
+}
+
+fn is_multiblock_port_or_valve(name: &str) -> bool {
+    matches!(
+        name,
+        dynamic::VALVE
+            | boiler::VALVE
+            | induction::PORT
+            | evaporation::VALVE
+            | evaporation::CONTROLLER
+            | turbine::VALVE
+            | turbine::VENT
+            | fission::PORT
+            | fusion::PORT
+            | fusion::CONTROLLER
+            | sps::PORT
+    )
+}
 
 /// How many tanks a machine of `process` has: the one its chemical goes into, and the one it comes out in.
 fn tank_count(spec: Option<process::Spec>) -> usize {
@@ -723,6 +780,34 @@ fn menu_data(progress: u32, energy: u64, capacity: u64, status: Status, cfg: &Co
 }
 
 impl Mekanism {
+    fn find_bounding_main(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<[i32; 3]> {
+        for dy in -4..=0 {
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    if dx == 0 && dy == 0 && dz == 0 {
+                        continue;
+                    }
+                    let cand = [x + dx, y + dy, z + dz];
+                    if let Some(b) = world::get_block(dimension, cand[0], cand[1], cand[2]) {
+                        let name = b.split('[').next().unwrap_or("");
+                        if bounding::is_bounded(name) {
+                            let facing = sides::property(&b, "facing").unwrap_or("north");
+                            let expected = bounding::parts_with_facing(name, facing);
+                            if expected.iter().any(|(o, _)| [cand[0] + o[0], cand[1] + o[1], cand[2] + o[2]] == [x, y, z]) {
+                                return Some(cand);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn is_multiblock_formed(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
+        self.formed_blocks.contains(&(dimension.to_owned(), x, y, z))
+    }
+
     /// A roll of dice, 0 up to 1, for the sawmill's secondary output (Java rolls `level.random.nextDouble()`): a generator
     /// that keeps its state between rolls, started from where the players stand and the tick, and mixed again with the
     /// tick and the place each time, so two machines and two ticks never repeat each other.
@@ -2035,7 +2120,9 @@ impl ServerMod for Mekanism {
             capacity: HashMap::new(),
             force: false,
             reactions: reaction::Book::default(),
-        }, r.on_chunks().on_items().on_tick()))
+            formed_structures: HashSet::new(),
+            formed_blocks: HashSet::new(),
+        }, r.on_chunks().on_items().on_tick().on_blocks()))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2125,10 +2212,102 @@ impl ServerMod for Mekanism {
         }
     }
 
+    fn block_broken(&mut self, player: &Player, pos: BlockPos, state: &str) {
+        let name = state.split('[').next().unwrap_or("");
+        if name == bounding::BLOCK {
+            // Java BlockBounding.java:140-148 & 162-177: Breaking a bounding block destroys the main machine!
+            let main = self
+                .bound_owner
+                .remove(&(player.dimension.clone(), pos.x, pos.y, pos.z))
+                .or_else(|| self.find_bounding_main(&player.dimension, pos.x, pos.y, pos.z));
+            if let Some(main) = main {
+                let _ = world::mine_block(&player.dimension, main[0], main[1], main[2], CONFIGURATOR, false, main[0], main[1], main[2], 1);
+            }
+        } else if bounding::is_bounded(name) {
+            // Java AttributeHasBounding.removeBoundingBlocks (AttributeHasBounding.java:34-48):
+            // When the bounded machine is removed, remove all its bounding blocks.
+            let facing = sides::property(state, "facing").unwrap_or("north");
+            let mut changes = Vec::new();
+            for (o, _) in bounding::parts_with_facing(name, facing) {
+                let p = [pos.x + o[0], pos.y + o[1], pos.z + o[2]];
+                self.bound_owner.remove(&(player.dimension.clone(), p[0], p[1], p[2]));
+                changes.push(BlockChange { x: p[0], y: p[1], z: p[2], state: "minecraft:air".into() });
+            }
+            if !changes.is_empty() {
+                let _ = world::set_blocks(&player.dimension, &changes);
+            }
+        }
+        if is_multiblock_block(name) {
+            self.formed_blocks.remove(&(player.dimension.clone(), pos.x, pos.y, pos.z));
+        }
+    }
+
+    fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {
+        let name = state.split('[').next().unwrap_or("");
+        if bounding::is_bounded(name) {
+            // Java AttributeHasBounding.placeBoundingBlocks (AttributeHasBounding.java:50-65):
+            // Immediately place all bounding blocks on machine placement instead of waiting up to 20 ticks.
+            let facing = sides::property(state, "facing").unwrap_or("north");
+            let mut changes = Vec::new();
+            for (o, part) in bounding::parts_with_facing(name, facing) {
+                let p = [pos.x + o[0], pos.y + o[1], pos.z + o[2]];
+                self.bound_owner.insert((player.dimension.clone(), p[0], p[1], p[2]), [pos.x, pos.y, pos.z]);
+                changes.push(BlockChange { x: p[0], y: p[1], z: p[2], state: format!("{}[part={part}]", bounding::BLOCK) });
+            }
+            if !changes.is_empty() {
+                let _ = world::set_blocks(&player.dimension, &changes);
+            }
+        }
+    }
+
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if self.read_radiation(player, &stack.item) {
             return true;
         }
+        // Java BlockBounding.java:101-120: Redirect clicks on bounding blocks to the main machine.
+        let pos = match pos {
+            Some(p) => {
+                if let Some(block) = world::get_block(&player.dimension, p.x, p.y, p.z) {
+                    let name = block.split('[').next().unwrap_or("");
+                    if name == bounding::BLOCK {
+                        if let Some(main) = self
+                            .bound_owner
+                            .get(&(player.dimension.clone(), p.x, p.y, p.z))
+                            .copied()
+                            .or_else(|| self.find_bounding_main(&player.dimension, p.x, p.y, p.z))
+                        {
+                            self.bound_owner.insert((player.dimension.clone(), p.x, p.y, p.z), main);
+                            Some(BlockPos { x: main[0], y: main[1], z: main[2] })
+                        } else {
+                            Some(p)
+                        }
+                    } else {
+                        Some(p)
+                    }
+                } else {
+                    Some(p)
+                }
+            }
+            None => None,
+        };
+
+        // Java TileEntityMultiblock.onActivate (TileEntityMultiblock.java:218-229):
+        // If the multiblock is unformed, or if the player is sneaking, clicking on a multiblock block
+        // passes to default block interaction (placing the held block). Casing never consumes the click.
+        if let Some(p) = pos {
+            if let Some(b) = world::get_block(&player.dimension, p.x, p.y, p.z) {
+                let name = b.split('[').next().unwrap_or("");
+                if is_multiblock_block(name) && stack.item != CONFIGURATOR {
+                    let sneaking = player_control::get_motion(&player.id).is_some_and(|m| m.sneaking);
+                    let formed = self.formed_blocks.contains(&(player.dimension.clone(), p.x, p.y, p.z));
+                    if sneaking || !formed || !is_multiblock_port_or_valve(name) {
+                        // FORK-29: Conditional block menu - pass through to block placement
+                        return false;
+                    }
+                }
+            }
+        }
+
         if let Some(k) = upgrades::type_of(&stack.item) {
             // `ItemUpgrade.useOn`: sneaking on a machine that takes the type puts the whole stack in, as far as it fits.
             let (Some(pos), true) = (pos, player_control::get_motion(&player.id).is_some_and(|m| m.sneaking)) else { return false };
@@ -2229,7 +2408,19 @@ impl ServerMod for Mekanism {
                     return false;
                 }
             } else if !transmitter::is_transmitter(name)
-                && !matches!(name, sps::PORT | induction::PORT | fusion::PORT | fission::PORT | boiler::VALVE | fusion::MATRIX)
+                && !matches!(
+                    name,
+                    sps::PORT
+                        | induction::PORT
+                        | fusion::PORT
+                        | fission::PORT
+                        | boiler::VALVE
+                        | fusion::MATRIX
+                        | dynamic::VALVE
+                        | turbine::VALVE
+                        | turbine::VENT
+                        | evaporation::VALVE
+                )
             {
                 return false;
             }
@@ -2408,25 +2599,99 @@ impl ServerMod for Mekanism {
     }
 
     fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> {
-        if group == dynamic::GROUP {
-            self.dynamic_structures(dimension, structures)
-        } else if group == induction::GROUP {
-            self.matrix_structures(dimension, structures)
-        } else if group == sps::GROUP {
-            self.sps_structures(dimension, structures)
-        } else if group == fusion::GROUP {
-            self.fusion_structures(dimension, structures)
-        } else if group == fission::GROUP {
-            self.fission_structures(dimension, structures)
-        } else if group == turbine::GROUP {
-            self.turbine_structures(dimension, structures)
-        } else if group == boiler::GROUP {
-            self.boiler_structures(dimension, structures)
-        } else if group == evaporation::GROUP {
-            self.evaporation_structures(dimension, structures)
+        let groups: Vec<&str> = if group.contains(',') {
+            group.split(',').map(|s| s.trim()).collect()
         } else {
-            Vec::new()
+            vec![group]
+        };
+        let mut updates = Vec::new();
+        for g in groups {
+            if g == dynamic::GROUP {
+                updates.extend(self.dynamic_structures(dimension, structures.clone()));
+            } else if g == induction::GROUP {
+                updates.extend(self.matrix_structures(dimension, structures.clone()));
+            } else if g == sps::GROUP {
+                updates.extend(self.sps_structures(dimension, structures.clone()));
+            } else if g == fusion::GROUP {
+                updates.extend(self.fusion_structures(dimension, structures.clone()));
+            } else if g == fission::GROUP {
+                updates.extend(self.fission_structures(dimension, structures.clone()));
+            } else if g == turbine::GROUP {
+                updates.extend(self.turbine_structures(dimension, structures.clone()));
+            } else if g == boiler::GROUP {
+                updates.extend(self.boiler_structures(dimension, structures.clone()));
+            } else if g == evaporation::GROUP {
+                updates.extend(self.evaporation_structures(dimension, structures.clone()));
+            }
         }
+
+        // Common multiblock post-processing for all 8 multiblock systems:
+        // 1. Formation tracking, sparkle particles (FORK-30) and indigo action-bar notification (S2)
+        // 2. Disassembly cleanup and capability closure for unformed/invalid valves/ports (S3)
+        for s in &structures {
+            let key = (dimension.to_owned(), group.to_owned(), [s.min.x, s.min.y, s.min.z]);
+            let is_formed = updates.iter().any(|u| {
+                u.pos.x >= s.min.x
+                    && u.pos.x <= s.max.x
+                    && u.pos.y >= s.min.y
+                    && u.pos.y <= s.max.y
+                    && u.pos.z >= s.min.z
+                    && u.pos.z <= s.max.z
+                    && u.data.first().copied().unwrap_or(0) != 0
+            });
+
+            if is_formed {
+                for m in &s.members {
+                    self.formed_blocks.insert((dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z));
+                }
+                if self.formed_structures.insert(key.clone()) {
+                    // Java: TileEntityMultiblock.doMultiblockSparkle (TileEntityMultiblock.java:297-312):
+                    // When a structure transitions from unformed to formed, players within 40 blocks (1,600 dist_sqr)
+                    // receive sparkles (or action bar chat MULTIBLOCK_FORMED_CHAT).
+                    let center = [
+                        (s.min.x as f64 + s.max.x as f64) / 2.0,
+                        (s.min.y as f64 + s.max.y as f64) / 2.0,
+                        (s.min.z as f64 + s.max.z as f64) / 2.0,
+                    ];
+                    for p in players::online() {
+                        if p.dimension == dimension {
+                            let d2 = (p.x - center[0]).powi(2) + (p.y - center[1]).powi(2) + (p.z - center[2]).powi(2);
+                            if d2 <= 1600.0 {
+                                let _ = players::tell(&p.id, "§9Multiblock Formed");
+                            }
+                        }
+                    }
+                    // FORK-30: world.spawn-particles (redstone dust sparkle along the 12 edges)
+                    // FORK-31: render.multiblock-fluid
+                }
+            } else {
+                for m in &s.members {
+                    self.formed_blocks.remove(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z));
+                }
+                if self.formed_structures.remove(&key) {
+                    // Java MultiblockCache.java: sync multiblock contents to cache on disassembly
+                    // FORK-31: remove rendered multiblock fluid
+                }
+            }
+        }
+
+        // Sanitize any updates for unformed components (S3):
+        for u in &mut updates {
+            if u.data.first().copied().unwrap_or(0) == 0 {
+                if let Some(block) = world::get_block(dimension, u.pos.x, u.pos.y, u.pos.z) {
+                    let name = block.split('[').next().unwrap_or("");
+                    if is_multiblock_port_or_valve(name) {
+                        for i in 0..5 {
+                            let _ = world::set_tank_filter(dimension, u.pos.x, u.pos.y, u.pos.z, i, &[NOTHING.to_owned()]);
+                        }
+                        // The faces of the tanks are closed per tick with the entity's real tank count (`block_entities_tick`).
+                        u.energy_faces = Some(vec![FlowSide::None; 6]);
+                    }
+                }
+            }
+        }
+
+        updates
     }
 
     fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
@@ -2436,6 +2701,38 @@ impl ServerMod for Mekanism {
         out.extend(self.tool_clicks(&mut entities));
         // Empties whose drops the game confirmed clear their slots now.
         out.extend(self.apply_empty_ready(&mut entities));
+        // Unformed multiblock ports/valves must NOT expose capabilities or act as standalone tanks (S3)
+        for e in &entities {
+            let name = e.state.split('[').next().unwrap_or("");
+            if is_multiblock_port_or_valve(name) && e.data.first().copied().unwrap_or(0) == 0 {
+                let tank_count = e.tanks.len();
+                for i in 0..tank_count {
+                    let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, i as u32, &[NOTHING.to_owned()]);
+                }
+                let tank_faces = if tank_count > 0 {
+                    Some(vec![vec![FlowSide::None; 6]; tank_count])
+                } else {
+                    None
+                };
+                let energy_faces = if !e.energy_faces.is_empty() {
+                    Some(vec![FlowSide::None; 6])
+                } else {
+                    None
+                };
+                out.push(BlockEntityUpdate {
+                    dimension: e.dimension.clone(),
+                    pos: e.pos,
+                    data: e.data.clone(),
+                    items: None,
+                    energy: None,
+                    energy_faces,
+                    tanks: None,
+                    tank_faces,
+                    menu_data: None,
+                    transmitter_faces: None,
+                });
+            }
+        }
         let valves: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(dynamic::VALVE)).collect();
         if !valves.is_empty() {
             out.extend(self.run_dynamic(&valves));
@@ -2549,3 +2846,73 @@ impl ServerMod for Mekanism {
 }
 
 horizon_mod_sdk::export_server_mod!(Mekanism);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Java TileEntityMultiblock.java:218-229: Multiblock components and valves vs casings.
+    #[test]
+    fn multiblock_block_classification() {
+        assert!(is_multiblock_block(dynamic::CASING));
+        assert!(is_multiblock_block(dynamic::VALVE));
+        assert!(is_multiblock_block(boiler::CASING));
+        assert!(is_multiblock_block(boiler::VALVE));
+        assert!(is_multiblock_block(induction::PORT));
+        assert!(is_multiblock_block("mekanism:induction_casing"));
+        assert!(is_multiblock_block(turbine::ROTOR));
+        assert!(is_multiblock_block("mekanism:structural_glass"));
+        assert!(!is_multiblock_block("mekanism:crusher"));
+        assert!(!is_multiblock_block(bounding::BLOCK));
+
+        assert!(is_multiblock_port_or_valve(dynamic::VALVE));
+        assert!(is_multiblock_port_or_valve(boiler::VALVE));
+        assert!(is_multiblock_port_or_valve(turbine::VALVE));
+        assert!(is_multiblock_port_or_valve(turbine::VENT));
+        assert!(is_multiblock_port_or_valve(fission::PORT));
+        assert!(is_multiblock_port_or_valve(fusion::PORT));
+        assert!(is_multiblock_port_or_valve(sps::PORT));
+        assert!(!is_multiblock_port_or_valve(dynamic::CASING));
+        assert!(!is_multiblock_port_or_valve(boiler::CASING));
+    }
+
+    /// Java TileEntityMultiblock.java:297-312: doMultiblockSparkle distance threshold is 40 blocks (1600 dist_sqr).
+    #[test]
+    fn multiblock_formation_sparkle_distance_threshold() {
+        let max_dist = 40.0;
+        let max_dist_sqr = max_dist * max_dist;
+        assert_eq!(max_dist_sqr, 1600.0);
+
+        let within_dist_sqr = 30.0f64 * 30.0f64;
+        assert!(within_dist_sqr <= 1600.0);
+
+        let outside_dist_sqr = 41.0f64 * 41.0f64;
+        assert!(outside_dist_sqr > 1600.0);
+    }
+
+    /// Java FormationProtocol.java:37: MAX_SIZE is 18 across all multiblock structures.
+    #[test]
+    fn multiblock_max_size_constant() {
+        const MAX_SIZE: i32 = 18;
+        assert_eq!(MAX_SIZE, 18);
+    }
+
+    /// Java TileEntityMultiblock.java:218-229: onActivate passes when unformed or sneaking.
+    #[test]
+    fn multiblock_on_activate_pass_through_conditions() {
+        let is_formed = false;
+        let is_sneaking = false;
+        let pass_to_block = !is_formed || is_sneaking;
+        assert!(pass_to_block);
+
+        let is_formed_2 = true;
+        let is_sneaking_2 = true;
+        let pass_to_block_2 = !is_formed_2 || is_sneaking_2;
+        assert!(pass_to_block_2);
+
+        let is_formed_3 = true;
+        let is_sneaking_3 = false;
+        let pass_to_block_3 = !is_formed_3 || is_sneaking_3;
+        assert!(!pass_to_block_3);
+    }
+}

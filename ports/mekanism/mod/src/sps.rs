@@ -35,13 +35,15 @@ const GRID: [[u8; 7]; 7] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Casing,
+    Glass,
     Port,
     Coil,
 }
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        CASING | "mekanism:structural_glass" => Some(Part::Casing),
+        CASING => Some(Part::Casing),
+        "mekanism:structural_glass" => Some(Part::Glass),
         PORT => Some(Part::Port),
         COIL => Some(Part::Coil),
         _ => None,
@@ -100,12 +102,13 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                     },
                     Some(0) => {}
                     Some(1) => {
+                        // Frame requirement: only SPS_CASING (Java: SPSValidator.java:63, CuboidStructureValidator.java:106)
                         if part != Some(Part::Casing) {
                             return bad;
                         }
                     }
-                    Some(_) => match part {
-                        Some(Part::Casing) => {}
+                    Some(2) => match part {
+                        Some(Part::Casing | Part::Glass) => {}
                         Some(Part::Port) => {
                             if let Some(b) = behind(rel) {
                                 behind_ports.insert(at(b));
@@ -113,6 +116,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                         }
                         _ => return bad,
                     },
+                    Some(_) => return bad,
                 }
             }
         }
@@ -179,30 +183,33 @@ pub fn with_mode(mut data: Vec<u8>, output: bool) -> Vec<u8> {
     data
 }
 
-/// `process`: spends `operations` mB of polonium; every thousand makes an mB of antimatter (all of it has to fit, or nothing is spent).
+/// `process`: spends `operations` mB of polonium; every thousand makes an mB of antimatter.
 fn process(s: &mut Sps, operations: u64) -> u64 {
     if operations == 0 || s.input.amount == 0 {
         return 0;
     }
-    let processed = operations.min(s.input.amount);
-    let total = s.input_processed + processed;
-    let mut left = total;
-    if total >= INPUT_PER_ANTIMATTER {
-        let add = total / INPUT_PER_ANTIMATTER;
-        let room = OUTPUT_CAPACITY.saturating_sub(s.output.amount);
-        if add > room || (s.output.amount > 0 && s.output.chemical != ANTIMATTER) {
-            return 0;
-        }
+    let room = OUTPUT_CAPACITY.saturating_sub(s.output.amount);
+    if room == 0 || (s.output.amount > 0 && s.output.chemical != ANTIMATTER) {
+        return 0;
+    }
+    // Up to room mB of antimatter: (room - 1) * 1000 + needed to complete current mB
+    let max_polonium_room = (INPUT_PER_ANTIMATTER - s.input_processed) + (room - 1) * INPUT_PER_ANTIMATTER;
+    let allowed = operations.min(s.input.amount).min(max_polonium_room);
+    if allowed == 0 {
+        return 0;
+    }
+    let total = s.input_processed + allowed;
+    let add = total / INPUT_PER_ANTIMATTER;
+    if add > 0 {
         s.output.chemical = ANTIMATTER.to_owned();
         s.output.amount += add;
-        left = total % INPUT_PER_ANTIMATTER;
     }
-    s.input_processed = left;
-    s.input.amount -= processed;
+    s.input_processed = total % INPUT_PER_ANTIMATTER;
+    s.input.amount -= allowed;
     if s.input.amount == 0 {
         s.input.chemical.clear();
     }
-    processed
+    allowed
 }
 
 /// One tick with `received` FE from the ports.
@@ -214,7 +221,8 @@ pub fn tick(s: &mut Sps, received: u64) {
         let input_needed = (INPUT_PER_ANTIMATTER - s.input_processed) as f64 + (INPUT_PER_ANTIMATTER * (needed_out - 1)) as f64;
         let processable = received as f64 / ENERGY_PER_INPUT as f64;
         if processable + s.progress >= input_needed {
-            processed = process(s, input_needed as u64) as f64;
+            let actual = process(s, input_needed as u64);
+            processed = actual as f64;
             s.progress = 0.0;
         } else {
             processed = processable;
@@ -231,6 +239,74 @@ pub fn tick(s: &mut Sps, received: u64) {
     }
     s.last_received = received;
     s.last_processed = processed;
+}
+
+/// Comparator signal from polonium input tank contents (`SPSMultiblockData:174`).
+pub fn comparator_level(amount: u64, capacity: u64) -> u8 {
+    if capacity == 0 || amount == 0 {
+        0
+    } else if amount >= capacity {
+        15
+    } else {
+        (1.0 + (amount as f64 / capacity as f64) * 14.0).floor() as u8
+    }
+}
+
+/// The death zone bounds: 5x5x5 inner chamber (min + 1 to max - 1).
+pub fn death_zone_bounds(min: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+    ([min[0] + 1, min[1] + 1, min[2] + 1], [min[0] + 5, min[1] + 5, min[2] + 5])
+}
+
+/// One tick of death zone lethal electricity and SPS experiments (FORK-7 / FORK-10).
+pub fn kill(dimension: &str, min: [i32; 3], last_received: u64, could_operate: bool, tick_no: u64) {
+    if last_received > 0 && could_operate && tick_no % 20 == 0 {
+        let (dz_min, dz_max) = death_zone_bounds(min);
+        // In Java: lastReceivedEnergy / 1000 Joules damage.
+        // In FE: 1 FE = 2.5 J, so last_received FE * 2.5 / 1000 = last_received / 400 HP damage.
+        let damage = (last_received as f32 * 2.5) / 1000.0;
+        let _ = host_damage_death_zone(dimension, dz_min, dz_max, damage); // FORK-7
+        let _ = host_transform_sps_experiments(dimension, dz_min, dz_max); // FORK-10
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// FORK Requirements (isolated host call stubs and declarations)
+// -------------------------------------------------------------------------------------------------
+
+/// Host interface for damaging entities inside SPS death zone (`SPSMultiblockData:200-206`).
+// FORK-7
+pub fn host_damage_death_zone(dimension: &str, min: [i32; 3], max: [i32; 3], damage: f32) -> Result<u32, &'static str> {
+    let _ = (dimension, min, max, damage);
+    Ok(0)
+}
+
+/// Host interface for transforming valid SPS experiment mobs (pig, creeper, mooshroom, villager)
+/// with visual lightning bolts and granting advancements (`SPSMultiblockData:209-235`).
+// FORK-10
+pub fn host_transform_sps_experiments(dimension: &str, min: [i32; 3], max: [i32; 3]) -> Result<u32, &'static str> {
+    let _ = (dimension, min, max);
+    Ok(0)
+}
+
+/// Host interface for comparator output calculation on multiblock ports (`TileEntitySPSPort:97`).
+// FORK-21
+pub fn host_set_comparator_output(dimension: &str, pos: [i32; 3], level: u8) -> Result<(), &'static str> {
+    let _ = (dimension, pos, level);
+    Ok(())
+}
+
+/// Host interface for multiblock formation sparkle particles (`TileEntityMultiblock:297-312`).
+// FORK-30
+pub fn host_multiblock_sparkle(dimension: &str, min: [i32; 3], max: [i32; 3]) -> Result<(), &'static str> {
+    let _ = (dimension, min, max);
+    Ok(())
+}
+
+/// Host interface for rendering SPS chamber particle effects and plasma core (`RenderSPS.java`).
+// FORK-19 / FORK-31
+pub fn host_render_sps_chamber(dimension: &str, min: [i32; 3], max: [i32; 3], progress: f64, active: bool) -> Result<(), &'static str> {
+    let _ = (dimension, min, max, progress, active);
+    Ok(())
 }
 
 #[derive(Default)]
@@ -250,6 +326,7 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
+            // The formation notice (sparkles / action bar) is made for every multiblock in `multiblock_changed` (lib.rs).
             // Each coil looks at the port it is behind.
             if found.valid {
                 let ports: HashSet<[i32; 3]> = members.iter().filter(|(_, p)| *p == Part::Port).map(|(p, _)| *p).collect();
@@ -268,21 +345,37 @@ impl Mekanism {
                 // A port keeps the mode its tick last saw: the validation rewrites every member's data, and a member
                 // carries no data of its own in `multiblock-changed`, so without this the mode reset to input on
                 // every revalidation. Other members have no mode byte and keep the plain encoding.
-                let data = if part_of(&m.state) == Some(Part::Port) {
+                let is_port = part_of(&m.state) == Some(Part::Port);
+                if is_port {
+                    let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                    let _ = world::set_block_property(dimension, m.pos.x, m.pos.y, m.pos.z, "active", if found.valid && output { "true" } else { "false" });
+                }
+                let data = if is_port {
                     let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
                     with_mode(encode(&found, &keep), output)
                 } else {
                     encode(&found, &keep)
+                };
+                let (tank_faces, energy_faces, energy_update) = if found.valid {
+                    (None, None, None)
+                } else {
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 0, &[NOTHING.to_owned()]);
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
+                    (
+                        Some(vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6]]),
+                        Some(vec![FlowSide::None; 6]),
+                        Some(0),
+                    )
                 };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
                     data,
                     items: None,
-                    energy: None,
-                    energy_faces: None,
+                    energy: energy_update,
+                    energy_faces,
                     tanks: None,
-                    tank_faces: None,
+                    tank_faces,
                     menu_data: None,
                     transmitter_faces: None,
                 });
@@ -294,12 +387,33 @@ impl Mekanism {
     /// A tick of the ports of the SPSs.
     pub(crate) fn run_sps(&mut self, ports: &[&BlockEntity], tick_no: u64) -> Vec<BlockEntityUpdate> {
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
+        let mut unformed: Vec<&BlockEntity> = Vec::new();
         for p in ports {
             if let Some((f, _)) = decode(&p.data).filter(|(f, _)| f.valid) {
                 by.entry((p.dimension.clone(), f.min)).or_default().push(*p);
+            } else {
+                unformed.push(*p);
             }
         }
         let mut out = Vec::new();
+        for p in unformed {
+            let (x, y, z) = (p.pos.x, p.pos.y, p.pos.z);
+            let _ = world::set_tank_filter(&p.dimension, x, y, z, 0, &[NOTHING.to_owned()]);
+            let _ = world::set_tank_filter(&p.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
+            let _ = world::set_block_property(&p.dimension, x, y, z, "active", "false");
+            out.push(BlockEntityUpdate {
+                dimension: p.dimension.clone(),
+                pos: p.pos,
+                data: p.data.clone(),
+                items: None,
+                energy: None,
+                energy_faces: Some(vec![FlowSide::None; 6]),
+                tanks: None,
+                tank_faces: Some(vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6]]),
+                menu_data: None,
+                transmitter_faces: None,
+            });
+        }
         for (key, group) in by {
             let Some((found, saved)) = decode(&group[0].data) else { continue };
             let s = self.spses.entry(key.clone()).or_default();
@@ -332,10 +446,25 @@ impl Mekanism {
             if s.sps.input.amount > 0 && s.sps.input.chemical != POLONIUM {
                 s.sps.input = process::Tank::default();
             }
-            // The energy the ports got goes to the coils (when there are coils to take it).
-            let received: u64 = if found.coils > 0 { group.iter().map(|p| p.energy).sum() } else { 0 };
+            let has_coil = |p: &BlockEntity| -> bool {
+                let rel = [(p.pos.x - found.min[0]) as usize, (p.pos.y - found.min[1]) as usize, (p.pos.z - found.min[2]) as usize];
+                if let Some(b) = behind(rel) {
+                    let bp = [found.min[0] + b[0] as i32, found.min[1] + b[1] as i32, found.min[2] + b[2] as i32];
+                    world::get_block(&p.dimension, bp[0], bp[1], bp[2]).is_some_and(|name| name.starts_with(COIL))
+                } else {
+                    false
+                }
+            };
+            // The energy the ports got goes to the coils (only from input ports that have a coil behind them)
+            let received: u64 = if found.coils > 0 {
+                group.iter().filter(|p| !mode_of(&p.data) && has_coil(p)).map(|p| p.energy).sum()
+            } else {
+                0
+            };
             tick(&mut s.sps, received);
             let st = s.sps.clone();
+            kill(&key.0, found.min, st.last_received, st.could_operate, tick_no);
+            let _ = host_render_sps_chamber(&key.0, found.min, [found.min[0] + 6, found.min[1] + 6, found.min[2] + 6], st.progress, st.last_received > 0); // FORK-19 / FORK-31
             let tanks_now = [st.input.clone(), st.output.clone()];
             for p in &group {
                 s.given.insert([p.pos.x, p.pos.y, p.pos.z], [tanks_now[0].amount, tanks_now[1].amount]);
@@ -361,6 +490,7 @@ impl Mekanism {
             for p in &group {
                 let (x, y, z) = (p.pos.x, p.pos.y, p.pos.z);
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 0, &if st.input.amount >= caps[0] { vec![NOTHING.to_owned()] } else { vec![POLONIUM.to_owned()] });
+                let _ = world::set_tank_filter(&p.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
                 // A sneak click with the configurator toggles whether the port takes in or gives out
                 // (`TileEntitySPSPort.onSneakRightClick`); a plain click says which it is.
                 let mut output = mode_of(&p.data);
@@ -380,21 +510,29 @@ impl Mekanism {
                 // Remember the mode for the structures function: it rewrites the port's data on every revalidation
                 // and cannot read the mode from the member it is given.
                 self.port_modes.insert((p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z), u8::from(output));
+                let _ = world::set_block_property(&p.dimension, x, y, z, "active", if output { "true" } else { "false" });
+                let comp = comparator_level(st.input.amount, caps[0]);
+                let _ = host_set_comparator_output(&p.dimension, [x, y, z], comp); // FORK-21
+
                 let keep = if mode_changed || tick_no % 20 == 0 { with_mode(encode(&found, &st), output) } else { p.data.clone() };
+                let port_coil = has_coil(p);
                 // What each face does with the tanks, and with energy: a port that takes in feeds polonium and energy
-                // to the coils, one that gives out lets antimatter out and takes no energy.
+                // to the coils (if backed by a coil), one that gives out lets antimatter out and takes no energy.
                 let (tank_faces, energy_faces) = if output {
                     (vec![vec![FlowSide::None; 6], vec![FlowSide::Output; 6]], vec![FlowSide::None; 6])
-                } else {
+                } else if port_coil {
                     (vec![vec![FlowSide::Input; 6], vec![FlowSide::None; 6]], vec![FlowSide::Input; 6])
+                } else {
+                    // Input port without coil does not accept energy
+                    (vec![vec![FlowSide::Input; 6], vec![FlowSide::None; 6]], vec![FlowSide::None; 6])
                 };
+                let energy_update = if port_coil && !output { Some(0) } else { None };
                 out.push(BlockEntityUpdate {
                     dimension: p.dimension.clone(),
                     pos: p.pos,
                     data: keep,
                     items: None,
-                    // The energy was spent on the coils.
-                    energy: Some(0),
+                    energy: energy_update,
                     energy_faces: Some(energy_faces),
                     tanks: Some(tanks_now.iter().map(plus::as_tank).collect()),
                     tank_faces: Some(tank_faces),
@@ -513,5 +651,64 @@ mod tests {
         assert_eq!(ENERGY_PER_INPUT, 400_000);
         assert_eq!(PORT_ENERGY, 400_000_000);
         assert_eq!(input_capacity(), 2_000);
+    }
+
+    #[test]
+    fn sps_structural_glass_allowed_at_requirement_2_not_at_frame() {
+        // Java: SPSValidator.java:49-68, CuboidStructureValidator.java:106
+        // Glass is allowed at requirement 2 (faces/ports), but forbidden at requirement 1 (casing frame).
+        let mut glass_on_face = sps();
+        for (p, part) in &mut glass_on_face {
+            if *p == [2, 6, 2] {
+                *part = Part::Glass;
+                break;
+            }
+        }
+        assert!(validate(&glass_on_face, [0; 3], [6; 3], |_| true).valid);
+
+        let mut glass_on_frame = sps();
+        for (p, part) in &mut glass_on_frame {
+            if *p == [3, 6, 0] {
+                *part = Part::Glass;
+                break;
+            }
+        }
+        assert!(!validate(&glass_on_frame, [0; 3], [6; 3], |_| true).valid);
+    }
+
+    #[test]
+    fn sps_process_does_not_deadlock_when_output_nearly_full() {
+        // When output has room for only 1 mB (999/1000) and input has 2000 polonium,
+        // it must process 1000 polonium to fill the 1 mB room without deadlocking.
+        let mut s = Sps {
+            input: process::Tank { chemical: POLONIUM.into(), amount: 2000 },
+            output: process::Tank { chemical: ANTIMATTER.into(), amount: 999 },
+            ..Sps::default()
+        };
+        let actual = process(&mut s, 2000);
+        assert_eq!(actual, 1000);
+        assert_eq!(s.output.amount, 1000);
+        assert_eq!(s.input.amount, 1000);
+        assert_eq!(s.input_processed, 0);
+    }
+
+    #[test]
+    fn sps_death_zone_bounds_and_comparator() {
+        // Java: SPSMultiblockData.java:91, 174
+        assert_eq!(death_zone_bounds([0, 0, 0]), ([1, 1, 1], [5, 5, 5]));
+        assert_eq!(death_zone_bounds([10, 20, 30]), ([11, 21, 31], [15, 25, 35]));
+        assert_eq!(comparator_level(0, 2000), 0);
+        assert_eq!(comparator_level(2000, 2000), 15);
+        assert_eq!(comparator_level(1000, 2000), 8);
+    }
+
+    #[test]
+    fn unformed_sps_port_locks_faces_and_clears_energy() {
+        // Java: TileEntitySPSPort.java:47, 66; SINTOMAS_MULTIBLOCOS.md S3
+        // Unformed SPS port must not expose energy or chemical capabilities.
+        let bad = Found { valid: false, min: [0; 3], coils: 0 };
+        let encoded = encode(&bad, &Sps::default());
+        let decoded = decode(&encoded);
+        assert_eq!(decoded.map(|(f, _)| f.valid), Some(false));
     }
 }

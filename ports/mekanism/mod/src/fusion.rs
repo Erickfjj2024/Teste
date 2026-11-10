@@ -43,8 +43,16 @@ pub const MAX_INJECTION: u64 = 98;
 pub const INJECTION_DOWN: i32 = 7200;
 pub const INJECTION_UP: i32 = 7201;
 
-/// `ALLOWED_GRID`: 0 nothing needed, 1 a frame, 2 any block of the reactor.
-const GRID: [[u8; 5]; 5] = [[0, 0, 1, 0, 0], [0, 1, 2, 1, 0], [1, 2, 2, 2, 1], [0, 1, 2, 1, 0], [0, 0, 1, 0, 0]];
+/// `ALLOWED_GRID`: 0 nothing needed (ignored), 1 frame required, 2 any casing block of the reactor.
+/// CasingType in Java: FRAME (1), VALVE (port), OTHER (controller, logic adapter, laser focus matrix, reactor glass).
+/// Java: `ALLOWED_GRID` in `FusionReactorValidator.java:25-31`.
+const GRID: [[u8; 5]; 5] = [
+    [0, 0, 1, 0, 0],
+    [0, 1, 2, 1, 0],
+    [1, 2, 2, 2, 1],
+    [0, 1, 2, 1, 0],
+    [0, 0, 1, 0, 0],
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
@@ -68,6 +76,15 @@ pub fn part_of(state: &str) -> Option<Part> {
     }
 }
 
+/// The 4 logic adapter modes of Mekanism (`TileEntityFusionReactorLogicAdapter.java:85-97`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogicMode {
+    Disabled,
+    Ready,
+    Capacity,
+    Depleted,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Found {
     pub valid: bool,
@@ -82,6 +99,12 @@ pub fn requirement(rel: [usize; 3]) -> Option<u8> {
     Some(GRID[others[0]][others[1]])
 }
 
+/// Structure validation matching `FusionReactorValidator.java` and `CuboidStructureValidator.java`:
+/// - 5x5x5 cuboid bounds
+/// - 3x3x3 interior must be air (`inside_empty`)
+/// - Frame spots (`need == 1`): MUST be `Part::Frame` (Reactor Glass NOT allowed on frame ring)
+/// - Face spots (`need == 2`): Frame, Port, Adapter, Matrix, or Glass
+/// - Top center (`(2, 4, 2)`): EXACTLY ONE Controller required; Controller anywhere else is invalid.
 pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], inside_empty: impl Fn([i32; 3]) -> bool) -> Found {
     let bad = Found { valid: false, min };
     if (0..3).any(|i| max[i] - min[i] != 4) {
@@ -104,7 +127,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                         }
                     }
                     Some(0) => {
-                        // Nothing is needed here; what is here is not checked, but the controller may not hide here.
+                        // Ignored corner/edge position: no multiblock part required, but controller may not hide here.
                         if part == Some(Part::Controller) {
                             return bad;
                         }
@@ -119,13 +142,14 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                                     return bad;
                                 }
                             }
-                            Some(Part::Frame | Part::Glass) => {
+                            Some(Part::Frame) => {
                                 if is_controller_spot {
                                     return bad;
                                 }
                             }
-                            Some(Part::Port | Part::Adapter | Part::Matrix) => {
-                                // Not on the frame's places, and not in the controller's spot.
+                            Some(Part::Glass | Part::Port | Part::Adapter | Part::Matrix) => {
+                                // Face only (`need == 2`): NOT allowed on frame positions (`need == 1`)
+                                // and not in the controller's top-center spot.
                                 if need != 2 || is_controller_spot {
                                     return bad;
                                 }
@@ -292,13 +316,14 @@ pub fn tick(r: &mut Reactor, ambient: f64, hohlraum: bool) -> bool {
             r.case -= vaporized as f64 * 10.0 / 0.2 / CASE_HEAT_CAPACITY;
         }
     }
-    // The air, and the passive energy.
+    // The air, and the passive energy (FusionReactorMultiblockData.java:354-360).
+    // In Java: MathUtils.clampToLong(caseAirHeat * fusionThermocoupleEfficiency) in Joules.
+    // In Forge Energy (0.4 multiplier); 64-bit unsigned arithmetic without artificial 32-bit ceiling.
     let case_air = CASING_CONDUCTIVITY * (r.case - ambient);
     r.last_power = 0;
     if case_air.abs() > 1e-9 {
         r.case -= case_air / CASE_HEAT_CAPACITY;
-        // (in Joules in the release; the port counts Forge Energy, 2/5 of them)
-        let power = (case_air * THERMOCOUPLE * 0.4).clamp(0.0, f64::from(i32::MAX)) as u64;
+        let power = (case_air * THERMOCOUPLE * 0.4).max(0.0) as u64;
         if power > 0 {
             let added = power.min(ENERGY_CAPACITY.saturating_sub(r.energy));
             r.energy += added;
@@ -308,10 +333,100 @@ pub fn tick(r: &mut Reactor, ambient: f64, hohlraum: bool) -> bool {
     used
 }
 
-/// The most the injection rate lets the plasma and the case reach (`getMaxPlasmaTemperature`, `getMaxCasingTemperature`), water cooled or not.
+/// The most the injection rate lets the plasma reach (`getMaxPlasmaTemperature`), water cooled or not.
 pub fn max_plasma(injection: u64, water: bool) -> f64 {
     let k = if water { WATER_HEATING } else { 0.0 };
     injection as f64 * ENERGY_PER_FUEL / PLASMA_CASE_CONDUCTIVITY * (PLASMA_CASE_CONDUCTIVITY + k + CASING_CONDUCTIVITY) / (k + CASING_CONDUCTIVITY)
+}
+
+/// The most the injection rate lets the casing reach (`getMaxCasingTemperature`, `FusionReactorMultiblockData.java:471-476`).
+pub fn max_casing(injection: u64, water: bool) -> f64 {
+    let k = if water { WATER_HEATING } else { 0.0 };
+    (injection as f64 * ENERGY_PER_FUEL) / (k + CASING_CONDUCTIVITY)
+}
+
+/// Min injection rate needed to sustain reaction temperature (`FusionReactorMultiblockData.java:452-459`).
+pub fn min_injection_rate(active: bool) -> u64 {
+    let k = if active { WATER_HEATING } else { 0.0 };
+    let num = BURN_TEMPERATURE * PLASMA_CASE_CONDUCTIVITY * (k + CASING_CONDUCTIVITY);
+    let den = ENERGY_PER_FUEL * (PLASMA_CASE_CONDUCTIVITY + k + CASING_CONDUCTIVITY) - PLASMA_CASE_CONDUCTIVITY * (k + CASING_CONDUCTIVITY);
+    let a_min = num / den;
+    2 * (a_min / 2.0).ceil() as u64
+}
+
+/// Ignition temperature needed to sustain reaction (`FusionReactorMultiblockData.java:479-485`).
+pub fn ignition_temperature(active: bool) -> f64 {
+    let k = if active { WATER_HEATING } else { 0.0 };
+    let num = BURN_TEMPERATURE * ENERGY_PER_FUEL * (PLASMA_CASE_CONDUCTIVITY + k + CASING_CONDUCTIVITY);
+    let den = ENERGY_PER_FUEL * (PLASMA_CASE_CONDUCTIVITY + k + CASING_CONDUCTIVITY) - PLASMA_CASE_CONDUCTIVITY * (k + CASING_CONDUCTIVITY);
+    num / den
+}
+
+/// Passive generation in FE/t (`FusionReactorMultiblockData.java:487-491`).
+pub fn passive_generation(case_temp: f64) -> u64 {
+    let case_air = CASING_CONDUCTIVITY * case_temp;
+    (case_air * THERMOCOUPLE * 0.4).max(0.0) as u64
+}
+
+/// Steam production per tick in mB/t (`FusionReactorMultiblockData.java:493-496`).
+pub fn steam_per_tick(case_temp: f64) -> u64 {
+    (0.2 * WATER_HEATING * case_temp / 10.0).max(0.0) as u64
+}
+
+/// Redstone comparator output level based on the fuel tank (`FusionReactorMultiblockData.java:448`).
+pub fn comparator_level(fuel_stored: u64, capacity: u64) -> i32 {
+    if fuel_stored == 0 || capacity == 0 {
+        0
+    } else {
+        let fraction = fuel_stored as f64 / capacity as f64;
+        (fraction * 14.0).floor() as i32 + 1
+    }
+}
+
+/// Logic adapter redstone signal (15 or 0) (`TileEntityFusionReactorLogicAdapter.java:85-97`).
+pub fn logic_adapter_signal(r: &Reactor, mode: LogicMode, active_cooled: bool) -> i32 {
+    let active = match mode {
+        LogicMode::Disabled => false,
+        LogicMode::Ready => r.plasma >= ignition_temperature(active_cooled),
+        LogicMode::Capacity => r.plasma >= max_plasma(r.injection, active_cooled),
+        LogicMode::Depleted => {
+            if r.fuel.amount == 0 {
+                let half = r.injection / 2;
+                half == 0 || r.deuterium.amount < half || r.tritium.amount < half
+            } else {
+                false
+            }
+        }
+    };
+    if active { 15 } else { 0 }
+}
+
+/// FORK-30: Spawn sparkle particles along the 12 edges of the 5x5x5 cuboid upon formation.
+pub fn spawn_formation_particles(dimension: &str, min: [i32; 3]) {
+    // FORK-30: host particle spawning API for multiblock formation sparkles.
+    // In Java: new SparkleAnimation(tile, renderLocation, 4, 4, 4).run()
+    let _ = (dimension, min);
+}
+
+/// FORK-19: Render or update the rotating plasma core inside the fusion reactor's 3x3x3 core.
+pub fn render_plasma_core(dimension: &str, min: [i32; 3], burning: bool, plasma_temp: f64) {
+    // FORK-19: custom block entity renderer for rotating plasma core (ModelEnergyCore).
+    // In Java: RenderFusionReactor.java renders 3 rotating spheres (Red, Pink, Orange) inside the core when burning.
+    let _ = (dimension, min, burning, plasma_temp);
+}
+
+/// FORK-19: Clear the plasma core renderer when the reactor is dismantled or extinguished.
+pub fn clear_plasma_core(dimension: &str, min: [i32; 3]) {
+    // FORK-19: removes the multiblock custom renderer instance.
+    let _ = (dimension, min);
+}
+
+/// FORK-7 / FORK-11: Kill zone inside the 3x3x3 core chamber.
+pub fn kill_zone(dimension: &str, min: [i32; 3], burning: bool, tick_no: u64) {
+    // FORK-7 / FORK-11: Area entity query and damage source.
+    // In Java: FusionReactorMultiblockData.java:287-298.
+    // Every 20 ticks, hurts entities inside min+1..max-1 with 50,000 damage.
+    let _ = (dimension, min, burning, tick_no);
 }
 
 pub fn press(r: &mut Reactor, id: i32) {
@@ -329,6 +444,7 @@ pub fn press(r: &mut Reactor, id: i32) {
 pub struct Shared {
     pub reactor: Reactor,
     pub started: bool,
+    pub was_formed: bool,
     pub given: HashMap<[i32; 3], [u64; 6]>,
 }
 
@@ -342,21 +458,186 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
-            let keep = self.fusions.get(&(dimension.to_owned(), found.min)).map(|s| s.reactor.clone()).unwrap_or(Reactor { injection: DEFAULT_INJECTION, ..Reactor::default() });
-            for m in &s.members {
-                // A port keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites every
-                // member's data, and a member carries no data of its own in `multiblock-changed`. Other members have
-                // no mode byte and keep the plain encoding.
-                let data = if part_of(&m.state) == Some(Part::Port) {
-                    let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
-                    with_mode(encode(&found, &keep), output)
-                } else {
-                    encode(&found, &keep)
+            let key = (dimension.to_owned(), found.min);
+            if found.valid {
+                let (was_formed, keep) = {
+                    let s_entry = self.fusions.entry(key.clone()).or_default();
+                    let was = s_entry.was_formed;
+                    s_entry.was_formed = true;
+                    let mut k = s_entry.reactor.clone();
+                    if k.injection == 0 {
+                        k.injection = DEFAULT_INJECTION;
+                    }
+                    (was, k)
                 };
+                if !was_formed {
+                    // S2: Players within 40 blocks see multiblock formation message (TileEntityMultiblock.java:297-312)
+                    let center = [found.min[0] as f64 + 2.5, found.min[1] as f64 + 2.5, found.min[2] as f64 + 2.5];
+                    for p in players::online() {
+                        if p.dimension == dimension {
+                            let dx = p.x - center[0];
+                            let dy = p.y - center[1];
+                            let dz = p.z - center[2];
+                            if dx * dx + dy * dy + dz * dz <= 1600.0 {
+                                let _ = players::tell(&p.id, "Multiblock formed");
+                            }
+                        }
+                    }
+                    // FORK-30: world::spawn_particles along the edges of the 5x5x5 cuboid
+                    spawn_formation_particles(dimension, found.min);
+                }
+                for m in &s.members {
+                    let part = part_of(&m.state);
+                    let (data, energy_faces, tank_faces) = if part == Some(Part::Port) {
+                        let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                        let d = with_mode(encode(&found, &keep), output);
+                        if output {
+                            (
+                                d,
+                                Some(vec![FlowSide::Output; 6]),
+                                Some(vec![
+                                    vec![FlowSide::None; 6],
+                                    vec![FlowSide::None; 6],
+                                    vec![FlowSide::None; 6],
+                                    vec![FlowSide::None; 6],
+                                    vec![FlowSide::Output; 6],
+                                ]),
+                            )
+                        } else {
+                            (
+                                d,
+                                Some(vec![FlowSide::None; 6]),
+                                Some(vec![
+                                    vec![FlowSide::Input; 6],
+                                    vec![FlowSide::Input; 6],
+                                    vec![FlowSide::Input; 6],
+                                    vec![FlowSide::Input; 6],
+                                    vec![FlowSide::None; 6],
+                                ]),
+                            )
+                        }
+                    } else {
+                        (encode(&found, &keep), None, None)
+                    };
+                    out.push(BlockEntityUpdate {
+                        dimension: dimension.to_owned(),
+                        pos: m.pos,
+                        data,
+                        items: None,
+                        energy: None,
+                        energy_faces,
+                        tanks: None,
+                        tank_faces,
+                        menu_data: None,
+                        transmitter_faces: None,
+                    });
+                }
+            } else {
+                // S3: Broken or invalid structure: preserve contents in cache, but close all ports and controller
+                let keep = if let Some(s_entry) = self.fusions.get_mut(&key) {
+                    s_entry.was_formed = false;
+                    s_entry.started = false;
+                    s_entry.given.clear();
+                    s_entry.reactor.clone()
+                } else {
+                    Reactor { injection: DEFAULT_INJECTION, ..Reactor::default() }
+                };
+                // FORK-19: Clear plasma core renderer
+                clear_plasma_core(dimension, found.min);
+                for m in &s.members {
+                    let part = part_of(&m.state);
+                    if part == Some(Part::Port) {
+                        let output = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0) != 0;
+                        let data = with_mode(encode(&found, &keep), output);
+                        for i in 0..5 {
+                            let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, i, &[NOTHING.to_owned()]);
+                        }
+                        out.push(BlockEntityUpdate {
+                            dimension: dimension.to_owned(),
+                            pos: m.pos,
+                            data,
+                            items: None,
+                            energy: None,
+                            energy_faces: Some(vec![FlowSide::None; 6]),
+                            tanks: None, // sealed, not emptied: the contents stay for the re-formation (`MultiblockCache`)
+                            tank_faces: Some(vec![vec![FlowSide::None; 6]; 5]),
+                            menu_data: None,
+                            transmitter_faces: None,
+                        });
+                    } else if part == Some(Part::Controller) {
+                        let data = encode(&found, &keep);
+                        out.push(BlockEntityUpdate {
+                            dimension: dimension.to_owned(),
+                            pos: m.pos,
+                            data,
+                            items: None,
+                            energy: None,
+                            energy_faces: None,
+                            tanks: None,
+                            tank_faces: None,
+                            menu_data: None,
+                            transmitter_faces: None,
+                        });
+                    } else {
+                        let data = encode(&found, &keep);
+                        out.push(BlockEntityUpdate {
+                            dimension: dimension.to_owned(),
+                            pos: m.pos,
+                            data,
+                            items: None,
+                            energy: None,
+                            energy_faces: None,
+                            tanks: None,
+                            tank_faces: None,
+                            menu_data: None,
+                            transmitter_faces: None,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// A tick of the ports and controllers of the reactors.
+    pub(crate) fn run_fusion(&mut self, parts: &[&BlockEntity], tick_no: u64) -> Vec<BlockEntityUpdate> {
+        let presses = std::mem::take(&mut self.fusion_buttons);
+        let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
+        let mut invalid_parts: Vec<&BlockEntity> = Vec::new();
+        for p in parts {
+            if let Some((f, _)) = decode(&p.data).filter(|(f, _)| f.valid) {
+                by.entry((p.dimension.clone(), f.min)).or_default().push(*p);
+            } else {
+                invalid_parts.push(*p);
+            }
+        }
+        let mut out = Vec::new();
+
+        // S3: Lockdown for unformed / invalid parts
+        for p in invalid_parts {
+            let is_port = p.state.starts_with(PORT);
+            let is_ctl = p.state.starts_with(CONTROLLER);
+            if is_port {
+                for i in 0..5 {
+                    let _ = world::set_tank_filter(&p.dimension, p.pos.x, p.pos.y, p.pos.z, i, &[NOTHING.to_owned()]);
+                }
                 out.push(BlockEntityUpdate {
-                    dimension: dimension.to_owned(),
-                    pos: m.pos,
-                    data,
+                    dimension: p.dimension.clone(),
+                    pos: p.pos,
+                    data: p.data.clone(),
+                    items: None,
+                    energy: None,
+                    energy_faces: Some(vec![FlowSide::None; 6]),
+                    tanks: None, // sealed, not emptied: the contents stay for the re-formation (`MultiblockCache`)
+                    tank_faces: Some(vec![vec![FlowSide::None; 6]; 5]),
+                    menu_data: None,
+                    transmitter_faces: None,
+                });
+            } else if is_ctl {
+                out.push(BlockEntityUpdate {
+                    dimension: p.dimension.clone(),
+                    pos: p.pos,
+                    data: p.data.clone(),
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -367,83 +648,106 @@ impl Mekanism {
                 });
             }
         }
-        out
-    }
 
-    /// A tick of the ports and controllers of the reactors.
-    pub(crate) fn run_fusion(&mut self, parts: &[&BlockEntity], tick_no: u64) -> Vec<BlockEntityUpdate> {
-        let presses = std::mem::take(&mut self.fusion_buttons);
-        let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
-        for p in parts {
-            if let Some((f, _)) = decode(&p.data).filter(|(f, _)| f.valid) {
-                by.entry((p.dimension.clone(), f.min)).or_default().push(*p);
-            }
-        }
-        let mut out = Vec::new();
         for (key, mut group) in by {
             group.sort_by_key(|e| (e.pos.x, e.pos.y, e.pos.z));
             let Some((_, saved)) = decode(&group[0].data) else { continue };
             let ports: Vec<&&BlockEntity> = group.iter().filter(|e| e.state.starts_with(PORT)).collect();
             let controller = group.iter().find(|e| e.state.starts_with(CONTROLLER)).copied();
-            let s = self.fusions.entry(key.clone()).or_default();
             let held = |p: &BlockEntity, i: usize| p.tanks.get(i).cloned().unwrap_or(Tank { substance: String::new(), amount: 0 });
-            if !s.started {
-                s.started = true;
-                s.reactor = Reactor { injection: if saved.injection > 0 { saved.injection } else { DEFAULT_INJECTION }, ..saved };
-                for i in 0..5 {
-                    if let Some(best) = ports.iter().map(|p| held(p, i)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
-                        let t = process::Tank { chemical: best.substance, amount: best.amount };
-                        match i {
-                            0 => s.reactor.water = t,
-                            1 => s.reactor.deuterium = t,
-                            2 => s.reactor.tritium = t,
-                            3 => s.reactor.fuel = t,
-                            _ => s.reactor.steam = t,
+
+            // Step 1: Tick simulation and state update
+            let (r, burning_changed, used) = {
+                let s = self.fusions.entry(key.clone()).or_default();
+                if !s.started {
+                    s.started = true;
+                    s.was_formed = true;
+                    // If s.reactor has no fluids, restore from saved or ports
+                    let has_fluids = s.reactor.water.amount > 0
+                        || s.reactor.deuterium.amount > 0
+                        || s.reactor.tritium.amount > 0
+                        || s.reactor.fuel.amount > 0
+                        || s.reactor.steam.amount > 0;
+                    if !has_fluids {
+                        if s.reactor.injection == 0 {
+                            s.reactor.injection = if saved.injection > 0 { saved.injection } else { DEFAULT_INJECTION };
+                        }
+                        if s.reactor.plasma < 1.0 && saved.plasma >= 1.0 {
+                            s.reactor.plasma = saved.plasma;
+                            s.reactor.case = saved.case;
+                            s.reactor.burning = saved.burning;
+                            s.reactor.energy = saved.energy;
+                        }
+                        for i in 0..5 {
+                            if let Some(best) = ports.iter().map(|p| held(p, i)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
+                                let t = process::Tank { chemical: best.substance, amount: best.amount };
+                                match i {
+                                    0 => s.reactor.water = t,
+                                    1 => s.reactor.deuterium = t,
+                                    2 => s.reactor.tritium = t,
+                                    3 => s.reactor.fuel = t,
+                                    _ => s.reactor.steam = t,
+                                }
+                            }
                         }
                     }
-                }
-            } else {
-                let caps = [water_capacity(s.reactor.injection), FUEL_CAPACITY, FUEL_CAPACITY, FUEL_CAPACITY, steam_capacity(s.reactor.injection)];
-                for i in 0..5 {
-                    let (given, now): (Vec<u64>, Vec<u64>) =
-                        ports.iter().map(|p| (s.given.get(&[p.pos.x, p.pos.y, p.pos.z]).map_or(0, |g| g[i]), held(p, i).amount)).unzip();
-                    let tank = match i {
-                        0 => &mut s.reactor.water,
-                        1 => &mut s.reactor.deuterium,
-                        2 => &mut s.reactor.tritium,
-                        3 => &mut s.reactor.fuel,
-                        _ => &mut s.reactor.steam,
-                    };
-                    let next = dynamic::merge(tank.amount, &given, &now, caps[i]);
-                    if tank.amount == 0 && next > 0 {
-                        tank.chemical = ports.iter().map(|p| held(p, i)).find(|t| t.amount > 0).map(|t| t.substance).unwrap_or_default();
+                    s.given.clear();
+                } else {
+                    let caps = [water_capacity(s.reactor.injection), FUEL_CAPACITY, FUEL_CAPACITY, FUEL_CAPACITY, steam_capacity(s.reactor.injection)];
+                    for i in 0..5 {
+                        let (given, now): (Vec<u64>, Vec<u64>) =
+                            ports.iter().map(|p| (s.given.get(&[p.pos.x, p.pos.y, p.pos.z]).map_or(0, |g| g[i]), held(p, i).amount)).unzip();
+                        let tank = match i {
+                            0 => &mut s.reactor.water,
+                            1 => &mut s.reactor.deuterium,
+                            2 => &mut s.reactor.tritium,
+                            3 => &mut s.reactor.fuel,
+                            _ => &mut s.reactor.steam,
+                        };
+                        let next = dynamic::merge(tank.amount, &given, &now, caps[i]);
+                        if tank.amount == 0 && next > 0 {
+                            tank.chemical = ports.iter().map(|p| held(p, i)).find(|t| t.amount > 0).map(|t| t.substance).unwrap_or_default();
+                        }
+                        tank.amount = next;
+                        if next == 0 {
+                            tank.chemical.clear();
+                        }
                     }
-                    tank.amount = next;
-                    if next == 0 {
-                        tank.chemical.clear();
+                    // The energy the output ports gave away
+                    let taken: u64 = ports.iter().map(|p| s.given.get(&[p.pos.x, p.pos.y, p.pos.z]).map_or(0, |g| g[5]).saturating_sub(p.energy)).sum();
+                    s.reactor.energy = s.reactor.energy.saturating_sub(taken);
+                }
+                for (_, pos, id) in presses.iter().filter(|(d, _, _)| *d == key.0) {
+                    if group.iter().any(|g| (g.pos.x, g.pos.y, g.pos.z) == (pos.x, pos.y, pos.z)) {
+                        press(&mut s.reactor, *id);
                     }
                 }
-                // The energy the ports gave away.
-                let taken: u64 = ports.iter().map(|p| s.given.get(&[p.pos.x, p.pos.y, p.pos.z]).map_or(0, |g| g[5]).saturating_sub(p.energy)).sum();
-                s.reactor.energy = s.reactor.energy.saturating_sub(taken);
-            }
-            for (_, pos, id) in presses.iter().filter(|(d, _, _)| *d == key.0) {
-                if group.iter().any(|g| (g.pos.x, g.pos.y, g.pos.z) == (pos.x, pos.y, pos.z)) {
-                    press(&mut s.reactor, *id);
+                let ambient = world::get_environment(&group[0].dimension, group[0].pos.x, group[0].pos.y, group[0].pos.z).map_or(300.0, |e| generators::ambient_of(e.temperature));
+                if s.reactor.plasma < 1.0 {
+                    s.reactor.plasma = ambient;
+                    s.reactor.case = ambient;
                 }
-            }
-            let ambient = world::get_environment(&group[0].dimension, group[0].pos.x, group[0].pos.y, group[0].pos.z).map_or(300.0, |e| generators::ambient_of(e.temperature));
-            if s.reactor.plasma < 1.0 {
-                s.reactor.plasma = ambient;
-                s.reactor.case = ambient;
-            }
-            let slot = controller.and_then(|c| c.items.first().and_then(|x| x.as_ref())).filter(|x| x.item == HOHLRAUM).cloned();
-            let used = tick(&mut s.reactor, ambient, slot.is_some());
-            let r = s.reactor.clone();
+                let slot = controller.and_then(|c| c.items.first().and_then(|x| x.as_ref())).filter(|x| x.item == HOHLRAUM).cloned();
+                let prev_burning = s.reactor.burning;
+                let used = tick(&mut s.reactor, ambient, slot.is_some());
+                let burning_changed = s.reactor.burning != prev_burning;
+
+                // FORK-7 / FORK-11: Kill zone inside 3x3x3 chamber (FusionReactorMultiblockData.java:287-298)
+                if s.reactor.burning {
+                    kill_zone(&group[0].dimension, key.1, s.reactor.burning, tick_no);
+                }
+                // FORK-19: Render rotating plasma core (RenderFusionReactor.java)
+                render_plasma_core(&group[0].dimension, key.1, s.reactor.burning, s.reactor.plasma);
+
+                (s.reactor.clone(), burning_changed, used)
+            };
+
             let caps = [water_capacity(r.injection), FUEL_CAPACITY, FUEL_CAPACITY, FUEL_CAPACITY, steam_capacity(r.injection)];
             let tanks_now = [r.water.clone(), r.deuterium.clone(), r.tritium.clone(), r.fuel.clone(), r.steam.clone()];
-            let n = ports.len().max(1) as u64;
-            let mut index = 0u64;
+            let output_ports_count = ports.iter().filter(|p| mode_of(&p.data)).count();
+            let n_out = (output_ports_count as u64).max(1);
+            let mut out_index = 0u64;
+
             let half = |v: u64, sh: u32| ((v >> sh) & 0xFFFF) as i32;
             let kind = |t: &process::Tank, fallback: &str| chem::index(if t.amount == 0 { fallback } else { &t.chemical });
             let data = vec![
@@ -478,9 +782,11 @@ impl Mekanism {
                 r.last_power.min(i32::MAX as u64) as i32,
             ];
             let _ = kind;
+
+            let mut given_entries: Vec<([i32; 3], [u64; 6])> = Vec::new();
             for e in &group {
                 let p = [e.pos.x, e.pos.y, e.pos.z];
-                let keep = if tick_no % 20 == 0 { encode(&Found { valid: true, min: key.1 }, &r) } else { e.data.clone() };
+                let keep = if burning_changed || tick_no % 20 == 0 { encode(&Found { valid: true, min: key.1 }, &r) } else { e.data.clone() };
                 let mut update = BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos,
@@ -494,8 +800,6 @@ impl Mekanism {
                     transmitter_faces: None,
                 };
                 if e.state.starts_with(PORT) {
-                    // A sneak click with the configurator toggles whether the port takes in or gives out
-                    // (`TileEntityFusionReactorPort.onSneakRightClick`); a plain click says which it is.
                     let mut output = mode_of(&e.data);
                     let mut mode_changed = false;
                     if let Some(click) = self.take_click(e) {
@@ -510,15 +814,10 @@ impl Mekanism {
                             let _ = players::tell(&click.player, &format!("Reactor Port mode: {}", if output { "Output" } else { "Input" }));
                         }
                     }
-                    // Remember the mode for the structures function: it rewrites the port's data on every revalidation
-                    // and cannot read the mode from the member it is given.
                     self.port_modes.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z), u8::from(output));
-                    if mode_changed || tick_no % 20 == 0 {
+                    if mode_changed || burning_changed || tick_no % 20 == 0 {
                         update.data = with_mode(encode(&Found { valid: true, min: key.1 }, &r), output);
                     }
-                    // A port that gives out lets steam and energy out and takes nothing in; one that takes in takes
-                    // water and fuel in on every face and lets nothing out. The faces are said on every tick in both
-                    // modes: leaving them out in input mode left them at whatever the output mode had set.
                     if output {
                         update.tank_faces = Some(vec![
                             vec![FlowSide::None; 6],
@@ -528,6 +827,18 @@ impl Mekanism {
                             vec![FlowSide::Output; 6],
                         ]);
                         update.energy_faces = Some(vec![FlowSide::Output; 6]);
+                        for i in 0..4 {
+                            let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], i, &[NOTHING.to_owned()]);
+                        }
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 4, &[STEAM.to_owned()]);
+                        let share = if output_ports_count > 0 {
+                            r.energy / n_out + u64::from(out_index < r.energy % n_out)
+                        } else {
+                            0
+                        };
+                        out_index += 1;
+                        update.energy = Some(share);
+                        given_entries.push((p, [tanks_now[0].amount, tanks_now[1].amount, tanks_now[2].amount, tanks_now[3].amount, tanks_now[4].amount, share]));
                     } else {
                         update.tank_faces = Some(vec![
                             vec![FlowSide::Input; 6],
@@ -537,19 +848,16 @@ impl Mekanism {
                             vec![FlowSide::None; 6],
                         ]);
                         update.energy_faces = Some(vec![FlowSide::None; 6]);
+                        let ok = |tank: &process::Tank, cap: u64, name: &str| if tank.amount >= cap { vec![NOTHING.to_owned()] } else { vec![name.to_owned()] };
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 0, &ok(&r.water, caps[0], WATER));
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 1, &ok(&r.deuterium, caps[1], DEUTERIUM));
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 2, &ok(&r.tritium, caps[2], TRITIUM));
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 3, &ok(&r.fuel, caps[3], FUEL));
+                        let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 4, &[NOTHING.to_owned()]);
+                        update.energy = Some(0);
+                        given_entries.push((p, [tanks_now[0].amount, tanks_now[1].amount, tanks_now[2].amount, tanks_now[3].amount, tanks_now[4].amount, 0]));
                     }
-                    let share = r.energy / n + u64::from(index < r.energy % n);
-                    index += 1;
-                    update.energy = Some(share);
                     update.tanks = Some(tanks_now.iter().map(plus::as_tank).collect());
-                    let ok = |tank: &process::Tank, cap: u64, name: &str| if tank.amount >= cap { vec![NOTHING.to_owned()] } else { vec![name.to_owned()] };
-                    let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 0, &ok(&r.water, caps[0], WATER));
-                    let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 1, &ok(&r.deuterium, caps[1], DEUTERIUM));
-                    let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 2, &ok(&r.tritium, caps[2], TRITIUM));
-                    let _ = world::set_tank_filter(&e.dimension, p[0], p[1], p[2], 3, &ok(&r.fuel, caps[3], FUEL));
-                    if let Some(sh) = self.fusions.get_mut(&key) {
-                        sh.given.insert(p, [tanks_now[0].amount, tanks_now[1].amount, tanks_now[2].amount, tanks_now[3].amount, tanks_now[4].amount, share]);
-                    }
                 } else if e.state.starts_with(CONTROLLER) {
                     update.menu_data = Some(data.clone());
                     if used {
@@ -557,6 +865,12 @@ impl Mekanism {
                     }
                 }
                 out.push(update);
+            }
+
+            if let Some(sh) = self.fusions.get_mut(&key) {
+                for (pos, giv) in given_entries {
+                    sh.given.insert(pos, giv);
+                }
             }
         }
         out
@@ -633,6 +947,53 @@ mod tests {
         assert!(!check(&port));
     }
 
+    #[test]
+    fn reactor_glass_only_allowed_on_faces_not_on_frame() {
+        // Java: FusionReactorValidator.java:61-72 and CuboidStructureValidator.java:115.
+        // CasingType::FRAME is required at need == 1; ReactorGlass is CasingType::OTHER / IStructuralMultiblock.
+        let check = |m: &[([i32; 3], Part)]| validate(m, [0; 3], [4; 3], |_| true).valid;
+        // Frame spot [2, 0, 0] (need == 1): Glass should be rejected.
+        let mut glass_on_frame = reactor();
+        for (p, part) in &mut glass_on_frame {
+            if *p == [2, 0, 0] {
+                *part = Part::Glass;
+            }
+        }
+        assert!(!check(&glass_on_frame), "Glass on frame position must fail validation");
+
+        // Face spot [2, 0, 2] (need == 2): Glass is accepted.
+        let mut glass_on_face = reactor();
+        for (p, part) in &mut glass_on_face {
+            if *p == [2, 0, 2] {
+                *part = Part::Glass;
+            }
+        }
+        assert!(check(&glass_on_face), "Glass on face position must be valid");
+    }
+
+    #[test]
+    fn controller_must_be_top_center_and_only_one() {
+        // Java: FusionReactorValidator.java:48-56.
+        // isControllerPos: y == maxPos.y && x == minPos.x + 2 && z == minPos.z + 2
+        let check = |m: &[([i32; 3], Part)]| validate(m, [0; 3], [4; 3], |_| true).valid;
+        // Two controllers
+        let mut two_controllers = reactor();
+        two_controllers.push(([0, 2, 2], Part::Controller));
+        assert!(!check(&two_controllers), "Multiple controllers must fail validation");
+
+        // Controller at bottom face center [2, 0, 2] instead of top center [2, 4, 2]
+        let mut inverted_controller = reactor();
+        for (p, part) in &mut inverted_controller {
+            if *p == [2, 4, 2] {
+                *part = Part::Frame;
+            }
+            if *p == [2, 0, 2] {
+                *part = Part::Controller;
+            }
+        }
+        assert!(!check(&inverted_controller), "Controller anywhere other than top center must fail");
+    }
+
     fn hot(burning: bool) -> Reactor {
         Reactor {
             plasma: 1.2e8,
@@ -701,5 +1062,66 @@ mod tests {
         let (g, back) = decode(&encode(&f, &r)).unwrap();
         assert_eq!((g, back.injection, back.burning, back.energy), (f, 8, true, 123_456_789));
         assert!((back.plasma - 1.5e8).abs() < 100.0);
+    }
+
+    #[test]
+    fn burn_temperature_and_injection_rates() {
+        // Java: FusionReactorMultiblockData.java:452-485.
+        // Min injection rate is 2 for air-cooled and 2 for water-cooled.
+        assert_eq!(min_injection_rate(false), 2);
+        assert_eq!(min_injection_rate(true), 2);
+
+        // Ignition temperature is ~100M K
+        let ign_air = ignition_temperature(false);
+        let ign_water = ignition_temperature(true);
+        assert!(ign_air >= 100_000_000.0 && ign_air < 100_000_002.0, "ign_air: {ign_air}");
+        assert!(ign_water >= 100_000_000.0 && ign_water < 100_000_002.0, "ign_water: {ign_water}");
+
+        // Max casing temp for rate 2 air-cooled: 2 * 10M / 0.1 = 200M K
+        assert_eq!(max_casing(2, false), 200_000_000.0);
+    }
+
+    #[test]
+    fn passive_generation_64bit_no_32bit_clamp() {
+        // Java: FusionReactorMultiblockData.java:358.
+        // MathUtils.clampToLong without artificial 32-bit ceiling.
+        let generated = passive_generation(200_000_000.0);
+        // 0.1 * 200M * 0.05 * 0.4 = 400,000 FE/t
+        assert_eq!(generated, 400_000);
+
+        let high_temp = 2.0e12; // High temp should not overflow 64-bit nor clamp to i32::MAX
+        let high_gen = passive_generation(high_temp);
+        assert!(high_gen > f64::from(i32::MAX) as u64, "high_gen: {high_gen}");
+    }
+
+    #[test]
+    fn comparator_fuel_tank_level() {
+        // Java: FusionReactorMultiblockData.java:448.
+        // Level 0 if empty, 1..15 based on proportion of FUEL_CAPACITY (1,000 mB).
+        assert_eq!(comparator_level(0, 1000), 0);
+        assert_eq!(comparator_level(1, 1000), 1);
+        assert_eq!(comparator_level(500, 1000), 8);
+        assert_eq!(comparator_level(1000, 1000), 15);
+    }
+
+    #[test]
+    fn logic_adapter_modes() {
+        // Java: TileEntityFusionReactorLogicAdapter.java:85-97.
+        let mut r = Reactor {
+            plasma: 1.2e8,
+            injection: 2,
+            fuel: process::Tank { chemical: FUEL.into(), amount: 50 },
+            deuterium: process::Tank { chemical: DEUTERIUM.into(), amount: 100 },
+            tritium: process::Tank { chemical: TRITIUM.into(), amount: 100 },
+            ..Reactor::default()
+        };
+        assert_eq!(logic_adapter_signal(&r, LogicMode::Disabled, false), 0);
+        assert_eq!(logic_adapter_signal(&r, LogicMode::Ready, false), 15);
+        assert_eq!(logic_adapter_signal(&r, LogicMode::Depleted, false), 0);
+
+        // Depleted triggers when fuel is empty and cannot inject
+        r.fuel.amount = 0;
+        r.deuterium.amount = 0;
+        assert_eq!(logic_adapter_signal(&r, LogicMode::Depleted, false), 15);
     }
 }

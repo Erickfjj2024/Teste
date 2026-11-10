@@ -43,3 +43,13 @@
 **Java:** `data/mekanism/recipe/evaporating/brine.json` (`input` 10 mB de `minecraft:water` → `output` 1 mB de `mekanism:brine`) e `lithium.json`.
 **Correção (feita, ainda sem build):** os três tipos entraram em `MACHINE_TYPES` (commit `831bff0`, patch da r5). Conferência mecânica: todo tipo de receita de máquina que o Rust lê agora é convertido (`bin_*`, `clear_configuration`, `energy_conversion` e `mek_data` são tratados à parte).
 **EN.** Cause: the tested `.hmod` held no `mekanism:evaporating` recipe: the converter's `MACHINE_TYPES` lacked `evaporating`, `activating` and `centrifuging`, so the plant's recipe book was empty (same for the Solar Neutron Activator and the Isotopic Centrifuge). Fixed by adding the three types; every machine recipe type the Rust reads is now converted. Not built yet.
+
+## Estado atual dos sintomas / Current state of the symptoms (2026-11-10)
+
+| # | Estado / State | O que foi feito e o que falta / What was done and what is missing |
+|---|---|---|
+| S1 | **ABERTO — precisa do FORK-29** | Nenhuma correção no mod resolve: com `menu: true` o jogo abre o menu da válvula antes de qualquer outra coisa, e `item_used` devolvendo `false` só "deixa para o jogo". O código do m7 devolve `false` nesses casos (documentado, inerte). Só um clique condicional decidido pelo mod (FORK-29) permite colocar o bloco da mão em estrutura não formada. / No mod-side fix works. Needs FORK-29. |
+| S2 | **Parcial** | Ao formar, jogadores a até 40 blocos recebem a mensagem índigo `Multiblock Formed` (texto exato de `multiblock.mekanism.formed.chat`), para todos os multiblocos (`multiblock_changed` em `lib.rs`). As faíscas dependem do FORK-30. / Message done; sparkles need FORK-30. |
+| S3 | **Corrigido no mod (sem build)** | Válvulas e portas de estrutura inválida ficam seladas (filtros `NOTHING`, faces fechadas), com o conteúdo **preservado** para reformar (não é zerado). Dynamic Tank (m1), Boiler, Evaporation, SPS, Fission, Fusion, Matrix. Vedação por tick com o número real de tanques de cada bloco. |
+| S4 | **ABERTO — FORK-31** | Falta a primitiva de renderização de fluido num volume. / Needs FORK-31. |
+| S5 | **Corrigido (sem build)** | Receitas `evaporating`/`activating`/`centrifuging` convertidas. |

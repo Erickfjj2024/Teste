@@ -11,6 +11,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${CHECK_WORK:-/tmp/mek-check}"
 rm -rf "$WORK/mod/src"; mkdir -p "$WORK/mod"
 cp -r "$SRC" "$WORK/mod/src"
+# CHECK_SKIP="modulo1 modulo2": exclui modulos que ainda nao compilam (outro grupo) / skip modules that do not compile yet (another group)
+for m in ${CHECK_SKIP:-}; do rm -f "$WORK/mod/src/$m.rs"; done
 rm -rf "$WORK/sdk"; cp -r "$HERE/sdk" "$WORK/sdk"
 cat > "$WORK/mod/Cargo.toml" <<TOML
 [package]

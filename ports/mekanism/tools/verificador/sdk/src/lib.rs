@@ -140,12 +140,15 @@ pub mod server {
     pub fn on_items(self) -> Self { self }
     pub fn block_entity_kind<T>(self, _t: T) -> Self { self }
     pub fn on_chunks(self) -> Self { self }
+    pub fn on_blocks(self) -> Self { self }
     pub fn new() -> Self { Self::default() }
   }
   pub trait ServerMod: Sized {
     fn init() -> Result<(Self, Registration), String>;
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {}
     fn tick(&mut self, tick: u64) {}
+    fn block_broken(&mut self, player: &Player, pos: BlockPos, state: &str) {}
+    fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {}
     fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {}
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool { false }
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }

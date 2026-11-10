@@ -62,6 +62,9 @@
 | FORK-30 | `world.spawn-particles` para mods (tipo, posição, velocidade, quantidade, jogadores a até N blocos), p.ex. as faíscas de formação / mod particles | `TileEntityMultiblock.doMultiblockSparkle:297-312`, `SparkleAnimation` (S2) |
 | FORK-31 | Renderização de fluido/químico dentro de um volume ligada a uma estrutura (caixa, textura, cor, fração de altura) / fluid fill rendering in a volume | `MultiblockTileEntityRenderer` e `Render*` dos multiblocos (S4; detalha o FORK-19) |
 | FORK-32 | Consulta do tempo de queima de qualquer item (registro de combustíveis do jogo, data packs e outros mods) / burn time of any item from the game's fuel registry | `FuelInventorySlot.burn` (`getBurnTime(null)`), usado pelo Fuelwood Heater, geradores e fornalhas; hoje o port usa uma tabela vanilla aproximada |
+| FORK-33 | Vários grupos de multibloco por bloco (vidro estrutural, pressure disperser): hoje só uma string de grupo / several multiblock groups per block | `IStructuralMultiblock`, `TileEntityStructuralGlass` (`revisao_logica/FORK_multiblock_comum.md`) |
+| FORK-34 | Mascarar capacidades de um bloco por estado (tanques/energia/itens fechados enquanto a estrutura é inválida), sem depender de filtros e faces por tick / per-state capability masking | `MultiblockData.getFluidTanks` vazio sem estrutura (S3) |
+| FORK-35 | Bounding blocks com clique, quebra e colocação ligados nativamente à máquina mestre / bounding blocks wired natively to their owner | `BlockBounding.java:101-177` |
 
 ## F. Como este arquivo vira a API pública / How this file becomes the public API
 

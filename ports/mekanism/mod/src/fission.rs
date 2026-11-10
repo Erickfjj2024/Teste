@@ -13,6 +13,7 @@ pub const PORT: &str = "mekanism:fission_reactor_port";
 pub const ADAPTER: &str = "mekanism:fission_reactor_logic_adapter";
 pub const FUEL: &str = "mekanism:fission_fuel_assembly";
 pub const ROD: &str = "mekanism:control_rod_assembly";
+pub const GLASS: &str = "mekanism:reactor_glass";
 pub const GROUP: &str = "mekanism:fission";
 pub const WATER: &str = "minecraft:water";
 pub const STEAM: &str = "mekanism:steam";
@@ -59,6 +60,7 @@ pub enum Part {
     Adapter,
     Fuel,
     Rod,
+    Glass,
 }
 
 pub fn part_of(state: &str) -> Option<Part> {
@@ -68,6 +70,7 @@ pub fn part_of(state: &str) -> Option<Part> {
         ADAPTER => Some(Part::Adapter),
         FUEL => Some(Part::Fuel),
         ROD => Some(Part::Rod),
+        GLASS => Some(Part::Glass),
         _ => None,
     }
 }
@@ -110,7 +113,7 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                     (0, Some(Part::Rod)) => columns.entry((x, z)).or_default().1.push(y),
                     (0, Some(_)) => return bad,
                     (_, Some(Part::Casing)) => {}
-                    (1, Some(Part::Port | Part::Adapter)) => {}
+                    (1, Some(Part::Port | Part::Adapter | Part::Glass)) => {}
                     _ => return bad,
                 }
             }
@@ -267,35 +270,40 @@ pub fn tick(r: &mut Reactor, f: &Found, ambient: f64, roll: f64) -> bool {
     // The fuel burns.
     r.last_burn = 0.0;
     r.leak = 0.0;
-    if r.active && r.fuel.amount > 0 && r.fuel.chemical == FISSILE {
+    let has_fuel = (r.fuel.chemical == FISSILE && r.fuel.amount > 0) || r.burn_remaining > 0.0;
+    if r.active && has_fuel {
         let stored = r.fuel.amount as f64 + r.burn_remaining;
         let burn = r.rate_limit.min(stored).min(max_burn(f));
-        let left = stored - burn;
-        r.fuel.amount = (left.floor() as u64).min(fuel_capacity(f));
-        if r.fuel.amount == 0 {
-            r.fuel.chemical.clear();
-        }
-        r.burn_remaining = left % 1.0;
-        r.temperature += burn * HEAT_PER_FUEL / capacity;
-        r.partial_waste += burn;
-        let new_waste = r.partial_waste.floor() as u64;
-        if new_waste > 0 {
-            r.partial_waste %= 1.0;
-            let mut kept = 0;
-            if r.waste.amount == 0 || r.waste.chemical == WASTE {
-                let room = fuel_capacity(f).saturating_sub(r.waste.amount);
-                r.waste.chemical = WASTE.to_owned();
-                kept = new_waste.min(room);
-                r.waste.amount += kept;
+        if burn > 0.0 {
+            let left = stored - burn;
+            r.fuel.amount = (left.floor() as u64).min(fuel_capacity(f));
+            if r.fuel.amount == 0 && left < 1e-9 {
+                r.fuel.chemical.clear();
+            } else if r.fuel.chemical.is_empty() {
+                r.fuel.chemical = FISSILE.to_owned();
             }
-            // What does not fit leaks as radiation.
-            r.leak += (new_waste - kept) as f64 * radiation::radioactivity(WASTE);
+            r.burn_remaining = if left < 1e-9 { 0.0 } else { left % 1.0 };
+            r.temperature += burn * HEAT_PER_FUEL / capacity;
+            r.partial_waste += burn;
+            let new_waste = r.partial_waste.floor() as u64;
+            if new_waste > 0 {
+                r.partial_waste %= 1.0;
+                let mut kept = 0;
+                if r.waste.amount == 0 || r.waste.chemical == WASTE {
+                    let room = fuel_capacity(f).saturating_sub(r.waste.amount);
+                    r.waste.chemical = WASTE.to_owned();
+                    kept = new_waste.min(room);
+                    r.waste.amount += kept;
+                }
+                // What does not fit leaks as radiation.
+                r.leak += (new_waste - kept) as f64 * radiation::radioactivity(WASTE);
+            }
+            r.last_burn = burn;
         }
-        r.last_burn = burn;
     }
     // The coolant boils.
     r.last_boil = 0;
-    let (tank, conductivity, enthalpy, heated) = if r.water.amount > 0 {
+    let (tank, conductivity, enthalpy, heated) = if r.water.amount > 0 && (r.water.chemical == WATER || r.water.chemical.is_empty()) {
         (&mut r.water, WATER_CONDUCTIVITY, WATER_ENTHALPY, STEAM)
     } else if r.coolant.amount > 0 && r.coolant.chemical == SODIUM {
         (&mut r.coolant, SODIUM_CONDUCTIVITY, SODIUM_ENTHALPY, HOT_SODIUM)
@@ -397,29 +405,71 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
-            let keep = self.reactors.get(&(dimension.to_owned(), found.min)).map(|s| s.reactor.clone()).unwrap_or_default();
+            let was_valid = self.reactors.get(&(dimension.to_owned(), found.min)).map(|s| s.started).unwrap_or(false);
+            if found.valid && !was_valid {
+                // S2: Multiblock formation notification (TileEntityMultiblock.java:297-312)
+                let centre = [found.min[0] + i32::from(found.size[0]) / 2, found.min[1] + i32::from(found.size[1]) / 2, found.min[2] + i32::from(found.size[2]) / 2];
+                for p in players::online() {
+                    if p.dimension == dimension {
+                        let dx = p.x - centre[0] as f64;
+                        let dy = p.y - centre[1] as f64;
+                        let dz = p.z - centre[2] as f64;
+                        if dx * dx + dy * dy + dz * dz <= 40.0 * 40.0 {
+                            let _ = players::tell(&p.id, "Multiblock formed");
+                        }
+                    }
+                }
+            } else if !found.valid {
+                if let Some(st) = self.reactors.get_mut(&(dimension.to_owned(), found.min)) {
+                    st.started = false;
+                }
+            }
+            let keep = self.reactors.get(&(dimension.to_owned(), found.min))
+                .map(|s| s.reactor.clone())
+                .unwrap_or_else(|| Reactor { rate_limit: DEFAULT_RATE, ..Reactor::default() });
             for m in &s.members {
                 // A port keeps the mode its tick last saw (see `port_modes` in lib.rs): the validation rewrites every
                 // member's data, and a member carries no data of its own in `multiblock-changed`. Other members have
                 // no mode byte and keep the plain encoding.
-                let data = if part_of(&m.state) == Some(Part::Port) {
+                let is_port = part_of(&m.state) == Some(Part::Port);
+                let data = if is_port {
                     let mode = self.port_modes.get(&(dimension.to_owned(), m.pos.x, m.pos.y, m.pos.z)).copied().unwrap_or(0);
                     with_mode(encode(&found, &keep), mode)
                 } else {
                     encode(&found, &keep)
                 };
-                out.push(BlockEntityUpdate {
-                    dimension: dimension.to_owned(),
-                    pos: m.pos,
-                    data,
-                    items: None,
-                    energy: None,
-                    energy_faces: None,
-                    tanks: None,
-                    tank_faces: None,
-                    menu_data: None,
-                    transmitter_faces: None,
-                });
+                if !found.valid && is_port {
+                    // S3: If a port is not part of a valid formed reactor, lock its tanks, faces and menu
+                    let locked = vec![NOTHING.to_owned()];
+                    for i in 0..5 {
+                        let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, i, &locked);
+                    }
+                    out.push(BlockEntityUpdate {
+                        dimension: dimension.to_owned(),
+                        pos: m.pos,
+                        data,
+                        items: None,
+                        energy: None,
+                        energy_faces: None,
+                        tanks: None, // sealed, not emptied: the contents stay for the re-formation (`MultiblockCache`)
+                        tank_faces: Some(vec![vec![FlowSide::None; 6]; 5]),
+                        menu_data: Some(Vec::new()),
+                        transmitter_faces: None,
+                    });
+                } else {
+                    out.push(BlockEntityUpdate {
+                        dimension: dimension.to_owned(),
+                        pos: m.pos,
+                        data,
+                        items: None,
+                        energy: None,
+                        energy_faces: None,
+                        tanks: None,
+                        tank_faces: None,
+                        menu_data: None,
+                        transmitter_faces: None,
+                    });
+                }
             }
         }
         out
@@ -429,12 +479,30 @@ impl Mekanism {
     pub(crate) fn run_fission(&mut self, ports: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.fission_buttons);
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
+        let mut out = Vec::new();
         for p in ports {
             if let Some((f, _)) = decode(&p.data).filter(|(f, _)| f.valid) {
                 by.entry((p.dimension.clone(), f.min)).or_default().push(*p);
+            } else {
+                // S3: If a port is not part of a valid formed reactor, lock its tanks, faces and menu
+                let locked = vec![NOTHING.to_owned()];
+                for i in 0..5 {
+                    let _ = world::set_tank_filter(&p.dimension, p.pos.x, p.pos.y, p.pos.z, i, &locked);
+                }
+                out.push(BlockEntityUpdate {
+                    dimension: p.dimension.clone(),
+                    pos: p.pos,
+                    data: p.data.clone(),
+                    items: None,
+                    energy: None,
+                    energy_faces: None,
+                    tanks: None, // sealed, not emptied: the contents stay for the re-formation (`MultiblockCache`)
+                    tank_faces: Some(vec![vec![FlowSide::None; 6]; 5]),
+                    menu_data: Some(Vec::new()),
+                    transmitter_faces: None,
+                });
             }
         }
-        let mut out = Vec::new();
         for (key, group) in by {
             let Some((found, saved)) = decode(&group[0].data) else { continue };
             let caps = [coolant_capacity(&found), coolant_capacity(&found), fuel_capacity(&found), heated_capacity(&found), fuel_capacity(&found)];
@@ -442,7 +510,7 @@ impl Mekanism {
             let held = |p: &BlockEntity, i: usize| p.tanks.get(i).cloned().unwrap_or(Tank { substance: String::new(), amount: 0 });
             if !s.started {
                 s.started = true;
-                s.reactor = Reactor { rate_limit: if saved.rate_limit > 0.0 { saved.rate_limit } else { DEFAULT_RATE }, ..saved };
+                s.reactor = Reactor { rate_limit: if saved.rate_limit >= 0.0 { saved.rate_limit } else { DEFAULT_RATE }, ..saved };
                 for i in 0..5 {
                     if let Some(best) = group.iter().map(|p| held(p, i)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
                         let t = process::Tank { chemical: best.substance, amount: best.amount.min(caps[i]) };
@@ -788,5 +856,122 @@ mod tests {
             let v = roll(t, 7);
             assert!((0.0..1.0).contains(&v));
         }
+    }
+
+    #[test]
+    fn reactor_glass_is_allowed_on_walls_but_not_edges() {
+        // Java: TileEntityReactorGlass.java:16 (canInterface returns true)
+        // CuboidStructureValidator.java:115-118 (allowed on wall faces where needsFrame is false, rejected on edges)
+        let mut with_glass = reactor(5, 2);
+        // Replace a casing on a wall face (x=0, y=1, z=2 -> edges = 1) with reactor glass
+        if let Some(pos) = with_glass.iter_mut().find(|(p, _)| *p == [0, 1, 2]) {
+            pos.1 = Part::Glass;
+        }
+        let f = validate(&with_glass, [0; 3], [4; 3], |_| true);
+        assert!(f.valid, "Reactor glass must be allowed on wall faces");
+
+        // Now put reactor glass on an edge (x=0, y=0, z=2 -> edges = 2)
+        let mut edge_glass = reactor(5, 2);
+        if let Some(pos) = edge_glass.iter_mut().find(|(p, _)| *p == [0, 0, 2]) {
+            pos.1 = Part::Glass;
+        }
+        let f_edge = validate(&edge_glass, [0; 3], [4; 3], |_| true);
+        assert!(!f_edge.valid, "Reactor glass must not be allowed on edges or frames");
+    }
+
+    #[test]
+    fn burn_remaining_burns_to_completion_when_fuel_tank_is_zero() {
+        // Java: FissionReactorMultiblockData.java:474-478 (storedFuel = fuelTank.getStored() + burnRemaining)
+        let f = validate(&reactor(5, 2), [0; 3], [4; 3], |_| true);
+        let mut r = Reactor {
+            temperature: 300.0,
+            rate_limit: 0.5,
+            active: true,
+            fuel: process::Tank { chemical: String::new(), amount: 0 },
+            burn_remaining: 0.5,
+            ..Reactor::default()
+        };
+        let init_temp = r.temperature;
+        tick(&mut r, &f, 300.0, 0.99);
+        assert_eq!(r.last_burn, 0.5);
+        assert!(r.burn_remaining < 1e-9);
+        assert!(r.temperature > init_temp);
+        assert_eq!(r.fuel.amount, 0);
+    }
+
+    #[test]
+    fn zero_burn_rate_is_preserved_across_loads() {
+        // Java: FissionReactorCache.java:20-27 (rateLimit != -1 retains configured 0.0)
+        let f = validate(&reactor(5, 2), [0; 3], [4; 3], |_| true);
+        let r = Reactor {
+            rate_limit: 0.0,
+            active: true,
+            ..Reactor::default()
+        };
+        let encoded = encode(&f, &r);
+        let decoded = decode(&encoded).expect("must decode");
+        assert_eq!(decoded.1.rate_limit, 0.0);
+        let saved_rate = if decoded.1.rate_limit >= 0.0 { decoded.1.rate_limit } else { DEFAULT_RATE };
+        assert_eq!(saved_rate, 0.0);
+    }
+
+    #[test]
+    fn reactor_dimensions_minimum_and_maximum_bounds() {
+        // Java: CuboidStructureValidator.java:34 (bounds 3..18)
+        // FissionReactorValidator.java:133-149 (must have at least one column with fuel + rod)
+        // 3x4x3 has room for 1 fuel (y=1) and 1 rod (y=2) in interior
+        let mut min_reactor = Vec::new();
+        for x in 0..3 {
+            for y in 0..4 {
+                for z in 0..3 {
+                    let edge = x == 0 || x == 2 || y == 0 || y == 3 || z == 0 || z == 2;
+                    if edge {
+                        min_reactor.push(([x, y, z], if (x, y, z) == (0, 1, 1) { Part::Port } else { Part::Casing }));
+                    } else if (x, z) == (1, 1) && y == 1 {
+                        min_reactor.push(([x, y, z], Part::Fuel));
+                    } else if (x, z) == (1, 1) && y == 2 {
+                        min_reactor.push(([x, y, z], Part::Rod));
+                    }
+                }
+            }
+        }
+        let f = validate(&min_reactor, [0; 3], [2, 3, 2], |_| true);
+        assert!(f.valid, "3x4x3 reactor must form");
+
+        // 3x3x3 has interior height 1, cannot fit both fuel and control rod
+        let mut too_short = Vec::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    let edge = x == 0 || x == 2 || y == 0 || y == 2 || z == 0 || z == 2;
+                    if edge {
+                        too_short.push(([x, y, z], if (x, y, z) == (0, 1, 1) { Part::Port } else { Part::Casing }));
+                    } else {
+                        too_short.push(([x, y, z], Part::Fuel));
+                    }
+                }
+            }
+        }
+        let f_short = validate(&too_short, [0; 3], [2; 3], |_| true);
+        assert!(!f_short.valid, "3x3x3 reactor cannot fit fuel + rod");
+
+        // Below 3 or above 18
+        assert!(!validate(&reactor(5, 2), [0; 3], [1, 4, 4], |_| true).valid);
+        assert!(!validate(&reactor(5, 2), [0; 3], [18, 4, 4], |_| true).valid);
+    }
+
+    #[test]
+    fn port_cycle_modes_and_names() {
+        // Java: AttributeStateFissionPortMode.java:49-51, TileEntityFissionReactorPort.java:116
+        assert_eq!(mode_name(0), "input only");
+        assert_eq!(mode_name(1), "output waste");
+        assert_eq!(mode_name(2), "output coolant");
+        assert_eq!(mode_name(3), "input only");
+
+        let data = vec![0u8; 53];
+        let with_m1 = with_mode(data.clone(), 1);
+        assert_eq!(mode_of(&with_m1), 1);
+        let with_m2 = with_mode(data, 2);
+        assert_eq!(mode_of(&with_m2), 2);
     }
 }

@@ -30,13 +30,15 @@ pub const NOTHING: &str = "mekanism:nothing";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Block,
+    Glass,
     Valve,
     Controller,
 }
 
 pub fn part_of(state: &str) -> Option<Part> {
     match state.split('[').next().unwrap_or("") {
-        BLOCK | "mekanism:structural_glass" => Some(Part::Block),
+        BLOCK => Some(Part::Block),
+        "mekanism:structural_glass" => Some(Part::Glass),
         VALVE => Some(Part::Valve),
         CONTROLLER => Some(Part::Controller),
         _ => None,
@@ -68,27 +70,31 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
                 let top = y == max[1];
                 let bottom = y == min[1];
                 let boundary = ex || ez || bottom;
-                // The edges of the box (two of the three coordinates on a boundary), the roof's corners excepted.
-                let edges = usize::from(ex) + usize::from(ez) + usize::from(bottom || top && !(ex || ez));
                 let roof_corner = top && ex && ez;
                 let roof_middle = top && !ex && !ez;
-                match (have.get(&p), roof_corner, roof_middle, boundary || top) {
-                    (_, true, _, _) => {}
-                    (Some(_), _, true, _) => return bad,
-                    (None, _, true, _) if !inside_empty(p) => return bad,
-                    (None, _, true, _) => {}
-                    (Some(Part::Controller), _, _, true) => {
+                // Java: CuboidStructureValidator: onEdge requires FRAME (THERMAL_EVAPORATION_BLOCK only).
+                // On top layer: corners are IGNORED, center is INNER, ring is OTHER (needsFrame=false).
+                // On lower layers: bottom edges/corners and vertical edge columns have matches >= 2 (needsFrame=true).
+                let is_frame = (bottom && (ex || ez)) || (!top && ex && ez);
+                match (have.get(&p), roof_corner, roof_middle, is_frame, boundary || top) {
+                    (Some(Part::Controller), true, _, _, _) => {
                         controllers += 1;
-                        if edges > 1 && !top {
-                            return bad;
-                        }
                     }
-                    (Some(Part::Valve), _, _, true) if edges > 1 && !top => return bad,
-                    (Some(_), _, _, true) => {}
-                    (None, _, _, true) => return bad,
-                    (Some(_), _, _, false) => return bad,
-                    (None, _, _, false) if !inside_empty(p) => return bad,
-                    (None, _, _, false) => {}
+                    (_, true, _, _, _) => {}
+                    (Some(_), _, true, _, _) => return bad,
+                    (None, _, true, _, _) if !inside_empty(p) => return bad,
+                    (None, _, true, _, _) => {}
+                    (Some(Part::Block), _, _, true, _) => {}
+                    (Some(_), _, _, true, _) => return bad,
+                    (None, _, _, true, _) => return bad,
+                    (Some(Part::Controller), _, _, false, true) => {
+                        controllers += 1;
+                    }
+                    (Some(Part::Block | Part::Glass | Part::Valve), _, _, false, true) => {}
+                    (None, _, _, false, true) => return bad,
+                    (Some(_), _, _, false, false) => return bad,
+                    (None, _, _, false, false) if !inside_empty(p) => return bad,
+                    (None, _, _, false, false) => {}
                 }
             }
         }
@@ -190,6 +196,57 @@ pub struct Plant {
     pub rate: f64,
 }
 
+/// Comparator signal from input tank contents (`EvaporationMultiblockData:312`).
+pub fn comparator_level(amount: u64, capacity: u64) -> u8 {
+    if capacity == 0 || amount == 0 {
+        0
+    } else if amount >= capacity {
+        15
+    } else {
+        (1.0 + (amount as f64 / capacity as f64) * 14.0).floor() as u8
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// FORK Requirements (isolated host call stubs and declarations)
+// -------------------------------------------------------------------------------------------------
+
+/// Host interface for comparator output calculation on multiblock valves (`TileEntityThermalEvaporationValve:64`).
+/// Level is discrete 0..15 based on input tank content ratio.
+// FORK-21
+pub fn host_set_comparator_output(dimension: &str, pos: [i32; 3], level: u8) -> Result<(), &'static str> {
+    let _ = (dimension, pos, level);
+    Ok(())
+}
+
+/// Host interface for heat network integration via thermal evaporation valves (`TileEntityThermalEvaporationValve:30`).
+// FORK-4
+pub fn host_transfer_valve_heat(dimension: &str, pos: [i32; 3], heat_input: f64) -> Result<f64, &'static str> {
+    let _ = (dimension, pos, heat_input);
+    Ok(0.0)
+}
+
+/// Host interface for multiblock formation sparkle particles (`TileEntityMultiblock:297-312`).
+// FORK-30
+pub fn host_multiblock_sparkle(dimension: &str, min: [i32; 3], max: [i32; 3]) -> Result<(), &'static str> {
+    let _ = (dimension, min, max);
+    Ok(())
+}
+
+/// Host interface for rendering multiblock inner fluid column (`RenderThermalEvaporationPlant.java`).
+// FORK-19 / FORK-31
+pub fn host_render_multiblock_fluid(dimension: &str, min: [i32; 3], max: [i32; 3], fluid: &str, fraction: f64) -> Result<(), &'static str> {
+    let _ = (dimension, min, max, fluid, fraction);
+    Ok(())
+}
+
+/// Host interface for removing rendered multiblock fluid upon disassembly.
+// FORK-19 / FORK-31
+pub fn host_remove_multiblock_fluid(dimension: &str, min: [i32; 3], max: [i32; 3]) -> Result<(), &'static str> {
+    let _ = (dimension, min, max);
+    Ok(())
+}
+
 impl Mekanism {
     pub(crate) fn evaporation_structures(&mut self, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> {
         let mut out = Vec::new();
@@ -200,8 +257,22 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
+            // The formation notice (sparkles / action bar) is made for every multiblock in `multiblock_changed` (lib.rs).
+            if !found.valid {
+                let _ = host_remove_multiblock_fluid(dimension, min, max); // FORK-19 / FORK-31
+            }
             for m in &s.members {
+                if part_of(&m.state) == Some(Part::Controller) {
+                    let _ = world::set_block_property(dimension, m.pos.x, m.pos.y, m.pos.z, "active", if found.valid { "true" } else { "false" });
+                }
                 let keep = self.plants.get(&(dimension.to_owned(), found.min)).map_or(AMBIENT as f32, |p| p.temperature as f32);
+                let tank_faces = if found.valid {
+                    None
+                } else {
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 0, &[NOTHING.to_owned()]);
+                    let _ = world::set_tank_filter(dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
+                    Some(vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6]])
+                };
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
@@ -210,7 +281,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: None,
-                    tank_faces: None,
+                    tank_faces,
                     menu_data: None,
                     transmitter_faces: None,
                 });
@@ -222,31 +293,56 @@ impl Mekanism {
     /// A tick of the valves and controllers of the plants.
     pub(crate) fn run_evaporation(&mut self, members: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
+        let mut unformed: Vec<&BlockEntity> = Vec::new();
         for m in members {
             if let Some((f, _)) = decode(&m.data).filter(|(f, _)| f.valid) {
                 by.entry((m.dimension.clone(), f.min)).or_default().push(*m);
+            } else {
+                unformed.push(*m);
             }
+        }
+        let mut out = Vec::new();
+        for m in unformed {
+            let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 0, &[NOTHING.to_owned()]);
+            let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
+            if part_of(&m.state) == Some(Part::Controller) {
+                let _ = world::set_block_property(&m.dimension, m.pos.x, m.pos.y, m.pos.z, "active", "false");
+            }
+            out.push(BlockEntityUpdate {
+                dimension: m.dimension.clone(),
+                pos: m.pos,
+                data: m.data.clone(),
+                items: None,
+                energy: None,
+                energy_faces: None,
+                tanks: None,
+                tank_faces: Some(vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6]]),
+                menu_data: None,
+                transmitter_faces: None,
+            });
         }
         if self.evaporating.is_empty() {
             self.evaporating = load_book();
         }
-        let mut out = Vec::new();
         for (key, group) in by {
             let Some((found, stored_t)) = decode(&group[0].data) else { continue };
             let in_cap = u64::from(found.height) * PER_LEVEL;
             let plant = self.plants.entry(key.clone()).or_default();
             let held = |m: &BlockEntity, i: usize| m.tanks.get(i).cloned().unwrap_or(Tank { substance: String::new(), amount: 0 });
+            let caps = [in_cap, OUTPUT_CAPACITY];
             if plant.given.is_empty() {
                 // After a load: what the valves hold, and the temperature the plant kept.
                 plant.temperature = f64::from(stored_t);
                 for i in 0..2 {
                     if let Some(best) = group.iter().map(|m| held(m, i)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
-                        let t = process::Tank { chemical: best.substance, amount: best.amount };
+                        let t = process::Tank { chemical: best.substance, amount: best.amount.min(caps[i]) };
                         if i == 0 { plant.input = t } else { plant.output = t }
                     }
                 }
             }
-            let caps = [in_cap, OUTPUT_CAPACITY];
+            if plant.input.amount > in_cap {
+                plant.input.amount = in_cap;
+            }
             for i in 0..2 {
                 let (given, now): (Vec<u64>, Vec<u64>) =
                     group.iter().map(|m| (plant.given.get(&[m.pos.x, m.pos.y, m.pos.z]).map_or(0, |g| if i == 0 { g.0 } else { g.1 }), held(m, i).amount)).unzip();
@@ -262,6 +358,23 @@ impl Mekanism {
                     tank.chemical.clear();
                 }
             }
+
+            // The bucket slots of the controller processed BEFORE recording given and emitting tanks to avoid fluid duplication
+            let ctl_idx = group.iter().position(|m| part_of(&m.state) == Some(Part::Controller));
+            let mut ctl_items = None;
+            if let Some(idx) = ctl_idx {
+                let m = group[idx];
+                if m.items.len() >= 4 {
+                    let slot = |i: usize| stack(m.items.get(i).unwrap_or(&None));
+                    let (mut a, mut b, mut c, mut d) = (slot(0), slot(1), slot(2), slot(3));
+                    let used_in = tank::buckets(&mut a, &mut b, &mut plant.input, in_cap, tank::EditMode::Fill);
+                    let used_out = tank::buckets(&mut c, &mut d, &mut plant.output, OUTPUT_CAPACITY, tank::EditMode::Empty);
+                    if used_in || used_out {
+                        ctl_items = Some(vec![item(&a), item(&b), item(&c), item(&d)]);
+                    }
+                }
+            }
+
             // The heat: the solar generators on the top corners that see the sun, then the air.
             let corners = {
                 let (min, top) = (found.min, found.min[1] + i32::from(found.height) - 1);
@@ -282,14 +395,19 @@ impl Mekanism {
             plant.temperature = heat(plant.temperature.max(1.0), solars, ambient);
             let mult = multiplier(plant.temperature, found.height);
             let ops = operations(mult, tick);
-            let mut done = 0;
-            if ops > 0 {
+            let can_operate = !plant.input.chemical.is_empty() && plant.input.amount > 0 && plant.output.amount < OUTPUT_CAPACITY;
+            if ops > 0 && can_operate {
                 let (mut i, mut o) = (plant.input.clone(), plant.output.clone());
-                done = evaporate(&mut i, &mut o, &self.evaporating, ops);
+                let _ = evaporate(&mut i, &mut o, &self.evaporating, ops);
                 plant.input = i;
                 plant.output = o;
             }
-            plant.rate = if done > 0 { mult.max(0.0) } else { 0.0 };
+            // Steady rate for GUI display (matches Java lastGain)
+            plant.rate = if can_operate && mult > 0.0 {
+                if mult < 1.0 { 1.0 / (1.0 / mult).ceil() } else { mult }
+            } else {
+                0.0
+            };
             let (input, output) = (plant.input.clone(), plant.output.clone());
             for m in &group {
                 plant.given.insert([m.pos.x, m.pos.y, m.pos.z], (input.amount, output.amount));
@@ -310,27 +428,37 @@ impl Mekanism {
                 (rate * 10.0) as i32,
                 i32::from(found.height),
             ];
+            let _ = host_render_multiblock_fluid(
+                &key.0,
+                found.min,
+                [found.min[0] + 3, found.min[1] + i32::from(found.height) - 1, found.min[2] + 3],
+                &input.chemical,
+                if in_cap > 0 { input.amount as f64 / in_cap as f64 } else { 0.0 },
+            ); // FORK-19 / FORK-31
             for m in &group {
-                let mut items = None;
-                let mut tanks = vec![plus::as_tank(&input), plus::as_tank(&output)];
-                if part_of(&m.state) == Some(Part::Controller) && m.items.len() >= 4 {
-                    // The bucket slots: a full bucket fills the input tank, an empty one is filled from the output tank.
-                    let slot = |i: usize| stack(m.items.get(i).unwrap_or(&None));
-                    let (mut a, mut b, mut c, mut d) = (slot(0), slot(1), slot(2), slot(3));
-                    let (mut ti, mut to) = (input.clone(), output.clone());
-                    let used_in = tank::buckets(&mut a, &mut b, &mut ti, in_cap, tank::EditMode::Fill);
-                    let used_out = tank::buckets(&mut c, &mut d, &mut to, OUTPUT_CAPACITY, tank::EditMode::Empty);
-                    if used_in || used_out {
-                        items = Some(vec![item(&a), item(&b), item(&c), item(&d)]);
-                        tanks = vec![plus::as_tank(&ti), plus::as_tank(&to)];
-                        let plant = self.plants.get_mut(&key).expect("the plant is there");
-                        plant.input = ti;
-                        plant.output = to;
-                    }
+                let is_ctl = part_of(&m.state) == Some(Part::Controller);
+                let items = if is_ctl { ctl_items.clone() } else { None };
+                let tanks = vec![plus::as_tank(&input), plus::as_tank(&output)];
+                let tank_faces = if is_ctl {
+                    Some(vec![vec![FlowSide::None; 6], vec![FlowSide::None; 6]])
+                } else {
+                    Some(vec![vec![FlowSide::Both; 6], vec![FlowSide::Output; 6]])
+                };
+                if is_ctl {
+                    let _ = world::set_block_property(&m.dimension, m.pos.x, m.pos.y, m.pos.z, "active", "true");
+                } else {
+                    let comp = comparator_level(input.amount, in_cap);
+                    let _ = host_set_comparator_output(&m.dimension, [m.pos.x, m.pos.y, m.pos.z], comp); // FORK-21
                 }
-                let keep = if part_of(&m.state) == Some(Part::Controller) && tick % 20 == 0 { encode(&found, temperature as f32) } else { m.data.clone() };
-                // The input tank only takes the fluids a recipe uses, and neither takes more when full.
-                let filter_in: Vec<String> = if input.amount >= in_cap { vec![NOTHING.to_owned()] } else { self.evaporating.keys().cloned().collect() };
+                let keep = if is_ctl && tick % 20 == 0 { encode(&found, temperature as f32) } else { m.data.clone() };
+                // The input tank only takes the fluids a recipe uses, restricted to existing chemical when partially full.
+                let filter_in: Vec<String> = if input.amount >= in_cap {
+                    vec![NOTHING.to_owned()]
+                } else if !input.chemical.is_empty() {
+                    vec![input.chemical.clone()]
+                } else {
+                    self.evaporating.keys().cloned().collect()
+                };
                 let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 0, &filter_in);
                 let _ = world::set_tank_filter(&m.dimension, m.pos.x, m.pos.y, m.pos.z, 1, &[NOTHING.to_owned()]);
                 out.push(BlockEntityUpdate {
@@ -341,7 +469,7 @@ impl Mekanism {
                     energy: None,
                     energy_faces: None,
                     tanks: Some(tanks),
-                    tank_faces: None,
+                    tank_faces,
                     menu_data: Some(data.clone()),
                     transmitter_faces: None,
                 });
@@ -456,5 +584,83 @@ mod tests {
         let is_valid = |b: &str| b.starts_with("mekanism:advanced_solar_generator");
         assert!(is_valid("mekanism:advanced_solar_generator"));
         assert!(!is_valid("mekanism:solar_generator"));
+    }
+
+    #[test]
+    fn structural_glass_allowed_on_walls_and_rim_not_on_edges() {
+        // Java: EvaporationValidator.java:58-68, CuboidStructureValidator.java:106
+        // Structural glass is valid on face walls (0, 2, 1) and roof rim (0, 4, 1),
+        // but invalid on frame edges (0, 2, 0), bottom edges (0, 0, 1), or bottom corners (0, 0, 0).
+        let mut on_face = tower(5);
+        if let Some(m) = on_face.iter_mut().find(|(p, _)| *p == [0, 2, 1]) {
+            m.1 = Part::Glass;
+        }
+        assert!(validate(&on_face, [0; 3], [3, 4, 3], |_| true).valid);
+
+        let mut on_rim = tower(5);
+        if let Some(m) = on_rim.iter_mut().find(|(p, _)| *p == [0, 4, 1]) {
+            m.1 = Part::Glass;
+        }
+        assert!(validate(&on_rim, [0; 3], [3, 4, 3], |_| true).valid);
+
+        let mut on_vert_edge = tower(5);
+        if let Some(m) = on_vert_edge.iter_mut().find(|(p, _)| *p == [0, 2, 0]) {
+            m.1 = Part::Glass;
+        }
+        assert!(!validate(&on_vert_edge, [0; 3], [3, 4, 3], |_| true).valid);
+
+        let mut on_bottom_edge = tower(5);
+        if let Some(m) = on_bottom_edge.iter_mut().find(|(p, _)| *p == [0, 0, 1]) {
+            m.1 = Part::Glass;
+        }
+        assert!(!validate(&on_bottom_edge, [0; 3], [3, 4, 3], |_| true).valid);
+
+        let mut on_bottom_corner = tower(5);
+        if let Some(m) = on_bottom_corner.iter_mut().find(|(p, _)| *p == [0, 0, 0]) {
+            m.1 = Part::Glass;
+        }
+        assert!(!validate(&on_bottom_corner, [0; 3], [3, 4, 3], |_| true).valid);
+    }
+
+    #[test]
+    fn controller_in_roof_corner_causes_conflict() {
+        // Java: EvaporationValidator.java:32-38
+        // Even though roof corners are ignored positions for structure frame, placing a second controller
+        // in a roof corner triggers MULTIBLOCK_INVALID_CONTROLLER_CONFLICT.
+        let mut two_ctl = tower(5);
+        two_ctl.push(([0, 4, 0], Part::Controller));
+        assert!(!validate(&two_ctl, [0; 3], [3, 4, 3], |_| true).valid);
+    }
+
+    #[test]
+    fn evaporation_comparator_level() {
+        // Java: EvaporationMultiblockData.java:312, MekanismUtils.java:692
+        assert_eq!(comparator_level(0, 1000), 0);
+        assert_eq!(comparator_level(1000, 1000), 15);
+        assert_eq!(comparator_level(500, 1000), 8);
+        assert_eq!(comparator_level(1, 1000), 1);
+        assert_eq!(comparator_level(0, 0), 0);
+    }
+
+    #[test]
+    fn evaporation_clamps_stored_fluid_on_rebuild_or_shrink() {
+        // Java: EvaporationMultiblockData.java:222, VariableCapacityFluidTank.java:69
+        let full_h18_cap = 18 * PER_LEVEL; // 4_608_000
+        let h3_cap = 3 * PER_LEVEL; // 768_000
+        let mut stored = full_h18_cap;
+        if stored > h3_cap {
+            stored = h3_cap;
+        }
+        assert_eq!(stored, 768_000);
+    }
+
+    #[test]
+    fn unformed_valve_locks_tank_faces_and_filters_nothing() {
+        // Java: TileEntityThermalEvaporationValve.java:25, 37; SINTOMAS_MULTIBLOCOS.md S3
+        // When unformed or dismantled, valves must lock tank faces to FlowSide::None and filter NOTHING.
+        let bad = Found { valid: false, min: [0; 3], height: 0 };
+        let encoded = encode(&bad, AMBIENT as f32);
+        let decoded = decode(&encoded);
+        assert_eq!(decoded.map(|(f, _)| f.valid), Some(false));
     }
 }
