@@ -416,6 +416,7 @@ Cada escopo foi refeito por uma conta diferente da rodada 1 (`revisao2/`). Erros
 Tarefas sem bloco próprio (r1, r3, r5): ver `revisao2/REVISAO_*.md` / tasks without own block: see the review files.
 
 | 19.12 | FORK-29 `server-events.block-used` (default/pass/consume): o clique em bloco de multibloco só abre a tela se formado e sem agachar; senão o bloco da mão é colocado. Exige APK novo; export novo (sem nível de API, mod novo não carrega em Horizon antigo) | feito no fork, sem teste em jogo |
+| 19.13 | FORK-34 `world.set-capabilities-enabled` (API 24): válvulas e portas de multibloco inválido fecham itens/fluidos/energia para fora (o Java devolve listas vazias sem estrutura); o conteúdo fica guardado. O truque antigo de filtro `NOTHING` continua como segunda barreira. / Valves and ports of an invalid multiblock close items, fluids and energy to the outside (Java returns empty lists without a structure); contents are kept. | feito no fork e ligado no mod, sem teste em jogo |
 
 ## 5. Fork do Horizon (precisam de APK novo)
 

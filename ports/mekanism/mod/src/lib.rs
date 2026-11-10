@@ -6,6 +6,7 @@
 //! smelter (`machine.rs`), the energy cubes and the universal cable.
 mod combiner;
 mod assemblicator;
+mod capmask;
 mod cardboard_box;
 mod chargepad;
 mod chemical_fluids;
@@ -572,6 +573,11 @@ fn is_multiblock_block(name: &str) -> bool {
             | "mekanism:structural_glass"
     ) || induction::CELLS.iter().any(|c| c.0 == name)
         || induction::PROVIDERS.iter().any(|c| c.0 == name)
+}
+
+fn is_multiblock_port_or_valve_at(dimension: &str, pos: BlockPos) -> bool {
+    world::get_block(dimension, pos.x, pos.y, pos.z)
+        .is_some_and(|b| is_multiblock_port_or_valve(b.split('[').next().unwrap_or("")))
 }
 
 fn is_multiblock_port_or_valve(name: &str) -> bool {
@@ -2757,9 +2763,13 @@ impl ServerMod for Mekanism {
             }
         }
 
-        // Sanitize any updates for unformed components (S3):
+        // Sanitize any updates for unformed components (S3), and open or close what the valves and ports let through (FORK-34):
         for u in &mut updates {
-            if u.data.first().copied().unwrap_or(0) == 0 {
+            let formed = u.data.first().copied().unwrap_or(0) != 0;
+            if is_multiblock_port_or_valve_at(dimension, u.pos) {
+                capmask::set_formed(dimension, u.pos, formed);
+            }
+            if !formed {
                 if let Some(block) = world::get_block(dimension, u.pos.x, u.pos.y, u.pos.z) {
                     let name = block.split('[').next().unwrap_or("");
                     if is_multiblock_port_or_valve(name) {
