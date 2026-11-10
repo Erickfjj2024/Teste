@@ -284,6 +284,8 @@ pub enum CraftingPattern {
     Shapeless {
         ingredients: Vec<String>,
     },
+    /// A recipe the game found (any vanilla or mod crafting recipe): the game matches it (`crafting-matches`).
+    Host,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -298,6 +300,7 @@ impl CraftingRecipeDef {
     /// Matches this recipe against a 3x3 crafting grid.
     pub fn matches(&self, grid: &[Option<ItemStack>; 9]) -> bool {
         match &self.pattern {
+            CraftingPattern::Host => crate::fork_utilidades::crafting_matches(&self.id, grid),
             CraftingPattern::Shapeless { ingredients } => {
                 let mut grid_items: Vec<String> = grid.iter()
                     .filter_map(|s| s.as_ref())
@@ -426,9 +429,11 @@ impl RecipeResolver {
     /// Resolves recipe for the given 3x3 crafting grid.
     /// First queries the host via `// FORK-32`, falling back to built-in recipes.
     pub fn find_recipe(grid: &[Option<ItemStack>; 9]) -> Option<CraftingRecipeDef> {
-        // FORK-32: Dynamic host crafting recipe lookup
-        // In the fork, this calls `horizon_recipes::match_crafting_recipe(grid)`.
-        // If the host provides the recipe, return it; otherwise check built-ins:
+        // The game's own recipes first (`MekanismRecipeType.getRecipeFor(RecipeType.CRAFTING, ...)`: every crafting recipe of the game and the mods).
+        if let Some(found) = crate::fork_utilidades::crafting_find(grid) {
+            return Some(CraftingRecipeDef { id: found.id, pattern: CraftingPattern::Host, output: found.output, remaining: found.remaining });
+        }
+        // Until the game answers, the three recipes of this family.
         for r in Self::built_in_recipes() {
             if r.matches(grid) {
                 return Some(r);
@@ -474,29 +479,54 @@ impl RecipeFormula {
         self.input_stacks.iter().all(|s| s.as_ref().map_or(true, |it| it.count == 0 || it.item.is_empty()))
     }
 
+    /// `RecipeFormula.valid()`: there is a recipe (a formula of items that make nothing is not valid).
     pub fn is_valid(&self) -> bool {
-        self.recipe.is_some() || !self.is_empty()
+        self.recipe.is_some()
     }
 
-    /// Java: `RecipeFormula.java:82-103`: Checks if stack is valid ingredient at slot `pos`.
+    /// `RecipeFormula.isIngredientInPos` (java:82-103): an empty stack is right where the formula expects none; otherwise the same item
+    /// and components as the formula's, or any stack that still makes the recipe when put there (a plank for a plank).
     pub fn is_ingredient_in_pos(&self, stack: &Option<ItemStack>, pos: usize) -> bool {
         if pos >= 9 {
             return false;
         }
-        let expected = &self.input_stacks[pos];
-        match (stack.as_ref(), expected.as_ref()) {
-            (None, None) => true,
-            (Some(st), Some(exp)) => st.item == exp.item,
-            _ => false,
+        let Some(recipe) = &self.recipe else { return false };
+        let Some(stack) = stack.as_ref().filter(|s| s.count > 0 && !s.item.is_empty()) else {
+            return self.input_stacks[pos].as_ref().map_or(true, |s| s.count == 0 || s.item.is_empty());
+        };
+        let Some(last) = self.input_stacks[pos].as_ref().filter(|s| s.count > 0 && !s.item.is_empty()) else {
+            return false;
+        };
+        if last.item == stack.item && config::same_components(&last.components, &stack.components) {
+            return true;
         }
+        let mut dummy = self.input_stacks.clone();
+        dummy[pos] = Some(stack.clone());
+        recipe.matches(&dummy)
     }
 
-    /// Java: `RecipeFormula.java:105-127`: Checks if stack is an ingredient anywhere in the formula.
+    /// `RecipeFormula.isValidIngredient` (java:105-127): one of the formula's own stacks, or a stack that still makes the recipe in place of
+    /// any of them.
     pub fn is_valid_ingredient(&self, stack: &ItemStack) -> bool {
+        let Some(recipe) = &self.recipe else { return false };
         if stack.item.is_empty() || stack.count == 0 {
             return false;
         }
-        self.input_stacks.iter().flatten().any(|exp| exp.item == stack.item)
+        for exp in self.input_stacks.iter().flatten() {
+            if exp.count > 0 && exp.item == stack.item && config::same_components(&exp.components, &stack.components) {
+                return true;
+            }
+        }
+        let mut dummy = self.input_stacks.clone();
+        for i in 0..9 {
+            let Some(original) = dummy[i].clone().filter(|s| s.count > 0 && !s.item.is_empty()) else { continue };
+            dummy[i] = Some(stack.clone());
+            if recipe.matches(&dummy) {
+                return true;
+            }
+            dummy[i] = Some(original);
+        }
+        false
     }
 
     /// Java: `RecipeFormula.java:74-80`: Checks if the crafting grid matches this formula's recipe.
@@ -637,10 +667,12 @@ pub fn assemblicator_item_faces(facing: &str, items: &[Data; 6]) -> Vec<Vec<u32>
 // ============================================================================
 
 /// Builds the stock control map mapping the 9 recipe ingredients to 18 stock slots.
-/// Java: `TileEntityFormulaicAssemblicator.java:642-658`:
-/// `j = i * 2`, `stockControlMap[j] = stack`, `stockControlMap[j + 1] = stack`.
-pub fn build_stock_control_map(formula: &FormulaAttachment) -> [Option<String>; INPUT_SLOTS] {
-    let mut map: [Option<String>; INPUT_SLOTS] = Default::default();
+/// What a stock-controlled input slot holds: the item and its components (`HashedItem`).
+pub type StockKey = (String, String);
+
+/// Java: `buildStockControlMap` (java:642-658): `j = i * 2`, `stockControlMap[j] = stockControlMap[j + 1] = the formula's stack i`.
+pub fn build_stock_control_map(formula: &FormulaAttachment) -> [Option<StockKey>; INPUT_SLOTS] {
+    let mut map: [Option<StockKey>; INPUT_SLOTS] = Default::default();
     if formula.is_empty() {
         return map;
     }
@@ -648,20 +680,24 @@ pub fn build_stock_control_map(formula: &FormulaAttachment) -> [Option<String>; 
         let j = i * 2;
         if let Some(stack) = &formula.items[i] {
             if !stack.item.is_empty() && stack.count > 0 {
-                map[j] = Some(stack.item.clone());
-                map[j + 1] = Some(stack.item.clone());
+                map[j] = Some((stack.item.clone(), stack.components.clone()));
+                map[j + 1] = Some((stack.item.clone(), stack.components.clone()));
             }
         }
     }
     map
 }
 
-/// Checks whether an item is valid for an input slot under stock control.
-/// Java: `TileEntityFormulaicAssemblicator.java:159-172`.
+fn same_key(key: &StockKey, stack: &ItemStack) -> bool {
+    key.0 == stack.item && config::same_components(&key.1, &stack.components)
+}
+
+/// Whether an item may go into input slot `slot_idx` (the slot validator of java:159-172): anything while there is no formula; nothing
+/// while the formula is not valid; with stock control the item the slot is for, and where the slot has none the formula's ingredients.
 pub fn is_item_valid_for_input(
     formula: &RecipeFormula,
     stock_control: bool,
-    stock_map: &[Option<String>; INPUT_SLOTS],
+    stock_map: &[Option<StockKey>; INPUT_SLOTS],
     slot_idx: usize,
     stack: &ItemStack,
 ) -> bool {
@@ -669,13 +705,12 @@ pub fn is_item_valid_for_input(
         true
     } else if !formula.is_valid() {
         false
-    } else if stock_control {
-        if let Some(expected_item) = &stock_map[slot_idx] {
-            *expected_item == stack.item
-        } else {
-            false
-        }
     } else {
+        if stock_control {
+            if let Some(key) = &stock_map[slot_idx] {
+                return same_key(key, stack);
+            }
+        }
         formula.is_valid_ingredient(stack)
     }
 }
@@ -699,12 +734,13 @@ pub fn move_items_to_grid(slots: &mut [Option<ItemStack>], formula: &RecipeFormu
         let is_empty = slots[craft_idx].as_ref().map_or(true, |s| s.count == 0);
         if is_empty {
             // Need an item for this slot if expected is Some
-            if let Some(exp) = expected_opt {
+            if expected_opt.is_some() {
                 let mut found = false;
                 // Search input slots backwards from 17 down to 0
                 for j in (0..INPUT_SLOTS).rev() {
                     let in_idx = SLOT_INPUT_START + j;
-                    let matches_exp = slots[in_idx].as_ref().map_or(false, |in_st| in_st.item == exp.item && in_st.count > 0);
+                    // `formula.isIngredientInPos`: the formula's own item or any that still makes the recipe in that place.
+                    let matches_exp = slots[in_idx].as_ref().is_some_and(|in_st| in_st.count > 0 && formula.is_ingredient_in_pos(&Some(in_st.clone()), i));
                     if matches_exp {
                         // Take 1 item from input slot and put into crafting slot
                         let (taken_item, components, remaining_count) = {
@@ -751,7 +787,7 @@ pub fn try_insert_input(slots: &mut [Option<ItemStack>], mut stack: ItemStack) -
         let idx = SLOT_INPUT_START + i;
         if let Some(cur) = &mut slots[idx] {
             if cur.item == stack.item && config::same_components(&cur.components, &stack.components) {
-                let room = 64u32.saturating_sub(cur.count);
+                let room = (crate::bin::stack_size(&stack.item) as u32).saturating_sub(cur.count);
                 let add = stack.count.min(room);
                 cur.count += add;
                 stack.count -= add;
@@ -779,7 +815,7 @@ pub fn try_insert_output(slots: &mut [Option<ItemStack>], mut stack: ItemStack) 
         let idx = SLOT_OUTPUT_START + i;
         if let Some(cur) = &mut slots[idx] {
             if cur.item == stack.item && config::same_components(&cur.components, &stack.components) {
-                let room = 64u32.saturating_sub(cur.count);
+                let room = (crate::bin::stack_size(&stack.item) as u32).saturating_sub(cur.count);
                 let add = stack.count.min(room);
                 cur.count += add;
                 stack.count -= add;
@@ -800,24 +836,10 @@ pub fn try_insert_output(slots: &mut [Option<ItemStack>], mut stack: ItemStack) 
     Some(stack)
 }
 
-/// Simulates whether an item fits into the output slots.
+/// Simulates whether an item fits into the output slots (`tryMoveToOutput(.., SIMULATE)`: the same insert, on a copy).
 pub fn can_fit_output(slots: &[Option<ItemStack>], stack: &ItemStack) -> bool {
-    let mut needed = stack.count;
-    for i in 0..OUTPUT_SLOTS {
-        let idx = SLOT_OUTPUT_START + i;
-        match &slots[idx] {
-            None => return true,
-            Some(cur) if cur.item == stack.item && config::same_components(&cur.components, &stack.components) => {
-                let room = 64u32.saturating_sub(cur.count);
-                if room >= needed {
-                    return true;
-                }
-                needed -= room;
-            }
-            _ => {}
-        }
-    }
-    false
+    let mut copy = slots.to_vec();
+    try_insert_output(&mut copy, stack.clone()).is_none()
 }
 
 /// Executes a single crafting operation (`doSingleCraft`).
@@ -827,6 +849,14 @@ pub fn do_single_craft(
     recipe: &CraftingRecipeDef,
     formula: &RecipeFormula,
 ) -> bool {
+    // 0. The grid must make the recipe now (`lastOutputStack` is empty otherwise).
+    let mut grid: [Option<ItemStack>; 9] = Default::default();
+    for i in 0..9 {
+        grid[i] = slots[SLOT_CRAFT_START + i].clone();
+    }
+    if !recipe.matches(&grid) {
+        return false;
+    }
     // 1. Simulate output insertion
     if !can_fit_output(slots, &recipe.output) {
         return false;
@@ -921,59 +951,95 @@ pub fn empty_grid(slots: &mut [Option<ItemStack>]) {
     }
 }
 
-/// Organizes the input buffer according to the stock control map.
-/// Java: `TileEntityFormulaicAssemblicator.java:543-616`.
-pub fn organize_stock(slots: &mut [Option<ItemStack>], stock_map: &[Option<String>; INPUT_SLOTS]) {
-    // 1. Gather all items in input slots into a count map
-    let mut counts: HashMap<String, u32> = HashMap::new();
+/// Puts the first kind of `stored` (up to a stack of it) in `slot`, removes what it took, and says whether nothing is left (`setSlotIfChanged`).
+fn fill_slot_from_first(stored: &mut Vec<(ItemStack, u32)>, slot: &mut Option<ItemStack>) -> bool {
+    let (proto, total) = stored[0].clone();
+    let count = total.min(crate::bin::stack_size(&proto.item) as u32);
+    if count == total {
+        stored.remove(0);
+    } else {
+        stored[0].1 = total - count;
+    }
+    *slot = Some(ItemStack { item: proto.item, count, components: proto.components });
+    stored.is_empty()
+}
+
+/// Organizes the input buffer according to the stock control map (`organizeStock`, java:543-616). Nothing is lost: what the controlled slots do
+/// not take goes to the slots without a controlled item, and what is left after that to any slot still empty. The kinds keep the order in which
+/// the slots held them.
+pub fn organize_stock(slots: &mut [Option<ItemStack>], stock_map: &[Option<StockKey>; INPUT_SLOTS]) {
+    // What there is, by item and components, in slot order (Object2IntLinkedOpenHashMap).
+    let mut stored: Vec<(ItemStack, u32)> = Vec::new();
+    for i in 0..INPUT_SLOTS {
+        if let Some(st) = &slots[SLOT_INPUT_START + i] {
+            if st.item.is_empty() || st.count == 0 {
+                continue;
+            }
+            match stored.iter_mut().find(|(p, _)| p.item == st.item && config::same_components(&p.components, &st.components)) {
+                Some(entry) => entry.1 += st.count,
+                None => stored.push((st.clone(), st.count)),
+            }
+        }
+    }
+    // The controlled slots take their item.
+    let mut unused: Vec<usize> = Vec::new();
     for i in 0..INPUT_SLOTS {
         let idx = SLOT_INPUT_START + i;
-        if let Some(st) = slots[idx].take() {
-            if !st.item.is_empty() && st.count > 0 {
-                *counts.entry(st.item).or_insert(0) += st.count;
-            }
-        }
-    }
-
-    // 2. Place items into their respective controlled slots
-    let mut unused_slots: Vec<usize> = Vec::new();
-    for i in 0..INPUT_SLOTS {
-        if let Some(expected) = &stock_map[i] {
-            if let Some(stored) = counts.get_mut(expected) {
-                if *stored > 0 {
-                    let take = (*stored).min(64);
-                    *stored -= take;
-                    slots[SLOT_INPUT_START + i] = Some(ItemStack {
-                        item: expected.clone(),
-                        count: take,
-                        components: String::new(),
-                    });
+        match &stock_map[i] {
+            None => unused.push(i),
+            Some(key) => {
+                let found = stored.iter().position(|(p, _)| same_key(key, p));
+                match found {
+                    Some(at) => {
+                        let (proto, total) = stored[at].clone();
+                        let count = total.min(crate::bin::stack_size(&proto.item) as u32);
+                        if count == total {
+                            stored.remove(at);
+                        } else {
+                            stored[at].1 = total - count;
+                        }
+                        let want = ItemStack { item: proto.item, count, components: proto.components };
+                        if slots[idx].as_ref() != Some(&want) {
+                            slots[idx] = Some(want);
+                        }
+                    }
+                    // Moved to a better slot already: the slot is emptied.
+                    None => slots[idx] = None,
                 }
             }
-        } else {
-            unused_slots.push(i);
         }
     }
-
-    // 3. Clean zero counts
-    counts.retain(|_, count| *count > 0);
-
-    // 4. Fill remaining items into unused slots
-    for i in unused_slots {
-        if counts.is_empty() {
-            break;
+    // The slots without a controlled item take what is left; once nothing is left they are emptied.
+    let mut empty = stored.is_empty();
+    for i in unused {
+        let idx = SLOT_INPUT_START + i;
+        if empty {
+            slots[idx] = None;
+        } else {
+            empty = fill_slot_from_first(&mut stored, &mut slots[idx]);
         }
-        let first_key = counts.keys().next().cloned().unwrap();
-        let stored = counts.get_mut(&first_key).unwrap();
-        let take = (*stored).min(64);
-        *stored -= take;
-        slots[SLOT_INPUT_START + i] = Some(ItemStack {
-            item: first_key.clone(),
-            count: take,
-            components: String::new(),
-        });
-        if *stored == 0 {
-            counts.remove(&first_key);
+    }
+    if empty {
+        return;
+    }
+    // Still something left: any slot that is empty takes it.
+    for i in 0..INPUT_SLOTS {
+        let idx = SLOT_INPUT_START + i;
+        if slots[idx].is_none() && fill_slot_from_first(&mut stored, &mut slots[idx]) {
+            return;
+        }
+    }
+}
+
+/// `moveItemsToInput` (java:~340): the grid's stacks go back to the input slots, all of them when forced, else those that are not the formula's
+/// ingredient for their place; what does not fit stays in the grid.
+pub fn move_items_to_input(slots: &mut [Option<ItemStack>], formula: &RecipeFormula, force: bool) {
+    for i in 0..CRAFT_SLOTS {
+        let idx = SLOT_CRAFT_START + i;
+        let Some(stack) = slots[idx].clone() else { continue };
+        if force || (!formula.is_empty() && !formula.is_ingredient_in_pos(&Some(stack.clone()), i)) {
+            let rest = try_insert_input(slots, stack);
+            slots[idx] = rest;
         }
     }
 }
@@ -1009,6 +1075,23 @@ pub fn encode_formula_slot(slots: &mut [Option<ItemStack>]) -> bool {
 // 6. TICK EXECUTION & INTEGRATION
 // ============================================================================
 
+/// `checkFormula` + `loadFormula` (java:~290): the formula in slot 0 when it holds a valid one; a formula that makes no recipe is marked
+/// invalid in the stack and counts as no formula. Says whether it changed the stack.
+pub fn load_formula(items: &mut [Option<ItemStack>]) -> (RecipeFormula, FormulaAttachment, bool) {
+    let att = items[SLOT_FORMULA].as_ref().map(CraftingFormulaItem::get_attachment).unwrap_or(FormulaAttachment::EMPTY);
+    if att.is_empty() || att.invalid {
+        return (RecipeFormula::EMPTY, att, false);
+    }
+    let formula = RecipeFormula::from_attachment(&att);
+    if formula.is_valid() {
+        return (formula, att, false);
+    }
+    if let Some(stack) = items[SLOT_FORMULA].as_mut() {
+        CraftingFormulaItem::set_attachment(stack, &att.as_invalid());
+    }
+    (RecipeFormula::EMPTY, att, true)
+}
+
 /// Ticks a single Formulaic Assemblicator block entity.
 /// Java: `TileEntityFormulaicAssemblicator.java:213-267`.
 pub fn tick_assemblicator(
@@ -1033,11 +1116,21 @@ pub fn tick_assemblicator(
         state.pulse_operations += 1;
     }
 
-    // Read formula from slot 0
-    let formula_att = items[SLOT_FORMULA].as_ref().map(CraftingFormulaItem::get_attachment).unwrap_or(FormulaAttachment::EMPTY);
-    let formula = RecipeFormula::from_attachment(&formula_att);
+    // Read the formula from slot 0 (a formula that makes nothing is marked invalid and ignored).
+    let (formula, formula_att, marked) = load_formula(items);
+    changed |= marked;
 
-    // AutoMode validation: if formula is empty, autoMode shuts off
+    // Stock control keeps the input slots organized (`needsOrganize`: on load and whenever an input changed; organizing is idempotent).
+    if !formula.is_empty() && state.stock_control {
+        let stock_map = build_stock_control_map(&formula_att);
+        let before: Vec<Option<ItemStack>> = items[SLOT_INPUT_START..SLOT_INPUT_START + INPUT_SLOTS].to_vec();
+        organize_stock(items, &stock_map);
+        if items[SLOT_INPUT_START..SLOT_INPUT_START + INPUT_SLOTS] != before[..] {
+            changed = true;
+        }
+    }
+
+    // AutoMode validation: with no formula the mode flips off (`nextMode`).
     if state.auto_mode && formula.is_empty() {
         state.auto_mode = false;
         state.operating_ticks = 0;
@@ -1079,11 +1172,14 @@ pub fn tick_assemblicator(
                 state.operating_ticks += 1;
                 changed = true;
             }
-        } else {
+        } else if state.operating_ticks != 0 {
             state.operating_ticks = 0;
+            changed = true;
         }
-    } else if !state.auto_mode {
+    } else if state.operating_ticks != 0 {
+        // Every other case (manual mode, no formula, the redstone says no) starts the count over.
         state.operating_ticks = 0;
+        changed = true;
     }
 
     changed
@@ -1149,14 +1245,15 @@ impl Mekanism {
         let mut items: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
         let mut changed = false;
 
-        let formula_att = items[SLOT_FORMULA].as_ref().map(CraftingFormulaItem::get_attachment).unwrap_or(FormulaAttachment::EMPTY);
-        let formula = RecipeFormula::from_attachment(&formula_att);
+        let (formula, formula_att, marked) = load_formula(&mut items);
+        changed |= marked;
 
         match id {
             BUTTON_ENCODE_FORMULA => {
-                changed = encode_formula_slot(&mut items);
+                changed |= !state.auto_mode && encode_formula_slot(&mut items);
             }
             BUTTON_STOCK_CONTROL => {
+                // `toggleStockControl`: only with a formula; turning it on organizes the inputs.
                 if !formula.is_empty() {
                     state.stock_control = !state.stock_control;
                     if state.stock_control {
@@ -1167,8 +1264,9 @@ impl Mekanism {
                 }
             }
             BUTTON_FILL_EMPTY => {
+                // `fillGrid` with a formula, `emptyGrid` without one.
                 if formula.is_empty() {
-                    empty_grid(&mut items);
+                    move_items_to_input(&mut items, &formula, true);
                 } else {
                     move_items_to_grid(&mut items, &formula);
                 }
@@ -1176,18 +1274,23 @@ impl Mekanism {
             }
             BUTTON_CRAFT_SINGLE => {
                 if !state.auto_mode {
-                    changed = craft_single(&mut items, &formula);
+                    changed |= craft_single(&mut items, &formula);
                 }
             }
             BUTTON_CRAFT_ALL => {
                 if !state.auto_mode {
-                    changed = craft_all(&mut items, &formula) > 0;
+                    changed |= craft_all(&mut items, &formula) > 0;
                 }
             }
             BUTTON_AUTO_MODE => {
-                if !formula.is_empty() && formula.is_valid() {
-                    state.auto_mode = !state.auto_mode;
+                // `nextMode`: on to off always; off to on only with a formula, and the grid's strangers go back to the inputs first.
+                if state.auto_mode {
                     state.operating_ticks = 0;
+                    state.auto_mode = false;
+                    changed = true;
+                } else if !formula.is_empty() {
+                    move_items_to_input(&mut items, &formula, false);
+                    state.auto_mode = true;
                     changed = true;
                 }
             }
@@ -1319,12 +1422,12 @@ mod tests {
         let att = FormulaAttachment::new(items, false);
         let map = build_stock_control_map(&att);
 
-        assert_eq!(map[0], Some("minecraft:diamond".to_string()));
-        assert_eq!(map[1], Some("minecraft:diamond".to_string()));
+        assert_eq!(map[0], Some(("minecraft:diamond".to_string(), String::new())));
+        assert_eq!(map[1], Some(("minecraft:diamond".to_string(), String::new())));
         assert_eq!(map[2], None);
         assert_eq!(map[3], None);
-        assert_eq!(map[8], Some("minecraft:stick".to_string()));
-        assert_eq!(map[9], Some("minecraft:stick".to_string()));
+        assert_eq!(map[8], Some(("minecraft:stick".to_string(), String::new())));
+        assert_eq!(map[9], Some(("minecraft:stick".to_string(), String::new())));
     }
 
     /// Test: Assemblicator state serialization and deserialization.
@@ -1392,29 +1495,127 @@ mod tests {
         assert_eq!(upgrades::ticks(BASE_TICKS_REQUIRED, 8), 4);
     }
 
-    /// Test: Stock control filtering allows only mapped ingredients.
-    /// Java source: `TileEntityFormulaicAssemblicator.java:159-172`.
-    #[test]
-    fn test_stock_control_input_validation() {
+    fn stack(item: &str, count: u32) -> ItemStack {
+        ItemStack { item: item.into(), count, components: String::new() }
+    }
+
+    /// The formula of the crafting formula's own recipe (paper in the first place, a circuit in the second).
+    fn paper_formula() -> (FormulaAttachment, RecipeFormula) {
         let mut items: [Option<ItemStack>; 9] = Default::default();
-        items[0] = Some(ItemStack { item: "minecraft:iron_ingot".into(), count: 1, components: String::new() });
+        items[0] = Some(stack("minecraft:paper", 1));
+        items[1] = Some(stack("mekanism:basic_control_circuit", 1));
         let att = FormulaAttachment::new(items, false);
         let formula = RecipeFormula::from_attachment(&att);
+        (att, formula)
+    }
+
+    /// Test: stock control filtering (java:159-172): the slot's own item when it has one, else the formula's ingredients; nothing while the formula is invalid.
+    #[test]
+    fn test_stock_control_input_validation() {
+        let (att, formula) = paper_formula();
+        assert!(formula.is_valid());
         let stock_map = build_stock_control_map(&att);
+        let paper = stack("minecraft:paper", 1);
+        let circuit = stack("mekanism:basic_control_circuit", 1);
+        let gold = stack("minecraft:gold_ingot", 1);
 
-        let iron = ItemStack { item: "minecraft:iron_ingot".into(), count: 1, components: String::new() };
-        let gold = ItemStack { item: "minecraft:gold_ingot".into(), count: 1, components: String::new() };
-
-        // Slot 0 and 1 are mapped to iron_ingot
-        assert!(is_item_valid_for_input(&formula, true, &stock_map, 0, &iron));
-        assert!(is_item_valid_for_input(&formula, true, &stock_map, 1, &iron));
+        // Slots 0 and 1 are for paper, 2 and 3 for the circuit.
+        assert!(is_item_valid_for_input(&formula, true, &stock_map, 0, &paper));
+        assert!(!is_item_valid_for_input(&formula, true, &stock_map, 0, &circuit));
+        assert!(is_item_valid_for_input(&formula, true, &stock_map, 2, &circuit));
         assert!(!is_item_valid_for_input(&formula, true, &stock_map, 0, &gold));
-        // Slot 2 is unmapped -> rejects when stock control is true
-        assert!(!is_item_valid_for_input(&formula, true, &stock_map, 2, &iron));
+        // Slot 10 has no item of its own: the formula's ingredients still go in (java:170-173), a stranger does not.
+        assert!(is_item_valid_for_input(&formula, true, &stock_map, 10, &paper));
+        assert!(!is_item_valid_for_input(&formula, true, &stock_map, 10, &gold));
+        // Without stock control: any ingredient of the formula, in any slot.
+        assert!(is_item_valid_for_input(&formula, false, &stock_map, 5, &circuit));
+        assert!(!is_item_valid_for_input(&formula, false, &stock_map, 5, &gold));
+        // No formula: anything. A formula that makes nothing: nothing.
+        assert!(is_item_valid_for_input(&RecipeFormula::EMPTY, true, &stock_map, 0, &gold));
+        let mut odd: [Option<ItemStack>; 9] = Default::default();
+        odd[0] = Some(stack("minecraft:iron_ingot", 1));
+        let odd = RecipeFormula::from_attachment(&FormulaAttachment::new(odd, false));
+        assert!(!odd.is_valid());
+        assert!(!is_item_valid_for_input(&odd, false, &stock_map, 0, &stack("minecraft:iron_ingot", 1)));
+    }
 
-        // When stock control is false, iron is valid for any slot as long as formula needs it
-        assert!(is_item_valid_for_input(&formula, false, &stock_map, 2, &iron));
-        assert!(!is_item_valid_for_input(&formula, false, &stock_map, 2, &gold));
+    /// Organizing the stock loses nothing: leftovers go to the other slots, with their components, in the order the slots held them.
+    #[test]
+    fn test_organize_stock_loses_nothing_and_keeps_components() {
+        let (att, _) = paper_formula();
+        let map = build_stock_control_map(&att);
+        let mut slots: Vec<Option<ItemStack>> = vec![None; TOTAL_SLOTS];
+        // Paper scattered in 3 slots, an enchanted book (components) and gold in others; 18 slots in all.
+        slots[SLOT_INPUT_START + 17] = Some(stack("minecraft:paper", 40));
+        slots[SLOT_INPUT_START + 5] = Some(stack("minecraft:paper", 40));
+        slots[SLOT_INPUT_START + 6] = Some(ItemStack { item: "minecraft:iron_sword".into(), count: 1, components: r#"{"minecraft:damage":5}"#.into() });
+        slots[SLOT_INPUT_START + 7] = Some(stack("minecraft:gold_ingot", 64));
+        let total_before: u32 = slots.iter().flatten().map(|s| s.count).sum();
+        organize_stock(&mut slots, &map);
+        let total_after: u32 = slots.iter().flatten().map(|s| s.count).sum();
+        assert_eq!(total_before, total_after, "no item may be lost");
+        // Paper fills the two slots made for it, 64 then 16.
+        assert_eq!(slots[SLOT_INPUT_START].as_ref().map(|s| s.count), Some(64));
+        assert_eq!(slots[SLOT_INPUT_START + 1].as_ref().map(|s| s.count), Some(16));
+        // The sword kept its components.
+        assert!(slots.iter().flatten().any(|s| s.item == "minecraft:iron_sword" && s.components.contains("damage")));
+    }
+
+    /// Organizing with every slot controlled still keeps the strangers (they go to the empty slots).
+    #[test]
+    fn test_organize_stock_leftovers_go_to_empty_slots() {
+        let mut items: [Option<ItemStack>; 9] = Default::default();
+        for (i, it) in items.iter_mut().enumerate() {
+            *it = Some(stack(&format!("minecraft:thing_{i}"), 1));
+        }
+        let map = build_stock_control_map(&FormulaAttachment::new(items, false));
+        let mut slots: Vec<Option<ItemStack>> = vec![None; TOTAL_SLOTS];
+        slots[SLOT_INPUT_START] = Some(stack("minecraft:gold_ingot", 10));
+        organize_stock(&mut slots, &map);
+        assert!(slots.iter().flatten().any(|s| s.item == "minecraft:gold_ingot" && s.count == 10), "the gold is not lost");
+    }
+
+    /// A formula's ingredient is also an item that still makes the recipe where it stands (`isIngredientInPos`).
+    #[test]
+    fn test_ingredient_in_pos_is_recipe_aware() {
+        let (_, formula) = paper_formula();
+        assert!(formula.is_ingredient_in_pos(&Some(stack("minecraft:paper", 1)), 0));
+        assert!(!formula.is_ingredient_in_pos(&Some(stack("minecraft:paper", 1)), 1));
+        // Empty where the formula has nothing is right; empty where it has something is not.
+        assert!(formula.is_ingredient_in_pos(&None, 5));
+        assert!(!formula.is_ingredient_in_pos(&None, 0));
+    }
+
+    /// `do_single_craft` only crafts when the grid makes the recipe, and counts stacks by the item's own limit.
+    #[test]
+    fn test_craft_needs_the_grid_to_match() {
+        let (_, formula) = paper_formula();
+        let mut slots: Vec<Option<ItemStack>> = vec![None; TOTAL_SLOTS];
+        slots[SLOT_CRAFT_START] = Some(stack("minecraft:paper", 1));
+        let recipe = formula.recipe.clone().unwrap();
+        assert!(!do_single_craft(&mut slots, &recipe, &formula), "a grid missing the circuit makes nothing");
+        // A bucket-like item (stack of 1) takes a whole slot to itself in the output.
+        let mut out: Vec<Option<ItemStack>> = vec![None; TOTAL_SLOTS];
+        for i in 0..OUTPUT_SLOTS {
+            out[SLOT_OUTPUT_START + i] = Some(stack("minecraft:bucket", 1));
+        }
+        assert!(!can_fit_output(&out, &stack("minecraft:bucket", 1)));
+    }
+
+    /// A formula that makes no recipe is marked invalid and then counts as none (`loadFormula`).
+    #[test]
+    fn test_load_formula_marks_an_invalid_one() {
+        let mut items: Vec<Option<ItemStack>> = vec![None; TOTAL_SLOTS];
+        let mut grid: [Option<ItemStack>; 9] = Default::default();
+        grid[0] = Some(stack("minecraft:iron_ingot", 1));
+        let mut formula_stack = stack(CRAFTING_FORMULA, 1);
+        CraftingFormulaItem::set_attachment(&mut formula_stack, &FormulaAttachment::new(grid, false));
+        items[SLOT_FORMULA] = Some(formula_stack);
+        let (formula, _, marked) = load_formula(&mut items);
+        assert!(formula.is_empty() && marked);
+        assert!(CraftingFormulaItem::get_attachment(items[SLOT_FORMULA].as_ref().unwrap()).invalid);
+        let (_, _, marked_again) = load_formula(&mut items);
+        assert!(!marked_again);
     }
 
     /// Test: empty_grid moves items back to input slots.

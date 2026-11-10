@@ -566,3 +566,16 @@ break-blocks: func(player: string, dimension: string, positions: list<tuple<s32,
 // player-state: func(player: string) -> option<player-state>;   // record com os campos acima
 // set-food: func(player: string, food: u32, saturation: f32) -> result<_, string>;
 // energy-of-stack / insert-energy-in-stack (itens com energia do mod ou de outros mods)
+
+// ---- Formulaic Assemblicator (mekanism/revisao_numeros/REVISAO_assemblicator.md) ----
+// As receitas de crafting de TODO o jogo (vanilla e mods): hoje o mod só lê receitas de tipos próprios e de cozimento.
+// crafting recipes of the whole game (vanilla and mods); today the mod only reads own-type and cooking recipes.
+record craft-match { id: string, output: item-stack, remaining: list<item-stack> }
+// A primeira receita de crafting que a grade 3x3 faz (RecipeManager.getRecipeFor(CRAFTING, input, level)).
+crafting-find: func(grid: list<option<item-stack>>) -> option<craft-match>;
+// Se a receita `id` aceita a grade (recipe.matches(input, level)).
+crafting-matches: func(id: string, grid: list<option<item-stack>>) -> bool;
+// O limite de pilha de um item (Item.getMaxStackSize / componente max_stack_size); hoje o mod adivinha pelo nome (bin::stack_size).
+item-max-stack-size: func(item: string) -> u32;
+// Validador por slot do contêiner (stock control: um slot só aceita o item da fórmula); hoje ContainerSpec só tem entradas/saídas por slot.
+// per-slot item validators for the container (stock control accepts only the formula's item in a slot)

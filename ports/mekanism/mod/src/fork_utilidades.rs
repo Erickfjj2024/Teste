@@ -36,3 +36,23 @@ pub fn has_neighbor_signal(dimension: &str, x: i32, y: i32, z: i32) -> bool {
 pub fn has_neighbor_signal(dimension: &str, x: i32, y: i32, z: i32) -> bool {
     world::get_redstone(dimension, x, y, z) > 0
 }
+
+/// A crafting recipe the game found for a 3x3 grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CraftMatch {
+    pub id: String,
+    pub output: horizon_mod_sdk::server::ItemStack,
+    /// What the recipe leaves in the grid (`getRemainingItems`: the bucket of a cake), empty stacks left out.
+    pub remaining: Vec<horizon_mod_sdk::server::ItemStack>,
+}
+
+/// FORK (`crafting-find`, `ports/api-fork/PROPOSTA-API.wit`): the first crafting recipe of the game (vanilla and mods) that the 3x3
+/// grid makes, `RecipeManager.getRecipeFor(RecipeType.CRAFTING, input, level)`. None until the game offers it.
+pub fn crafting_find(_grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> Option<CraftMatch> {
+    None
+}
+
+/// FORK (`crafting-matches`): whether the recipe `id` accepts the grid (`recipe.matches(input, level)`). False until the game offers it.
+pub fn crafting_matches(_id: &str, _grid: &[Option<horizon_mod_sdk::server::ItemStack>; 9]) -> bool {
+    false
+}
