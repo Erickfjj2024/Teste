@@ -3110,6 +3110,40 @@ for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', rec
     put(f'{OUT}/data/{NS}/recipe/additions_{rel}.json', new)
     nadd += 1
 print(f'additions machine recipes {nadd}')
+
+# The recolour crafting recipes ("surround a dye with any plastic of that kind but this colour"): the same difference, written out in the key or the ingredients.
+def additions_crafting_ingredient(v):
+    if isinstance(v, list):
+        return [additions_crafting_ingredient(x) for x in v]
+    if isinstance(v, dict) and v.get('neoforge:ingredient_type') == 'neoforge:difference':
+        items = additions_item_ingredient(v)
+        return [i for i in items if i.split(':')[-1] in _plastic_have or i.split(':')[-1] in _have_a]
+    if isinstance(v, str) and v.startswith('mekanismadditions:'):
+        return v.replace('mekanismadditions:', f'{NS}:')
+    return v
+ncraft = 0
+for p in sorted(glob.glob(f'{AGEN}/data/mekanismadditions/recipe/**/*.json', recursive=True)):
+    if 'balloon' in p or 'recolor' not in p:
+        continue
+    r = read_json(p)
+    if not str(r.get('type', '')).startswith('minecraft:crafting_'):
+        continue
+    rid = r.get('result', {}).get('id', '').split(':')[-1]
+    if rid not in _plastic_have and rid not in _have_a:
+        continue
+    new = dict(r)
+    if 'key' in new:
+        new['key'] = {k: additions_crafting_ingredient(v) for k, v in new['key'].items()}
+    if 'ingredients' in new:
+        new['ingredients'] = [additions_crafting_ingredient(v) for v in new['ingredients']]
+    new['result'] = {**r['result'], 'id': r['result']['id'].replace('mekanismadditions:', f'{NS}:')}
+    if any(x == [] for x in list(new.get('key', {}).values()) + list(new.get('ingredients', []))):
+        continue
+    rel = os.path.relpath(p, f'{AGEN}/data/mekanismadditions/recipe')[:-5].replace(os.sep, '__')
+    put(f'{OUT}/data/{NS}/recipe/additions_{rel}.json', json.loads(json.dumps(new).replace('mekanismadditions:', f'{NS}:')))
+    ncraft += 1
+print(f'additions recolour crafting recipes {ncraft}')
+
 # the crafting recipes whose every ingredient the port has (the solar generator wants a solar panel and an energy tablet,
 # the gas-burning one an electrolytic core: none of them is here yet)
 _have_now = set(kept_items) | set(kept_blocks)
