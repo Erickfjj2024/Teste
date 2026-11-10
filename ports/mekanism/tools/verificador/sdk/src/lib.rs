@@ -56,6 +56,7 @@ pub mod server {
     pub fn set_mob_health<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn kill_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn remove_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
+    pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn set_entity_fire<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
   }
   pub mod player_items { use super::*;
