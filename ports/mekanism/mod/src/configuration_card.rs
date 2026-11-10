@@ -594,7 +594,7 @@ impl ConfigurationCardItem {
             Self::set_data(card_stack, &data);
             let display_name = display_name(if data.data_name.is_empty() { block_name } else { &data.data_name });
             let msg = format!("Retrieved configuration data from {display_name}");
-            let _ = players::tell(player_id, &msg);
+            let _ = players::tell_overlay(player_id, &msg);
 
             // FORK-34: Server advancement criteria trigger CONFIGURATION_CARD (copied = true)
             // horizon_advancements::trigger_configuration_card(player_id, true);
@@ -610,7 +610,7 @@ impl ConfigurationCardItem {
                 apply_configuration(block_name, block_entity, &card_data);
                 let display_name = display_name(if card_data.data_name.is_empty() { &card_data.data_type } else { &card_data.data_name });
                 let msg = format!("Injected configuration data of type {display_name}");
-                let _ = players::tell(player_id, &msg);
+                let _ = players::tell_overlay(player_id, &msg);
 
                 // FORK-34: Server advancement criteria trigger CONFIGURATION_CARD (copied = false)
                 // horizon_advancements::trigger_configuration_card(player_id, false);
@@ -618,7 +618,7 @@ impl ConfigurationCardItem {
                 CardInteractionResult::Pasted { message: msg }
             } else {
                 let msg = MSG_UNEQUAL.to_string();
-                let _ = players::tell(player_id, &msg);
+                let _ = players::tell_overlay(player_id, &msg);
                 CardInteractionResult::Incompatible { message: msg }
             }
         }
@@ -629,7 +629,7 @@ impl ConfigurationCardItem {
     pub fn use_air(player_id: &str, sneaking: bool, card_stack: &mut ItemStack) -> bool {
         if sneaking {
             Self::clear_data(card_stack);
-            let _ = players::tell(player_id, MSG_CLEARED);
+            let _ = players::tell_overlay(player_id, MSG_CLEARED);
             true
         } else {
             false

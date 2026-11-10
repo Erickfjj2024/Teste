@@ -383,6 +383,8 @@ struct Mekanism {
     pending: Vec<Click>,
     /// Configuration card clicks waiting for the machine's next tick (a use can't change a block entity).
     card_clicks: Vec<equipment_world::CardClick>,
+    /// The step height each player's boots last gave (a transient modifier the mod puts back).
+    suit_step: HashMap<String, f32>,
     /// The waste barrels whose tank filter was set.
     waste_filtered: HashSet<(String, i32, i32, i32)>,
     /// Empties waiting for the game to confirm their drops exist, by block and by summon ticket, and empties whose
@@ -2178,6 +2180,7 @@ impl ServerMod for Mekanism {
             filtered: HashSet::new(),
             pending: Vec::new(),
             card_clicks: Vec::new(),
+            suit_step: HashMap::new(),
             waste_filtered: HashSet::new(),
             empty: HashMap::new(),
             empty_tickets: HashMap::new(),

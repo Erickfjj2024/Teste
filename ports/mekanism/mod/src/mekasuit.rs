@@ -698,7 +698,7 @@ pub fn tick_electrolytic_breathing(
         }
     }
 
-    let units_used = (hydrogen_stored / 2).max(oxygen_used as u64);
+    let units_used = hydrogen_stored.div_ceil(2).max(oxygen_used as u64);
     let energy_used = units_used * cost_per_unit;
     helmet.energy = helmet.energy.saturating_sub(energy_used);
 
@@ -737,34 +737,65 @@ pub fn tick_nutritional_injection(
     }
 }
 
-/// Inhalation purification tick on Helmet (`ModuleInhalationPurificationUnit.java:62-85`).
-/// Speeds up negative potion effects by 9 ticks/tick, costing 40,000 J = 16,000 FE per effect.
-pub fn tick_inhalation_purification(
-    helmet: &mut MekaSuitItemStack,
-    harmful_effects_count: usize,
-) -> (usize, u64) {
-    if helmet.item != HELMET || harmful_effects_count == 0 {
-        return (0, 0);
-    }
-    if !helmet.modules.is_enabled(ModuleType::InhalationPurificationUnit) {
-        return (0, 0);
-    }
+/// What an effect is to the player (`MobEffectCategory`), for the inhalation unit's three switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectCategory {
+    Beneficial,
+    Neutral,
+    Harmful,
+}
 
-    let cost_per_effect = ENERGY_USAGE_POTION_TICK; // 16,000 FE
-    let mut cleared = 0;
-    let mut total_energy = 0;
+/// The category of a game effect (vanilla's own table; an effect of another mod is neutral until the game tells the mod its category).
+pub fn effect_category(id: &str) -> EffectCategory {
+    let name = id.strip_prefix("minecraft:").unwrap_or(id);
+    match name {
+        "speed" | "haste" | "strength" | "instant_health" | "jump_boost" | "regeneration" | "resistance" | "fire_resistance" | "water_breathing"
+        | "invisibility" | "night_vision" | "health_boost" | "absorption" | "saturation" | "luck" | "slow_falling" | "conduit_power"
+        | "dolphins_grace" | "hero_of_the_village" => EffectCategory::Beneficial,
+        "slowness" | "mining_fatigue" | "instant_damage" | "nausea" | "blindness" | "hunger" | "weakness" | "poison" | "wither" | "levitation"
+        | "darkness" | "unluck" | "bad_omen" | "trial_omen" | "raid_omen" | "wind_charged" | "weaving" | "oozing" | "infested" => EffectCategory::Harmful,
+        _ => EffectCategory::Neutral,
+    }
+}
 
-    for _ in 0..harmful_effects_count {
-        if helmet.energy >= cost_per_effect {
-            helmet.energy -= cost_per_effect;
-            total_energy += cost_per_effect;
-            cleared += 1;
-        } else {
+/// Inhalation purification on the helmet (`ModuleInhalationPurificationUnit.tickServer`): every effect of a category it handles (and with ticks left: an
+/// infinite one is not sped up) is shortened by 9 ticks a tick, each at `potion tick` energy (16 000 FE; nothing in creative), until the energy is
+/// less than one payment. Returns the effects to shorten (id, ticks) and the energy used.
+pub fn tick_inhalation_purification(helmet: &mut MekaSuitItemStack, effects: &[(String, i32)], creative: bool) -> (Vec<(String, i32)>, u64) {
+    let mut shorten = Vec::new();
+    if helmet.item != HELMET {
+        return (shorten, 0);
+    }
+    let Some(m) = helmet.modules.get(ModuleType::InhalationPurificationUnit).filter(|m| m.enabled) else { return (shorten, 0) };
+    let (beneficial, neutral, harmful) = (m.beneficial_effects, m.neutral_effects, m.harmful_effects);
+    let usage = ENERGY_USAGE_POTION_TICK;
+    let free = usage == 0 || creative;
+    if !free && helmet.energy < usage {
+        return (shorten, 0);
+    }
+    let mut spent = 0;
+    for (id, duration) in effects {
+        let handled = match effect_category(id) {
+            EffectCategory::Beneficial => beneficial,
+            EffectCategory::Neutral => neutral,
+            EffectCategory::Harmful => harmful,
+        };
+        if !handled || *duration <= 0 {
+            continue;
+        }
+        if !free {
+            if helmet.energy < usage {
+                break;
+            }
+            helmet.energy -= usage;
+            spent += usage;
+        }
+        shorten.push((id.clone(), 9));
+        if !free && helmet.energy < usage {
             break;
         }
     }
-
-    (cleared, total_energy)
+    (shorten, spent)
 }
 
 /// Charge distribution unit tick on Bodyarmor (`ModuleChargeDistributionUnit.java:36-48`).
@@ -1272,117 +1303,6 @@ pub fn tick_magnetic_attraction(boots: &mut MekaSuitItemStack, items_in_range_co
 // -----------------------------------------------------------------------------
 // Player Armor Ticking & Host Integration (FORK-n)
 // -----------------------------------------------------------------------------
-
-/// Context of the player and environment for ticking MekaSuit armor.
-#[derive(Clone, Debug, Default)]
-pub struct PlayerSuitContext {
-    pub player_name: String,
-    pub is_jumping: bool,
-    pub is_sneaking: bool,
-    /// What the movement modules need (sprinting, flying, ground, water, boost key, creative...).
-    pub movement: MoveInput,
-    /// What the jetpack needs besides the keys (motion, look, ground, cooldown...).
-    pub jetpack: JetpackInput,
-    pub can_see_sun: bool,
-    pub sun_brightness: f32,
-    pub biome_temp: f32,
-    pub downfall: f32,
-    pub can_rain: bool,
-    pub is_raining: bool,
-    pub is_underwater: bool,
-    pub is_in_rain: bool,
-    pub is_on_fire: bool,
-    pub submerged_fluid_temp_k: f64,
-    pub food_level: i32,
-    pub air_supply: i32,
-    pub max_air_supply: i32,
-    pub harmful_effects_count: usize,
-    pub items_in_magnetic_range: usize,
-    pub inventory_needed_energy: u64,
-}
-
-/// Ticks all 4 worn armor pieces for a player in a game tick (`ItemMekaSuitArmor.java:231-241`).
-pub fn tick_player_suit(
-    pieces: &mut [Option<MekaSuitItemStack>; 4],
-    ctx: &PlayerSuitContext,
-) {
-    // 1. Helmet operations
-    if let Some(ref mut helmet) = pieces[ArmorSlot::Helmet as usize] {
-        // Solar recharging
-        tick_solar_recharging(
-            helmet,
-            ctx.can_see_sun,
-            ctx.biome_temp,
-            ctx.downfall,
-            ctx.can_rain,
-            ctx.is_raining,
-            ctx.sun_brightness,
-        );
-
-        // Nutritional injection
-        tick_nutritional_injection(helmet, ctx.food_level);
-
-        // Inhalation purification
-        tick_inhalation_purification(helmet, ctx.harmful_effects_count);
-    }
-
-    // 2. Electrolytic breathing (Helmet + Bodyarmor interaction)
-    let (mut helmet_opt, mut body_opt) = split_helmet_and_bodyarmor(pieces);
-    if let Some(ref mut helmet) = helmet_opt {
-        tick_electrolytic_breathing(
-            helmet,
-            body_opt.as_deref_mut(),
-            ctx.is_underwater,
-            ctx.is_in_rain,
-            ctx.air_supply,
-            ctx.max_air_supply,
-        );
-    }
-
-    // 3. Bodyarmor operations
-    if let Some(ref mut body) = pieces[ArmorSlot::Chest as usize] {
-        // Jetpack
-        let jetpack = tick_jetpack(body, &ctx.jetpack);
-        if let Some(m) = jetpack.new_motion {
-            // The motion is a new `deltaMovement`: the host is asked for the difference (FORK-29: host_apply_vector_impulse).
-            let d = ctx.jetpack.motion;
-            host_apply_vector_impulse(&ctx.player_name, m[0] - d[0], m[1] - d[1], m[2] - d[2]);
-        }
-
-        // Gravitational modulation
-        tick_gravitational_modulation(body, &ctx.movement);
-    }
-
-    // Charge distribution across suit pieces
-    tick_charge_distribution(pieces, ctx.inventory_needed_energy);
-
-    // 4. Pants operations
-    if let Some(ref mut pants) = pieces[ArmorSlot::Legs as usize] {
-        // Locomotive boost
-        tick_locomotive_boost(pants, &ctx.movement);
-
-        // Geothermal generator
-        tick_geothermal_generator(pants, ctx.is_on_fire, ctx.submerged_fluid_temp_k);
-
-        // Hydrostatic repulsor
-        tick_hydrostatic_repulsor(pants, &ctx.movement);
-    }
-
-    // 5. Boots operations
-    if let Some(ref mut boots) = pieces[ArmorSlot::Feet as usize] {
-        // Magnetic attraction
-        tick_magnetic_attraction(boots, ctx.items_in_magnetic_range, &ctx.movement);
-    }
-}
-
-fn split_helmet_and_bodyarmor<'a>(
-    pieces: &'a mut [Option<MekaSuitItemStack>; 4],
-) -> (Option<&'a mut MekaSuitItemStack>, Option<&'a mut MekaSuitItemStack>) {
-    let (head_slice, rest) = pieces.split_at_mut(1);
-    let helmet = head_slice[0].as_mut();
-    let bodyarmor = rest[0].as_mut();
-    (helmet, bodyarmor)
-}
 
 // -----------------------------------------------------------------------------
 // Host API Bindings & Fallbacks (marked with // FORK-n)

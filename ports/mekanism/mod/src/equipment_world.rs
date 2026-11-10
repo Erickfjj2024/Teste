@@ -118,11 +118,10 @@ impl Mekanism {
         let original = stack.clone();
         let mut stack = stack.clone();
         if stack.item == assemblicator::CRAFTING_FORMULA {
-            // Shift + use in the air clears the formula (`ItemCraftingFormula.use`).
-            if pos.is_none() && sneaking {
+            // Shift + use clears the formula, silently (`ItemCraftingFormula.use`: `FORMULA_HOLDER` set to empty, no message).
+            if sneaking {
                 assemblicator::CraftingFormulaItem::clear(&mut stack);
                 self.write_held(player, &original, &stack);
-                let _ = players::tell(&player.id, "Crafting Formula cleared");
                 return true;
             }
             return false;
@@ -200,7 +199,10 @@ impl Mekanism {
     /// resets, the elytra glide and the charge of inventory items. Nothing runs on guessed inputs: no energy is spent for an effect
     /// the game does not apply.
     pub(crate) fn suits_tick(&mut self, tick: u64) {
-        for p in players::online() {
+        let online = players::online();
+        // A player who left loses the transient modifier: the next time they are here it is set again.
+        self.suit_step.retain(|id, _| online.iter().any(|p| &p.id == id));
+        for p in online {
             let Some(inv) = player_items::get_inventory(&p.id) else { continue };
             // Slots 36 feet, 37 legs, 38 chest, 39 head; the suit's pieces are head, chest, legs, feet.
             let slots = [39usize, 38, 37, 36];
@@ -230,6 +232,12 @@ impl Mekanism {
                     mekasuit::tick_solar_recharging(helmet, sees, env.temperature, env.downfall, env.precipitation, raining, brightness);
                 }
             }
+            // The sky at the head for the rain: it rains (`isRainingAt`: a rain level above 0.2, rain and not snow, and nothing above).
+            let head = [p.x.floor() as i32, (p.y + 1.62).floor() as i32, p.z.floor() as i32];
+            let env_rain = world::get_environment(&p.dimension, head[0], head[1], head[2]).map(|env| {
+                let sky = env.has_skylight && env.precipitation && self.sky_clear_at(&p.dimension, head, tick);
+                (env.rain > 0.2, env.temperature, sky)
+            });
             // The player's body (API 29): what the nutrition, the geothermal unit and the jetpack read.
             let state = player_control::get_state(&p.id);
             let playing = p.game_mode != GameMode::Creative && p.game_mode != GameMode::Spectator;
@@ -248,26 +256,89 @@ impl Mekanism {
                 if let Some(pants) = pieces[mekasuit::ArmorSlot::Legs as usize].as_mut() {
                     mekasuit::tick_geothermal_generator(pants, st.fire_ticks > 0, if st.in_lava { 1300.0 } else { 0.0 });
                 }
+                let motion = player_control::get_motion(&p.id);
+                let sneaking = motion.as_ref().is_some_and(|m| m.sneaking);
+                let on_ground = motion.as_ref().is_some_and(|m| m.on_ground);
+                let creative_or_spectator = !playing;
+                let look = player_control::get_look(&p.id);
+                // The body's velocity as the tick began; the locomotive boost and then the jetpack change it (java: the armour tick, then `tickEnd`).
+                let mut velocity = [st.velocity_x, st.velocity_y, st.velocity_z];
+                let mut velocity_changed = false;
+                let move_input = mekasuit::MoveInput {
+                    sprinting: st.sprinting,
+                    fall_flying: st.fall_flying,
+                    on_ground,
+                    in_water: st.in_water,
+                    in_fluid: st.in_water || st.in_lava,
+                    sneaking,
+                    flying: st.flying,
+                    boost_key: false,
+                    creative_or_spectator,
+                };
+                // Locomotive boost: `moveRelative(boost, (0, 0, 1))`, a push along where the player faces.
+                if let (Some(pants), Some((yaw, _))) = (pieces[mekasuit::ArmorSlot::Legs as usize].as_mut(), look) {
+                    let (boost, _) = mekasuit::tick_locomotive_boost(pants, &move_input);
+                    if boost != 0.0 {
+                        let rad = f64::from(yaw).to_radians();
+                        velocity[0] += -rad.sin() * f64::from(boost);
+                        velocity[2] += rad.cos() * f64::from(boost);
+                        velocity_changed = true;
+                    }
+                }
+                // Step assist: the boots' extra step height as a transient modifier, put back when it changes.
+                let step = mekasuit::step_boost(pieces[mekasuit::ArmorSlot::Feet as usize].as_ref(), sneaking, false);
+                if self.suit_step.get(&p.id).copied() != Some(step) {
+                    if step > 0.0 {
+                        let _ = player_control::set_attribute_modifier(&p.id, "minecraft:step_height", STEP_MODIFIER, f64::from(step), "add_value");
+                    } else {
+                        let _ = player_control::remove_attribute_modifier(&p.id, "minecraft:step_height", STEP_MODIFIER);
+                    }
+                    self.suit_step.insert(p.id.clone(), step);
+                }
+                // Electrolytic breathing: the eyes in water (full rate) or in the rain (half).
+                {
+                    let in_rain = env_rain.is_some_and(|(raining, temperature, sky)| raining && sky && temperature >= 0.15);
+                    let (head, rest) = pieces.split_at_mut(1);
+                    if let Some(helmet) = head[0].as_mut() {
+                        let (oxygen, _) = mekasuit::tick_electrolytic_breathing(helmet, rest[0].as_mut(), st.eyes_in_water, in_rain, st.air, st.max_air);
+                        if oxygen > 0 {
+                            let _ = player_control::set_air(&p.id, st.air + oxygen);
+                        }
+                        // Inhalation purification: each effect it handles is shortened by 9 ticks.
+                        let effects: Vec<(String, i32)> = st.effects.iter().map(|e| (e.id.clone(), e.duration)).collect();
+                        let (shorten, _) = mekasuit::tick_inhalation_purification(helmet, &effects, p.game_mode == GameMode::Creative);
+                        for (id, ticks) in shorten {
+                            let _ = player_control::reduce_effect(&p.id, &id, ticks);
+                        }
+                    }
+                }
                 // The jetpack: the keys, the velocity and the look; the new velocity is set whole.
-                if let (Some(body), Some((yaw, pitch))) = (pieces[mekasuit::ArmorSlot::Chest as usize].as_mut(), player_control::get_look(&p.id)) {
+                if let (Some(body), Some((yaw, pitch))) = (pieces[mekasuit::ArmorSlot::Chest as usize].as_mut(), look) {
                     let input = mekasuit::JetpackInput {
                         ascending: st.jumping,
-                        descending: player_control::get_motion(&p.id).is_some_and(|m| m.sneaking),
-                        on_ground_or_sleeping: mekasuit::is_on_ground_or_sleeping(player_control::get_motion(&p.id).is_some_and(|m| m.on_ground), st.sleeping, st.flying),
-                        sneaking: player_control::get_motion(&p.id).is_some_and(|m| m.sneaking),
+                        descending: sneaking,
+                        on_ground_or_sleeping: mekasuit::is_on_ground_or_sleeping(on_ground, st.sleeping, st.flying),
+                        sneaking,
                         fall_flying: st.fall_flying,
                         spectator: p.game_mode == GameMode::Spectator,
                         passenger: st.passenger,
                         on_cooldown: false,
-                        motion: [st.velocity_x, st.velocity_y, st.velocity_z],
+                        motion: velocity,
                         look: crate::sides::look(yaw, pitch),
                         // `Player.getUpVector(1F)`: the view vector of the same yaw with the pitch turned up by 90 degrees.
                         up: crate::sides::look(yaw, pitch - 90.0),
                     };
                     let jet = mekasuit::tick_jetpack(body, &input);
                     if let Some(m) = jet.new_motion {
-                        let _ = player_control::set_motion(&p.id, m[0], m[1], m[2]);
+                        velocity = m;
+                        velocity_changed = true;
                     }
+                    if jet.reset_fall {
+                        let _ = player_control::reset_fall_distance(&p.id);
+                    }
+                }
+                if velocity_changed {
+                    let _ = player_control::set_motion(&p.id, velocity[0], velocity[1], velocity[2]);
                 }
             }
             // Charge distribution among the pieces (inventory items' charge needs their energy, not readable yet: 0).
@@ -308,6 +379,9 @@ pub fn suit_source(source: &DamageSource) -> mekasuit::DamageSource {
         always_supported: has("mekanism:mekasuit_always_supported") || ALWAYS_SUPPORTED.contains(&source.damage_type.as_str()),
     }
 }
+
+/// The id of the transient step height modifier of the boots.
+const STEP_MODIFIER: &str = "mekanism:mekasuit_step_assist";
 
 /// `FoodData.eat(food, saturationModifier)`: the level rises (at most 20), the saturation by `food * modifier * 2` (at most the level).
 pub fn eat(food_level: u32, saturation: f32, food: u32, modifier: f32) -> (u32, f32) {
