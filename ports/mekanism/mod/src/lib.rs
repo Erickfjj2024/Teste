@@ -2651,6 +2651,9 @@ impl ServerMod for Mekanism {
         if block == resistive_heater::BLOCK {
             return self.resistive_button(&e, id);
         }
+        if block == oredictionificator::BLOCK {
+            return self.oredictionificator_button(&e, id);
+        }
         if block == dimensional_stabilizer::BLOCK {
             self.stabilizer_buttons.push((e.dimension.clone(), e.pos, id));
             return None;

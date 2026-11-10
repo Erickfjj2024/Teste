@@ -1715,6 +1715,53 @@ def fuelwood_heater_menu(m):
     return {'slots': 1, 'data_slots': 5, 'results': [],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[15, 29]], 'width': 176, 'height': 166, 'widgets': widgets}}
 
+def oredictionificator_menu(m):
+    """GuiOredictionificator (236 by 230): the filter list (three rows at 10, 18 and a holder around them), the new-filter button, the input slot at 56, 115,
+    the large progress arrow at 94, 119, the output slot at 164, 115, and the redstone tab. Its numbers are `oredictionificator.rs::menu_numbers`: 0 it
+    converted this tick, 1 the redstone control, 2 how many filters, 3 to 5 whether each of the first three is on. **What the screens of the port cannot
+    do yet:** show a filter's tag and result (the screen has numbers, not text), scroll the list, and make or edit a filter (a text field for the tag and
+    a choice of the result); the filters' switches work, and the "new filter" button is drawn but does nothing. FORK-20 in `PROPOSTA-API.wit`."""
+    width, height = 236, 230
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    slot = gui_sprite('slot/normal')
+    inv_x, inv_y = 38, height - 82
+    for row in range(3):
+        for col in range(9):
+            panel.paste(slot, (inv_x - 1 + 18 * col, inv_y - 1 + 18 * row))
+    for col in range(9):
+        panel.paste(slot, (inv_x - 1 + 18 * col, height - 25))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 204, 68, 2), (9, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 204, 22, 2), (9, 85))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 202, 20, 2), (10, 86))
+    panel.alpha_composite(gui_sprite('slot/input'), (55, 114))
+    panel.alpha_composite(gui_sprite('slot/output'), (163, 114))
+    panel.alpha_composite(gui_sprite('progress/large_right/empty'), (94, 119))
+    for i in range(3):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 202, 22, 2), (10, 18 + 22 * i))
+    texture = save_gui(panel, m)
+    title = MACHINE_NAMES.get(m, 'Oredictionificator')
+    widgets = [
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': width - 68, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 94, 'y': 119, 'w': 48, 'h': 8,
+         'value': {'data': 0}, 'max': {'const': 1}, 'direction': 'right', 'tooltip': 'Converting'},
+        {'type': 'text', 'x': 14, 'y': 91, 'text': 'New Filter (needs a text field: not available yet)', 'color': '#808080', 'scale': 85},
+        {'type': 'text', 'x': 14, 'y': 22, 'text': '{2} filters; the first three are shown', 'color': '#808080', 'scale': 85}]
+    for i in range(3):
+        for state, label, color in ((1, 'on', '#00CD00'), (0, 'off', '#CD0000')):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 3 + i}, 'eq': state}}, 'widgets': [
+                {'type': 'text', 'x': 14, 'y': 33 + 22 * i, 'text': f'Filter {i + 1}: {label}', 'color': color}]})
+    # a filter's row is a button only when the filter exists: the number of filters is tested one count at a time
+    for i in range(3):
+        for count in range(i + 1, 4):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 2}, 'eq': count}}, 'widgets': [
+                {'type': 'button', 'x': 10, 'y': 18 + 22 * i, 'w': 202, 'h': 22, 'id': 7700 + i, 'tooltip': f'Switch filter {i + 1} on or off'}]})
+    widgets += shift_x(redstone_widgets(1), width - 176)
+    return {'slots': 2, 'data_slots': 6, 'results': [1],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[56, 115], [164, 115]], 'width': width, 'height': height,
+                       'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def dynamic_valve_menu(m):
     """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
     def frames(panel):
@@ -2220,6 +2267,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/formulaic_assemblicator.json', assemblicator_
 put(f'{OUT}/data/{NS}/horizon/menu/dimensional_stabilizer.json', stabilizer_menu('dimensional_stabilizer'))
 put(f'{OUT}/data/{NS}/horizon/menu/resistive_heater.json', resistive_heater_menu('resistive_heater'))
 put(f'{OUT}/data/{NS}/horizon/menu/fuelwood_heater.json', fuelwood_heater_menu('fuelwood_heater'))
+put(f'{OUT}/data/{NS}/horizon/menu/oredictionificator.json', oredictionificator_menu('oredictionificator'))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/boiler_valve.json', boiler_valve_menu('boiler_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turbine_valve'))

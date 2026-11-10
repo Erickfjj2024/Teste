@@ -20,16 +20,16 @@ pub const INPUT_SLOT: usize = 0;
 pub const OUTPUT_SLOT: usize = 1;
 pub const TOTAL_SLOTS: usize = 2;
 
-/// Valid tag prefix paths (Java: `MekanismConfig.general.validOredictionificatorFilters`).
-pub const VALID_PREFIXES: [&str; 7] = [
-    "ores",
-    "ingots",
-    "dusts",
-    "gems",
-    "storage_blocks",
-    "raw_materials",
-    "nuggets",
-];
+/// The tags a filter may name (`MekanismConfig.general.validOredictionificatorFilters`, default `{c: [ingots/, ores/, dusts/, nuggets/, storage_blocks/,
+/// raw_materials/]}`): in the `c` namespace, with a path that starts with one of these.
+pub const VALID_NAMESPACE: &str = "c";
+pub const VALID_PREFIXES: [&str; 6] = ["ingots/", "ores/", "dusts/", "nuggets/", "storage_blocks/", "raw_materials/"];
+
+/// `isPossibleFilter`: whether a tag (`c:ores/iron`) may be filtered on.
+pub fn is_possible_filter(tag: &str) -> bool {
+    let Some((namespace, path)) = tag.split_once(':') else { return false };
+    namespace == VALID_NAMESPACE && VALID_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+}
 
 /// Item filter for the Oredictionificator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,18 +48,9 @@ impl ItemFilter {
         }
     }
 
-    /// Checks if a tag is allowed under Mekanism's valid prefixes (Java: `TileEntityOredictionificator.java:128-135`).
+    /// Whether a tag may be the filter of an oredictionificator (`isValidTarget`, without the check that the tag exists, which the game answers).
     pub fn is_valid_tag(tag: &str) -> bool {
-        // Must be in "c:" namespace or similar common tag convention
-        let path = if let Some(stripped) = tag.strip_prefix("c:") {
-            stripped
-        } else if let Some(stripped) = tag.strip_prefix("forge:") {
-            stripped
-        } else {
-            tag
-        };
-
-        VALID_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+        is_possible_filter(tag)
     }
 }
 
@@ -161,70 +152,69 @@ pub fn default_item_faces(facing: &str) -> Vec<Vec<u32>> {
     faces
 }
 
-/// Pure conversion step for one tick (Java: `TileEntityOredictionificator.java:82-96`).
+/// The result of the first filter that matches (`getResult`): the item's filterable tags in order, and for each the enabled filters in order; a filter
+/// with no output is skipped and the search goes on.
+pub fn result_of(filters: &[ItemFilter], tags: &[String]) -> Option<String> {
+    for tag in tags.iter().filter(|t| is_possible_filter(t)) {
+        for filter in filters.iter().filter(|f| f.enabled) {
+            if &filter.filter_tag == tag && !filter.selected_output.is_empty() {
+                return Some(filter.selected_output.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Pure conversion step for one tick (Java: `TileEntityOredictionificator.onUpdateServer`, java:82-96): the first result found is the only one tried; it goes
+/// into an empty output slot, or onto a stack of the same item below the item's own limit (`max_stack`). Says whether it converted.
 pub fn step_conversion(
     filters: &[ItemFilter],
     input_item: &mut Option<ItemStack>,
     output_item: &mut Option<ItemStack>,
     get_item_tags: impl Fn(&str) -> Vec<String>,
+    max_stack: impl Fn(&str) -> u32,
 ) -> bool {
-    let Some(input) = input_item else {
-        return false;
-    };
+    let Some(input) = input_item else { return false };
     if input.count == 0 {
         return false;
     }
-
     let tags = get_item_tags(&input.item);
-
-    // Find first enabled filter matching any of the item's tags (Java: `TileEntityOredictionificator.java:152-167`)
-    for filter in filters.iter().filter(|f| f.enabled) {
-        if tags.iter().any(|t| t == &filter.filter_tag) {
-            let target = &filter.selected_output;
-            if target.is_empty() {
-                continue;
-            }
-
-            // Check if output slot can accept the result
-            match output_item {
-                None => {
-                    *output_item = Some(ItemStack {
-                        item: target.clone(),
-                        count: 1,
-                        components: String::new(),
-                    });
-                    input.count -= 1;
-                    if input.count == 0 {
-                        *input_item = None;
-                    }
-                    return true;
-                }
-                Some(out) => {
-                    if out.item == *target && out.count < 64 {
-                        out.count += 1;
-                        input.count -= 1;
-                        if input.count == 0 {
-                            *input_item = None;
-                        }
-                        return true;
-                    }
-                }
-            }
+    let Some(target) = result_of(filters, &tags) else { return false };
+    match output_item {
+        None => {
+            *output_item = Some(ItemStack { item: target, count: 1, components: String::new() });
         }
+        Some(out) if out.item == target && out.components.trim().is_empty() && out.count < max_stack(&target) => {
+            out.count += 1;
+        }
+        Some(_) => return false,
     }
-
-    false
+    input.count -= 1;
+    if input.count == 0 {
+        *input_item = None;
+    }
+    true
 }
 
-/// Host API bridge for retrieving item tags in WASM runtime.
-// FORK-23: Item tags inspection API in WASM
+/// The tags an item is in, from the game (`recipe-types.item-tags`, API 30).
 pub fn host_get_item_tags(item_id: &str) -> Vec<String> {
-    let _ = item_id;
-    Vec::new()
+    horizon_mod_sdk::server::recipe_types::item_tags(item_id)
 }
+
+/// The numbers the screen reads: 0 it converted this tick, 1 the redstone control, 2 how many filters it has, 3 to 5 whether each of the first three is on.
+pub fn menu_numbers(state: &State) -> Vec<i32> {
+    let mut v = vec![i32::from(state.did_process), state.redstone_control as i32, state.filters.len() as i32];
+    for i in 0..3 {
+        v.push(state.filters.get(i).map_or(0, |f| i32::from(f.enabled)));
+    }
+    v
+}
+
+/// A button of its screen: a filter switched on or off (`TOGGLE_FILTER_STATE`, `BUTTON_TOGGLE_FILTER_BASE + index`), or the redstone tab.
+pub const BUTTON_TOGGLE_FILTER_BASE: i32 = 7700;
 
 impl Mekanism {
-    /// Server tick handler for Oredictionificators.
+    /// Server tick handler for Oredictionificators (`onUpdateServer`).
     pub(crate) fn run_oredictionificators(
         &mut self,
         machines: &[&BlockEntity],
@@ -235,48 +225,67 @@ impl Mekanism {
             if block != BLOCK {
                 continue;
             }
-
             let mut state = decode(&e.data);
+            let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
             let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
-            if !state.redstone_control.can_function(powered, false) {
-                continue;
+            let last = self.last_power.insert(key, powered).unwrap_or(false);
+            let mut items: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
+            let mut converted = false;
+            if state.redstone_control.can_function(powered, last) {
+                let mut input = items[INPUT_SLOT].clone();
+                let mut output = items[OUTPUT_SLOT].clone();
+                converted = step_conversion(&state.filters, &mut input, &mut output, host_get_item_tags, |i| crate::bin::stack_size(i) as u32);
+                if converted {
+                    items[INPUT_SLOT] = input;
+                    items[OUTPUT_SLOT] = output;
+                }
             }
-
-            let mut items: Vec<Option<ItemStack>> = (0..TOTAL_SLOTS)
-                .map(|i| e.items.get(i).cloned().flatten())
-                .collect();
-
-            let mut input = items[INPUT_SLOT].clone();
-            let mut output = items[OUTPUT_SLOT].clone();
-
-            let converted = step_conversion(
-                &state.filters,
-                &mut input,
-                &mut output,
-                host_get_item_tags,
-            );
-
+            let was = state.did_process;
             state.did_process = converted;
-
-            if converted {
-                items[INPUT_SLOT] = input;
-                items[OUTPUT_SLOT] = output;
-
+            let numbers = menu_numbers(&state);
+            if converted || was != converted || e.menu_data != numbers {
                 out.push(BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos,
                     data: encode(&state),
-                    items: Some(items),
+                    items: if converted { Some(items) } else { None },
                     energy: None,
                     energy_faces: None,
                     tanks: None,
                     tank_faces: None,
-                    menu_data: Some(vec![i32::from(state.did_process)]),
+                    menu_data: Some(numbers),
                     transmitter_faces: None,
                 });
             }
         }
         out
+    }
+
+    /// A button of the screen: the redstone tab or a filter's switch.
+    pub(crate) fn oredictionificator_button(&mut self, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
+        let mut state = decode(&e.data);
+        if id == crate::redstone::NEXT {
+            state.redstone_control = state.redstone_control.next();
+        } else if id == crate::redstone::PREVIOUS {
+            state.redstone_control = state.redstone_control.previous();
+        } else if id >= BUTTON_TOGGLE_FILTER_BASE && ((id - BUTTON_TOGGLE_FILTER_BASE) as usize) < state.filters.len() {
+            let f = &mut state.filters[(id - BUTTON_TOGGLE_FILTER_BASE) as usize];
+            f.enabled = !f.enabled;
+        } else {
+            return None;
+        }
+        Some(BlockEntityUpdate {
+            dimension: e.dimension.clone(),
+            pos: e.pos,
+            data: encode(&state),
+            items: None,
+            energy: None,
+            energy_faces: None,
+            tanks: None,
+            tank_faces: None,
+            menu_data: Some(menu_numbers(&state)),
+            transmitter_faces: None,
+        })
     }
 }
 
@@ -295,7 +304,9 @@ mod tests {
         assert!(ItemFilter::is_valid_tag("c:ingots/copper"));
         assert!(ItemFilter::is_valid_tag("c:ores/tin"));
         assert!(ItemFilter::is_valid_tag("c:dusts/iron"));
-        assert!(ItemFilter::is_valid_tag("c:gems/diamond"));
+        // `gems/` is not in the default list of valid filters (`GeneralConfig:243-244`).
+        assert!(!ItemFilter::is_valid_tag("c:gems/diamond"));
+        assert!(!ItemFilter::is_valid_tag("forge:ores/tin"));
         assert!(ItemFilter::is_valid_tag("c:storage_blocks/steel"));
         assert!(ItemFilter::is_valid_tag("c:raw_materials/osmium"));
         assert!(ItemFilter::is_valid_tag("c:nuggets/gold"));
@@ -322,7 +333,7 @@ mod tests {
 
         let processed = step_conversion(&filters, &mut input, &mut output, |_item| {
             vec!["c:ingots/copper".into()]
-        });
+        }, |_| 64);
 
         assert!(processed);
         assert_eq!(input.unwrap().count, 4);
@@ -352,7 +363,7 @@ mod tests {
 
         let processed = step_conversion(&filters, &mut input, &mut output, |_item| {
             vec!["c:ingots/copper".into()]
-        });
+        }, |_| 64);
 
         assert!(processed);
         assert!(input.is_none()); // Consumed the last item
@@ -383,7 +394,7 @@ mod tests {
 
         let processed = step_conversion(&filters, &mut input, &mut output, |_item| {
             vec!["c:ingots/copper".into()]
-        });
+        }, |_| 64);
 
         assert!(processed);
         // Produced mekanism:ingot_copper, not other_mod:copper_ingot
@@ -411,5 +422,43 @@ mod tests {
         assert_eq!(decoded.filters.len(), 2);
         assert_eq!(decoded.filters[0], state.filters[0]);
         assert_eq!(decoded.filters[1], state.filters[1]);
+    }
+
+    #[test]
+    fn test_the_items_tag_order_decides_and_the_first_result_is_the_only_one_tried() {
+        let filters = vec![
+            ItemFilter::new("c:ores/iron".into(), "mod_a:iron_ore".into()),
+            ItemFilter::new("c:raw_materials/iron".into(), "mod_b:raw_iron".into()),
+        ];
+        // Tag-major: the item's first tag that a filter wants decides, whatever the filters' order.
+        let tags = vec!["c:raw_materials/iron".to_owned(), "c:ores/iron".to_owned()];
+        assert_eq!(result_of(&filters, &tags).as_deref(), Some("mod_b:raw_iron"));
+        // A tag outside the valid list is not looked at.
+        let odd = vec!["minecraft:logs".to_owned()];
+        assert_eq!(result_of(&[ItemFilter::new("minecraft:logs".into(), "x:y".into())], &odd), None);
+        // The first result is the only one tried: a full output of another item blocks it.
+        let mut input = Some(ItemStack { item: "a:b".into(), count: 3, components: String::new() });
+        let mut output = Some(ItemStack { item: "other:thing".into(), count: 1, components: String::new() });
+        let tags2 = tags.clone();
+        assert!(!step_conversion(&filters, &mut input, &mut output, move |_| tags2.clone(), |_| 64));
+        assert_eq!(input.unwrap().count, 3);
+    }
+
+    #[test]
+    fn test_output_stops_at_the_items_own_limit() {
+        let filters = vec![ItemFilter::new("c:ingots/tin".into(), "mod:tin_ingot".into())];
+        let mut input = Some(ItemStack { item: "a:b".into(), count: 1, components: String::new() });
+        let mut output = Some(ItemStack { item: "mod:tin_ingot".into(), count: 16, components: String::new() });
+        assert!(!step_conversion(&filters, &mut input, &mut output, |_| vec!["c:ingots/tin".into()], |_| 16));
+        assert!(step_conversion(&filters, &mut input, &mut output, |_| vec!["c:ingots/tin".into()], |_| 64));
+        assert_eq!(output.unwrap().count, 17);
+    }
+
+    #[test]
+    fn test_screen_numbers_and_filter_switch() {
+        let mut state = State { filters: vec![ItemFilter::new("c:ores/tin".into(), "m:t".into())], ..State::default() };
+        assert_eq!(menu_numbers(&state), vec![0, 0, 1, 1, 0, 0]);
+        state.filters[0].enabled = false;
+        assert_eq!(menu_numbers(&state)[3], 0);
     }
 }

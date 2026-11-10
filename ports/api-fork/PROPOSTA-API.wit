@@ -616,3 +616,8 @@ tell-overlay: func(player: string, text: string) -> bool;
 set-entity-fire: func(dimension: string, id: u32, ticks: s32) -> result<_, string>;                        // flecha com Flame no modo de fogo
 // Troca de modo de itens (IAttachmentBasedModeItem.changeMode: tecla de modo e rolagem com sneak): o Android não tem a tecla.
 // export item-mode-changed: func(player: player, stack: item-stack, shift: s32) -> option<item-stack>;
+
+// ---- FORK-20: widgets de tela (campo de texto, texto dinâmico, lista rolável) — ver FORK-20-telas-filtros.md ----
+// BlockEntityUpdate.menu-text: option<list<string>>
+// widget textfield { x, y, w, h, max-length, validator, id } -> export menu-text-input: func(player: player, dimension: string, pos: block-pos, id: s32, text: string) -> option<block-entity-update>;
+// widget list { x, y, w, h, row-height, rows, source, first, count, on-click }
