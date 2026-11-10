@@ -16,3 +16,7 @@
 - Chamadas de computador.
 
 **EN.** Fixed: valid tags (only `c:` with 6 prefixes), tag-major search with only the first result tried, the item's own stack limit, real item tags, `didProcess`, a screen with working filter switches and redstone tab. Open: creating or editing a filter needs a text field, dynamic text and a scrolling list (FORK-20); until then the machine cannot be used.
+
+## Atualização: texto dinâmico (API 34) / Update: dynamic text
+**PT-BR.** Com `world.set-menu-text` (FORK-20, parte 1) a tela mostra a **tag** e o **resultado** de cada um dos três primeiros filtros (duas linhas por linha, verde se ligado e vermelho se desligado; um filtro sem resultado diz "(no result chosen)"). Os textos são enviados ao jogo só quando mudam. **Continua aberto:** o campo de texto (FORK-20 parte 2) e a lista rolável (parte 3): ainda não dá para criar ou editar um filtro nem ver mais que três.
+**EN.** The screen now shows each of the first three filters' tag and result. Still open: the text field and the scrolling list.

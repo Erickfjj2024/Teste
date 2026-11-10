@@ -1719,8 +1719,8 @@ def oredictionificator_menu(m):
     """GuiOredictionificator (236 by 230): the filter list (three rows at 10, 18 and a holder around them), the new-filter button, the input slot at 56, 115,
     the large progress arrow at 94, 119, the output slot at 164, 115, and the redstone tab. Its numbers are `oredictionificator.rs::menu_numbers`: 0 it
     converted this tick, 1 the redstone control, 2 how many filters, 3 to 5 whether each of the first three is on. **What the screens of the port cannot
-    do yet:** show a filter's tag and result (the screen has numbers, not text), scroll the list, and make or edit a filter (a text field for the tag and
-    a choice of the result); the filters' switches work, and the "new filter" button is drawn but does nothing. FORK-20 in `PROPOSTA-API.wit`."""
+    do yet:** show scroll the list, and make or edit a filter (a text field for the tag and a choice of the result). The first three filters' tag and result are
+    shown (`set-menu-text`, API 34), and their switches work; the "new filter" button is drawn but does nothing. FORK-20 in `PROPOSTA-API.wit`."""
     width, height = 236, 230
     panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
@@ -1747,11 +1747,13 @@ def oredictionificator_menu(m):
         {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 94, 'y': 119, 'w': 48, 'h': 8,
          'value': {'data': 0}, 'max': {'const': 1}, 'direction': 'right', 'tooltip': 'Converting'},
         {'type': 'text', 'x': 14, 'y': 91, 'text': 'New Filter (needs a text field: not available yet)', 'color': '#808080', 'scale': 85},
-        {'type': 'text', 'x': 14, 'y': 22, 'text': '{2} filters; the first three are shown', 'color': '#808080', 'scale': 85}]
+        ]
     for i in range(3):
-        for state, label, color in ((1, 'on', '#00CD00'), (0, 'off', '#CD0000')):
+        # a row: the tag (text 2i) and the result (text 2i + 1) of the filter, in the colour of its state (green on, red off)
+        for state, color in ((1, '#00CD00'), (0, '#CD0000')):
             widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 3 + i}, 'eq': state}}, 'widgets': [
-                {'type': 'text', 'x': 14, 'y': 33 + 22 * i, 'text': f'Filter {i + 1}: {label}', 'color': color}]})
+                {'type': 'text', 'x': 14, 'y': 21 + 22 * i, 'text': '', 'text_data': 2 * i, 'color': color, 'scale': 85},
+                {'type': 'text', 'x': 14, 'y': 31 + 22 * i, 'text': '', 'text_data': 2 * i + 1, 'color': '#404040', 'scale': 85}]})
     # a filter's row is a button only when the filter exists: the number of filters is tested one count at a time
     for i in range(3):
         for count in range(i + 1, 4):

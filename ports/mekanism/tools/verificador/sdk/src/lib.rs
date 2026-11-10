@@ -56,7 +56,6 @@ pub mod server {
     pub fn set_mob_health<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn kill_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn remove_mob<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
-    pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn set_entity_fire<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
   }
   pub mod player_items { use super::*;
@@ -70,6 +69,7 @@ pub mod server {
     pub fn set_forced<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
   }
   pub mod world { use super::*;
+    pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn pull_items<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> Result<(), String> { Ok(()) }
     pub fn mine_block<A0,A1,A2,A3,A4,A5,A6,A7,A8,A9>(_a0:A0,_a1:A1,_a2:A2,_a3:A3,_a4:A4,_a5:A5,_a6:A6,_a7:A7,_a8:A8,_a9:A9) -> Result<(), String> { Ok(()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct BlockChange { pub x: i32, pub y: i32, pub z: i32, pub state: String }

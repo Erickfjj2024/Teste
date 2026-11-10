@@ -387,6 +387,8 @@ struct Mekanism {
     suit_step: HashMap<String, f32>,
     /// The waste barrels whose tank filter was set.
     waste_filtered: HashSet<(String, i32, i32, i32)>,
+    /// The strings last given to each block's screen (`set-menu-text`).
+    menu_texts: HashMap<(String, i32, i32, i32), Vec<String>>,
     /// The buttons pressed on the dimensional stabilizers' screens, and the chunks each holds forced.
     stabilizer_buttons: Vec<(String, BlockPos, i32)>,
     stabilizer_tickets: HashMap<(String, i32, i32, i32), HashSet<(i32, i32)>>,
@@ -2185,6 +2187,7 @@ impl ServerMod for Mekanism {
             card_clicks: Vec::new(),
             suit_step: HashMap::new(),
             waste_filtered: HashSet::new(),
+            menu_texts: HashMap::new(),
             stabilizer_buttons: Vec::new(),
             stabilizer_tickets: HashMap::new(),
             empty: HashMap::new(),

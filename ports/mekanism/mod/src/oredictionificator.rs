@@ -210,6 +210,25 @@ pub fn menu_numbers(state: &State) -> Vec<i32> {
     v
 }
 
+/// The strings the screen shows (`world.set-menu-text`): for each of the first three filters its tag and its result, two lines, in this order
+/// (tag 0, result 0, tag 1, ...). A filter with no result says so, as the original's row does (a warning icon).
+pub fn menu_texts(state: &State) -> Vec<String> {
+    let mut v = Vec::new();
+    for i in 0..3 {
+        match state.filters.get(i) {
+            Some(f) => {
+                v.push(f.filter_tag.clone());
+                v.push(if f.selected_output.is_empty() { "(no result chosen)".to_owned() } else { f.selected_output.clone() });
+            }
+            None => {
+                v.push(String::new());
+                v.push(String::new());
+            }
+        }
+    }
+    v
+}
+
 /// A button of its screen: a filter switched on or off (`TOGGLE_FILTER_STATE`, `BUTTON_TOGGLE_FILTER_BASE + index`), or the redstone tab.
 pub const BUTTON_TOGGLE_FILTER_BASE: i32 = 7700;
 
@@ -240,6 +259,7 @@ impl Mekanism {
                     items[OUTPUT_SLOT] = output;
                 }
             }
+            self.send_oredictionificator_texts(e, &state);
             let was = state.did_process;
             state.did_process = converted;
             let numbers = menu_numbers(&state);
@@ -261,6 +281,16 @@ impl Mekanism {
         out
     }
 
+    /// Gives the game the screen's strings when they changed since the last time (`set-menu-text` is a call the game answers after, so it is not repeated every tick).
+    fn send_oredictionificator_texts(&mut self, e: &BlockEntity, state: &State) {
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        let texts = menu_texts(state);
+        if self.menu_texts.get(&key) != Some(&texts) {
+            let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+            self.menu_texts.insert(key, texts);
+        }
+    }
+
     /// A button of the screen: the redstone tab or a filter's switch.
     pub(crate) fn oredictionificator_button(&mut self, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
         let mut state = decode(&e.data);
@@ -274,6 +304,7 @@ impl Mekanism {
         } else {
             return None;
         }
+        self.send_oredictionificator_texts(e, &state);
         Some(BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
@@ -460,5 +491,18 @@ mod tests {
         assert_eq!(menu_numbers(&state), vec![0, 0, 1, 1, 0, 0]);
         state.filters[0].enabled = false;
         assert_eq!(menu_numbers(&state)[3], 0);
+    }
+
+    #[test]
+    fn test_the_screen_gets_a_tag_and_a_result_for_each_of_three_rows() {
+        let state = State {
+            filters: vec![ItemFilter::new("c:ores/tin".into(), "m:tin_ore".into()), ItemFilter::new("c:dusts/iron".into(), String::new())],
+            ..State::default()
+        };
+        let texts = menu_texts(&state);
+        assert_eq!(texts.len(), 6);
+        assert_eq!((texts[0].as_str(), texts[1].as_str()), ("c:ores/tin", "m:tin_ore"));
+        assert_eq!(texts[3], "(no result chosen)");
+        assert_eq!((texts[4].as_str(), texts[5].as_str()), ("", ""));
     }
 }
