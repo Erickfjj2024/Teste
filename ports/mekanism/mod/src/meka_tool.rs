@@ -72,13 +72,16 @@ pub const ENERGY_USAGE_SHOVEL: u64 = fe(10);
 pub const ENERGY_USAGE_AXE: u64 = fe(10);
 
 /// Shear entity energy usage: 10 J = 4 FE (`GearConfig.java:243`).
-pub const ENERGY_USAGE_SHEAR_ENTITY: u64 = fe(10);
+pub const ENERGY_USAGE_SHEAR_ENTITY_JOULES: u64 = 10;
+pub const ENERGY_USAGE_SHEAR_ENTITY: u64 = fe(ENERGY_USAGE_SHEAR_ENTITY_JOULES);
 
 /// Shear block (trim) energy usage: 10 J = 4 FE (`GearConfig.java:244`).
-pub const ENERGY_USAGE_SHEAR_TRIM: u64 = fe(10);
+pub const ENERGY_USAGE_SHEAR_TRIM_JOULES: u64 = 10;
+pub const ENERGY_USAGE_SHEAR_TRIM: u64 = fe(ENERGY_USAGE_SHEAR_TRIM_JOULES);
 
 /// Base teleport energy usage per 10 blocks: 1_000 J = 400 FE (`GearConfig.java:245`).
-pub const ENERGY_USAGE_TELEPORT: u64 = fe(1_000);
+pub const ENERGY_USAGE_TELEPORT_JOULES: u64 = 1_000;
+pub const ENERGY_USAGE_TELEPORT: u64 = fe(ENERGY_USAGE_TELEPORT_JOULES);
 
 /// Maximum vein mining block count: 128 (`GearConfig.java:143`).
 pub const MAX_VEIN_MINING_COUNT: usize = 128;
@@ -516,6 +519,40 @@ impl MekaToolData {
     }
 
     /// Attack speed modifier: -2.4 (`ItemMekaTool.java:349`).
+    /// What the container holds, in Joules (the original counts Joules, the port Forge Energy).
+    fn stored_joules(&self) -> u128 {
+        u128::from(self.energy) * 5 / 2
+    }
+
+    /// `ItemMekaTool.hasEnergyForDigAction` (java:135-146): the energy for a block of hardness 0 (the least a dig can cost), or at least a ratio above 1e-5 of it
+    /// (the dig then goes slower).
+    pub fn has_energy_for_dig_action(&self) -> bool {
+        let required = u128::from(self.get_destroy_joules(0.0));
+        let available = self.stored_joules();
+        required <= available || (available as f64 / required as f64) > 1.0e-5
+    }
+
+    /// `ModuleShearingUnit.canPerformAction(SHEARS_DISARM)` (java:~22-30): the energy for a block of hardness 0 with the silk touch setting.
+    pub fn can_shear_disarm(&self) -> bool {
+        let cost = u128::from(self.get_destroy_joules(0.0));
+        cost == 0 || self.stored_joules() >= cost
+    }
+
+    /// Shearing an entity or trimming a block (`ModuleShearingUnit.onInteract`/`onItemUse`): 10 J each, free when the cost is 0; refused without the energy.
+    /// Returns whether it can go on, taking the energy when it does.
+    pub fn use_shear_energy(&mut self, joules: u64) -> bool {
+        if joules == 0 {
+            return true;
+        }
+        if self.stored_joules() < u128::from(joules) {
+            return false;
+        }
+        // The port counts Forge Energy: the conversion is rounded up so that a use is never cheaper than the original.
+        let fe_cost = (joules * 2).div_ceil(5);
+        self.energy = self.energy.saturating_sub(fe_cost);
+        true
+    }
+
     pub fn attack_speed(&self) -> f64 {
         BASE_ATTACK_SPEED
     }
@@ -589,7 +626,14 @@ impl MekaToolData {
 // Mining Algorithms: Blasting and Vein Mining
 // -----------------------------------------------------------------------------
 
-/// Finds positions affected by Blasting Unit (`IBlastingItem.java:26-60`).
+/// `IBlastingItem.canBlastBlock` (java:82-84): not air, not a liquid, not a bounding block (`ModuleVeinMiningUnit.canVeinBlock`) and with a destroy speed above 0
+/// (so bedrock, hardness -1, and a block of hardness 0 are left alone).
+pub fn can_blast_block(is_air: bool, is_liquid: bool, is_bounding_block: bool, hardness: f32) -> bool {
+    !is_air && !is_liquid && !is_bounding_block && hardness > 0.0
+}
+
+/// Finds positions affected by Blasting Unit (`IBlastingItem.findPositions`, java:26-60). The positions come in the order of `BlockPos.betweenClosed`
+/// (x fastest, then y, then z).
 ///
 /// Orientations:
 /// - UP / DOWN: `(-radius..=radius, 0..=0, -radius..=radius)`
@@ -605,42 +649,72 @@ pub fn find_blasting_positions(
         return Vec::new();
     }
     let r = radius as i32;
+    let (lower, upper) = match hit_face {
+        HitFace::Up | HitFace::Down => ([-r, 0, -r], [r, 0, r]),
+        HitFace::East | HitFace::West => ([0, -1, -r], [0, 2 * r - 1, r]),
+        HitFace::North | HitFace::South => ([-r, -1, 0], [r, 2 * r - 1, 0]),
+    };
     let mut positions = Vec::new();
-
-    match hit_face {
-        HitFace::Up | HitFace::Down => {
-            for dx in -r..=r {
-                for dz in -r..=r {
-                    let pos = [target_pos[0] + dx, target_pos[1], target_pos[2] + dz];
-                    if can_blast(pos) {
-                        positions.push(pos);
-                    }
-                }
-            }
-        }
-        HitFace::East | HitFace::West => {
-            for dy in -1..=(2 * r - 1) {
-                for dz in -r..=r {
-                    let pos = [target_pos[0], target_pos[1] + dy, target_pos[2] + dz];
-                    if can_blast(pos) {
-                        positions.push(pos);
-                    }
-                }
-            }
-        }
-        HitFace::North | HitFace::South => {
-            for dx in -r..=r {
-                for dy in -1..=(2 * r - 1) {
-                    let pos = [target_pos[0] + dx, target_pos[1] + dy, target_pos[2]];
-                    if can_blast(pos) {
-                        positions.push(pos);
-                    }
+    for dz in lower[2]..=upper[2] {
+        for dy in lower[1]..=upper[1] {
+            for dx in lower[0]..=upper[0] {
+                let pos = [target_pos[0] + dx, target_pos[1] + dy, target_pos[2] + dz];
+                if can_blast(pos) {
+                    positions.push(pos);
                 }
             }
         }
     }
-
     positions
+}
+
+/// One block that the blasting or the vein mining wants to break (`found` of `MekanismUtils.veinMineArea`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaTarget {
+    pub pos: [i32; 3],
+    /// 0 for the blasted blocks (and the first block of a vein), the traversal distance for the vein.
+    pub distance: u32,
+    pub hardness: f32,
+    /// The block is an ore of the vein tracker (`ATOMIC_DISASSEMBLER_ORE`): the exponent of the energy is 1.5, otherwise 2.
+    pub is_ore: bool,
+    pub is_air: bool,
+}
+
+/// `MekanismUtils.veinMineArea`: which blocks get broken and how many Joules they use. `energy_required` is what the target block takes
+/// (`getDestroyEnergy` with the efficiency); the rest of the stored energy pays the others in order. A block is **skipped when `used + cost >= available`**
+/// (equal does not pass), but the next ones are still tried. Air and indestructible blocks (hardness -1) and the target itself are passed over.
+/// The base for the blasted blocks (`base_blast_joules`) includes the efficiency, the one for the vein (`base_vein_joules`) does not.
+pub fn plan_area_mining(
+    stored_joules: u64,
+    energy_required: u64,
+    target: [i32; 3],
+    base_blast_joules: u64,
+    base_vein_joules: u64,
+    found: &[AreaTarget],
+) -> (Vec<[i32; 3]>, u64) {
+    let available = stored_joules as i128 - energy_required as i128;
+    let mut used: i128 = 0;
+    let mut broken = Vec::new();
+    for t in found {
+        if t.pos == target || t.is_air || t.hardness < 0.0 {
+            continue;
+        }
+        let cost = if t.distance == 0 {
+            // `blastEnergy.calc(baseBlastEnergy, hardness)` = `getDestroyEnergy(base, hardness)`
+            if t.hardness == 0.0 { (base_blast_joules / 2).max(1) } else { base_blast_joules }
+        } else {
+            // `ceilToLong(getDestroyEnergy(base, hardness) * 0.5 * pow(distance, ore ? 1.5 : 2))`
+            let base = if t.hardness == 0.0 { (base_vein_joules / 2).max(1) } else { base_vein_joules };
+            let multiplier = 0.5 * f64::from(t.distance).powf(if t.is_ore { 1.5 } else { 2.0 });
+            (base as f64 * multiplier).ceil() as u64
+        };
+        if used + cost as i128 >= available {
+            continue;
+        }
+        used += cost as i128;
+        broken.push(t.pos);
+    }
+    (broken, used as u64)
 }
 
 /// Breadth-first search for Vein Mining traversal (`ModuleVeinMiningUnit.java:136-177`).
@@ -730,40 +804,80 @@ pub fn calculate_vein_energy(base_energy: u64, hardness: f32, distance: u32, is_
 // Farming Unit AOE Positions and Action Costs
 // -----------------------------------------------------------------------------
 
-/// Finds positions for Farming Unit AOE tools (`ModuleFarmingUnit.java:220`).
-pub fn find_farming_positions(target_pos: [i32; 3], hit_face: HitFace, radius: u8) -> Vec<[i32; 3]> {
-    if radius == 0 {
-        return vec![target_pos];
+/// The tools of `ModuleFarmingUnit.onItemUse`: the axe (strip, scrape, wax off) works on a plane facing the clicked side, the shovel (flatten, douse) and the hoe
+/// (till) on the horizontal plane around the block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FarmingTool {
+    Axe,
+    Shovel,
+    Hoe,
+}
+
+/// The blocks a farming use covers (`IToolAOEData.getTargetPositions`, `ModuleFarmingUnit.java:222-310`), in the order of `BlockPos.betweenClosed` (x fastest,
+/// then y, then z). `radius` is `(diameter - 1) / 2`; with the `Off` setting (diameter 0) it does nothing and returns no position.
+pub fn find_farming_positions(tool: FarmingTool, target_pos: [i32; 3], hit_face: HitFace, farming: FarmingRadius) -> Vec<[i32; 3]> {
+    if farming == FarmingRadius::Off {
+        return Vec::new();
     }
-    let r = radius as i32;
+    let r = i32::from(farming.radius());
+    // Axe: `EAST/WEST (0, r, r)`, `UP/DOWN (r, 0, r)`, `SOUTH/NORTH (r, r, 0)`; shovel and hoe: `(r, 0, r)` whatever the face.
+    let (rx, ry, rz) = match (tool, hit_face) {
+        (FarmingTool::Axe, HitFace::East | HitFace::West) => (0, r, r),
+        (FarmingTool::Axe, HitFace::North | HitFace::South) => (r, r, 0),
+        _ => (r, 0, r),
+    };
     let mut positions = Vec::new();
-
-    match hit_face {
-        HitFace::Up | HitFace::Down => {
-            for dx in -r..=r {
-                for dz in -r..=r {
-                    positions.push([target_pos[0] + dx, target_pos[1], target_pos[2] + dz]);
-                }
-            }
-        }
-        HitFace::North | HitFace::South => {
-            for dx in -r..=r {
-                for dy in -r..=r {
-                    positions.push([target_pos[0] + dx, target_pos[1] + dy, target_pos[2]]);
-                }
-            }
-        }
-        HitFace::East | HitFace::West => {
-            for dz in -r..=r {
-                for dy in -r..=r {
-                    positions.push([target_pos[0], target_pos[1] + dy, target_pos[2] + dz]);
-                }
+    for dz in -rz..=rz {
+        for dy in -ry..=ry {
+            for dx in -rx..=rx {
+                positions.push([target_pos[0] + dx, target_pos[1] + dy, target_pos[2] + dz]);
             }
         }
     }
-
     positions
 }
+
+/// One block the farming use may change: it is valid when `IToolAOEData.isValid` says so and its tool-modified state is the one of the clicked block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FarmingCandidate {
+    pub pos: [i32; 3],
+    pub valid: bool,
+}
+
+/// The energy of a farming use (`ModuleFarmingUnit.useAOE`, java:108-190): it fails (`None`) with less than one use of energy. The clicked block is always
+/// changed and paid; then each other candidate, in order, is paid `usage` more, and the loop **stops** when `used + usage` would be above the energy (equal passes).
+/// Returns the blocks changed (the first one included) and the energy used.
+pub fn plan_farming_use(energy: u64, usage: u64, target: [i32; 3], candidates: &[FarmingCandidate]) -> Option<(Vec<[i32; 3]>, u64)> {
+    if energy < usage {
+        return None;
+    }
+    let mut used = usage;
+    let mut changed = vec![target];
+    for c in candidates {
+        if c.pos == target {
+            continue;
+        }
+        let next = used + usage;
+        if next > energy {
+            break;
+        }
+        if c.valid {
+            used = next;
+            changed.push(c.pos);
+        }
+    }
+    Some((changed, used))
+}
+
+/// `ShovelToolAOEData.isValid`: a block can be flattened when the one above is air, or a replaceable plant (the farming-override tag, or
+/// replaceable and in `REPLACEABLE_BY_TREES`) that has no fluid and does not render as solid.
+pub fn shovel_position_valid(above_is_air: bool, above_is_replaceable_plant: bool, above_has_fluid: bool, above_is_solid_render: bool) -> bool {
+    if above_is_air {
+        return true;
+    }
+    above_is_replaceable_plant && !above_has_fluid && !above_is_solid_render
+}
+
 
 // -----------------------------------------------------------------------------
 // Teleportation Mechanics (ItemMekaTool.java:373-417)
@@ -805,14 +919,11 @@ pub fn check_teleport(
         return Err("Too close to teleport (min distance sqr 5.0)");
     }
 
-    let distance = dist_sqr.sqrt();
-    if distance > MAX_TELEPORT_REACH as f64 {
-        return Err("Exceeds max reach (100 blocks)");
-    }
-
-    // Java: MathUtils.ceilToLong(mekaToolEnergyUsageTeleport * (distance / 10D))
-    // mekaToolEnergyUsageTeleport = 1_000 J = 400 FE
-    let energy_needed = (ENERGY_USAGE_TELEPORT as f64 * (distance / 10.0)).ceil() as u64;
+    // `ItemMekaTool.use` (java:380-392): the ray is cut at `mekaToolMaxTeleportReach` by the host; the energy is
+    // `ceilToLong(mekaToolEnergyUsageTeleport * (distance / 10D))` where `distance` is **`distanceToSqr`**, the squared distance, in Joules.
+    // The port counts Forge Energy and rounds the conversion up, so a teleport is never cheaper than the original.
+    let joules = (ENERGY_USAGE_TELEPORT_JOULES as f64 * (dist_sqr / 10.0)).ceil() as u64;
+    let energy_needed = (joules * 2).div_ceil(5);
 
     if energy_available < energy_needed {
         return Err("Insufficient energy for teleport");
@@ -1165,6 +1276,137 @@ mod tests {
     }
 
     #[test]
+    fn java_blast_energy_rule_skips_when_used_plus_cost_reaches_the_available() {
+        // `MekanismUtils.veinMineArea`: available = stored - energyRequired; a block is skipped when `used + cost >= available`.
+        // Default efficiency: 10 J * 4 = 40 J a block. Target + 8 blasted neighbours at hardness 1.5, stored exactly 360 J: available 320.
+        let target = [0, 0, 0];
+        let mut found = vec![AreaTarget { pos: target, distance: 0, hardness: 1.5, is_ore: false, is_air: false }];
+        for x in 1..=8 {
+            found.push(AreaTarget { pos: [x, 0, 0], distance: 0, hardness: 1.5, is_ore: false, is_air: false });
+        }
+        let (broken, used) = plan_area_mining(360, 40, target, 40, 10, &found);
+        assert_eq!(broken.len(), 7, "the 8th would make used + cost = 320, not below 320");
+        assert_eq!(used, 280);
+        // One joule more and the 8th passes.
+        let (broken, used) = plan_area_mining(361, 40, target, 40, 10, &found);
+        assert_eq!((broken.len(), used), (8, 320));
+        // Not enough for the target itself: nothing else is mined.
+        assert_eq!(plan_area_mining(30, 40, target, 40, 10, &found).0.len(), 0);
+        // Air and indestructible blocks are passed over without cost; hardness 0 costs half.
+        let mixed = [
+            AreaTarget { pos: [1, 0, 0], distance: 0, hardness: 1.5, is_ore: false, is_air: true },
+            AreaTarget { pos: [2, 0, 0], distance: 0, hardness: -1.0, is_ore: false, is_air: false },
+            AreaTarget { pos: [3, 0, 0], distance: 0, hardness: 0.0, is_ore: false, is_air: false },
+        ];
+        assert_eq!(plan_area_mining(1_000, 40, target, 40, 10, &mixed), (vec![[3, 0, 0]], 20));
+        // A vein block at distance 4 of an ore costs ceil(10 J * 0.5 * 4^1.5) = 40 J, a non-ore one ceil(10 * 0.5 * 4^2) = 80 J.
+        let vein = [
+            AreaTarget { pos: [1, 0, 0], distance: 4, hardness: 1.5, is_ore: true, is_air: false },
+            AreaTarget { pos: [2, 0, 0], distance: 4, hardness: 1.5, is_ore: false, is_air: false },
+        ];
+        assert_eq!(plan_area_mining(10_000, 40, target, 40, 10, &vein).1, 120);
+    }
+
+    #[test]
+    fn java_blast_block_filter_and_order() {
+        // `IBlastingItem.canBlastBlock`
+        assert!(can_blast_block(false, false, false, 1.5));
+        assert!(!can_blast_block(true, false, false, 1.5), "air");
+        assert!(!can_blast_block(false, true, false, 1.5), "liquid");
+        assert!(!can_blast_block(false, false, true, 1.5), "bounding block");
+        assert!(!can_blast_block(false, false, false, 0.0), "a destroy speed of 0 is left alone");
+        assert!(!can_blast_block(false, false, false, -1.0), "bedrock");
+        // The horizontal plane of an UP/DOWN face goes x fastest, then z.
+        let plane = find_blasting_positions([10, 60, 20], HitFace::Up, 1, |_| true);
+        assert_eq!(plane[0], [9, 60, 19]);
+        assert_eq!(plane[1], [10, 60, 19]);
+        assert_eq!(plane[3], [9, 60, 20]);
+        assert_eq!(plane.len(), 9);
+        // A wall: radius 2 on NORTH is x -2..=2, y -1..=3.
+        let wall = find_blasting_positions([0, 10, 0], HitFace::North, 2, |_| true);
+        assert_eq!(wall.len(), 25);
+        assert_eq!(wall[0], [-2, 9, 0]);
+        assert_eq!(wall[24], [2, 13, 0]);
+    }
+
+    #[test]
+    fn java_farming_planes_per_tool_and_the_off_setting() {
+        // ModuleFarmingUnit: the axe uses a plane facing the clicked side, the shovel and the hoe the horizontal plane; OFF (diameter 0) does nothing.
+        let pos = [5, 10, 15];
+        assert!(find_farming_positions(FarmingTool::Hoe, pos, HitFace::Up, FarmingRadius::Off).is_empty());
+        assert_eq!(find_farming_positions(FarmingTool::Hoe, pos, HitFace::Up, FarmingRadius::Low), vec![pos], "diameter 1: the block alone");
+        // A hoe or shovel clicking a wall still works on the horizontal plane around the block.
+        let hoe_wall = find_farming_positions(FarmingTool::Hoe, pos, HitFace::North, FarmingRadius::Med);
+        assert_eq!(hoe_wall.len(), 9);
+        assert!(hoe_wall.iter().all(|p| p[1] == 10));
+        let shovel_wall = find_farming_positions(FarmingTool::Shovel, pos, HitFace::East, FarmingRadius::High);
+        assert_eq!(shovel_wall.len(), 25);
+        assert!(shovel_wall.iter().all(|p| p[1] == 10));
+        // An axe on a north face covers x and y with z fixed; on an east face y and z with x fixed.
+        let axe_north = find_farming_positions(FarmingTool::Axe, pos, HitFace::North, FarmingRadius::Med);
+        assert!(axe_north.iter().all(|p| p[2] == 15) && axe_north.len() == 9);
+        let axe_east = find_farming_positions(FarmingTool::Axe, pos, HitFace::East, FarmingRadius::Med);
+        assert!(axe_east.iter().all(|p| p[0] == 5) && axe_east.len() == 9);
+        // `betweenClosed` order: x fastest, then y, then z.
+        assert_eq!(axe_north[0], [4, 9, 15]);
+        assert_eq!(axe_north[1], [5, 9, 15]);
+        assert_eq!(axe_north[3], [4, 10, 15]);
+        assert_eq!(axe_east[0], [5, 9, 14]);
+        assert_eq!(axe_east[1], [5, 10, 14]);
+    }
+
+    #[test]
+    fn java_farming_energy_stops_when_the_next_use_would_exceed_it() {
+        // `useAOE`: it fails without one use of energy; each other block is paid `usage` more; the loop stops when `used + usage > energy` (equal passes).
+        let target = [0, 0, 0];
+        let line: Vec<FarmingCandidate> = (0..6).map(|x| FarmingCandidate { pos: [x, 0, 0], valid: true }).collect();
+        assert_eq!(plan_farming_use(3, 4, target, &line), None);
+        assert_eq!(plan_farming_use(4, 4, target, &line), Some((vec![target], 4)));
+        // Energy 10, usage 4: the target (4), one more (8), the next would be 12 > 10: stop.
+        assert_eq!(plan_farming_use(10, 4, target, &line), Some((vec![target, [1, 0, 0]], 8)));
+        // Energy 8: the second use brings it to exactly 8, which is allowed.
+        assert_eq!(plan_farming_use(8, 4, target, &line).unwrap().1, 8);
+        // A block that cannot be changed costs nothing and does not stop the loop.
+        let mixed = [FarmingCandidate { pos: [1, 0, 0], valid: false }, FarmingCandidate { pos: [2, 0, 0], valid: true }];
+        assert_eq!(plan_farming_use(100, 4, target, &mixed), Some((vec![target, [2, 0, 0]], 8)));
+        // A shovel needs air above, or a plant that is not solid and has no fluid.
+        assert!(shovel_position_valid(true, false, false, false));
+        assert!(shovel_position_valid(false, true, false, false));
+        assert!(!shovel_position_valid(false, true, true, false));
+        assert!(!shovel_position_valid(false, true, false, true));
+        assert!(!shovel_position_valid(false, false, false, false));
+    }
+
+    #[test]
+    fn java_shearing_and_dig_energy_rules() {
+        // ModuleShearingUnit: 10 J (4 FE) to shear an entity or trim a block, free if the cost is 0; the disarm needs the destroy energy of hardness 0
+        // (with the efficiency: 10 J * 4 / 2 = 20 J = 8 FE, with silk touch 100 * 4 / 2 = 200 J = 80 FE).
+        let mut tool = MekaToolData::new(100_000);
+        tool.energy = 3;
+        assert!(!tool.use_shear_energy(ENERGY_USAGE_SHEAR_ENTITY_JOULES));
+        assert_eq!(tool.energy, 3);
+        tool.energy = 4;
+        assert!(tool.use_shear_energy(ENERGY_USAGE_SHEAR_TRIM_JOULES));
+        assert_eq!(tool.energy, 0);
+        assert!(tool.use_shear_energy(0), "a free use needs no energy");
+        tool.energy = 7;
+        assert!(!tool.can_shear_disarm());
+        tool.energy = 8;
+        assert!(tool.can_shear_disarm());
+        assert!(tool.install_module(ModuleType::SilkTouchUnit).is_ok());
+        tool.energy = 79;
+        assert!(!tool.can_shear_disarm());
+        tool.energy = 80;
+        assert!(tool.can_shear_disarm());
+        // `hasEnergyForDigAction`: enough for hardness 0, or any energy above a ratio of 1e-5 of it (the dig goes slower).
+        let mut empty = MekaToolData::new(100_000);
+        empty.energy = 0;
+        assert!(!empty.has_energy_for_dig_action());
+        empty.energy = 1;
+        assert!(empty.has_energy_for_dig_action());
+    }
+
+    #[test]
     fn farming_positions_and_tool_energy_costs() {
         // ModuleFarmingUnit.java:119-123 & GearConfig.java:240-242
         let pos = [5, 10, 15];
@@ -1175,10 +1417,10 @@ mod tests {
         assert_eq!(FarmingRadius::High.radius(), 2);
         assert_eq!(FarmingRadius::Ultra.radius(), 3);
 
-        let positions_med = find_farming_positions(pos, HitFace::Up, 1);
+        let positions_med = find_farming_positions(FarmingTool::Hoe, pos, HitFace::Up, FarmingRadius::Med);
         assert_eq!(positions_med.len(), 9, "3x3 = 9 blocks");
 
-        let positions_ultra = find_farming_positions(pos, HitFace::Up, 3);
+        let positions_ultra = find_farming_positions(FarmingTool::Hoe, pos, HitFace::Up, FarmingRadius::Ultra);
         assert_eq!(positions_ultra.len(), 49, "7x7 = 49 blocks");
 
         // Tool action costs
@@ -1202,17 +1444,22 @@ mod tests {
         let blocked = check_teleport(player, [10, 60, 0], false, true, true, true, 10_000);
         assert!(blocked.is_err(), "Fails if head space not clear");
 
-        // Valid teleport at distance 20 blocks
-        // energy = ceil(400 * 20 / 10) = 800 FE
-        let valid = check_teleport(player, [20, 60, 0], true, true, true, true, 10_000);
+        // Valid teleport 20 blocks away: `distance` in the original is `distanceToSqr` = 400, so
+        // energy = ceil(1000 J * (400 / 10)) = 40 000 J = 16 000 FE (`ItemMekaTool.java:389`).
+        let valid = check_teleport(player, [20, 60, 0], true, true, true, true, 100_000);
         assert!(valid.is_ok());
         let (target, energy) = valid.unwrap();
         assert_eq!(target, [20.5, 61.5, 0.5], "Target centered +0.5, +1.5, +0.5");
-        assert_eq!(energy, 800, "20 blocks * 40 FE/block = 800 FE");
+        assert_eq!(energy, 16_000, "1000 J * 400 / 10 = 40 000 J");
+        // 50 blocks: distanceToSqr 2500 -> 250 000 J = 100 000 FE: the cost grows with the square of the distance.
+        assert_eq!(check_teleport(player, [50, 60, 0], true, true, true, true, 1_000_000).unwrap().1, 100_000);
+        // The edge of the "too close" check: distanceToSqr 5 is allowed, below 5 passes the use to the game.
+        assert!(check_teleport(player, [2, 61, 0], true, true, true, true, 100_000).is_ok(), "distanceToSqr 5.0 is not below 5");
+        assert!(check_teleport(player, [2, 60, 0], true, true, true, true, 100_000).is_err(), "distanceToSqr 4.0 is below 5");
 
         // Insufficient energy
-        let low_energy = check_teleport(player, [20, 60, 0], true, true, true, true, 500);
-        assert!(low_energy.is_err(), "Fails when energy < 800");
+        let low_energy = check_teleport(player, [20, 60, 0], true, true, true, true, 15_999);
+        assert!(low_energy.is_err(), "Fails when energy < 16 000");
     }
 
     #[test]
