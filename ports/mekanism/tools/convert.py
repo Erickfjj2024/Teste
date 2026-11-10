@@ -191,7 +191,7 @@ for m in HEAT_CONDUCTORS + HEAT_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 OPEN_MACHINES |= set(HEAT_CONDUCTORS + HEAT_MACHINES)
 # Utilities: machines with a screen or a charge slot, the personal storages, the cardboard box (hardness/resistance of the original blocks).
-UTILITY_MACHINES = ['modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel']
+UTILITY_MACHINES = ['qio_drive_array', 'qio_redstone_adapter', 'radioactive_waste_barrel', 'modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel']
 for m in UTILITY_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 BLOCKS['cardboard_box'] = ('minecraft:beacon', {'hardness': 0.5, 'explosion_resistance': 0.6, 'requires_tool': False}, 'machine')
