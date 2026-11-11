@@ -50,6 +50,8 @@ pub mod server {
     pub struct DroppedItem { pub id: u32, pub stack: crate::server::ItemStack, pub x: f64, pub y: f64, pub z: f64 }
     pub fn items_in_box<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Vec<DroppedItem> { Vec::new() }
     pub fn take_dropped_item<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
+    pub struct DamageResult { pub id: u32, pub applied: f32, pub blocked: bool }
+    pub fn damage_entities_in_box<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Vec<DamageResult> { Vec::new() }
     pub fn spawn_mod_entity<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: &[u8]) -> Result<u64, String> { Err(String::new()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Mob { pub id: u32, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub max_health: f32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct MobOptions { pub name: Option<String>, pub health: Option<f32>, pub no_ai: bool, pub invisible: bool, pub silent: bool, pub invulnerable: bool, pub no_gravity: bool }
