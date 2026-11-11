@@ -69,6 +69,7 @@ pub mod server {
     pub fn set_forced<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
   }
   pub mod world { use super::*;
+    pub fn spawn_mod_entity<A0, A1, A2, A3, A4, A5>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5) -> Result<u64, String> { Err(String::new()) }
     pub fn block_hardness<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Option<f32> { None }
     pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn pull_items<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> Result<(), String> { Ok(()) }
@@ -172,6 +173,7 @@ pub mod server {
     pub fn on_blocks(self) -> Self { self }
     pub fn on_damage(self) -> Self { self }
     pub fn on_item_release(self) -> Self { self }
+    pub fn on_mod_entities(self) -> Self { self }
     pub fn on_net(self) -> Self { self }
     pub fn redirect(self, _block: &str, _flag_at: u32, _pos_at: u32) -> Self { self }
     pub fn new() -> Self { Self::default() }
