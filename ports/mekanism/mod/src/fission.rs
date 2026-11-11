@@ -172,6 +172,8 @@ pub struct Reactor {
     pub last_boil: u64,
     /// Radiation (Sv/h) the reactor leaked this tick: waste that did not fit in its tank.
     pub leak: f64,
+    /// `lastEnvironmentLoss`: the heat the reactor gave the air last tick, in kelvin.
+    pub last_loss: f64,
 }
 
 pub fn encode(f: &Found, r: &Reactor) -> Vec<u8> {
@@ -329,7 +331,9 @@ pub fn tick(r: &mut Reactor, f: &Found, ambient: f64, roll: f64) -> bool {
         }
     }
     // The air takes heat away.
-    r.temperature -= (r.temperature - ambient) / (AIR + INSULATION + CONDUCTION);
+    let to_air = (r.temperature - ambient) / (AIR + INSULATION + CONDUCTION);
+    r.last_loss = to_air.max(0.0);
+    r.temperature -= to_air;
     // The damage.
     let t = r.temperature;
     if t > MIN_DAMAGE_TEMP {
@@ -357,6 +361,51 @@ pub fn after_meltdown(r: &mut Reactor, ambient: f64) {
     r.heated = process::Tank::default();
     r.fuel = process::Tank::default();
     r.waste = process::Tank::default();
+}
+
+/// The text box of the stats page (`GuiFissionReactorStats`'s rate limit field, 77, 128).
+pub const RATE_TEXT: i32 = 7110;
+
+/// What the rate limit box confirmed (`setRateLimit`): a number from 0 to the most the reactor burns, rounded to two decimals; anything else is refused.
+pub fn set_rate_limit_text(r: &mut Reactor, f: &Found, text: &str) -> bool {
+    let Ok(v) = text.trim().parse::<f64>() else { return false };
+    if !v.is_finite() || v < 0.0 || v > max_burn(f) {
+        return false;
+    }
+    let v = (v * 100.0).round() / 100.0;
+    if v == r.rate_limit {
+        return false;
+    }
+    r.rate_limit = v;
+    true
+}
+
+/// `TileEntityFissionReactorCasing.getTempColor`: 0 bright green under 600 K, 1 yellow under 1,000, 2 orange under 1,200, 3 red under 1,600, 4 dark red.
+pub fn temp_band(t: f64) -> i32 {
+    if t < 600.0 { 0 } else if t < 1_000.0 { 1 } else if t < 1_200.0 { 2 } else if t < 1_600.0 { 3 } else { 4 }
+}
+
+/// `getDamageColor`: 0 bright green under a quarter of the damage, 1 yellow under half, 2 orange under three quarters, 3 dark red.
+pub fn damage_band(damage: f64) -> i32 {
+    let d = damage / MAX_DAMAGE;
+    if d < 0.25 { 0 } else if d < 0.5 { 1 } else if d < 0.75 { 2 } else { 3 }
+}
+
+/// The strings of the screens (`GuiFissionReactor`'s inner screen and `GuiFissionReactorStats`): 0 burn rate, 1 heating rate, 2 temperature, 3 damage, then the stats
+/// page's heat capacity, surface area, boil efficiency, maximum burn rate and rate limit.
+pub fn screen_texts(r: &Reactor, f: &Found, capacity: f64) -> Vec<String> {
+    let n = crate::evaporation::trim_number;
+    vec![
+        format!("Burn Rate: {} mB/t", n(r.last_burn)),
+        format!("Heating Rate: {} mB/t", crate::boiler::thousands(r.last_boil)),
+        format!("Temperature: {} K", n(r.temperature)),
+        format!("Damage: {}%", r.damage.round().min(100.0) as i32),
+        format!("Heat Capacity: {} J/K", crate::boiler::thousands(capacity as u64)),
+        format!("Surface Area: {}", crate::boiler::thousands(u64::from(f.surface))),
+        format!("Boil Efficiency: {}%", n(boil_efficiency(f) * 100.0)),
+        format!("Max Burn Rate: {} mB/t", crate::boiler::thousands(max_burn(f) as u64)),
+        format!("Rate Limit: {} mB/t", n(r.rate_limit)),
+    ]
 }
 
 /// A press of a button of the screen.
@@ -478,6 +527,7 @@ impl Mekanism {
     /// A tick of the ports of the reactors.
     pub(crate) fn run_fission(&mut self, ports: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.fission_buttons);
+        let texts_in = std::mem::take(&mut self.fission_texts);
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
         let mut out = Vec::new();
         for p in ports {
@@ -547,6 +597,11 @@ impl Mekanism {
             for (dim, pos, id) in presses.iter().filter(|(d, p, _)| *d == key.0 && group.iter().any(|g| (g.pos.x, g.pos.y, g.pos.z) == (p.x, p.y, p.z))) {
                 let _ = (dim, pos);
                 press(&mut s.reactor, &found, *id);
+            }
+            for (_, _, id, text) in texts_in.iter().filter(|(d, p, _, _)| *d == key.0 && group.iter().any(|g| (g.pos.x, g.pos.y, g.pos.z) == (p.x, p.y, p.z))) {
+                if *id == RATE_TEXT {
+                    set_rate_limit_text(&mut s.reactor, &found, text);
+                }
             }
             s.reactor.rate_limit = s.reactor.rate_limit.min(max_burn(&found));
             // The tanks only keep what they are for.
@@ -624,7 +679,21 @@ impl Mekanism {
                 found.assemblies as i32,
                 (boil_efficiency(&found) * 100.0).round() as i32,
                 found.surface as i32,
+                temp_band(r.temperature),
+                damage_band(r.damage),
+                r.last_loss.floor() as i32,
+                ((r.last_loss * 10.0).floor() as i32) % 10,
+                ((r.last_loss * 100.0).floor() as i32) % 10,
+                (max_burn(&found) * 100.0).round() as i32,
             ];
+            let texts = screen_texts(&r, &found, CASING_HEAT * f64::from(found.blocks));
+            for p in &group {
+                let tkey = (p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&p.dimension, p.pos.x, p.pos.y, p.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
+            }
             for p in &group {
                 let (x, y, z) = (p.pos.x, p.pos.y, p.pos.z);
                 let full = |amount: u64, cap: u64, ok: &str, other: bool| if amount >= cap || other { vec![NOTHING.to_owned()] } else { vec![ok.to_owned()] };
@@ -973,5 +1042,25 @@ mod tests {
         assert_eq!(mode_of(&with_m1), 1);
         let with_m2 = with_mode(data, 2);
         assert_eq!(mode_of(&with_m2), 2);
+    }
+
+    #[test]
+    fn the_rate_limit_box_takes_a_number_up_to_the_most_the_reactor_burns() {
+        let f = Found { assemblies: 4, ..Found::default() };
+        let mut r = Reactor { rate_limit: 0.1, ..Reactor::default() };
+        assert!(set_rate_limit_text(&mut r, &f, "2.567"));
+        assert_eq!(r.rate_limit, 2.57);
+        assert!(!set_rate_limit_text(&mut r, &f, "2.57"));
+        assert!(!set_rate_limit_text(&mut r, &f, "5"));
+        assert!(!set_rate_limit_text(&mut r, &f, "-1"));
+        assert!(!set_rate_limit_text(&mut r, &f, "abc"));
+        assert!(set_rate_limit_text(&mut r, &f, "4"));
+        assert_eq!(r.rate_limit, 4.0);
+    }
+
+    #[test]
+    fn the_colour_bands_follow_the_casing() {
+        assert_eq!([temp_band(300.0), temp_band(600.0), temp_band(1000.0), temp_band(1200.0), temp_band(1600.0)], [0, 1, 2, 3, 4]);
+        assert_eq!([damage_band(0.0), damage_band(25.0), damage_band(50.0), damage_band(75.0)], [0, 1, 2, 3]);
     }
 }

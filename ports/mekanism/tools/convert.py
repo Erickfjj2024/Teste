@@ -2093,51 +2093,125 @@ def turbine_valve_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
                        'widgets': widgets}}
 
+def scale_bar_tex(width, name):
+    """The fill of a dynamic rate bar (`GuiDynamicHorizontalRateBar`) in the heat colours."""
+    from PIL import Image
+    img = Image.new('RGBA', (width, 8))
+    for x in range(width):
+        level = x / max(1, width - 1)
+        color = (int(min(200, 400 * level)), int(max(0, 200 - max(0, -200 + 400 * level))), 0, 255)
+        for y in range(8):
+            img.putpixel((x, y), color)
+    return save_gui(img, name)
+
+stats_tab = save_gui(nine_slice(gui_sprite('holder_right'), 26, 26, 4), 'tab_stats')
+
 def fission_port_menu(m):
-    """GuiFissionReactor (simplified): fuel, coolant, heated coolant and waste gauges, the burn rate with its buttons, and the on/off button."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    for x in (7, 35, 117, 145):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 24, 50, 2), (x, 18))
-    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 76, 50, 3), (36 + 28, 18))
-    for x, w in ((64, 20), (86, 20), (108, 20)):
-        pass
-    for x, y, w in ((64, 70, 22), (88, 70, 22), (112, 70, 22), (136, 70, 22)):
-        pass
+    """GuiFissionReactor (195 by 255): the four standard gauges (the coolant at 6, 13, the fuel at 25, 13, the heated coolant at 152, 13, the waste at 171, 13); the
+    inner screen at 45, 17 (105 by 56: the status in green or red, the burn rate, the heating rate, the temperature and the damage, the last two in the colours of
+    `TileEntityFissionReactorCasing.getTempColor` and `getDamageColor`, the screen's strings 0 to 3 from `fission.rs::screen_texts` and the colour bands 30 and 31);
+    the Activate and SCRAM buttons (6, 75 and 89, 75, 81 by 16, each live only in its state), the big light at 173, 76, the temperature bar at 5, 102 (183 wide, the
+    heat colours of `ColorFunction.HEAT`), the heat graph at 5, 123 (185 by 38, `GuiDoubleGraph`, at least 1,600 K tall), the heat tab, and the stats tab on the right, which
+    opens the page of `GuiFissionReactorStats` as a window: the heat and fuel statistics (the screen's strings 4 to 8), the burn rate bar at 5, 114 and the rate limit box at
+    77, 128 (the reactor's own rate limit, `fission.rs::RATE_TEXT`). The player's inventory label is at 6, 163. Numbers (`fission.rs`): 0-3 fuel, 4-7 coolant, 8-11 heated
+    coolant, 12-15 waste (amount and capacity halves), 16-19 what each holds, 20 temperature times ten, 21 damage, 22 rate limit times 100, 23 burn rate times 100, 24 the most
+    it burns, 25 heating rate, 26 state (0 off, 1 on, 2 forced off), 27 assemblies, 28 boil efficiency, 29 surface, 30 temperature colour, 31 damage colour, 32 to 34 the heat
+    lost to the air, 35 the most it burns times 100. **Not in the port:** the warning tab."""
+    from PIL import Image
+    width, height = 195, 255
+    inv_x = 17
+    panel, slot, inv_y = inventory_panel(width, height, inv_x)
+    for x in (6, 25, 152, 171):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 60, 2), (x, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 105, 56, 3), (45, 17))
+    for x in (6, 89):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 81, 16, 2), (x, 75))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 183, 8, 1), (5, 102))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 185, 38, 1), (5, 123))
     texture = save_gui(panel, m)
     title = 'Fission Reactor'
+    lights = Image.open(find('gui/big_lights.png', ASSET_DIRS)).convert('RGBA')
+    light_off = save_gui(lights.crop((0, 0, 12, 12)), 'big_light_off')
+    light_on = save_gui(lights.crop((12, 0, 24, 12)), 'big_light_on')
+    heat = Image.new('RGBA', (183, 8))
+    for x in range(183):
+        level = x / 182
+        color = (int(min(200, 400 * level)), int(max(0, 200 - max(0, -200 + 400 * level))), 0, 255)
+        for y in range(8):
+            heat.putpixel((x, y), color)
+    heat_tex = save_gui(heat, 'fission_heat_bar')
     widgets = []
-    for i, x in enumerate((8, 36, 118, 146)):
-        widgets.append({'type': 'gauge', 'x': x, 'y': 19, 'w': 22, 'h': 48, 'value': {'pair': [4 * i, 4 * i + 1]}, 'max': {'pair': [4 * i + 2, 4 * i + 3]},
-                        'kind': {'data': 16 + i}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+    for x, first, kind in ((6, 4, 17), (25, 0, 16), (152, 8, 18), (171, 12, 19)):
+        widgets.append({'type': 'gauge', 'x': x + 1, 'y': 14, 'w': 16, 'h': 58, 'value': {'pair': [first, first + 1]}, 'max': {'pair': [first + 2, first + 3]},
+                        'kind': {'data': kind}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+        widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': x + 1, 'y': 14, 'w': 16, 'h': 58})
     widgets += [
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 66, 'y': 21, 'text': 'Temp {20}/10 K', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 66, 'y': 30, 'text': 'Damage {21}%', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 66, 'y': 39, 'text': 'Rate {22}/100', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 66, 'y': 48, 'text': 'Burn {23}/100  Max {24}', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 66, 'y': 57, 'text': 'Boil {25}  Eff {28}%', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 66, 'y': 66, 'text': 'Assemblies {27}', 'color': '#00CD00', 'scale': 75},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    # the buttons: on/off and the burn rate
-    for k, (bid, label, x) in enumerate([(7101, '-1', 8), (7102, '-.1', 34), (7103, '+.1', 118), (7104, '+1', 144)]):
-        widgets.append({'type': 'text', 'x': x + 3, 'y': 71, 'text': label, 'color': '#404040'})
-        widgets.append({'type': 'button', 'x': x, 'y': 69, 'w': 22, 'h': 12, 'id': bid, 'tooltip': 'Burn rate'})
-    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 1}}, 'widgets': [
-        {'type': 'text', 'x': 66, 'y': 72, 'text': 'ON - click to SCRAM', 'color': '#00CD00', 'scale': 70}]})
-    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 0}}, 'widgets': [
-        {'type': 'text', 'x': 66, 'y': 72, 'text': 'OFF - click to start', 'color': '#CD0000', 'scale': 70}]})
-    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 2}}, 'widgets': [
-        {'type': 'text', 'x': 66, 'y': 72, 'text': 'FORCED OFF', 'color': '#CD0000', 'scale': 70}]})
-    widgets.append({'type': 'button', 'x': 60, 'y': 69, 'w': 56, 'h': 14, 'id': 7100, 'tooltip': 'Activate / Scram'})
-    return {'slots': 1, 'data_slots': 30,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 6, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 5, 'y': 93, 'text': 'Temperature:', 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 5, 'y': 114, 'text': 'Heat Graph:', 'color': '#404040', 'scale': 90},
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 1}}, 'widgets': [
+            {'type': 'text', 'x': 48, 'y': 20, 'text': 'Status: Active', 'color': '#55FF55', 'scale': 85}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 0}}, 'widgets': [
+            {'type': 'text', 'x': 48, 'y': 20, 'text': 'Status: Disabled', 'color': '#FF5555', 'scale': 85}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 2}}, 'widgets': [
+            {'type': 'text', 'x': 48, 'y': 20, 'text': 'Status: Disabled', 'color': '#FF5555', 'scale': 85}]},
+        {'type': 'text', 'x': 48, 'y': 30, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 85},
+        {'type': 'text', 'x': 48, 'y': 40, 'text': '', 'text_data': 1, 'color': '#3CFE9A', 'scale': 85}]
+    for band, color in enumerate(('#55FF55', '#FFFF55', '#FFAA00', '#FF5555', '#AA0000')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 30}, 'eq': band}}, 'widgets': [
+            {'type': 'text', 'x': 48, 'y': 50, 'text': '', 'text_data': 2, 'color': color, 'scale': 85}]})
+    for band, color in enumerate(('#55FF55', '#FFFF55', '#FFAA00', '#AA0000')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 31}, 'eq': band}}, 'widgets': [
+            {'type': 'text', 'x': 48, 'y': 60, 'text': '', 'text_data': 3, 'color': color, 'scale': 85}]})
+    # the buttons: each live only in its state
+    for state, activate_on, scram_on in ((0, True, False), (1, False, True), (2, False, False)):
+        group = []
+        group.append({'type': 'text', 'x': 6 + (81 - text_width('Activate')) // 2, 'y': 79, 'text': 'Activate', 'color': '#00AA00' if activate_on else '#808080'})
+        group.append({'type': 'text', 'x': 89 + (81 - text_width('SCRAM')) // 2, 'y': 79, 'text': 'SCRAM', 'color': '#AA0000' if scram_on else '#808080'})
+        if activate_on:
+            group.append({'type': 'button', 'x': 6, 'y': 75, 'w': 81, 'h': 16, 'id': 7100, 'tooltip': 'Activate'})
+        if scram_on:
+            group.append({'type': 'button', 'x': 89, 'y': 75, 'w': 81, 'h': 16, 'id': 7100, 'tooltip': 'SCRAM'})
+        if state == 2:
+            group.append({'type': 'button', 'x': 6, 'y': 75, 'w': 81, 'h': 16, 'tooltip': 'Forced off: the reactor melted down and cannot restart until its rods and fuel are reset'})
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': state}}, 'widgets': group})
+    widgets += [
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 1}}, 'widgets': [{'type': 'sprite', 'texture': light_on, 'x': 173, 'y': 76, 'w': 12, 'h': 12}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 0}}, 'widgets': [{'type': 'sprite', 'texture': light_off, 'x': 173, 'y': 76, 'w': 12, 'h': 12}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 26}, 'eq': 2}}, 'widgets': [{'type': 'sprite', 'texture': light_off, 'x': 173, 'y': 76, 'w': 12, 'h': 12}]},
+        {'type': 'sprite', 'texture': heat_tex, 'x': 6, 'y': 103, 'w': 183, 'h': 8, 'value': {'data': 20}, 'max': {'const': 18000}, 'direction': 'right',
+         'tooltip': 'Temperature: {20} (x0.1 K)'},
+        {'type': 'graph', 'x': 5, 'y': 123, 'w': 185, 'h': 38, 'series': [{'value': {'data': 20}, 'color': '#FFFFFF'}], 'samples': 183, 'min_scale': 16000,
+         'tooltip': 'Temperature: {20} (x0.1 K)'},
+        {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {32}.{33}{34} K/t'},
+        {'type': 'sprite', 'texture': stats_tab, 'x': 195, 'y': 6, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': 195, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'stats'}, 'tooltip': 'Fission Reactor Statistics'}]
+    # the stats page
+    win = nine_slice(gui_sprite('base'), width, height, 4)
+    win.alpha_composite(nine_slice(gui_sprite('bar/base'), 185, 10, 1), (5, 114))
+    win_tex = save_gui(win, 'fission_stats_window')
+    stats_title = 'Fission Reactor Statistics'
+    stats = [
+        {'type': 'text', 'x': (width - text_width(stats_title)) // 2, 'y': 5, 'text': stats_title, 'color': '#404040'},
+        {'type': 'text', 'x': 6, 'y': 20, 'text': 'Heat Statistics', 'color': '#202020'},
+        {'type': 'text', 'x': 6, 'y': 32, 'text': '', 'text_data': 4, 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 6, 'y': 42, 'text': '', 'text_data': 5, 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 6, 'y': 52, 'text': '', 'text_data': 6, 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 6, 'y': 68, 'text': 'Fuel Statistics', 'color': '#202020'},
+        {'type': 'text', 'x': 6, 'y': 80, 'text': '', 'text_data': 7, 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 6, 'y': 90, 'text': '', 'text_data': 8, 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 6, 'y': 104, 'text': 'Current Burn Rate:', 'color': '#404040', 'scale': 90},
+        {'type': 'sprite', 'texture': scale_bar_tex(183, 'fission_burn_bar'), 'x': 6, 'y': 115, 'w': 183, 'h': 8, 'value': {'data': 23}, 'max': {'data': 35},
+         'direction': 'right', 'tooltip': 'Burn Rate: {23} (x0.01 mB/t)'},
+        {'type': 'text', 'x': 5, 'y': 131, 'text': 'Set Rate Limit:', 'color': '#404040', 'scale': 90},
+        {'type': 'textfield', 'x': 77, 'y': 128, 'w': 54, 'h': 12, 'id': 7110, 'validator': 'any', 'max_length': 8},
+        {'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Back'}]
+    window = {'id': 'stats', 'x': 0, 'y': 0, 'width': width, 'height': height, 'texture': win_tex, 'widgets': stats}
+    return {'slots': 1, 'data_slots': 36, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': inv_y,
+                       'widgets': widgets, 'windows': [window]}}
 
 def fusion_controller_menu(m):
     """GuiFusionReactorController (simplified): the hohlraum slot, deuterium, tritium, fuel, water and steam gauges, the injection rate, the heat."""

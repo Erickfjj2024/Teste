@@ -488,6 +488,7 @@ struct Mekanism {
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
+    fission_texts: Vec<(String, BlockPos, i32, String)>,
     /// The blades players are putting on or taking off rotors.
     blades: Vec<turbine::BladeRequest>,
     evaporating: HashMap<String, (u64, String, u64)>,
@@ -2276,6 +2277,7 @@ impl ServerMod for Mekanism {
             robit_recipes: HashMap::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
+            fission_texts: Vec::new(),
             blades: Vec::new(),
             evaporating: HashMap::new(),
             matrix_given: HashMap::new(),
@@ -3212,6 +3214,8 @@ impl ServerMod for Mekanism {
                 out.extend(self.resistive_text(e, id, &text));
             } else if block == laser::AMPLIFIER {
                 self.laser_texts.push((dimension, pos, id, text));
+            } else if block == fission::PORT {
+                self.fission_texts.push((dimension, pos, id, text));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.
