@@ -3,6 +3,8 @@ pub mod server {
   pub use serde_json;
   pub mod players { use super::*;
     pub fn tell_overlay<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
+    pub struct RadialEntry { pub id: String, pub label: String, pub icon: String }
+    pub fn open_radial_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     pub fn set_hud_line<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Player { pub id: String, pub name: String, pub x: f64, pub y: f64, pub z: f64, pub dimension: String, pub game_mode: GameMode, pub health: f32 }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum GameMode { #[default] Survival, Creative, Adventure, Spectator }
