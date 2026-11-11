@@ -1,0 +1,431 @@
+From 196133ba234bbafe7ce17e94135250f1ef20b100 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 02:53:22 +0000
+Subject: [PATCH] API 41: players.set-hud-line (a server mod's HUD lines on one
+ player's screen)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ crates/horizon-client/src/game.rs             |  1 +
+ crates/horizon-client/src/game/mod_hud.rs     | 71 +++++++++++++++++++
+ crates/horizon-client/src/game/mods.rs        |  1 +
+ .../horizon-client/src/game/native_hooks.rs   |  2 +
+ crates/horizon-client/src/game/native_net.rs  |  1 +
+ crates/horizon-client/src/game/remote.rs      |  2 +
+ crates/horizon-client/src/game/server_mods.rs |  7 ++
+ .../examples/block-use/src/lib.rs             |  6 +-
+ .../examples/block-use/tests/block_use.toml   |  6 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  6 ++
+ crates/horizon-mods/src/api_level.rs          |  5 +-
+ crates/horizon-mods/src/runtime.rs            | 13 ++++
+ crates/horizon-mods/src/screen.rs             | 39 ++++++++++
+ crates/horizon-mods/src/testing.rs            | 13 ++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  1 +
+ 17 files changed, 174 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-client/src/game/mod_hud.rs
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 2c39aa521..e1984afec 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -282,6 +282,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::PackBlock { pos, .. } => format!("packed the block at {pos:?}"),
+             Output::UnpackBlock { pos, .. } => format!("unpacked a block at {pos:?}"),
+             Output::TellOverlay { text, .. } => format!("action bar: {text}"),
++            Output::HudLine { id, text, .. } => format!("HUD line {id}: {text}"),
+             Output::PlayerBody { change, .. } => format!("body: {change:?}"),
+             Output::SetFood { food, saturation, .. } => format!("set food to {food} and saturation to {saturation}"),
+             Output::SetMotion { velocity, .. } => format!("set a player's motion to {velocity:?}"),
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 07cc6ca07..9c19fcb86 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -203,6 +203,7 @@ mod native_explosions;
+ mod native_falling;
+ mod block_renderers;
+ mod menu_screens;
++mod mod_hud;
+ #[cfg(feature = "mods")]
+ mod mod_entities;
+ mod native_hooks;
+diff --git a/crates/horizon-client/src/game/mod_hud.rs b/crates/horizon-client/src/game/mod_hud.rs
+new file mode 100644
+index 000000000..0f15b8a34
+--- /dev/null
++++ b/crates/horizon-client/src/game/mod_hud.rs
+@@ -0,0 +1,71 @@
++//! The server mods' HUD lines on this client (`players.set-hud-line`): what the server sent, by id, drawn at the screen's top left
++//! with the other HUD boxes (the MekaSuit's module HUD).
++use super::Game;
++use horizon_client::{extras_hud::Corners, hud::HudBatch};
++use horizon_client_render::extras::Corner;
++use std::{collections::BTreeMap, sync::Mutex};
++
++/// One line: its icon, text and bar.
++struct Line {
++    icon: String,
++    text: String,
++    fraction: f32,
++}
++
++/// Most lines a client keeps.
++const LINES: usize = 32;
++
++static HUD: Mutex<BTreeMap<String, Line>> = Mutex::new(BTreeMap::new());
++
++/// A `horizon:hud_line` message arrived: the line is set, or taken away when its text is empty.
++pub(super) fn remember_hud_line(data: &[u8]) {
++    let Some((id, icon, text, fraction)) = horizon_mods::screen::decode_hud_line(data) else {
++        return;
++    };
++    let Ok(mut lines) = HUD.lock() else {
++        return;
++    };
++    if text.is_empty() {
++        lines.remove(&id);
++    } else if lines.len() < LINES || lines.contains_key(&id) {
++        lines.insert(id, Line { icon, text, fraction });
++    }
++}
++
++/// The client left its server: the lines it was sent go.
++pub(super) fn forget_hud_lines() {
++    if let Ok(mut lines) = HUD.lock() {
++        lines.clear();
++    }
++}
++
++/// Height of a line: the icon's (16 at half size is 8) or the text's, and room for the bar.
++const ROW: f32 = 12.0;
++
++impl Game<'_> {
++    /// Draws the lines in a box at the top left, under what that corner holds.
++    pub(super) fn draw_mod_hud(&self, batch: &mut HudBatch, corners: &mut Corners) {
++        let Ok(lines) = HUD.lock() else {
++            return;
++        };
++        if lines.is_empty() {
++            return;
++        }
++        let width = lines.values().map(|l| self.native_text_width(&l.text)).fold(0.0f32, f32::max) + 14.0;
++        let (x, y) = corners.place(Corner::TopLeft, width, ROW * lines.len() as f32);
++        for (i, line) in lines.values().enumerate() {
++            let top = y + i as f32 * ROW;
++            if !line.icon.is_empty() {
++                let start = batch.vertices.len();
++                self.native_item(batch, &line.icon, [x, top], 16.0);
++                batch.scale_since(start, x, top, 0.5, 0.5);
++            }
++            self.native_text(batch, &line.text, [x + 11.0, top], 0xFFFF_FFFF, true);
++            if line.fraction >= 0.0 {
++                let w = width - 14.0;
++                self.native_fill(batch, [x + 11.0, top + 9.0, w, 1.5], 0x8040_4040);
++                self.native_fill(batch, [x + 11.0, top + 9.0, w * line.fraction.clamp(0.0, 1.0), 1.5], 0xFF3C_DCFF);
++            }
++        }
++    }
++}
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index f8c47046c..4c7adffdf 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -874,6 +874,7 @@ impl Game<'_> {
+                 | Output::SetMotion { .. }
+                 | Output::SetFood { .. }
+                 | Output::TellOverlay { .. }
++                | Output::HudLine { .. }
+                 | Output::PackBlock { .. }
+                 | Output::UnpackBlock { .. }
+                 | Output::PlayerBody { .. }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index c3f0e1bff..542e4a682 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1235,6 +1235,8 @@ impl Game<'_> {
+     /// `native_fill` and `native_text`. Skip a corner `native_corner_shown`
+     /// says is taken.
+     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
++        // The server mods' HUD lines (`players.set-hud-line`).
++        self.draw_mod_hud(batch, corners);
+         let _ = (batch, corners);
+     }
+     /// A player right-clicks the entity `entity` (`Entity.getId`) of type
+diff --git a/crates/horizon-client/src/game/native_net.rs b/crates/horizon-client/src/game/native_net.rs
+index 6c518898d..c22309f75 100644
+--- a/crates/horizon-client/src/game/native_net.rs
++++ b/crates/horizon-client/src/game/native_net.rs
+@@ -99,6 +99,7 @@ impl Game<'_> {
+     pub(super) fn remote_native_net(&mut self, data: &[u8]) {
+         match mod_net::decode(data) {
+             Ok(m) if m.channel == horizon_mods::screen::MENU_TEXT_CHANNEL => super::menu_screens::remember_menu_text(&m.data),
++            Ok(m) if m.channel == horizon_mods::screen::HUD_CHANNEL => super::mod_hud::remember_hud_line(&m.data),
+             Ok(m) => self.native_net_from_server(&m.channel, &m.data),
+             Err(e) => log::debug!("Horizon: a bad mod message: {e}"),
+         }
+diff --git a/crates/horizon-client/src/game/remote.rs b/crates/horizon-client/src/game/remote.rs
+index d7281eec5..00fc5ad45 100644
+--- a/crates/horizon-client/src/game/remote.rs
++++ b/crates/horizon-client/src/game/remote.rs
+@@ -1078,6 +1078,8 @@ impl Game<'_> {
+             r.session.disconnect();
+         }
+         super::lan::forget_sync_data();
++        // The server mods' HUD lines belong to the server left.
++        super::mod_hud::forget_hud_lines();
+         self.gui.atlas.object_skins.clear();
+         self.server_packs_disconnect();
+         self.code_of_conduct = None;
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index bba16e4e2..678df371e 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2441,6 +2441,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} could not unpack into {pos:?}");
+                     }
+                 }
++                Output::HudLine { name, player, id, icon, text, fraction } => {
++                    let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
++                    let data = horizon_mods::screen::encode_hud_line(&id, &icon, &text, fraction);
++                    if let Err(e) = self.native_net_send_to_player(uuid, horizon_mods::screen::HUD_CHANNEL, &data) {
++                        log::debug!("Horizon: mod {name}'s HUD line for {player}: {e}");
++                    }
++                }
+                 Output::TellOverlay { name: _, player, text } => {
+                     self.tell_server_player_as(host, &player, Text::literal(text), true);
+                 }
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 515417520..c11b5cbec 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Block Use (FORK-29): a mod that decides what a right click on one of its blocks does. Holding a block, the click
+ //! passes (the block does not use itself; the held block is placed); sneaking with a hand held, or holding anything
+ //! else, leaves it to the game; an empty hand and no sneaking is the block's own use, taken by the mod.
+-use horizon_mod_sdk::server::{BlockPos, BlockUse, ItemStack, Player, Registration, ServerMod, menu_input, world};
++use horizon_mod_sdk::server::{BlockPos, BlockUse, ItemStack, Player, Registration, ServerMod, menu_input, players, world};
+ 
+ struct Gate;
+ 
+@@ -60,6 +60,10 @@ impl ServerMod for Gate {
+             let n = world::break_blocks(&player.dimension, &[(pos.x + 1, pos.y, pos.z), (pos.x + 2, pos.y, pos.z), (pos.x + 3, pos.y, pos.z)], "minecraft:diamond_pickaxe", true, 0).unwrap_or(99);
+             let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &[format!("breaks {n}")]);
+         }
++        // API 41: the machine at y 79 puts a line on the player's HUD: a redstone icon, a text and a bar half full.
++        if pos.y == 79 {
++            let _ = players::set_hud_line(&player.id, "blockuse:energy", "minecraft:redstone", "Energy: 50%", 0.5);
++        }
+         match stack {
+             Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
+             None if !sneaking => BlockUse::Consume,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index e66d52c91..7dfe46e5c 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -101,3 +101,9 @@ use-block = { pos = [1, 78, 1] }
+ ticks = 1
+ expect.broken = ["3 with minecraft:diamond_pickaxe silk=true fortune=0"]
+ expect.menu-text = ["minecraft:overworld 1 78 1 breaks 1"]
++
++[[step]]
++# API 41: a click on the machine at y 79 sets a line of the mod's HUD on Alex's screen.
++use-block = { pos = [1, 79, 1] }
++ticks = 1
++expect.hud = ["Alex: blockuse:energy [minecraft:redstone] Energy: 50% 0.5"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index cf7f796e7..8213cb6de 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -668,6 +668,12 @@ interface players {
+     /// No mod name in front of it. Counts toward the same 8 per call as
+     /// `tell`. API 31.
+     tell-overlay: func(player: string, text: string) -> bool;
++    /// Sets line `id` (`mymod:energy`, at most 64 bytes) of the mod's HUD on one player's screen (the MekaSuit's module HUD,
++    /// `IModuleHUD`): the item `icon` (`mymod:jetpack_unit`; empty for none) drawn small, `text` beside it (at most 256 bytes), and,
++    /// with `fraction` 0 to 1, a bar under the text filled that much (a negative fraction draws no bar). The lines show at the screen's
++    /// top left, under what is there already, in the order of their ids, until changed; an empty text takes the line away, and the
++    /// player's client forgets them all when it leaves the server. False for a player who is not online; at most 32 lines a call. API 41.
++    set-hud-line: func(player: string, id: string, icon: string, text: string, fraction: f32) -> bool;
+     /// A system message to every player and the server's log, after the
+     /// mod's name. Counts toward the same 8 per call.
+     broadcast: func(text: string);
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 335d9af07..6db508a61 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 40;
++pub const LEVEL: u32 = 41;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 111] = [
++pub const FUNCTIONS: [(&str, u32); 112] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -105,6 +105,7 @@ pub const FUNCTIONS: [(&str, u32); 111] = [
+     ("world.set-comparator-output", 38),
+     ("world.break-blocks", 39),
+     ("recipe-types.item-tag-members", 40),
++    ("players.set-hud-line", 41),
+     ("world.block-hardness", 35),
+     ("world.spawn-particles", 26),
+     ("recipe-types.burn-time", 27),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 4a5841816..ff5c6e0a2 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -460,6 +460,8 @@ pub enum Output {
+     UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
+     /// `world.break-blocks`: many blocks broken as a player holding a tool would.
+     BreakBlocks { name: String, dimension: String, positions: Vec<[i32; 3]>, tool: String, silk_touch: bool, fortune: u32 },
++    /// `players.set-hud-line`: a line of the mod's HUD on one player's screen.
++    HudLine { name: String, player: String, id: String, icon: String, text: String, fraction: f32 },
+     /// `world.set-comparator-output`: the signal a comparator reads from a block entity.
+     SetComparator { name: String, dimension: String, pos: [i32; 3], level: u8 },
+     /// `world.set-menu-text`: the strings the menu of a block entity carries (FORK-20).
+@@ -3541,6 +3543,17 @@ impl players::Host for State {
+         self.snapshot.players.iter().any(|p| p.id == player)
+             && self.say(|name| Output::TellOverlay { name, player, text: clip(text) })
+     }
++    fn set_hud_line(&mut self, player: String, id: String, icon: String, text: String, fraction: f32) -> bool {
++        if id.is_empty() || id.len() > 64 || icon.len() > 128 || text.len() > 256 || !fraction.is_finite() {
++            return false;
++        }
++        let made = self.out.iter().filter(|o| matches!(o, Output::HudLine { .. })).count();
++        if made >= 32 || !self.snapshot.players.iter().any(|p| p.id == player) {
++            return false;
++        }
++        self.out.push(Output::HudLine { name: self.name.clone(), player, id, icon, text, fraction: fraction.min(1.0) });
++        true
++    }
+     fn broadcast(&mut self, text: String) {
+         self.say(|name| Output::Broadcast {
+             name,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index 67b023228..c40e5225f 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -592,6 +592,35 @@ impl GraphHistory {
+     }
+ }
+ 
++/// The channel a mod's HUD lines travel on, host to client (`players.set-hud-line`).
++pub const HUD_CHANNEL: &str = "horizon:hud_line";
++
++/// A HUD line as the channel carries it: id, icon and text (each its length in two bytes, then UTF-8), then the fraction (four bytes).
++pub fn encode_hud_line(id: &str, icon: &str, text: &str, fraction: f32) -> Vec<u8> {
++    let mut out = Vec::new();
++    for s in [id, icon, text] {
++        let b = s.as_bytes();
++        out.extend((b.len().min(usize::from(u16::MAX)) as u16).to_le_bytes());
++        out.extend(&b[..b.len().min(usize::from(u16::MAX))]);
++    }
++    out.extend(fraction.to_le_bytes());
++    out
++}
++
++/// The id, icon, text and fraction of [`encode_hud_line`].
++pub fn decode_hud_line(data: &[u8]) -> Option<(String, String, String, f32)> {
++    let mut at = 0;
++    let mut text = || -> Option<String> {
++        let n = usize::from(u16::from_le_bytes([*data.get(at)?, *data.get(at + 1)?]));
++        let s = String::from_utf8(data.get(at + 2..at + 2 + n)?.to_vec()).ok()?;
++        at += 2 + n;
++        Some(s)
++    };
++    let (id, icon, line) = (text()?, text()?, text()?);
++    let f = data.get(at..at + 4)?;
++    Some((id, icon, line, f32::from_le_bytes([f[0], f[1], f[2], f[3]])))
++}
++
+ /// What a confirmed text box sends the server, on `<mod id>:menu_text`: the block's position (three little-endian whole numbers),
+ /// the widget's `id` (one more) and the text (UTF-8, the rest of the message).
+ pub fn encode_menu_input(pos: [i32; 3], id: i32, text: &str) -> Vec<u8> {
+@@ -735,6 +764,16 @@ mod menu_text_tests {
+         assert_eq!(hovered(&ok, &[1234, 0, 0], &Locals::default(), [10.0, 30.0]), Some(vec!["Heat 1234".to_owned()]));
+     }
+ 
++    #[test]
++    fn a_hud_line_round_trips_and_a_cut_one_is_refused() {
++        let bytes = encode_hud_line("mekanism:energy", "mekanism:energy_unit", "Energy: 50% ✓", 0.5);
++        assert_eq!(
++            decode_hud_line(&bytes),
++            Some(("mekanism:energy".into(), "mekanism:energy_unit".into(), "Energy: 50% ✓".into(), 0.5))
++        );
++        assert_eq!(decode_hud_line(&bytes[..bytes.len() - 1]), None);
++    }
++
+     #[test]
+     fn validators_filter_what_is_typed() {
+         use crate::content::Validator;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index b615006d5..446710c0f 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1499,6 +1499,8 @@ pub struct Expect {
+     sounds: Option<Vec<String>>,
+     /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (the coordinates with 3 decimals, name `-` for none).
+     mod_entities: Option<Vec<String>>,
++    /// Server mods: every `set-hud-line`, as `"Name: id [icon] text fraction"`.
++    hud: Option<Vec<String>>,
+     /// Server mods: every `break-blocks`, as `"count with tool silk=bool fortune=n"`.
+     broken: Option<Vec<String>>,
+     /// Server mods: every `set-comparator-output`, as `"dimension x y z level"`.
+@@ -2525,6 +2527,17 @@ impl Step {
+                 .collect();
+             same("broken", want, &got)?;
+         }
++        if let Some(want) = &e.hud {
++            let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::HudLine { player, id, icon, text, fraction, .. } => Some(format!("{}: {id} [{icon}] {text} {fraction}", name(player))),
++                    _ => None,
++                })
++                .collect();
++            same("hud", want, &got)?;
++        }
+         if let Some(want) = &e.comparator {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index ef7f013f2..7718ce726 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 40);
++    assert_eq!(LEVEL, 41);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 415481219..14edea507 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -679,6 +679,7 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
+ | `online` | `func() -> list<player>` | The players online, in the order they joined. |
+ | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
+ | `tell-overlay` | `func(player: string, text: string) -> bool` | A message over the hotbar (the action bar, as `Player.displayClientMessage(text, true)`) to one player, for a line that is gone in seconds; false when no player with that id is online. No mod name in front of it. Counts toward the same 8 per call as `tell`. API 31. |
++| `set-hud-line` | `func(player: string, id: string, icon: string, text: string, fraction: f32) -> bool` | Sets line `id` (`mymod:energy`, at most 64 bytes) of the mod's HUD on one player's screen (the MekaSuit's module HUD, `IModuleHUD`): the item `icon` (`mymod:jetpack_unit`; empty for none) drawn small, `text` beside it (at most 256 bytes), and, with `fraction` 0 to 1, a bar under the text filled that much (a negative fraction draws no bar). The lines show at the screen's top left, under what is there already, in the order of their ids, until changed; an empty text takes the line away, and the player's client forgets them all when it leaves the server. False for a player who is not online; at most 32 lines a call. API 41. |
+ | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+ 
+ ## `world`
+-- 
+2.43.0
+
