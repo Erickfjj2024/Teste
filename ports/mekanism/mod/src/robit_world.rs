@@ -247,6 +247,34 @@ pub fn read_item_components(components: &str) -> RobitItemData {
     d
 }
 
+// ---- the menu -----------------------------------------------------------------------------------------------------
+
+/// The numbers and strings of the Robit's screens (`GuiRobitMain`): the numbers 0 follows, 1 picks up, 2 its energy, 3 the furnace's progress in percent; the strings 0 the greeting,
+/// 1 the energy, 2 following, 3 pickup, 4 the owner, 5 its own name (the box of the rename window starts with it).
+pub fn menu_of(r: &RobitEntity) -> (Vec<i32>, Vec<String>) {
+    let yes = |b: bool| if b { "Yes" } else { "No" };
+    let progress = (u64::from(r.smelting_progress) * 100 / u64::from(robit::SMELTING_TICKS_REQUIRED)).min(100) as i32;
+    (
+        vec![i32::from(r.following), i32::from(r.drop_pickup), r.energy.min(40_000) as i32, progress],
+        vec![
+            format!("Hi, {}!", r.display_name()),
+            format!("Energy: {}", crate::laser::format_energy(r.energy)),
+            format!("Following: {}", yes(r.following)),
+            format!("Drop Pickup: {}", yes(r.drop_pickup)),
+            format!("Owner: {}", r.owner_name),
+            r.custom_name.clone().unwrap_or_default(),
+        ],
+    )
+}
+
+/// The crafting grid's cells (slots 30 to 38 of the menu, past the container's) of the entity as the menu shows it, when it is open.
+fn grid_of(items: &[Option<ItemStack>]) -> Option<Vec<Option<ItemStack>>> {
+    (items.len() > robit::TOTAL_SLOTS + 9).then(|| items[robit::TOTAL_SLOTS..robit::TOTAL_SLOTS + 9].to_vec())
+}
+
+/// The slot of the crafting result in the menu.
+pub const CRAFT_RESULT: usize = robit::TOTAL_SLOTS + 9;
+
 // ---- the world ----------------------------------------------------------------------------------------------------
 
 fn base_of(e: &ModEntity) -> RobitEntity {
@@ -295,7 +323,7 @@ fn drop_stack(dimension: &str, x: f64, y: f64, z: f64, s: &Stack) {
 }
 
 /// The tick of every Robit (`EntityRobit.tick`, `RobitAIFollow`, `RobitAIPickup`, `baseTick`).
-pub fn tick_all(damage: &mut HashMap<u32, f64>, recipes: &HashMap<String, (String, u32)>, list: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
+pub fn tick_all(damage: &mut HashMap<u32, f64>, renames: &mut HashMap<u32, String>, recipes: &HashMap<String, (String, u32)>, list: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
     let online = players::online();
     let mut out = Vec::new();
     for e in list.into_iter().filter(|e| e.kind == KIND) {
@@ -308,6 +336,9 @@ pub fn tick_all(damage: &mut HashMap<u32, f64>, recipes: &HashMap<String, (Strin
         let r = &mut saved.robit;
         if let Some(d) = damage.remove(&e.id) {
             r.take_damage(d);
+        }
+        if let Some(name) = renames.remove(&e.id) {
+            r.custom_name = Some(name).filter(|n| !n.trim().is_empty());
         }
         // the owner: in the same dimension and not a spectator
         let owner = online
@@ -367,9 +398,20 @@ pub fn tick_all(damage: &mut HashMap<u32, f64>, recipes: &HashMap<String, (Strin
         let rr = r.clone();
         let following = rr.follow_active && owner.is_some();
         let goal = owner.map(|(x, y, z, _)| (x, y, z));
+        let (menu_data, menu_text) = menu_of(&rr);
+        let mut items = item_slots(&slots_now);
+        // While the menu is open the virtual slots are there too: the crafting grid makes its result.
+        if e.items.len() > robit::TOTAL_SLOTS {
+            items.extend(e.items[robit::TOTAL_SLOTS..].iter().cloned());
+            if let Some(grid) = grid_of(&items) {
+                items[CRAFT_RESULT] = recipe_types::crafting_find(&grid).map(|m| m.output);
+            }
+        }
         let mut u = update(&e, |u| {
+            u.menu_data = Some(menu_data);
+            u.menu_text = Some(menu_text);
             u.energy = Some(energy);
-            u.items = Some(item_slots(&slots_now));
+            u.items = Some(items);
             u.skin = Some(skin);
             u.name = Some(name_now);
         });
@@ -464,6 +506,74 @@ impl Mekanism {
             return true;
         }
         players::open_entity_menu(&player.id, &e.dimension, e.id)
+    }
+
+    /// A button of the Robit's screens (`entity-menu-button`): 1 follow, 2 pick up, 3 go home, 20 and up a skin of the list. A player that may not access it does nothing.
+    pub(crate) fn robit_button(&mut self, player: &Player, e: &ModEntity, id: i32) -> Option<ModEntityUpdate> {
+        let mut saved = robit_of(e)?;
+        if !saved.robit.can_player_access(&player.id, false) {
+            return None;
+        }
+        let r = &mut saved.robit;
+        let mut teleport = None;
+        match id {
+            1 => r.following = !r.following,
+            2 => r.drop_pickup = !r.drop_pickup,
+            3 => {
+                if r.go_home() {
+                    teleport = Some((r.x, r.y, r.z));
+                }
+            }
+            20..=40 => {
+                let skin = robit::ALL_SKINS.get((id - 20) as usize)?;
+                if !r.set_skin(skin.id, true) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        let (menu_data, menu_text) = menu_of(r);
+        let skin = skin_id(&r.skin);
+        let mut saved_now = saved.clone();
+        saved_now.init = None;
+        let mut u = update(e, |u| {
+            u.data = Some(encode(&saved_now));
+            u.menu_data = Some(menu_data);
+            u.menu_text = Some(menu_text);
+            u.skin = Some(skin);
+            u.teleport = teleport;
+            u.health = None;
+        });
+        if teleport.is_some() {
+            u.stop = true;
+        }
+        Some(u)
+    }
+
+    /// The crafting result taken (`entity-menu-taken`): each cell of the grid gives up one item, and what the recipe leaves behind (a bucket, a bottle) takes the place of a cell that
+    /// was emptied.
+    pub(crate) fn robit_taken(&mut self, e: &ModEntity, slot: u32) -> Option<ModEntityUpdate> {
+        if slot as usize != CRAFT_RESULT {
+            return None;
+        }
+        let grid = grid_of(&e.items)?;
+        let found = recipe_types::crafting_find(&grid)?;
+        let mut items = e.items.clone();
+        for (i, cell) in grid.iter().enumerate() {
+            let at = robit::TOTAL_SLOTS + i;
+            if let Some(stack) = cell {
+                items[at] = if stack.count > 1 {
+                    Some(ItemStack { count: stack.count - 1, ..stack.clone() })
+                } else {
+                    found.remaining.get(i).cloned().flatten()
+                };
+            }
+        }
+        items[CRAFT_RESULT] = None;
+        Some(update(e, |u| {
+            u.items = Some(items);
+            u.health = None;
+        }))
     }
 
     /// A blow on a Robit (`onDamageTaken`): the damage is paid in energy at the next tick and the Robit stays whole.

@@ -490,6 +490,8 @@ struct Mekanism {
     glide_ticks: HashMap<String, u32>,
     /// The blows each Robit took since its last tick (paid in energy then), by entity id, and the furnace's recipes (smelting: input to output and count).
     robit_damage: HashMap<u32, f64>,
+    /// The names players typed in a Robit's rename box, by entity id, until its next tick.
+    robit_renames: HashMap<u32, String>,
     robit_recipes: HashMap<String, (String, u32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     fusion_texts: Vec<(String, BlockPos, i32, String)>,
@@ -2284,6 +2286,7 @@ impl ServerMod for Mekanism {
             hud_sent: HashMap::new(),
             glide_ticks: HashMap::new(),
             robit_damage: HashMap::new(),
+            robit_renames: HashMap::new(),
             robit_recipes: HashMap::new(),
             fusion_buttons: Vec::new(),
             fusion_texts: Vec::new(),
@@ -2486,11 +2489,19 @@ impl ServerMod for Mekanism {
                 }
             }
         }
-        robit_world::tick_all(&mut self.robit_damage, &self.robit_recipes, list)
+        robit_world::tick_all(&mut self.robit_damage, &mut self.robit_renames, &self.robit_recipes, list)
     }
 
     fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool {
         entity.kind == robit_world::KIND && self.robit_used(player, &entity, sneaking)
+    }
+
+    fn entity_menu_button(&mut self, player: &Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> {
+        if entity.kind == robit_world::KIND { self.robit_button(player, &entity, id) } else { None }
+    }
+
+    fn entity_menu_taken(&mut self, _player: &Player, entity: ModEntity, slot: u32, _stack: ItemStack) -> Option<ModEntityUpdate> {
+        if entity.kind == robit_world::KIND { self.robit_taken(&entity, slot) } else { None }
     }
 
     fn mod_entity_damaged(&mut self, entity: ModEntity, _source: DamageSource, amount: f32) -> f32 {
@@ -2748,6 +2759,13 @@ impl ServerMod for Mekanism {
             return;
         }
         if let Some(input) = horizon_mod_sdk::server::menu_input::decode(data) {
+            if input.pos.x == i32::MIN {
+                // a text box of an entity's menu: the position is `(i32::MIN, 0, entity id)`; the Robit's rename box is 10
+                if input.id == 10 && !input.text.trim().is_empty() {
+                    self.robit_renames.insert(input.pos.z as u32, input.text.trim().chars().take(32).collect());
+                }
+                return;
+            }
             self.text_inputs.push((player.dimension.clone(), input.pos, input.id, input.text, player.id.clone(), player.name.clone()));
         }
     }

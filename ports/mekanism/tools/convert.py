@@ -3467,13 +3467,106 @@ glang = read_json(f'{GGEN}/assets/{GSRC}/lang/en_us.json')
 
 # a creative tab with all of it
 tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)] 
+def robit_menu(skin_names):
+    """The Robit's screens (`GuiRobitMain`, `GuiRobitInventory`, `GuiRobitSmelting`, `GuiRobitCrafting`, `GuiRobitRepair`; FORK-10 5b, the kind's `menu`): the main page (176 by 166) with the
+    inner screen at 27, 16 (122 by 56: the greeting, the energy, whether it follows, whether it picks up and its owner, the entity's strings 0 to 4), the power bar at 27, 74, the energy slot
+    (153, 17), the buttons go home (6, 16), rename (6, 35), skin (6, 54), pick-up (152, 35) and follow (152, 54), and the holder on the right (176, 6, 106 high) with the tabs
+    main, crafting, inventory, smelting and repair at 179, 10 and 20 apart. Each other page is a window over the top 84 of it: the inventory (the 27 slots at 8, 18), the furnace (the input at 51,
+    35, the output at 116, 35 and the progress bar at 78, 38), the crafting (the 3 by 3 grid at 30, 17 and the result at 124, 35, the arrow at 90, 35) and the repair (the two inputs at 27, 47
+    and 76, 47, the result at 134, 47 and the name box at 60, 21), with the windows of the rename box and of the skins. The entity's menu data: 0 follows, 1 picks up, 2 its energy in
+    Forge Energy (at most 40,000), 3 the furnace's progress in percent; its strings: 0 the greeting, 1 the energy, 2 following, 3 pickup, 4 the owner, 5 its name. The slots: 0 to 26 the storage,
+    27 the energy slot, 28 and 29 the furnace, 30 to 38 the crafting grid and 39 its result, 40 and 41 the repair's inputs and 42 its result (virtual ones 30 to 42). **Not in the port:**
+    the security tab, and the anvil's texture (it is the vanilla one)."""
+    from PIL import Image
+    width, height = 176, 166
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 56, 3), (27, 16))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 122, 6, 1), (26, 73))
+    panel.alpha_composite(gui_sprite('slot/power'), (152, 16))
+    texture = save_gui(panel, 'robit')
+    def icon(name):
+        return save_gui(Image.open(find(f'gui/button/{name}.png', ASSET_DIRS)).convert('RGBA'), f'robit_{name}')
+    holder = save_gui(nine_slice(gui_sprite('holder_right'), 26, 106, 4), 'robit_tab_holder')
+    def window_panel(frames, name, extra=None):
+        p = nine_slice(gui_sprite('base'), width, 84, 4)
+        for (x, y, kind) in frames:
+            p.alpha_composite(gui_sprite(f'slot/{kind}'), (x - 1, y - 1))
+        if extra:
+            extra(p)
+        return save_gui(p, f'robit_{name}')
+    def slots_of(first, positions):
+        return [{'slot': first + i, 'x': x, 'y': y} for i, (x, y) in enumerate(positions)]
+    w_text = lambda t, x=8: {'type': 'text', 'x': x, 'y': 6, 'text': t, 'color': '#404040'}
+    inv_pos = [(8 + 18 * c, 18 + 18 * r) for r in range(3) for c in range(9)]
+    win_inventory = {'id': 'inventory', 'x': 0, 'y': 0, 'width': width, 'height': 84, 'texture': window_panel([(x, y, 'normal') for x, y in inv_pos], 'inventory'),
+                     'widgets': [w_text('Robit Inventory')], 'slots': slots_of(0, inv_pos)}
+    def furnace_extra(p):
+        p.alpha_composite(gui_sprite('progress/bar/empty'), (78, 38))
+    win_furnace = {'id': 'furnace', 'x': 0, 'y': 0, 'width': width, 'height': 84,
+                   'texture': window_panel([(51, 35, 'input'), (116, 35, 'output')], 'furnace', furnace_extra),
+                   'widgets': [w_text('Robit Smelting'),
+                               {'type': 'sprite', 'texture': save_gui(gui_sprite('progress/bar/full'), 'robit_progress_full'), 'x': 78, 'y': 38, 'w': 25, 'h': 9,
+                                'value': {'data': 3}, 'max': {'const': 100}, 'direction': 'right', 'tooltip': 'Progress: {3}%'}],
+                   'slots': [{'slot': 28, 'x': 51, 'y': 35}, {'slot': 29, 'x': 116, 'y': 35}]}
+    grid = [(30 + 18 * c, 17 + 18 * r) for r in range(3) for c in range(3)]
+    def crafting_extra(p):
+        p.alpha_composite(gui_sprite('progress/right/empty'), (90, 35))
+    win_crafting = {'id': 'crafting', 'x': 0, 'y': 0, 'width': width, 'height': 84,
+                    'texture': window_panel([(x, y, 'normal') for x, y in grid] + [(124, 35, 'output')], 'crafting', crafting_extra),
+                    'widgets': [w_text('Robit Crafting')], 'slots': slots_of(30, grid) + [{'slot': 39, 'x': 124, 'y': 35}]}
+    win_repair = {'id': 'repair', 'x': 0, 'y': 0, 'width': width, 'height': 84,
+                  'texture': window_panel([(27, 47, 'input'), (76, 47, 'input'), (134, 47, 'output')], 'repair'),
+                  'widgets': [w_text('Robit Repair'), {'type': 'text', 'x': 8, 'y': 24, 'text': 'Name:', 'color': '#404040', 'scale': 90},
+                              {'type': 'textfield', 'x': 60, 'y': 21, 'w': 103, 'h': 12, 'id': 11, 'validator': 'any', 'max_length': 50},
+                              {'type': 'text', 'x': 8, 'y': 68, 'text': 'Only joining two damaged tools works here.', 'color': '#808080', 'scale': 70}],
+                  'slots': [{'slot': 40, 'x': 27, 'y': 47}, {'slot': 41, 'x': 76, 'y': 47}, {'slot': 42, 'x': 134, 'y': 47}]}
+    rp = nine_slice(gui_sprite('base'), width, 84, 4)
+    rp.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 14, 2), (27, 30))
+    win_rename = {'id': 'rename', 'x': 0, 'y': 0, 'width': width, 'height': 84, 'texture': save_gui(rp, 'robit_rename'),
+                  'widgets': [w_text('Rename the Robit'), {'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Back'},
+                              {'type': 'textfield', 'x': 29, 'y': 32, 'w': 118, 'h': 10, 'id': 10, 'validator': 'any', 'max_length': 32, 'text_data': 5},
+                              {'type': 'text', 'x': 29, 'y': 50, 'text': 'Type a name and confirm', 'color': '#808080', 'scale': 80}]}
+    sp = nine_slice(gui_sprite('base'), width, 84, 4)
+    skin_w = [w_text('Skin')]
+    for i, name in enumerate(skin_names):
+        col, row = i % 3, i // 3
+        x, y = 8 + 56 * col, 18 + 12 * row
+        sp.alpha_composite(nine_slice(gui_sprite('button'), 54, 11, 2), (x, y))
+        skin_w.append({'type': 'text', 'x': x + 3, 'y': y + 2, 'text': name[:12], 'color': '#404040', 'scale': 65})
+        skin_w.append({'type': 'button', 'x': x, 'y': y, 'w': 54, 'h': 11, 'id': 20 + i, 'tooltip': name})
+    skin_w.append({'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Back'})
+    win_skin = {'id': 'skin', 'x': 0, 'y': 0, 'width': width, 'height': 84, 'texture': save_gui(sp, 'robit_skin'), 'widgets': skin_w}
+    widgets = [
+        {'type': 'text', 'x': (width - text_width('Robit')) // 2, 'y': 6, 'text': 'Robit', 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'sprite', 'texture': holder, 'x': 176, 'y': 6, 'w': 26, 'h': 106}]
+    for i in range(5):
+        widgets.append({'type': 'text', 'x': 29, 'y': 20 + 9 * i if i == 0 else 20 + 9 * (i + 1), 'text': '', 'text_data': i, 'color': '#3CFE9A', 'scale': 80})
+    widgets.append({'type': 'sprite', 'texture': power_h_fill, 'x': 27, 'y': 74, 'w': 120, 'h': 4, 'value': {'data': 2}, 'max': {'const': 40000}, 'direction': 'right',
+                    'tooltip': 'Energy: {2} FE'})
+    for name, x, y, bid, tip in (('home', 6, 16, 3, 'Go home'), ('rename', 6, 35, None, 'Rename'), ('skin', 6, 54, None, 'Skin'), ('drop', 152, 35, 2, 'Pick up items'), ('follow', 152, 54, 1, 'Follow')):
+        widgets.append({'type': 'sprite', 'texture': icon(name), 'x': x, 'y': y, 'w': 18, 'h': 18})
+        b = {'type': 'button', 'x': x, 'y': y, 'w': 18, 'h': 18, 'tooltip': tip}
+        if bid is not None:
+            b['id'] = bid
+        else:
+            b['local'] = {'open': 'rename' if name == 'rename' else 'skin'}
+        widgets.append(b)
+    for k, (name, window, tip) in enumerate((('main', None, 'Robit'), ('crafting', 'crafting', 'Crafting'), ('inventory', 'inventory', 'Inventory'), ('smelting', 'furnace', 'Smelting'), ('repair', 'repair', 'Repair'))):
+        widgets.append({'type': 'sprite', 'texture': icon(name), 'x': 179, 'y': 10 + 20 * k, 'w': 18, 'h': 18})
+        widgets.append({'type': 'button', 'x': 179, 'y': 10 + 20 * k, 'w': 18, 'h': 18, 'local': ({'open': window} if window else 'close'), 'tooltip': tip})
+    slots = [None] * 27 + [[153, 17]] + [None] * 15
+    return {'slots': 43, 'data_slots': 4, 'results': [39, 42],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets, 'windows': [win_inventory, win_furnace, win_crafting, win_repair, win_rename, win_skin]}}
+
 # The Robit (FORK-10): the entity kind with the skins of `robit.rs::ALL_SKINS` (the first texture of each; the original's variants are chosen by the entity),
 # each skin drawn as an item model: the Robit's own model (`models/item/robit.json`, or the allay costume's) with the skin's texture set, which the
 # original's `mekanism:robit` loader does at run time.
 _robit_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mod', 'src', 'robit.rs')).read()
-_robit_skins = re.findall(r'id: "mekanism:(\w+)",\s*name: "[^"]*",\s*textures: &\["mekanism:(\w+)"[^\]]*\],\s*required_advancement: [^\n]*\n\s*custom_model: (None|Some\("mekanism:item/(\w+)"\))', _robit_src)
-_robit_kind = {'width': 0.6, 'height': 0.65, 'max_health': 1.0, 'speed': 0.3, 'container_slots': 30, 'skins': []}
-for _sid, _tex, _cm, _model in _robit_skins:
+_robit_skins = re.findall(r'id: "mekanism:(\w+)",\s*name: "([^"]*)",\s*textures: &\["mekanism:(\w+)"[^\]]*\],\s*required_advancement: [^\n]*\n\s*custom_model: (None|Some\("mekanism:item/(\w+)"\))', _robit_src)
+_robit_kind = {'width': 0.6, 'height': 0.65, 'max_health': 1.0, 'speed': 0.3, 'container_slots': 30, 'menu': f'{NS}:robit', 'skins': []}
+for _sid, _sname, _tex, _cm, _model in _robit_skins:
     _base = read_json(find(f'models/item/{_model or "robit"}.json', ASSET_DIRS))
     _base.pop('loader', None)
     _base['textures'] = {'robit': f'{NS}:entity/robit/{_tex}', 'particle': f'{NS}:entity/robit/{_tex}'}
@@ -3481,6 +3574,7 @@ for _sid, _tex, _cm, _model in _robit_skins:
     put(f'{OUT}/assets/{NS}/items/robit_skin_{_sid}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/robit_skin_{_sid}'}})
     _robit_kind['skins'].append({'id': f'{NS}:{_sid}', 'texture': f'{NS}:entity/robit/{_tex}', 'model': f'{NS}:robit_skin_{_sid}'})
 put(f'{OUT}/data/{NS}/horizon/entity_kind/robit.json', _robit_kind)
+put(f'{OUT}/data/{NS}/horizon/menu/robit.json', robit_menu([n for _i, n, _t, _c, _m in _robit_skins]))
 # the Robit item itself shows the default skin's model (the original's loader sets the texture, which the port's models carry)
 put(f'{OUT}/assets/{NS}/models/item/robit.json', read_json(f'{OUT}/assets/{NS}/models/item/robit_skin_robit.json'))
 for _png in glob.glob(f'{GEN}/assets/{NS}/textures/entity/robit/*.png'):

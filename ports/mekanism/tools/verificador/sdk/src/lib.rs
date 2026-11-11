@@ -206,10 +206,10 @@ pub mod server {
     fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool { false }
     fn entities_tick(&mut self, tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> { Vec::new() }
     fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool { false }
-    fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }
-    fn mod_entity_died(&mut self, entity: ModEntity) {}
     fn entity_menu_button(&mut self, player: &Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> { None }
     fn entity_menu_taken(&mut self, player: &Player, entity: ModEntity, slot: u32, stack: ItemStack) -> Option<ModEntityUpdate> { None }
+    fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }
+    fn mod_entity_died(&mut self, entity: ModEntity) {}
     fn init() -> Result<(Self, Registration), String>;
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {}
     fn tick(&mut self, tick: u64) {}
