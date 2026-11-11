@@ -1,6 +1,6 @@
 //! The teleporter (`TileEntityTeleporter`): a block with a frame of `mekanism:teleporter_frame` blocks (a 1 by 2 opening beside it, framed by
-//! nine frames). Teleporters on the same frequency send what stands in their opening to the nearest other one, for energy: 100 plus 2 for each
-//! block of distance (and 1000 more to change dimension).
+//! nine frames). Teleporters on the same frequency send what stands in their opening to the nearest other one, for energy: 1,000 J plus 10 J for each
+//! block of distance (and 10,000 J more to change dimension; the port counts Forge Energy, 2/5 of them), paid for everyone in the opening together.
 //!
 //! Frequencies are named ones (`frequency.rs`), chosen on the screen's list or made with its boxes, as the quantum entangloporter's. Only players are teleported
 //! (mobs, items and vehicles are not), nothing is shown in the opening and there is no sound.
@@ -87,7 +87,7 @@ pub fn trip_cost(from_dim: &str, from: [f64; 3], to_dim: &str, to: [i32; 3]) -> 
 }
 
 /// The nearest other teleporter of a frequency (same dimension first, by distance; else the first in another).
-pub fn closest<'a>(me: (&str, [i32; 3]), others: &'a [(String, [i32; 3], usize)]) -> Option<&'a (String, [i32; 3], usize)> {
+pub fn closest<'a, F>(me: (&str, [i32; 3]), others: &'a [(String, [i32; 3], F)]) -> Option<&'a (String, [i32; 3], F)> {
     let dist = |p: [i32; 3]| {
         let d = [p[0] - me.1[0], p[1] - me.1[1], p[2] - me.1[2]];
         i64::from(d[0]).pow(2) + i64::from(d[1]).pow(2) + i64::from(d[2]).pow(2)
@@ -98,14 +98,31 @@ pub fn closest<'a>(me: (&str, [i32; 3]), others: &'a [(String, [i32; 3], usize)]
         .min_by_key(|o| (u8::from(o.0 != me.0), dist(o.1)))
 }
 
-/// Where a teleporter puts what arrives (`getTeleporterTargetPos`): the first cell of its opening, two below for a downward one.
-pub fn target(pos: [i32; 3], face: usize) -> [i32; 3] {
-    let d = direction(face);
-    if face == laser::DOWN {
-        [pos[0], pos[1] - 2, pos[2]]
-    } else {
-        [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]]
+/// Where a teleporter puts what arrives (`getTeleporterTargetPos`): the first cell of its opening, two below for a downward one, the block above for one with no frame.
+pub fn target(pos: [i32; 3], face: Option<usize>) -> [i32; 3] {
+    match face {
+        None => [pos[0], pos[1] + 1, pos[2]],
+        Some(laser::DOWN) => [pos[0], pos[1] - 2, pos[2]],
+        Some(face) => {
+            let d = direction(face);
+            [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]]
+        }
     }
+}
+
+/// `alignPlayer`: the way a player faces when it arrives: toward the other side of a horizontal frame; for a vertical frame or none, away from the first open side
+/// of the cell (the caller says which sides are open); north 180, south 0, west 90, east 270.
+pub fn arrival_yaw(face: Option<usize>, open_sides: &[usize]) -> Option<f32> {
+    let side = match face {
+        Some(f) if f != laser::UP && f != laser::DOWN => Some(f),
+        _ => [laser::NORTH, laser::SOUTH, laser::WEST, laser::EAST].into_iter().find(|s| open_sides.contains(s)),
+    };
+    side.map(|s| match s {
+        laser::NORTH => 180.0,
+        laser::SOUTH => 0.0,
+        laser::WEST => 90.0,
+        _ => 270.0,
+    })
 }
 
 /// The two cells of the opening: the first to the second (`getTeleporterBoundingBox`).
@@ -148,9 +165,10 @@ impl Mekanism {
         let presses = std::mem::take(&mut self.teleporter_buttons);
         let texts_in = std::mem::take(&mut self.teleporter_texts);
         let mut out = Vec::new();
-        let mut table: Vec<(String, String, [i32; 3], usize)> = Vec::new();
+        let mut table: Vec<(String, String, [i32; 3], Option<usize>)> = Vec::new();
         let mut info: HashMap<(String, i32, i32, i32), (Option<frequency::Freq>, Option<usize>)> = HashMap::new();
         let known: Vec<frequency::Freq> = parts.iter().filter_map(|e| decode(&e.data)).collect();
+        let mut deleted: Vec<String> = Vec::new();
         for e in parts {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
             let mut freq = decode(&e.data);
@@ -169,8 +187,15 @@ impl Mekanism {
             for (action, who, name) in asked {
                 self.freq_viewer.insert(key.clone(), (who.clone(), name.clone()));
                 if let Some(next) = frequency::apply(&action, &freq, &frequency::listing(&known, &who), &who, &name) {
+                    if next.is_none() {
+                        // `FrequencyManager.remove`: the frequency is gone for every block that held it.
+                        deleted.extend(freq.as_ref().map(frequency::Freq::key));
+                    }
                     freq = next;
                 }
+            }
+            if freq.as_ref().is_some_and(|f| deleted.contains(&f.key())) {
+                freq = None;
             }
             // The frame is looked for once a second.
             let cached = self.frames.found.get(&key).copied();
@@ -182,10 +207,9 @@ impl Mekanism {
                     f
                 }
             };
+            // Every teleporter on the frequency is a destination (`TeleporterFrequency.activeCoords`), with a frame or without one.
             if let Some(f) = &freq {
-                if let Some((face, _)) = frame {
-                    table.push((f.key(), e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z], face));
-                }
+                table.push((f.key(), e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z], frame.map(|f| f.0)));
             }
             info.insert(key, (freq, frame.map(|f| f.0)));
         }
@@ -201,7 +225,7 @@ impl Mekanism {
                 energy = now;
                 items_update = Some(vec![left]);
             }
-            let others: Vec<(String, [i32; 3], usize)> = match &freq {
+            let others: Vec<(String, [i32; 3], Option<usize>)> = match &freq {
                 Some(f) => table.iter().filter(|t| t.0 == f.key()).map(|t| (t.1.clone(), t.2, t.3)).collect(),
                 None => Vec::new(),
             };
@@ -228,16 +252,24 @@ impl Mekanism {
                 *delay = delay.saturating_sub(1);
                 let arrived = self.frames.arrived.get(&key).cloned().unwrap_or_default();
                 let candidates: Vec<&&Player> = here.iter().filter(|p| !arrived.contains(&p.id)).collect();
-                if !waiting {
+                // `canTeleport`: the trip of everyone in the opening is paid together; without the energy for all of them nobody goes (not enough energy).
+                let need: u64 = candidates.iter().map(|p| trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos)).fold(0u64, |a, c| a.saturating_add(c));
+                if !candidates.is_empty() && energy < need {
+                    status = 3;
+                } else if !waiting && !candidates.is_empty() {
+                    let t = target(*dest_pos, *dest_face);
+                    let open: Vec<usize> = [laser::NORTH, laser::SOUTH, laser::WEST, laser::EAST]
+                        .into_iter()
+                        .filter(|s| {
+                            let d = direction(*s);
+                            world::get_block(dest_dim, t[0] + d[0], t[1] + d[1], t[2] + d[2]).is_some_and(|b| b == "minecraft:air")
+                        })
+                        .collect();
+                    let yaw = arrival_yaw(*dest_face, &open);
                     for p in candidates {
-                        let need = trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos);
-                        if energy < need {
-                            status = 3;
-                            continue;
-                        }
-                        let t = target(*dest_pos, *dest_face);
-                        if player_control::teleport(&p.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, None, None).is_ok() {
-                            energy -= need;
+                        let cost = trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos);
+                        if player_control::teleport(&p.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, yaw, None).is_ok() {
+                            energy = energy.saturating_sub(cost);
                             let dkey = (dest_dim.clone(), dest_pos[0], dest_pos[1], dest_pos[2]);
                             self.frames.arrived.entry(dkey.clone()).or_default().insert(p.id.clone());
                             self.frames.delay.insert(dkey, DELAY);
@@ -260,6 +292,8 @@ impl Mekanism {
                 listing.public.len() as i32,
                 listing.private.len() as i32,
             ];
+            // `getRedstoneLevel`: a comparator reads 15 while it is ready.
+            redstone::set_comparator(&e.dimension, e.pos, if status == 4 { 15 } else { 0 });
             let texts = frequency::texts(&freq, &listing);
             if self.menu_texts.get(&key) != Some(&texts) {
                 let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
@@ -335,8 +369,14 @@ mod tests {
 
     #[test]
     fn what_arrives_stands_in_the_opening() {
-        assert_eq!(target([5, 64, 5], laser::UP), [5, 65, 5]);
-        assert_eq!(target([5, 64, 5], laser::DOWN), [5, 62, 5]);
+        assert_eq!(target([5, 64, 5], Some(laser::UP)), [5, 65, 5]);
+        assert_eq!(target([5, 64, 5], Some(laser::DOWN)), [5, 62, 5]);
+        // with no frame it is the block above
+        assert_eq!(target([5, 64, 5], None), [5, 65, 5]);
+        assert_eq!(arrival_yaw(Some(laser::NORTH), &[]), Some(180.0));
+        assert_eq!(arrival_yaw(Some(laser::EAST), &[]), Some(270.0));
+        assert_eq!(arrival_yaw(Some(laser::UP), &[laser::WEST, laser::EAST]), Some(90.0));
+        assert_eq!(arrival_yaw(None, &[]), None);
         let b = opening([5, 64, 5], laser::UP);
         assert!(inside([5.5, 65.5, 5.5], b) && inside([5.5, 66.9, 5.5], b) && !inside([5.5, 67.1, 5.5], b));
     }

@@ -33,10 +33,8 @@ impl Freq {
 
 /// `InputValidator.LETTER_OR_DIGIT.or(FREQUENCY_CHARS)`: what a name may be made of.
 pub fn valid_name(name: &str) -> bool {
-    let t = name.trim();
-    !t.is_empty()
-        && t.chars().count() <= MAX_NAME
-        && t.chars().all(|c| c.is_alphanumeric() || "- |'\"_+:()?!/@$`~,.#".contains(c))
+    // `InputValidator.LETTER_OR_DIGIT.or(FREQUENCY_CHARS)`: ASCII letters and digits and the listed marks; the original does not trim (`!freq.isEmpty()`).
+    !name.is_empty() && name.chars().count() <= MAX_NAME && name.chars().all(|c| c.is_ascii_alphanumeric() || "- |'\"_+:()?!/@$`~,.#".contains(c))
 }
 
 /// The frequency as bytes (appended to a block's own): a flag, the security, then the name, the owner and the owner's name, each with its length.
@@ -151,7 +149,7 @@ pub fn button_action(id: i32, base: i32) -> Option<Action> {
 }
 
 pub fn text_action(id: i32, base: i32, text: &str) -> Option<Action> {
-    let t = text.trim();
+    let t = text;
     if id == id_box_public(base) {
         valid_name(t).then(|| Action::CreatePublic(t.to_owned()))
     } else if id == id_box_private(base) {
@@ -211,9 +209,11 @@ mod tests {
     #[test]
     fn the_name_rules() {
         assert!(valid_name("Base 1"));
+        // ASCII only, spaces kept (a name of spaces is a name)
+        assert!(!valid_name("caf\u{e9}"));
+        assert!(valid_name("  "));
         assert!(valid_name("a_b-c"));
         assert!(!valid_name(""));
-        assert!(!valid_name("   "));
         assert!(!valid_name("a name that is far too long"));
         assert!(!valid_name("tab\\there"));
     }
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(button_action(100 + 1, 100), Some(Action::SetPublic(1)));
         assert_eq!(button_action(100 + 16, 100), Some(Action::SetPrivate(0)));
         assert_eq!(button_action(id_delete(100), 100), Some(Action::Delete));
-        assert_eq!(text_action(id_box_public(100), 100, " New "), Some(Action::CreatePublic("New".into())));
+        assert_eq!(text_action(id_box_public(100), 100, "New"), Some(Action::CreatePublic("New".into())));
         assert_eq!(text_action(id_box_private(100), 100, ""), None);
         assert_eq!(apply(&Action::SetPublic(0), &None, &l, "me", "Me"), Some(Some(f("pub", false, "a"))));
         // setting what it already is changes nothing

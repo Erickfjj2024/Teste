@@ -42,6 +42,32 @@ pub fn share(total: u64, index: u64, count: u64) -> u64 {
     total / count + u64::from(index < total % count)
 }
 
+/// The frequency's item after one block's slot went from `before` to `now`: the same item in a bigger stack adds the difference to what the frequency holds (so two blocks that took
+/// items in one tick both count), a different item or a smaller stack is what the block now holds.
+pub fn merge_item(current: Option<Stack>, before: Option<&Stack>, now: Option<Stack>) -> Option<Stack> {
+    match (current, before, now) {
+        (Some(cur), Some(b), Some(n)) if cur.item == n.item && cur.components == n.components && b.item == n.item && n.count > b.count => {
+            Some(Stack { count: cur.count.saturating_add(n.count - b.count), ..cur })
+        }
+        (Some(cur), None, Some(n)) if cur.item == n.item && cur.components == n.components => Some(Stack { count: cur.count.saturating_add(n.count), ..cur }),
+        (_, _, n) => n,
+    }
+}
+
+/// What a tank of the frequency takes (`BasicFluidTank` and `BasicChemicalTank`): nothing when full, only its own substance once it holds some, and for the chemical tank only substances that
+/// are not radioactive (`ChemicalAttributeValidator.DEFAULT`) while it is empty. An empty list means no restriction.
+pub fn tank_filter(tank: &process::Tank, capacity: u64, allowed: Option<&dyn Fn(&str) -> bool>) -> Vec<String> {
+    if tank.amount >= capacity {
+        vec![NOTHING.to_owned()]
+    } else if tank.amount > 0 && !tank.chemical.is_empty() {
+        vec![tank.chemical.clone()]
+    } else if let Some(ok) = allowed {
+        crate::chem_table::CHEMICALS.iter().filter(|c| ok(c)).map(|c| (*c).to_owned()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// What every entangloporter of one frequency shares.
 #[derive(Default)]
 pub struct Shared {
@@ -62,6 +88,7 @@ impl Mekanism {
         let mut by: HashMap<String, (frequency::Freq, Vec<&BlockEntity>)> = HashMap::new();
         let mut frequency_of: HashMap<(String, i32, i32, i32), Option<frequency::Freq>> = HashMap::new();
         let known: Vec<frequency::Freq> = qes.iter().filter_map(|e| decode(&e.data).and_then(|d| d.0)).collect();
+        let mut deleted: Vec<String> = Vec::new();
         for e in qes {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
             let mut f = decode(&e.data).and_then(|d| d.0);
@@ -80,8 +107,15 @@ impl Mekanism {
             for (action, who, name) in asked {
                 self.freq_viewer.insert(key.clone(), (who.clone(), name.clone()));
                 if let Some(next) = frequency::apply(&action, &f, &frequency::listing(&known, &who), &who, &name) {
+                    if next.is_none() {
+                        // `FrequencyManager.remove`: the frequency is gone for every block that held it.
+                        deleted.extend(f.as_ref().map(frequency::Freq::key));
+                    }
                     f = next;
                 }
+            }
+            if f.as_ref().is_some_and(|f| deleted.contains(&f.key())) {
+                f = None;
             }
             if let Some(freq) = &f {
                 by.entry(freq.key()).or_insert_with(|| (freq.clone(), Vec::new())).1.push(*e);
@@ -132,11 +166,14 @@ impl Mekanism {
             if !s.started {
                 s.started = true;
                 s.energy = group.iter().filter_map(|e| decode(&e.data)).map(|(_, en)| en).max().unwrap_or(0).min(ENERGY_CAPACITY);
-                if let Some(t) = group.iter().map(|e| held_tank(e, 0)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
-                    s.fluid = process::Tank { chemical: t.substance, amount: t.amount.min(FLUID_CAPACITY) };
+                // Each block holds its share of the frequency's fluid and chemical, so what the frequency holds is the sum (the energy is the total, kept in every block).
+                let sum = |i: usize| group.iter().map(|e| held_tank(e, i).amount).fold(0u64, u64::saturating_add);
+                let kind = |i: usize| group.iter().map(|e| held_tank(e, i)).find(|t| t.amount > 0).map(|t| t.substance).unwrap_or_default();
+                if sum(0) > 0 {
+                    s.fluid = process::Tank { chemical: kind(0), amount: sum(0).min(FLUID_CAPACITY) };
                 }
-                if let Some(t) = group.iter().map(|e| held_tank(e, 1)).max_by_key(|t| t.amount).filter(|t| t.amount > 0) {
-                    s.chemical = process::Tank { chemical: t.substance, amount: t.amount.min(CHEMICAL_CAPACITY) };
+                if sum(1) > 0 {
+                    s.chemical = process::Tank { chemical: kind(1), amount: sum(1).min(CHEMICAL_CAPACITY) };
                 }
                 s.item = group.iter().find_map(|e| slot(e));
             } else {
@@ -155,10 +192,10 @@ impl Mekanism {
                     if s.chemical.chemical.is_empty() && c.amount > 0 {
                         s.chemical.chemical = c.substance;
                     }
-                    // The item: the first block whose slot changed decides.
+                    // The item: every block whose slot changed is heard. A bigger stack of the item the frequency holds adds what it gained; anything else replaces it.
                     let now = slot(e);
                     if now != gi {
-                        s.item = now;
+                        s.item = merge_item(s.item.take(), gi.as_ref(), now);
                     }
                 }
                 if s.fluid.amount == 0 {
@@ -192,9 +229,8 @@ impl Mekanism {
                 let (se, sf, sc) = (share(energy_total, index as u64, count), share(fluid.amount, index as u64, count), share(chemical.amount, index as u64, count));
                 s.given.insert(key, (se, sf, sc, item.clone()));
                 let _ = world::set_energy_capacity(&e.dimension, e.pos.x, e.pos.y, e.pos.z, (se + room / count + 1).min(ENERGY_CAPACITY));
-                let ok = |amount: u64, cap: u64| if amount >= cap { vec![NOTHING.to_owned()] } else { Vec::new() };
-                let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 0, &ok(fluid.amount, FLUID_CAPACITY));
-                let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 1, &ok(chemical.amount, CHEMICAL_CAPACITY));
+                let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 0, &tank_filter(&fluid, FLUID_CAPACITY, None));
+                let _ = world::set_tank_filter(&e.dimension, e.pos.x, e.pos.y, e.pos.z, 1, &tank_filter(&chemical, CHEMICAL_CAPACITY, Some(&|c: &str| crate::radiation::radioactivity(c) == 0.0)));
                 let key2 = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
                 let listing = viewer_of_static(&self.freq_viewer, &known, &key2, &Some(frequency.clone()));
                 let mut menu = data.clone();
@@ -252,5 +288,31 @@ mod tests {
         assert_eq!(decode(&encode(&Some(f.clone()), 123_456_789)), Some((Some(f), 123_456_789)));
         assert_eq!(decode(&encode(&None, 5)), Some((None, 5)));
         assert_eq!(decode(&[]), None);
+    }
+
+    #[test]
+    fn the_items_of_two_blocks_both_count() {
+        let st = |n| Some(Stack { item: "minecraft:stone".into(), count: n, components: String::new() });
+        // the frequency holds 10; a block that went from 0 to 5 and another from 2 to 6 add 5 and 4
+        let a = merge_item(st(10), None, st(5));
+        let b = merge_item(a, st(2).as_ref(), st(6));
+        assert_eq!(b.map(|s| s.count), Some(19));
+        // a different item replaces it
+        let other = Some(Stack { item: "minecraft:dirt".into(), count: 1, components: String::new() });
+        assert_eq!(merge_item(st(10), None, other.clone()), other);
+        // a smaller stack is what the block holds now
+        assert_eq!(merge_item(st(10), st(8).as_ref(), st(3)).map(|s| s.count), Some(3));
+    }
+
+    #[test]
+    fn the_tanks_take_what_the_original_allows() {
+        let empty = process::Tank::default();
+        let full = process::Tank { chemical: "mekanism:hydrogen".into(), amount: 10 };
+        assert_eq!(tank_filter(&full, 10, None), vec![NOTHING.to_owned()]);
+        assert_eq!(tank_filter(&process::Tank { amount: 3, ..full.clone() }, 10, None), vec!["mekanism:hydrogen".to_owned()]);
+        assert!(tank_filter(&empty, 10, None).is_empty());
+        let plain = tank_filter(&empty, 10, Some(&|c: &str| c != "mekanism:plutonium"));
+        assert!(plain.contains(&"mekanism:hydrogen".to_owned()));
+        assert!(!plain.contains(&"mekanism:plutonium".to_owned()));
     }
 }
