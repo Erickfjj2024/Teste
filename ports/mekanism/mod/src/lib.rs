@@ -2286,7 +2286,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().on_net().on_mod_entities().redirect(bounding::BLOCK, 0, 1)))
+        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().on_net().on_mod_entities().on_block_break_start().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2486,6 +2486,10 @@ impl ServerMod for Mekanism {
 
     fn mod_entity_died(&mut self, entity: ModEntity) {
         self.robit_died(&entity);
+    }
+
+    fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool {
+        self.meka_break(player, &stack, pos, state)
     }
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {

@@ -6,7 +6,6 @@ pub mod server {
     pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct RadialEntry { pub id: String, pub label: String, pub icon: String }
     pub fn open_radial_menu<A0>(_a0: A0, _a1: &[RadialEntry], _a2: u32) -> bool { false }
-    pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     pub fn set_hud_line<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Player { pub id: String, pub name: String, pub x: f64, pub y: f64, pub z: f64, pub dimension: String, pub game_mode: GameMode, pub health: f32 }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)] pub enum GameMode { #[default] Survival, Creative, Adventure, Spectator }
@@ -202,6 +201,7 @@ pub mod server {
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool }
   pub trait ServerMod: Sized {
+    fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool { false }
     fn entities_tick(&mut self, tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> { Vec::new() }
     fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool { false }
     fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }

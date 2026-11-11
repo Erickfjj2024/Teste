@@ -58,8 +58,8 @@ pub fn crafting_matches(id: &str, grid: &[Option<horizon_mod_sdk::server::ItemSt
     horizon_mod_sdk::server::recipe_types::crafting_matches(id, &grid.to_vec())
 }
 
-/// FORK-20 (pedido em PROPOSTA-API.wit, `item-tag-members`): the items of an item tag, in the order the game lists them. Until the host has it the
-/// list is empty, and the Oredictionificator cannot choose a result for a new filter.
-pub fn item_tag_members(_tag: &str) -> Vec<String> {
-    Vec::new()
+/// `recipe-types.item-tag-members` (API 40): the items of an item tag in the game's order, empty for a tag it does not have. Used by the Oredictionificator to choose
+/// the result of a filter.
+pub fn item_tag_members(tag: &str) -> Vec<String> {
+    horizon_mod_sdk::server::recipe_types::item_tag_members(tag)
 }

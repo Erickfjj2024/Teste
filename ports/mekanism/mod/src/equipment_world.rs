@@ -65,7 +65,104 @@ pub fn with_energy(components: &str, energy: u64) -> Option<String> {
     Some(out)
 }
 
+/// The tool the Meka-Tool's area breaks as (a netherite pickaxe: the right one for what a vein or blast holds, as the disassembler stack is in the original).
+fn laser_tool() -> &'static str {
+    crate::laser::BREAK_TOOL
+}
+
+/// The face of a block a player looking along `dir` hits (the opposite of the look's main axis): what `IBlastingItem.getTargetSide` finds by ray cast.
+pub fn hit_face_of(dir: [f64; 3]) -> meka_tool::HitFace {
+    let (ax, ay, az) = (dir[0].abs(), dir[1].abs(), dir[2].abs());
+    if ay >= ax && ay >= az {
+        if dir[1] > 0.0 { meka_tool::HitFace::Down } else { meka_tool::HitFace::Up }
+    } else if ax >= az {
+        if dir[0] > 0.0 { meka_tool::HitFace::West } else { meka_tool::HitFace::East }
+    } else if dir[2] > 0.0 {
+        meka_tool::HitFace::North
+    } else {
+        meka_tool::HitFace::South
+    }
+}
+
 impl Mekanism {
+    /// `ItemMekaTool.mineBlock`'s area work, asked by `block-break-start` (the game then breaks the target as usual): the tool pays for the target, the Blasting Unit gathers the
+    /// blocks of its area, the Vein Mining Unit the ones connected to them, and as many of those as the energy allows are broken as a player with the tool would (`world.break-blocks`).
+    /// Always answers false: the target itself is the game's to break. Nothing happens in creative, with no energy for the target, or with neither unit on.
+    pub(crate) fn meka_break(&mut self, player: &Player, stack: &ItemStack, pos: BlockPos, state: &str) -> bool {
+        if stack.item != meka_tool::MEKA_TOOL || player.game_mode == GameMode::Creative {
+            return false;
+        }
+        let data = meka_tool::host_read_meka_tool(&stack.components);
+        let blasting = data.get_module(meka_tool::ModuleType::BlastingUnit).filter(|m| m.enabled);
+        let veining = data.get_module(meka_tool::ModuleType::VeinMiningUnit).filter(|m| m.enabled);
+        if blasting.is_none() && veining.is_none() {
+            return false;
+        }
+        let dim = player.dimension.clone();
+        let target = [pos.x, pos.y, pos.z];
+        let hardness_at = |p: [i32; 3]| world::block_hardness(&dim, p[0], p[1], p[2]).unwrap_or(-1.0);
+        let block_id = |p: [i32; 3]| world::get_block(&dim, p[0], p[1], p[2]).map(|b| b.split('[').next().unwrap_or("").to_owned());
+        let air = |id: &str| matches!(id, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air");
+        let liquid = |id: &str| matches!(id, "minecraft:water" | "minecraft:lava");
+        // the energy for the target (`getDestroyEnergy(modDestroyEnergy, hardness)`), in Joules as the rules count them
+        let silk = data.has_silk_touch();
+        let required_j = data.get_destroy_joules(hardness_at(target));
+        let stored_j = data.energy * 5 / 2;
+        if stored_j < required_j {
+            return false;
+        }
+        let base_blast = data.mod_destroy_joules();
+        let base_vein = data.base_destroy_joules();
+        let can_blast = |p: [i32; 3]| {
+            let Some(id) = block_id(p) else { return false };
+            meka_tool::can_blast_block(air(&id), liquid(&id), id == "mekanism:bounding_block", hardness_at(p))
+        };
+        let mut initial: Vec<[i32; 3]> = Vec::new();
+        if let Some(b) = blasting {
+            let face = player_control::get_look(&player.id).map(|(yaw, pitch)| hit_face_of(crate::sides::look(yaw, pitch)));
+            if let Some(face) = face {
+                initial = meka_tool::find_blasting_positions(target, face, b.blast_radius.radius(), &can_blast);
+            }
+        }
+        if initial.is_empty() {
+            let id = state.split('[').next().unwrap_or("");
+            if id == "mekanism:bounding_block" || veining.is_none() {
+                return false;
+            }
+            initial.push(target);
+        }
+        let blocks: Vec<([i32; 3], String)> = initial.iter().filter_map(|p| block_id(*p).map(|id| (*p, id))).collect();
+        let is_ore = |id: &str| horizon_mod_sdk::server::recipe_types::item_tags(id).iter().any(|t| t.starts_with("c:ores"));
+        let found: Vec<([i32; 3], u32)> = match veining {
+            Some(v) => {
+                let range = if v.vein_extended { v.vein_range.range() } else { 0 };
+                meka_tool::find_vein_positions_by_block(&blocks, range, &is_ore, &block_id)
+            }
+            None => blocks.iter().map(|(p, _)| (*p, 0)).collect(),
+        };
+        let targets: Vec<meka_tool::AreaTarget> = found
+            .iter()
+            .map(|(p, distance)| {
+                let id = block_id(*p).unwrap_or_default();
+                meka_tool::AreaTarget { pos: *p, distance: *distance, hardness: hardness_at(*p), is_ore: is_ore(&id), is_air: air(&id) }
+            })
+            .collect();
+        let (broken, used_j) = meka_tool::plan_area_mining(stored_j, required_j, target, base_blast, base_vein, &targets);
+        if broken.is_empty() {
+            return false;
+        }
+        let positions: Vec<(i32, i32, i32)> = broken.iter().map(|p| (p[0], p[1], p[2])).collect();
+        let _ = world::break_blocks(&dim, &positions, laser_tool(), silk, u32::from(data.fortune_level()));
+        // the tool pays for the target and for the area (Forge Energy, rounded up)
+        let paid = ((required_j + used_j) * 2).div_ceil(5);
+        if let Some((slot, components)) = Self::find_hotbar_slot(&player.id, stack)
+            && let Some(written) = with_energy(&components, data.energy.saturating_sub(paid))
+        {
+            let _ = player_items::set_slot(&player.id, slot, Some(&ItemStack { item: stack.item.clone(), count: stack.count, components: written }));
+        }
+        false
+    }
+
     /// A right click with a Meka-Tool in the air or on a block. Answers whether the mod took the use.
     pub(crate) fn meka_tool_used(&mut self, player: &Player, stack: &ItemStack) -> bool {
         let data = meka_tool::host_read_meka_tool(&stack.components);
@@ -747,5 +844,15 @@ mod tests {
         assert_eq!(set_glider(r#"{"minecraft:damage":3,"minecraft:glider":{}}"#, false), r#"{"minecraft:damage":3}"#);
         assert_eq!(set_glider(r#"{"minecraft:glider":{}}"#, false), "{}");
         assert_eq!(set_glider(r#"{"minecraft:damage":3}"#, false), r#"{"minecraft:damage":3}"#);
+    }
+
+    #[test]
+    fn the_face_hit_is_opposite_the_look() {
+        assert_eq!(hit_face_of([0.0, -1.0, 0.0]), meka_tool::HitFace::Up);
+        assert_eq!(hit_face_of([0.0, 1.0, 0.0]), meka_tool::HitFace::Down);
+        assert_eq!(hit_face_of([0.1, 0.0, -1.0]), meka_tool::HitFace::South);
+        assert_eq!(hit_face_of([0.1, 0.0, 1.0]), meka_tool::HitFace::North);
+        assert_eq!(hit_face_of([1.0, 0.2, 0.3]), meka_tool::HitFace::West);
+        assert_eq!(hit_face_of([-1.0, 0.2, 0.3]), meka_tool::HitFace::East);
     }
 }

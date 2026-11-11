@@ -777,6 +777,60 @@ pub fn find_vein_positions(
     found
 }
 
+/// `ModuleVeinMiningUnit.findPositions` as the original does it: every block that comes off the frontier is found (with the traversal distance), and its neighbours join the
+/// frontier when they are **the same block as that one** (`is(block)`, so a blast of different blocks vein-mines each of them). `initial` is the blocks with their ids,
+/// `is_ore` says whether a block id is of the vein tracker, `extended_range` how far a block that is not an ore goes, `block_at` what is at a position.
+pub fn find_vein_positions_by_block(
+    initial: &[([i32; 3], String)],
+    extended_range: u32,
+    is_ore: impl Fn(&str) -> bool,
+    block_at: impl Fn([i32; 3]) -> Option<String>,
+) -> Vec<([i32; 3], u32)> {
+    use std::collections::{HashSet, VecDeque};
+    let mut tracked: Vec<&str> = Vec::new();
+    for (_, id) in initial {
+        if !tracked.contains(&id.as_str()) {
+            tracked.push(id);
+        }
+    }
+    let max_count = initial.len() + MAX_VEIN_MINING_COUNT * tracked.len();
+    let mut found: Vec<([i32; 3], u32)> = Vec::new();
+    let mut found_set: HashSet<[i32; 3]> = HashSet::new();
+    let mut frontier: VecDeque<([i32; 3], String)> = initial.iter().cloned().collect();
+    let mut in_frontier: HashSet<[i32; 3]> = initial.iter().map(|(p, _)| *p).collect();
+    let mut distance = 0u32;
+    let mut next = frontier.len();
+    while let Some((pos, id)) = frontier.pop_front() {
+        in_frontier.remove(&pos);
+        found.push((pos, distance));
+        found_set.insert(pos);
+        if found.len() >= max_count {
+            break;
+        }
+        if is_ore(&id) || extended_range > distance {
+            for dz in -1..=1 {
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let n = [pos[0] + dx, pos[1] + dy, pos[2] + dz];
+                        if found_set.contains(&n) || in_frontier.contains(&n) {
+                            continue;
+                        }
+                        if block_at(n).is_some_and(|b| b == id) {
+                            in_frontier.insert(n);
+                            frontier.push_back((n, id.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if found.len() == next {
+            distance += 1;
+            next += frontier.len();
+        }
+    }
+    found
+}
+
 /// Calculates vein mining energy for a connected block at a given BFS distance.
 /// Java: `ItemMekaTool.java:272-275`:
 /// `multiplier = 0.5 * Math.pow(distance, isOre ? 1.5 : 2)`
@@ -1480,5 +1534,26 @@ mod tests {
         assert!(restored.is_module_enabled(ModuleType::EnergyUnit));
         assert!(restored.is_module_enabled(ModuleType::AttackAmplificationUnit));
         assert!(restored.is_module_enabled(ModuleType::SilkTouchUnit));
+    }
+
+    #[test]
+    fn a_vein_follows_the_same_block_as_each_block_it_finds() {
+        // a line of 5 iron blocks at x 0..4, a stone block beside the first: the stone is not taken into the iron's vein
+        let at = |p: [i32; 3]| match p {
+            [x, 0, 0] if (0..5).contains(&x) => Some("minecraft:iron_ore".to_owned()),
+            [0, 1, 0] => Some("minecraft:stone".to_owned()),
+            _ => None,
+        };
+        let found = find_vein_positions_by_block(&[([0, 0, 0], "minecraft:iron_ore".to_owned())], 0, |id| id == "minecraft:iron_ore", &at);
+        assert_eq!(found.len(), 5);
+        assert_eq!(found[0], ([0, 0, 0], 0));
+        assert!(found.iter().all(|(p, _)| p[1] == 0));
+        assert_eq!(found[4].1, 4);
+        // not an ore and no extended range: only the block itself
+        let alone = find_vein_positions_by_block(&[([0, 0, 0], "minecraft:iron_ore".to_owned())], 0, |_| false, &at);
+        assert_eq!(alone.len(), 1);
+        // with a range of 2 a plain block reaches two blocks along
+        let two = find_vein_positions_by_block(&[([0, 0, 0], "minecraft:iron_ore".to_owned())], 2, |_| false, &at);
+        assert_eq!(two.len(), 3);
     }
 }
