@@ -1,0 +1,325 @@
+From 1ca612f2baab8779d74f5cd6361fbfa7d1e92bbb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 01:59:12 +0000
+Subject: [PATCH] API 39: world.break-blocks (vein mining and blasting as a
+ player holding a tool)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ crates/horizon-client/src/game/mods.rs        |  1 +
+ crates/horizon-client/src/game/server_mods.rs | 49 +++++++++++++++++++
+ .../examples/block-use/src/lib.rs             |  5 ++
+ .../examples/block-use/tests/block_use.toml   |  8 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  6 +++
+ crates/horizon-mods/src/api_level.rs          |  5 +-
+ crates/horizon-mods/src/runtime.rs            | 28 +++++++++++
+ crates/horizon-mods/src/testing.rs            | 19 +++++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  1 +
+ 11 files changed, 123 insertions(+), 4 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 15d68065e..2c39aa521 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -294,6 +294,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::SetCapabilitiesEnabled { items, fluids, energy, .. } => {
+                 format!("capabilities items {items} fluids {fluids} energy {energy}")
+             }
++            Output::BreakBlocks { positions, .. } => format!("break {} block(s)", positions.len()),
+             Output::SetComparator { level, .. } => format!("comparator output {level}"),
+             Output::SetMenuText { texts, .. } => format!("set {} menu text(s)", texts.len()),
+             Output::MineBlock { tool, .. } => format!("mined a block with {tool}"),
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 048868787..f8c47046c 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -892,6 +892,7 @@ impl Game<'_> {
+                 | Output::SetCapabilitiesEnabled { .. }
+                 | Output::SetMenuText { .. }
+                 | Output::SetComparator { .. }
++                | Output::BreakBlocks { .. }
+                 | Output::SpawnParticles { .. }
+                 | Output::SetTankFilter { .. }
+                 | Output::SetEnergyCapacity { .. }) => {
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 2350834ba..bba16e4e2 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -204,6 +204,13 @@ mod run {
+                     .unwrap_or_default(),
+             )
+         }
++        fn breakable(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
++            let Some((_, chunks)) = self.dims.iter().find(|(d, _)| *d == dimension) else { return false };
++            let Some(chunk) = chunks.get(&(x >> 4, z >> 4)) else { return false };
++            let f = self.res.facts().get(chunk.block(x & 15, y, z & 15));
++            let base = &*f.name;
++            !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava") && f.hardness >= 0.0
++        }
+         fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, horizon_mods::ModItemStack, [f64; 3])> {
+             if dimension != self.dimension {
+                 return Vec::new();
+@@ -931,6 +938,41 @@ mod run {
+                 }
+             }
+         }
++        /// A mod's `world.break-blocks`: each block that is loaded and breakable (not air, a fluid, bedrock-hard) becomes air and its drops,
++        /// worked out with the tool (silk touch, fortune), fall at its place.
++        pub(in crate::game) fn native_break_blocks(&mut self, positions: &[[i32; 3]], tool: &str, silk_touch: bool, fortune: u32) {
++            let mut enchants = Vec::new();
++            if silk_touch {
++                enchants.push("\"minecraft:silk_touch\":1".to_owned());
++            }
++            if fortune > 0 {
++                enchants.push(format!("\"minecraft:fortune\":{fortune}"));
++            }
++            let components = if enchants.is_empty() { String::new() } else { format!("{{\"minecraft:enchantments\":{{{}}}}}", enchants.join(",")) };
++            let held = self.game_stack(&horizon_mods::ModItemStack { item: tool.to_owned(), count: 1, components });
++            let Ok(air) = crate::game::render_control::parse_state(self.pack.assets.registry, "minecraft:air") else {
++                return;
++            };
++            for pos in positions.iter().take(4096) {
++                let state = self.world.block(pos[0], pos[1], pos[2]);
++                let facts = self.res.facts().get(state);
++                let base = &*facts.name;
++                if !self.world.chunks.contains_key(&(pos[0] >> 4, pos[2] >> 4))
++                    || base.ends_with(":air")
++                    || matches!(base, "minecraft:water" | "minecraft:lava")
++                    || facts.hardness < 0.0
++                {
++                    continue;
++                }
++                let drops = self.block_loot_at(*pos, state, held.as_ref());
++                if self.place_state(*pos, air, false).is_err() {
++                    continue;
++                }
++                for stack in drops {
++                    self.pop_resource(*pos, stack);
++                }
++            }
++        }
+         /// A mod's `world.set-item-faces`: the slots each face of the entity's container reaches, kept in it.
+         pub(in crate::game) fn native_set_item_faces(&mut self, pos: [i32; 3], faces: &[Vec<u32>]) {
+             let key = (pos[0], pos[1], pos[2]);
+@@ -2592,6 +2634,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} asked for the particle {particle}, which was not shown");
+                     }
+                 }
++                Output::BreakBlocks { name, dimension, positions, tool, silk_touch, fortune } => {
++                    if dimension == self.dim.id() {
++                        self.native_break_blocks(&positions, &tool, silk_touch, fortune);
++                    } else {
++                        log::debug!("Horizon: mod {name} broke blocks in another level");
++                    }
++                }
+                 Output::SetComparator { name, dimension, pos, level } => {
+                     if dimension == self.dim.id() {
+                         self.native_set_comparator(pos, level);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 8b087724e..515417520 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -55,6 +55,11 @@ impl ServerMod for Gate {
+         if pos.y == 77 {
+             let _ = world::set_comparator_output(&player.dimension, pos.x, pos.y, pos.z, 9);
+         }
++        // API 39: the machine at y 78 mines the 3 blocks east of it (one is air, one bedrock) with a silk touch pickaxe.
++        if pos.y == 78 {
++            let n = world::break_blocks(&player.dimension, &[(pos.x + 1, pos.y, pos.z), (pos.x + 2, pos.y, pos.z), (pos.x + 3, pos.y, pos.z)], "minecraft:diamond_pickaxe", true, 0).unwrap_or(99);
++            let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &[format!("breaks {n}")]);
++        }
+         match stack {
+             Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
+             None if !sneaking => BlockUse::Consume,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index b2934ce57..e66d52c91 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -93,3 +93,11 @@ expect.menu-text = ["minecraft:overworld 6 64 6 -1"]
+ use-block = { pos = [1, 77, 1] }
+ ticks = 1
+ expect.comparator = ["minecraft:overworld 1 77 1 9"]
++
++[[step]]
++# API 39: break-blocks answers how many blocks it will break: the stone only (the bedrock is unbreakable, the third cell is air).
++blocks = [{ x = 2, y = 78, z = 1, state = "minecraft:stone" }, { x = 3, y = 78, z = 1, state = "minecraft:bedrock" }]
++use-block = { pos = [1, 78, 1] }
++ticks = 1
++expect.broken = ["3 with minecraft:diamond_pickaxe silk=true fortune=0"]
++expect.menu-text = ["minecraft:overworld 1 78 1 breaks 1"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 97e08adee..f32f8e269 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -763,6 +763,12 @@ interface %world {
+     /// with the entity. Made after this call returns; nothing happens for a
+     /// block that is not a mod's block entity. API 24.
+     set-capabilities-enabled: func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>;
++    /// Breaks up to 4096 blocks as a player holding `tool` would (the Meka-Tool's vein mining and blasting; FORK-34's `mine-block` for many
++    /// blocks): each loaded block that is not air, a fluid or unbreakable (negative hardness; bedrock, barriers, portals, command blocks)
++    /// is replaced by air and its drops, worked out with the tool (`silk-touch`, `fortune` 0 to 3 as its enchantments), fall at its place.
++    /// Returns how many blocks it will break, counted at the call; they are broken after the call returns. The tool is not worn, no
++    /// experience is given, and protection (spawn, adventure mode) is not asked: the mod checks what it needs. API 39.
++    break-blocks: func(dimension: string, positions: list<tuple<s32, s32, s32>>, tool: string, silk-touch: bool, fortune: u32) -> result<u32, string>;
+     /// Sets the signal a comparator reads from the mod's block entity at the position, 0 to 15 (`getAnalogOutputSignal`: Mekanism's tanks,
+     /// bins and multiblock valves give the fill level), instead of the one its container gives; the comparators around are told. Kept with
+     /// the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. A level past 15 is 15. API 38.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 5ecdf03ac..15f2d6beb 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 38;
++pub const LEVEL: u32 = 39;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 109] = [
++pub const FUNCTIONS: [(&str, u32); 110] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -103,6 +103,7 @@ pub const FUNCTIONS: [(&str, u32); 109] = [
+     ("world.set-capabilities-enabled", 24),
+     ("world.set-menu-text", 34),
+     ("world.set-comparator-output", 38),
++    ("world.break-blocks", 39),
+     ("world.block-hardness", 35),
+     ("world.spawn-particles", 26),
+     ("recipe-types.burn-time", 27),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 191dcf686..c9bf6c607 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -458,6 +458,8 @@ pub enum Output {
+     PackBlock { name: String, dimension: String, pos: [i32; 3], into: [i32; 3], replacement: Option<String> },
+     /// `world.unpack-block`: what the box at `box_pos` holds, back at `pos`.
+     UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
++    /// `world.break-blocks`: many blocks broken as a player holding a tool would.
++    BreakBlocks { name: String, dimension: String, positions: Vec<[i32; 3]>, tool: String, silk_touch: bool, fortune: u32 },
+     /// `world.set-comparator-output`: the signal a comparator reads from a block entity.
+     SetComparator { name: String, dimension: String, pos: [i32; 3], level: u8 },
+     /// `world.set-menu-text`: the strings the menu of a block entity carries (FORK-20).
+@@ -580,6 +582,10 @@ pub trait WorldView: std::any::Any + Send {
+     fn dropped_items(&self, _dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<(u32, ModItemStack, [f64; 3])> {
+         Vec::new()
+     }
++    /// Whether the block at a position is one `break-blocks` breaks: loaded, not air, not a fluid, not unbreakable.
++    fn breakable(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> bool {
++        false
++    }
+     /// The destroy time of the block at a position, `None` where no chunk of that dimension is loaded.
+     fn block_hardness(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<f32> {
+         None
+@@ -2655,6 +2661,28 @@ impl mod_world::Host for State {
+         self.out.push(Output::UnpackBlock { name: self.name.clone(), dimension, box_pos: [box_x, box_y, box_z], pos: [x, y, z] });
+         Ok(())
+     }
++    fn break_blocks(&mut self, dimension: String, positions: Vec<(i32, i32, i32)>, tool: String, silk_touch: bool, fortune: u32) -> Result<u32, String> {
++        if positions.len() > 4096 || tool.len() > 100 || fortune > 3 {
++            return Err("at most 4096 positions, a tool id and a fortune 0 to 3".into());
++        }
++        let made = self.out.iter().filter(|o| matches!(o, Output::BreakBlocks { .. })).count();
++        if made >= 16 {
++            return Err("at most 16 break-blocks a call".into());
++        }
++        let breakable = |p: &(i32, i32, i32)| {
++            self.world.lock().ok().and_then(|v| v.as_ref().map(|v| v.breakable(&dimension, p.0, p.1, p.2))).unwrap_or(false)
++        };
++        let count = positions.iter().filter(|p| breakable(p)).count() as u32;
++        self.out.push(Output::BreakBlocks {
++            name: self.name.clone(),
++            dimension,
++            positions: positions.into_iter().map(|p| [p.0, p.1, p.2]).collect(),
++            tool,
++            silk_touch,
++            fortune,
++        });
++        Ok(count)
++    }
+     fn set_comparator_output(&mut self, dimension: String, x: i32, y: i32, z: i32, level: u8) -> Result<(), String> {
+         let made = self.out.iter().filter(|o| matches!(o, Output::SetComparator { .. })).count();
+         if made >= BLOCKS_PER_CALL {
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 55f845cf6..b615006d5 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -145,6 +145,11 @@ impl crate::WorldView for ScriptWorld {
+     fn item_max_stack(&self, item: &str) -> Option<u32> {
+         self.3.get(item).copied()
+     }
++    fn breakable(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
++        let Some(name) = self.block(dimension, x, y, z) else { return false };
++        let base = name.split('[').next().unwrap_or("");
++        !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava" | "minecraft:bedrock") && self.block_hardness(dimension, x, y, z).is_some_and(|h| h >= 0.0)
++    }
+     fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, crate::ModItemStack, [f64; 3])> {
+         if dimension != "minecraft:overworld" {
+             return Vec::new();
+@@ -1494,6 +1499,8 @@ pub struct Expect {
+     sounds: Option<Vec<String>>,
+     /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (the coordinates with 3 decimals, name `-` for none).
+     mod_entities: Option<Vec<String>>,
++    /// Server mods: every `break-blocks`, as `"count with tool silk=bool fortune=n"`.
++    broken: Option<Vec<String>>,
+     /// Server mods: every `set-comparator-output`, as `"dimension x y z level"`.
+     comparator: Option<Vec<String>>,
+     /// Server mods (FORK-20): every `set-menu-text`, as `"dimension x y z text|text"`.
+@@ -2506,6 +2513,18 @@ impl Step {
+                 .collect();
+             same("mod-entities", want, &got)?;
+         }
++        if let Some(want) = &e.broken {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::BreakBlocks { positions, tool, silk_touch, fortune, .. } => {
++                        Some(format!("{} with {tool} silk={silk_touch} fortune={fortune}", positions.len()))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("broken", want, &got)?;
++        }
+         if let Some(want) = &e.comparator {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 4ef5eaf4d..e14b713ea 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 38);
++    assert_eq!(LEVEL, 39);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index c3911164b..6da553d97 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -735,6 +735,7 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
+ | `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
+ | `set-capabilities-enabled` | `func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>` | Closes or opens, for everything outside the block entity (hoppers and droppers, pipes, tubes and cables, other machines), the three kinds of capability it carries: its `items` container, its `fluids` (tanks) and its `energy`. A closed capability gives and takes nothing through any face, whatever the faces say; the contents, the faces and the mod's own reads and writes are untouched, so a structure that becomes valid again finds everything where it was. All three are open until closed. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. API 24. |
++| `break-blocks` | `func(dimension: string, positions: list<tuple<s32, s32, s32>>, tool: string, silk-touch: bool, fortune: u32) -> result<u32, string>` | Breaks up to 4096 blocks as a player holding `tool` would (the Meka-Tool's vein mining and blasting; FORK-34's `mine-block` for many blocks): each loaded block that is not air, a fluid or unbreakable (negative hardness; bedrock, barriers, portals, command blocks) is replaced by air and its drops, worked out with the tool (`silk-touch`, `fortune` 0 to 3 as its enchantments), fall at its place. Returns how many blocks it will break, counted at the call; they are broken after the call returns. The tool is not worn, no experience is given, and protection (spawn, adventure mode) is not asked: the mod checks what it needs. API 39. |
+ | `set-comparator-output` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8) -> result<_, string>` | Sets the signal a comparator reads from the mod's block entity at the position, 0 to 15 (`getAnalogOutputSignal`: Mekanism's tanks, bins and multiblock valves give the fill level), instead of the one its container gives; the comparators around are told. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. A level past 15 is 15. API 38. |
+ | `block-hardness` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>` | The block's destroy time (`BlockBehaviour.defaultDestroyTime`, what a pickaxe's speed is divided into; 0 for air and plants, 1.5 for stone, 50 for obsidian), negative for what cannot be broken (bedrock is -1); none where no chunk of the dimension is loaded. A mod that bills energy by hardness (the Laser Tractor Beam, 100 000 J a point) reads it. API 35. |
+ | `set-menu-text` | `func(dimension: string, x: s32, y: s32, z: s32, texts: list<string>) -> result<_, string>` | Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block entity. An error for more than 64 strings or one over 256 bytes. API 34. |
+-- 
+2.43.0
+
