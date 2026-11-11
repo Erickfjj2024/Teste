@@ -200,14 +200,16 @@ pub mod server {
         Some(MenuInput { pos: BlockPos { x: int(0)?, y: int(4)?, z: int(8)? }, id: int(12)?, text: String::from_utf8(data.get(16..)?.to_vec()).ok()? })
     }
   }
-  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String> }
-  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String>, pub menu_data: Vec<i32> }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>> }
   pub trait ServerMod: Sized {
     fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool { false }
     fn entities_tick(&mut self, tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> { Vec::new() }
     fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool { false }
     fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }
     fn mod_entity_died(&mut self, entity: ModEntity) {}
+    fn entity_menu_button(&mut self, player: &Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> { None }
+    fn entity_menu_taken(&mut self, player: &Player, entity: ModEntity, slot: u32, stack: ItemStack) -> Option<ModEntityUpdate> { None }
     fn init() -> Result<(Self, Registration), String>;
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {}
     fn tick(&mut self, tick: u64) {}

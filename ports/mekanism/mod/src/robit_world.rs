@@ -413,6 +413,8 @@ fn update(e: &ModEntity, f: impl FnOnce(&mut ModEntityUpdate)) -> ModEntityUpdat
         stop: false,
         health: Some(robit::MAX_HEALTH),
         remove: false,
+        menu_data: None,
+        menu_text: None,
     };
     f(&mut u);
     u
