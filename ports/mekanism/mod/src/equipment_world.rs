@@ -241,6 +241,7 @@ impl Mekanism {
             });
             // The player's body (API 29): what the nutrition, the geothermal unit and the jetpack read.
             let state = player_control::get_state(&p.id);
+            let mut glider: Option<bool> = None;
             let playing = p.game_mode != GameMode::Creative && p.game_mode != GameMode::Spectator;
             if let Some(st) = &state {
                 // Nutritional injection: only in playing mode and when the player can eat (`canEat(false)`: food below 20).
@@ -341,16 +342,35 @@ impl Mekanism {
                 if velocity_changed {
                     let _ = player_control::set_motion(&p.id, velocity[0], velocity[1], velocity[2]);
                 }
+                // The Elytra Unit (`canElytraFly`, `elytraFlightTick`): the chestplate carries `minecraft:glider` while it can fly, and while the player glides
+                // it takes its energy every 20 flight ticks.
+                if let Some(body) = pieces[mekasuit::ArmorSlot::Chest as usize].as_mut() {
+                    let can = mekasuit::can_elytra_fly(body, &move_input);
+                    glider = Some(can);
+                    if st.fall_flying && can {
+                        let ticks = self.glide_ticks.entry(p.id.clone()).or_insert(0);
+                        let (_, _) = mekasuit::tick_elytra(body, *ticks, &move_input);
+                        *ticks += 1;
+                    } else {
+                        self.glide_ticks.remove(&p.id);
+                    }
+                }
             }
             // Charge distribution among the pieces (inventory items' charge needs their energy, not readable yet: 0).
             mekasuit::tick_charge_distribution(&mut pieces, 0);
 
             for i in 0..4 {
-                if pieces[i] == before[i] {
+                let (Some(piece), Some(original)) = (pieces[i].as_ref(), originals[i].as_ref()) else { continue };
+                let mut components = if pieces[i] == before[i] { original.components.clone() } else { piece.encode(&original.components) };
+                if i == mekasuit::ArmorSlot::Chest as usize
+                    && let Some(want) = glider
+                {
+                    components = set_glider(&components, want);
+                }
+                if components == original.components {
                     continue;
                 }
-                let (Some(piece), Some(original)) = (pieces[i].as_ref(), originals[i].as_ref()) else { continue };
-                let replacement = ItemStack { item: original.item.clone(), count: original.count, components: piece.encode(&original.components) };
+                let replacement = ItemStack { item: original.item.clone(), count: original.count, components };
                 let _ = player_items::compare_and_set_slot(&p.id, slots[i] as u32, Some(original), Some(&replacement));
             }
         }
@@ -525,6 +545,20 @@ impl Mekanism {
         let replacement = ItemStack { item: stack.item.clone(), count: stack.count, components: written };
         let _ = player_items::compare_and_set_slot(&player.id, slot, Some(&current), Some(&replacement));
     }
+}
+
+/// The components with `minecraft:glider` there (the stack glides as an elytra does, `LivingEntity.canGlideUsing`) or taken away.
+pub fn set_glider(components: &str, on: bool) -> String {
+    let has = crate::config::split_components(components).is_some_and(|e| e.iter().any(|(k, _)| k == "minecraft:glider"));
+    if on {
+        return if has { components.to_owned() } else { with_component(components, "minecraft:glider", "{}") };
+    }
+    if !has {
+        return components.to_owned();
+    }
+    let entries = crate::config::split_components(components).unwrap_or_default();
+    let kept: Vec<String> = entries.iter().filter(|(k, _)| k != "minecraft:glider").map(|(k, r)| format!("\"{k}\":{}", &components[r.clone()])).collect();
+    format!("{{{}}}", kept.join(","))
 }
 
 /// The components with `key` set to `value` (SNBT text of the value), the rest byte-for-byte; the key is added when it is not there.
@@ -703,5 +737,15 @@ mod tests {
         assert_eq!(lines[1].2, "");
         assert_eq!(lines[4].0, "mekanism:suit_jetpack");
         assert_eq!(lines[4].2, "");
+    }
+
+    #[test]
+    fn the_glider_component_comes_and_goes() {
+        assert_eq!(set_glider("", true), r#"{"minecraft:glider":{}}"#);
+        assert_eq!(set_glider(r#"{"minecraft:damage":3}"#, true), r#"{"minecraft:damage":3,"minecraft:glider":{}}"#);
+        assert_eq!(set_glider(r#"{"minecraft:glider":{}}"#, true), r#"{"minecraft:glider":{}}"#);
+        assert_eq!(set_glider(r#"{"minecraft:damage":3,"minecraft:glider":{}}"#, false), r#"{"minecraft:damage":3}"#);
+        assert_eq!(set_glider(r#"{"minecraft:glider":{}}"#, false), "{}");
+        assert_eq!(set_glider(r#"{"minecraft:damage":3}"#, false), r#"{"minecraft:damage":3}"#);
     }
 }

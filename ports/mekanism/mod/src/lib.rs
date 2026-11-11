@@ -479,6 +479,8 @@ struct Mekanism {
     turbine_buttons: Vec<(String, [i32; 3])>,
     /// The HUD line each player last got, by line id: its text and bar, so only changes are sent.
     hud_sent: HashMap<(String, String), (String, i32)>,
+    /// How many ticks each player has glided in a row (`elytraFlightTick`'s counter).
+    glide_ticks: HashMap<String, u32>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -2265,6 +2267,7 @@ impl ServerMod for Mekanism {
             laser_texts: Vec::new(),
             turbine_buttons: Vec::new(),
             hud_sent: HashMap::new(),
+            glide_ticks: HashMap::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
