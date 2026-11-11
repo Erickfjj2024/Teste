@@ -7,8 +7,9 @@ use crate::process::Tank;
 pub const BUCKET: u64 = 1000;
 
 /// `ContainerEditMode`: what a fluid tank lets be done with it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EditMode {
+    #[default]
     Both = 0,
     Fill = 1,
     Empty = 2,

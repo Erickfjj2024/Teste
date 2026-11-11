@@ -492,6 +492,7 @@ struct Mekanism {
     laser_texts: Vec<(String, BlockPos, i32, String)>,
     /// The steam mode presses on the turbine screens: dimension and the structure's minimum corner.
     turbine_buttons: Vec<(String, [i32; 3])>,
+    dynamic_buttons: Vec<(String, [i32; 3], i32)>,
     /// The HUD line each player last got, by line id: its text and bar, so only changes are sent.
     hud_sent: HashMap<(String, String), (String, i32)>,
     /// How many ticks each player has glided in a row (`elytraFlightTick`'s counter).
@@ -2310,6 +2311,7 @@ impl ServerMod for Mekanism {
             laser_buttons: Vec::new(),
             laser_texts: Vec::new(),
             turbine_buttons: Vec::new(),
+            dynamic_buttons: Vec::new(),
             hud_sent: HashMap::new(),
             glide_ticks: HashMap::new(),
             robit_damage: HashMap::new(),
@@ -2848,6 +2850,12 @@ impl ServerMod for Mekanism {
         if turbine::part_of(&e.state).is_some() && id == turbine::BUTTON_DUMP_MODE {
             if let Some((found, _)) = turbine::decode(&e.data) {
                 self.turbine_buttons.push((e.dimension.clone(), found.min));
+            }
+            return None;
+        }
+        if block == dynamic::VALVE && matches!(id, plus::EDIT_MODE | 5101) {
+            if let Some(found) = dynamic::decode(&e.data).filter(|f| f.valid) {
+                self.dynamic_buttons.push((e.dimension.clone(), found.min, id));
             }
             return None;
         }

@@ -139,6 +139,8 @@ pub struct Shared {
     pub chemical: process::Tank,
     /// What each valve was last given.
     pub given: HashMap<[i32; 3], (u64, u64)>,
+    /// `GuiContainerEditModeTab`: what the buckets in the valves' slots may do with the tank.
+    pub edit: tank::EditMode,
 }
 
 impl Mekanism {
@@ -201,11 +203,17 @@ impl Mekanism {
             }
         }
         let mut out = Vec::new();
+        let buttons = std::mem::take(&mut self.dynamic_buttons);
         for (key, group) in by {
             let volume = decode(&group[0].data).map_or(0, |f| f.volume);
             let fluid_cap = volume * FLUID_PER_BLOCK;
             let chem_cap = volume * CHEMICAL_PER_BLOCK;
             let shared = self.dynamic.entry(key.clone()).or_default();
+            for (dimension, min, id) in &buttons {
+                if *dimension == key.0 && *min == key.1 {
+                    shared.edit = if *id == plus::EDIT_MODE { shared.edit.next() } else { shared.edit.previous() };
+                }
+            }
             let fresh = shared.given.is_empty();
             let held = |v: &BlockEntity, i: usize| v.tanks.get(i).map_or(0, |t| t.amount);
             // After a load nothing was given yet: the structure holds what its valves do.
@@ -260,7 +268,7 @@ impl Mekanism {
                 let slot = |i: usize| stack(v.items.get(i).unwrap_or(&None));
                 let (mut i0, mut o1) = (slot(0), slot(1));
                 let mut f = shared.fluid.clone();
-                if tank::buckets(&mut i0, &mut o1, &mut f, fluid_cap, tank::EditMode::Both) {
+                if tank::buckets(&mut i0, &mut o1, &mut f, fluid_cap, shared.edit) {
                     shared.fluid = f;
                     valve_items.insert([v.pos.x, v.pos.y, v.pos.z], vec![item(&i0), item(&o1)]);
                 }
@@ -278,7 +286,13 @@ impl Mekanism {
                 let p = [v.pos.x, v.pos.y, v.pos.z];
                 let items = valve_items.remove(&p);
                 let shown_cap = if chemical.amount > 0 { chem_cap } else if fluid.amount > 0 { fluid_cap } else { chem_cap };
-                let data = dynamic_menu(&v.data, &tanks[0], &tanks[1], shown_cap);
+                let data = dynamic_menu(&tanks[0], &tanks[1], shown_cap, shared.edit);
+                let texts = screen_texts(&tanks[0], &tanks[1], shown_cap);
+                let tkey = (v.dimension.clone(), v.pos.x, v.pos.y, v.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&v.dimension, v.pos.x, v.pos.y, v.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts);
+                }
                 // FORK-31: the one valve with the least position draws the fluid inside the casing; the byte after it says how full the tank is.
                 let draws = group.iter().all(|o| (o.pos.x, o.pos.y, o.pos.z) >= (v.pos.x, v.pos.y, v.pos.z));
                 let shown_amount = if chemical.amount > 0 { chemical.amount } else { fluid.amount };
@@ -321,27 +335,60 @@ fn f_or(tanks: &[Tank], i: usize) -> Tank {
     tanks[i].clone()
 }
 
-/// The screen's numbers: the amount and the capacity in buckets (low and high halves each), the chemical's number, the volume (halves).
-pub fn dynamic_menu(structure: &[u8], tank: &Tank, chemical_tank: &Tank, cap: u64) -> Vec<i32> {
+/// The screen's numbers: the amount and the capacity in millibuckets (low and high halves each), the chemical's number and the edit mode.
+pub fn dynamic_menu(tank: &Tank, chemical_tank: &Tank, cap: u64, edit: tank::EditMode) -> Vec<i32> {
     let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
     let (shown, name) = if chemical_tank.amount > 0 { (chemical_tank, &chemical_tank.substance) } else { (tank, &tank.substance) };
-    let buckets = shown.amount / 1000;
-    let cap_b = cap / 1000;
-    let volume = decode(structure).map_or(0, |f| f.volume);
     vec![
-        half(buckets, 0),
-        half(buckets, 16),
+        half(shown.amount, 0),
+        half(shown.amount, 16),
         if shown.amount == 0 { 0 } else { chem::index(name) },
-        half(cap_b, 0),
-        half(cap_b, 16),
-        half(volume, 0),
-        half(volume, 16),
+        half(cap, 0),
+        half(cap, 16),
+        edit as i32,
     ]
+}
+
+/// The name of a fluid or a chemical as the screen writes it (`Hydrogen Chloride` for `mekanism:hydrogen_chloride`).
+pub fn display_name(id: &str) -> String {
+    let path = id.rsplit(':').next().unwrap_or(id);
+    path.split('_')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The inner screen's lines (`GuiDynamicTank`): the name and the amount (or "Empty"), then "Capacity:" and the capacity, in mB.
+pub fn screen_texts(tank: &Tank, chemical_tank: &Tank, cap: u64) -> Vec<String> {
+    let shown = if chemical_tank.amount > 0 { chemical_tank } else { tank };
+    let mut lines = Vec::new();
+    if shown.amount == 0 {
+        lines.push("Empty".to_owned());
+    } else {
+        lines.push(format!("{}:", display_name(&shown.substance)));
+        lines.push(format!("{} mB", boiler::thousands(shown.amount)));
+    }
+    lines.push("Capacity:".to_owned());
+    lines.push(format!("{} mB", boiler::thousands(cap)));
+    lines.resize(4, String::new());
+    lines
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_inner_screen_writes_the_name_the_amount_and_the_capacity_in_mb() {
+        let water = Tank { substance: "minecraft:water".into(), amount: 12_345 };
+        assert_eq!(screen_texts(&water, &Tank::default(), 16_000), ["Water:", "12,345 mB", "Capacity:", "16,000 mB"]);
+        assert_eq!(screen_texts(&Tank::default(), &Tank::default(), 16_000), ["Empty", "Capacity:", "16,000 mB", ""]);
+        let gas = Tank { substance: "mekanism:hydrogen_chloride".into(), amount: 1 };
+        assert_eq!(screen_texts(&water, &gas, 8_000)[0], "Hydrogen Chloride:");
+    }
 
     /// A hollow 3x3x3 box of casing with a valve in the middle of its top face.
     fn shell(n: i32) -> Vec<([i32; 3], bool)> {

@@ -1833,7 +1833,7 @@ def personal_storage_menu(m):
             panel.paste(slot, (7 + 18 * x, 17 + 18 * y))
     texture = save_gui(panel, m)
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
-    widgets = [{'type': 'text', 'x': 8, 'y': 6, 'text': title, 'color': '#404040'},
+    widgets = [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
                {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
                {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
     slots = [[8 + x * 18, 18 + y * 18] for y in range(6) for x in range(9)]
@@ -1917,26 +1917,39 @@ def modification_station_menu(m):
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
 def dynamic_valve_menu(m):
-    """GuiDynamicTank: the structure's tank in a wide gauge, its bucket slots at 146, 19 and 146, 51, and what it holds, its capacity and its volume."""
-    def frames(panel):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 66, 50, 2), (48, 18))
-        for x, y, overlay in ((146, 19, 'slot/overlay/input'), (146, 51, 'slot/overlay/output')):
-            panel.alpha_composite(gui_sprite('slot/input' if overlay.endswith('input') else 'slot/output'), (x - 1, y - 1))
-            panel.alpha_composite(gui_sprite(overlay), (x - 1, y - 1))
-    texture = tank_panel(m, None, [frames])
+    """GuiDynamicTank (176 by 166): the armor holder at the left, the element holder at 141, 16 (26 by 56) with the two bucket slots at 146, 21 (input or drain) and
+    146, 51 (output or fill) and a down arrow between them (150, 39), the inner screen at 49, 21 (84 by 46: what it holds in mB, then the capacity, the screen's strings
+    0 to 3 from `dynamic.rs::screen_texts`), the medium gauge at 7, 16 (34 by 56) and the edit mode tab at 176, 138. Numbers (`dynamic.rs::dynamic_menu`): 0-1 the amount in mB,
+    2 the chemical, 3-4 the capacity, 5 the edit mode. **Not in the port:** the security and the warning tabs."""
+    width, height = 176, 166
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 34, 56, 2), (7, 16))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 84, 46, 3), (49, 21))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 26, 56, 2), (141, 16))
+    for y, kind in ((21, 'input'), (51, 'output')):
+        panel.alpha_composite(gui_sprite(f'slot/{kind}'), (145, y - 1))
+        panel.alpha_composite(gui_sprite(f'slot/overlay/{kind}'), (145, y - 1))
+    panel.alpha_composite(gui_sprite('arrow/down'), (150, 39))
+    texture = save_gui(panel, m)
     title = 'Dynamic Tank'
     widgets = [
-        {'type': 'gauge', 'x': 49, 'y': 19, 'w': 64, 'h': 48, 'value': {'pair': [0, 1]}, 'max': {'pair': [3, 4]}, 'kind': {'data': 2},
-         'types': GAUGE_TYPES, 'tooltip': '{label}: {value} B', 'empty': 'Empty'},
-        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/wide', 'gauge_overlay_wide'), 'x': 49, 'y': 19, 'w': 64, 'h': 48},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 20, 'text': '{0+1} B', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 8, 'y': 30, 'text': 'of {3+4}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 8, 'y': 40, 'text': 'Volume {5+6}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.86', 'color': '#808080'}]
-    return {'slots': 2, 'data_slots': 7, 'results': [1],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
+        {'type': 'sprite', 'texture': armor_holder_left(), 'x': -26, 'y': 62, 'w': 26, 'h': 98},
+        {'type': 'gauge', 'x': 8, 'y': 17, 'w': 32, 'h': 54, 'value': {'pair': [0, 1]}, 'max': {'pair': [3, 4]}, 'kind': {'data': 2},
+         'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 8, 'y': 17, 'w': 32, 'h': 54},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+    for k in range(4):
+        widgets.append({'type': 'text', 'x': 52, 'y': 24 + 10 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A'})
+    # GuiContainerEditModeTab
+    for k, mode in enumerate(['both', 'fill', 'empty']):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': k}}, 'widgets': [
+            {'type': 'sprite', 'texture': edit_mode_tab(mode), 'x': 176, 'y': 138, 'w': 26, 'h': 18}]})
+    widgets.append({'type': 'button', 'x': 176, 'y': 138, 'w': 26, 'h': 18, 'id': 5100, 'alt_id': 5101, 'tooltip': 'Fill and empty / fill only / empty only'})
+    return {'slots': 2, 'data_slots': 6, 'results': [1], 'armor': ARMOR_LEFT,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 21], [146, 51]], 'widgets': widgets,
+                       'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y}}
 
 def evaporation_menu(m):
     """GuiThermalEvaporationController (196 by 166): the fluid gauges at 6, 13 (input) and 172, 13 (output), the bucket slots at 28, 20 / 28, 51 and 152, 20 /
@@ -2823,16 +2836,14 @@ def pump_menu(m):
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
         {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
-        {'type': 'text', 'x': 58, 'y': 27, 'text': '{16} mB', 'color': '#00CD00'},
-        {'type': 'text', 'x': 58, 'y': 38, 'text': 'Status {5}', 'color': '#00CD00'},
-        {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
-        {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
+        ]
+    # GuiInnerScreen: the energy, for the plenisher whether it is finished, and the fluid (`pump.rs::screen_texts`); the pumps have no side configuration
+    for k in range(3 if m == 'fluidic_plenisher' else 2):
+        widgets.append({'type': 'text', 'x': 57, 'y': 26 + 9 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A'})
     widgets += redstone_widgets(24) + energy_tab_widgets(24, MACHINE_USAGE[m])
-    window = {'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H, 'texture': window_tex,
-              'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 24 + 15)}
     return with_upgrades({'slots': 3, 'data_slots': 24 + 3, 'results': [1],
                           'screen': {'texture': texture, 'own_labels': True, 'slots': [[28, 20], [28, 51], [143, 35]],
-                                     'widgets': widgets, 'windows': [window]}}, m, 3, 24)
+                                     'widgets': widgets}}, m, 3, 24)
 
 put(f'{OUT}/data/{NS}/horizon/menu/dynamic_valve.json', dynamic_valve_menu('dynamic_valve'))
 put(f'{OUT}/data/{NS}/horizon/menu/formulaic_assemblicator.json', assemblicator_menu('formulaic_assemblicator'))

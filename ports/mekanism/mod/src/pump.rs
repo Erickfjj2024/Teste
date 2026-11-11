@@ -81,6 +81,22 @@ pub fn spread(p: (i32, i32, i32)) -> [(i32, i32, i32); 5] {
     [(p.0, p.1 - 1, p.2), (p.0 - 1, p.1, p.2), (p.0 + 1, p.1, p.2), (p.0, p.1, p.2 - 1), (p.0, p.1, p.2 + 1)]
 }
 
+/// The inner screen's lines (`GuiElectricPump`, `GuiFluidicPlenisher`): the energy over the capacity, for the plenisher whether it is finished,
+/// and the fluid it holds in mB (or "No fluid").
+pub fn screen_texts(plenisher: bool, energy: u64, capacity: u64, finished: bool, tank: &process::Tank) -> Vec<String> {
+    let f = crate::laser::format_energy;
+    let mut lines = vec![format!("{}/{}", f(energy), f(capacity))];
+    if plenisher {
+        lines.push(format!("Finished: {}", if finished { "Yes" } else { "No" }));
+    }
+    lines.push(if tank.amount == 0 {
+        "No fluid".to_owned()
+    } else {
+        format!("{}: {} mB", dynamic::display_name(&tank.chemical), boiler::thousands(tank.amount))
+    });
+    lines
+}
+
 impl Mekanism {
     /// One operation of a plenisher: fills the next node with a bucket of the tank's fluid (the search runs first, then only the
     /// block below is refilled). Whether a bucket was spent.
@@ -301,6 +317,12 @@ impl Mekanism {
         let energy_faces = dirty.then(|| self.apply_config(e, layout, &facing, &cfg));
         let mut data = menu_data(operating, energy, capacity, status, &cfg);
         data.extend(chem::screen(&tank));
+        let finished = self.plenishers.get(&key).is_some_and(|st| st.done);
+        let texts = screen_texts(def.form == 1, energy, capacity, finished, &tank);
+        if self.menu_texts.get(&key) != Some(&texts) {
+            let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+            self.menu_texts.insert(key.clone(), texts);
+        }
         let control = Control::from_byte(e.data.get(redstone::offset(def.kind)).copied().unwrap_or(0));
         let mut saved = machine_data(operating, &cfg);
         let shown = (ticks, self.install.get(&key).copied().unwrap_or(0), counts, if active { usage } else { 0 });
@@ -330,6 +352,16 @@ impl Mekanism {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_inner_screen_shows_the_energy_the_fluid_and_for_the_plenisher_whether_it_is_done() {
+        let water = process::Tank { chemical: "minecraft:water".into(), amount: 3_000 };
+        let pump = screen_texts(false, 0, 0, false, &water);
+        assert_eq!(pump.len(), 2);
+        assert_eq!(pump[1], "Water: 3,000 mB");
+        let plenisher = screen_texts(true, 0, 0, true, &process::Tank::default());
+        assert_eq!(plenisher[1..], ["Finished: Yes", "No fluid"]);
+    }
 
     #[test]
     fn only_sources_are_taken() {
