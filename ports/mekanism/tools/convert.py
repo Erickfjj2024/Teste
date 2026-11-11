@@ -2017,7 +2017,7 @@ def boiler_valve_menu(m):
     fill = None
     rate_img = find('gui/bar/vertical_rate.png', ASSET_DIRS)
     if rate_img:
-        fill = save_gui(Image.open(rate_img).convert('RGBA').crop((8, 0, 14, 58)), 'bar_vertical_rate')
+        fill = save_gui(Image.open(rate_img).convert('RGBA'), 'bar_vertical_rate')
     widgets = []
     for x, tank in order:
         widgets.append({'type': 'gauge', 'x': x + 1, 'y': 14, 'w': 16, 'h': 58, 'value': {'pair': [4 * tank, 4 * tank + 1]}, 'max': {'pair': [4 * tank + 2, 4 * tank + 3]},
@@ -2041,34 +2041,57 @@ def boiler_valve_menu(m):
                        'widgets': widgets}}
 
 def turbine_valve_menu(m):
-    """GuiIndustrialTurbine (simplified): the energy bar, the steam gauge and what the turbine is made of and does."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    """GuiIndustrialTurbine (190 by 166): the steam gauge (the medium one, 32 wide) at 6, 13, the steam input rate bar at 40, 13, the inner screen at 50, 18
+    (126 by 50: the production, the flow, the capacity and the largest flow, the screen's strings 0 to 3 from `turbine.rs::screen_texts`), the energy bar at
+    178, 16, the steam mode button (`GuiGasMode`, 173, 72: idle, dumping excess, dumping), the energy tab (storing and producing), the title at y 5 and the
+    player's inventory 7 to the right of the usual place. Numbers (`turbine.rs`): 0-5 energy and its capacity (three 16-bit parts), 6-9 steam and its capacity,
+    10 what the gauge holds, 11 what it produces now, 12 the most, 13 flow, 14 the largest flow, 15 dispersers, 16 vents, 17 blades, 18 coils, 19 condensers,
+    20 blades the coils can use, 21 steam mode, 22 the input rate over the largest flow in thousandths, 23 the energy over its capacity in thousandths,
+    24 the energy in thousands. **Not in the port:** the turbine's second page (`GuiTurbineStats`, the tab on the right) and the warning tab."""
+    from PIL import Image
+    width, height = 190, 166
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
+    inv_x = 15
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+            panel.paste(slot, (inv_x - 1 + 18 * col, 83 + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 12, 1), (7, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 26, 50, 2), (143, 30))
-    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 130, 50, 3), (7, 30))
+        panel.paste(slot, (inv_x - 1 + 18 * col, 141))
+    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 34, 60, 2), (6, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 58, 1), (40, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 126, 50, 3), (50, 18))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 4, 52, 1), (178, 16))
     texture = save_gui(panel, m)
     title = 'Industrial Turbine'
+    rate_img = find('gui/bar/vertical_rate.png', ASSET_DIRS)
+    fill = save_gui(Image.open(rate_img).convert('RGBA'), 'bar_vertical_rate') if rate_img else None
+    modes = [save_gui(Image.open(find(f'gui/gas_mode_{n}.png', ASSET_DIRS)).convert('RGBA'), f'gas_mode_{n}') for n in ('idle', 'excess', 'dump')]
+    tips = ['Steam mode: idle', 'Dumping excess Steam\nWater will NOT be recycled', 'Dumping Steam\nWater will NOT be recycled']
     widgets = [
-        {'type': 'sprite', 'texture': power_h_fill, 'x': 8, 'y': 18, 'w': 160, 'h': 10, 'value': {'pair': [0, 1]}, 'max': {'pair': [3, 4]},
-         'direction': 'right', 'tooltip': 'Energy: {value} / {max} FE'},
-        {'type': 'gauge', 'x': 144, 'y': 31, 'w': 24, 'h': 48, 'value': {'pair': [6, 7]}, 'max': {'pair': [8, 9]}, 'kind': {'data': 10},
+        {'type': 'gauge', 'x': 7, 'y': 14, 'w': 32, 'h': 58, 'value': {'pair': [6, 7]}, 'max': {'pair': [8, 9]}, 'kind': {'data': 10},
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 10, 'y': 33, 'text': 'Production {11}/{12}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 10, 'y': 42, 'text': 'Flow {13}/{14}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 10, 'y': 51, 'text': 'Blades {17}  Coils {18}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 10, 'y': 60, 'text': 'Vents {16}  Condensers {19}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 10, 'y': 69, 'text': 'Dispersers {15}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    return {'slots': 1, 'data_slots': 21,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 7, 'y': 14, 'w': 32, 'h': 58},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 144, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+    for k in range(4):
+        widgets.append({'type': 'text', 'x': 53, 'y': 21 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 85})
+    if fill:
+        widgets.append({'type': 'sprite', 'texture': fill, 'x': 41, 'y': 14, 'w': 6, 'h': 58, 'value': {'data': 22}, 'max': {'const': 1000}, 'direction': 'up',
+                        'tooltip': 'Steam Input: {last} mB/t'.replace('{last}', '{22}')})
+    widgets += [
+        {'type': 'sprite', 'texture': power_fill, 'x': 179, 'y': 17, 'w': 4, 'h': 52, 'value': {'data': 23}, 'max': {'const': 1000}, 'direction': 'up',
+         'tooltip': 'Energy: {24} kFE'},
+        {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {24} kFE\nProducing: {11} FE/t\nUnit: Forge Energy'}]
+    for k in range(3):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 21}, 'eq': k}}, 'widgets': [
+            {'type': 'sprite', 'texture': modes[k], 'x': 173, 'y': 72, 'w': 10, 'h': 10},
+            {'type': 'button', 'x': 173, 'y': 72, 'w': 10, 'h': 10, 'id': 7400, 'tooltip': tips[k]}]})
+    return {'slots': 1, 'data_slots': 25,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
+                       'widgets': widgets}}
 
 def fission_port_menu(m):
     """GuiFissionReactor (simplified): fuel, coolant, heated coolant and waste gauges, the burn rate with its buttons, and the on/off button."""

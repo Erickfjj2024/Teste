@@ -630,3 +630,7 @@ block-hardness: func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>; 
 // ---- Oredictionificator: resultado do filtro (mekanism/oredictionificator.rs) ----
 // O filtro novo (digitado no campo de texto, FORK-20 parte 2) escolhe o resultado entre os itens da tag (getPossibleFilters / FilterButton).
 // recipe-types.item-tag-members: func(tag: string) -> list<string>;   // ids dos itens da tag de item, na ordem do jogo; vazio se a tag não existe
+
+// ---- FORK-20 parte 4: gráfico de linhas (GuiDoubleGraph do Mekanism: aquecimento do reator de fissão e de fusão) ----
+// widget graph { x, y, w, h, series: [{ value: data-ref, color }, ...], samples: 40, min-scale: number, tooltip }: o cliente guarda as últimas `samples` leituras de cada
+// série (uma por tick de tela) e desenha as linhas; a escala vai do menor ao maior valor guardado (no mínimo `min-scale`).

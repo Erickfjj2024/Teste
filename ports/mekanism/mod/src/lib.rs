@@ -475,6 +475,8 @@ struct Mekanism {
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
     laser_texts: Vec<(String, BlockPos, i32, String)>,
+    /// The steam mode presses on the turbine screens: dimension and the structure's minimum corner.
+    turbine_buttons: Vec<(String, [i32; 3])>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -2259,6 +2261,7 @@ impl ServerMod for Mekanism {
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
             laser_texts: Vec::new(),
+            turbine_buttons: Vec::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
@@ -2713,6 +2716,12 @@ impl ServerMod for Mekanism {
         }
         if block == sorter::SORTER {
             self.sorter_buttons.push((e.dimension.clone(), e.pos, id));
+            return None;
+        }
+        if turbine::part_of(&e.state).is_some() && id == turbine::BUTTON_DUMP_MODE {
+            if let Some((found, _)) = turbine::decode(&e.data) {
+                self.turbine_buttons.push((e.dimension.clone(), found.min));
+            }
             return None;
         }
         if block == laser::AMPLIFIER {

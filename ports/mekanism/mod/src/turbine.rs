@@ -189,6 +189,11 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
 }
 
 pub fn encode(f: &Found, energy: u64) -> Vec<u8> {
+    encode_with_dump(f, energy, 0)
+}
+
+/// The same with the steam mode at the end (kept with the structure).
+pub fn encode_with_dump(f: &Found, energy: u64, dump: u8) -> Vec<u8> {
     let mut out = vec![u8::from(f.valid)];
     for c in f.min {
         out.extend(c.to_le_bytes());
@@ -197,7 +202,13 @@ pub fn encode(f: &Found, energy: u64) -> Vec<u8> {
         out.extend(v.to_le_bytes());
     }
     out.extend(energy.to_le_bytes());
+    out.push(dump);
     out
+}
+
+/// The steam mode kept with the structure (0 when there is none).
+pub fn decode_dump(data: &[u8]) -> u8 {
+    data.get(45).copied().unwrap_or(0) % 3
 }
 
 pub fn decode(data: &[u8]) -> Option<(Found, u64)> {
@@ -325,6 +336,42 @@ pub struct Turbine {
     pub energy_given: HashMap<[i32; 3], u64>,
     pub last: Tick,
     pub started: bool,
+    /// `GasMode` of the steam tank: 0 idle, 1 dumping excess, 2 dumping (`dumpMode`).
+    pub dump_mode: u8,
+    /// `lastSteamInput` (what came in the tick before) and `newSteamInput` (this tick's), in mB.
+    pub last_steam_input: u64,
+    pub new_steam_input: u64,
+}
+
+/// The button of the turbine screens' steam mode (`GuiGasMode`, 173, 72): the mode moves on to the next.
+pub const BUTTON_DUMP_MODE: i32 = 7400;
+
+/// `getDumpingAmount`: what a dumping turbine lets out of its steam tank in a tick.
+pub fn dumping_amount(stored: u64, last_input: u64) -> u64 {
+    stored.min((stored / 50).max(last_input.saturating_mul(2)))
+}
+
+/// What the steam tank loses to the dump mode in a tick (`TurbineMultiblockData.tick`): in `dumping` as much as `getDumpingAmount`; in `dumping excess`
+/// what is over `dumpExcessKeepRatio` (0.75) of the capacity, at most that much.
+pub fn dumped(mode: u8, stored: u64, capacity: u64, last_input: u64) -> u64 {
+    match mode {
+        2 => dumping_amount(stored, last_input),
+        1 => {
+            let target = (capacity as f64 * 0.75) as u64;
+            if target < stored { (stored - target).min(dumping_amount(stored, last_input)) } else { 0 }
+        }
+        _ => 0,
+    }
+}
+
+/// The lines of the inner screen (`GuiIndustrialTurbine`, only while it is formed): the production, the flow, the steam capacity and the largest flow.
+pub fn screen_texts(production_fe: u64, flow: u64, capacity: u64, max_flow: u64) -> Vec<String> {
+    vec![
+        format!("Production: {}", crate::laser::format_energy(production_fe)),
+        format!("Flow rate: {} mB/t", crate::boiler::thousands(flow)),
+        format!("Capacity: {} mB", crate::boiler::thousands(capacity)),
+        format!("Max flow: {} mB/t", crate::boiler::thousands(max_flow)),
+    ]
 }
 
 /// One request to put a blade on a rotor or take it off.
@@ -346,22 +393,22 @@ impl Mekanism {
             let found = validate(&members, min, max, |p| {
                 world::get_block(dimension, p[0], p[1], p[2]).is_none_or(|b| matches!(b.split('[').next().unwrap_or(""), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"))
             });
-            let keep = if let Some(t) = self.turbines.get_mut(&(dimension.to_owned(), found.min)) {
+            let (keep, keep_dump) = if let Some(t) = self.turbines.get_mut(&(dimension.to_owned(), found.min)) {
                 if !found.valid {
                     t.started = false;
                     t.steam_given.clear();
                     t.water_given.clear();
                     t.energy_given.clear();
                 }
-                t.energy
+                (t.energy, t.dump_mode)
             } else {
-                0
+                (0, 0)
             };
             for m in &s.members {
                 out.push(BlockEntityUpdate {
                     dimension: dimension.to_owned(),
                     pos: m.pos,
-                    data: encode(&found, keep),
+                    data: encode_with_dump(&found, keep, keep_dump),
                     items: None,
                     energy: None,
                     energy_faces: None,
@@ -378,6 +425,7 @@ impl Mekanism {
     /// A tick of the rotors, valves and vents of the turbines.
     pub(crate) fn run_turbine(&mut self, parts: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let mut out = Vec::new();
+        let presses = std::mem::take(&mut self.turbine_buttons);
         // The blades players put on and take off first.
         out.extend(self.blade_requests(parts));
         let blades_at: HashMap<(String, [i32; 3]), u32> = parts
@@ -399,12 +447,14 @@ impl Mekanism {
             let blades: u32 = group.iter().filter(|e| e.state.starts_with(ROTOR)).map(|e| blades_at.get(&(e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z])).copied().unwrap_or(0)).sum();
             let (steam_cap, water_cap, energy_cap) = (steam_capacity(&found), water_capacity(&found), energy_capacity(&found));
             let t = self.turbines.entry(key.clone()).or_default();
+            let mut dump_changed = false;
             if !t.started {
                 t.started = true;
                 t.steam_given.clear();
                 t.water_given.clear();
                 t.energy_given.clear();
                 t.energy = stored.min(energy_cap);
+                t.dump_mode = decode_dump(&group[0].data);
                 if let Some(best) = valves.iter().filter_map(|v| v.tanks.first()).max_by_key(|x| x.amount).filter(|x| x.amount > 0) {
                     t.steam = process::Tank { chemical: best.substance.clone(), amount: best.amount.min(steam_cap) };
                 }
@@ -417,6 +467,8 @@ impl Mekanism {
                 let (given, now): (Vec<u64>, Vec<u64>) = valves.iter().map(|v| (t.steam_given.get(&pos_of(v)).copied().unwrap_or(0), v.tanks.first().map_or(0, |x| x.amount))).unzip();
                 let before = t.steam.amount;
                 t.steam.amount = dynamic::merge(before, &given, &now, steam_cap);
+                t.last_steam_input = t.new_steam_input;
+                t.new_steam_input = t.steam.amount.saturating_sub(before);
                 if before == 0 && t.steam.amount > 0 {
                     t.steam.chemical = valves.iter().filter_map(|v| v.tanks.first()).find(|x| x.amount > 0).map(|x| x.substance.clone()).unwrap_or_default();
                 }
@@ -425,6 +477,10 @@ impl Mekanism {
                 // The valves' energy that was taken.
                 let taken: u64 = valves.iter().map(|v| t.energy_given.get(&pos_of(v)).copied().unwrap_or(0).saturating_sub(v.energy)).sum();
                 t.energy = t.energy.saturating_sub(taken);
+            }
+            for _ in presses.iter().filter(|(d, m)| *d == key.0 && *m == key.1) {
+                t.dump_mode = (t.dump_mode + 1) % 3;
+                dump_changed = true;
             }
             if t.steam.chemical != STEAM {
                 t.steam = process::Tank::default();
@@ -439,8 +495,15 @@ impl Mekanism {
                 t.water.chemical = WATER.to_owned();
                 t.water.amount += result.water;
             }
+            // `dumpMode`: the steam the tank lets out (`lastSteamInput` is what came in the tick before).
+            let gone = dumped(t.dump_mode, t.steam.amount, steam_cap, t.last_steam_input);
+            t.steam.amount -= gone;
+            if t.steam.amount == 0 {
+                t.steam.chemical.clear();
+            }
             t.last = result;
             let (steam, water, energy) = (t.steam.clone(), t.water.clone(), t.energy);
+            let (dump_mode, last_input) = (t.dump_mode, t.last_steam_input);
             // The energy is shared among the valves.
             let n = valves.len().max(1) as u64;
             let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
@@ -466,11 +529,23 @@ impl Mekanism {
                 found.coils as i32,
                 found.condensers as i32,
                 (blades as i32).min((found.coils * BLADES_PER_COIL) as i32),
+                i32::from(dump_mode),
+                (if max_flow(&found) > 0.0 { (last_input as f64 / max_flow(&found)).min(1.0) } else { 0.0 } * 1000.0) as i32,
+                (if energy_cap > 0 { (energy as f64 / energy_cap as f64).min(1.0) } else { 0.0 } * 1000.0) as i32,
+                (energy / 1000).min(i32::MAX as u64) as i32,
             ];
+            let texts = screen_texts(result.energy, result.flow, steam_cap, max_flow(&found) as u64);
+            for e in &group {
+                let tkey = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
+            }
             let mut index = 0u64;
             for e in &group {
                 let p = [e.pos.x, e.pos.y, e.pos.z];
-                let keep = if tick % 20 == 0 { encode(&found, energy) } else { e.data.clone() };
+                let keep = if tick % 20 == 0 || dump_changed { encode_with_dump(&found, energy, dump_mode) } else { e.data.clone() };
                 let mut update = BlockEntityUpdate {
                     dimension: e.dimension.clone(),
                     pos: e.pos,
@@ -750,5 +825,29 @@ mod tests {
         assert_eq!(redstone_level(100_000, 100_000), 15);
         assert_eq!(redstone_level(50_000, 100_000), 8);
         assert_eq!(redstone_level(1, 100_000), 1);
+    }
+
+    #[test]
+    fn the_steam_mode_lets_steam_out_as_the_turbine_does() {
+        assert_eq!(dumped(0, 1_000_000, 1_000_000, 0), 0);
+        // dumping: a fiftieth of what it holds, or twice what came in if that is more, at most all of it
+        assert_eq!(dumped(2, 1_000_000, 1_000_000, 0), 20_000);
+        assert_eq!(dumped(2, 1_000_000, 1_000_000, 50_000), 100_000);
+        assert_eq!(dumped(2, 100, 1_000_000, 0), 2);
+        assert_eq!(dumped(2, 10, 1_000_000, 100), 10);
+        // dumping excess: only what is over three quarters of the capacity
+        assert_eq!(dumped(1, 700_000, 1_000_000, 0), 0);
+        assert_eq!(dumped(1, 760_000, 1_000_000, 0), 10_000);
+        assert_eq!(dumped(1, 1_000_000, 1_000_000, 0), 20_000);
+        assert_eq!(dumped(1, 1_000_000, 1_000_000, 1_000_000), 250_000);
+    }
+
+    #[test]
+    fn the_mode_is_kept_with_the_structure() {
+        let f = Found { valid: true, ..Found::default() };
+        assert_eq!(decode_dump(&encode_with_dump(&f, 5, 2)), 2);
+        assert_eq!(decode_dump(&encode(&f, 5)), 0);
+        assert_eq!(decode(&encode_with_dump(&f, 5, 2)).map(|(_, e)| e), Some(5));
+        assert_eq!(screen_texts(2_000_000, 1500, 60_000, 4000)[1], "Flow rate: 1,500 mB/t");
     }
 }
