@@ -33,6 +33,7 @@ pub mod server {
     pub fn crafting_find(_a0: &Vec<Option<ItemStack>>) -> Option<CraftMatch> { None }
     pub fn crafting_matches<A0>(_a0: A0, _a1: &Vec<Option<ItemStack>>) -> bool { false }
     pub fn item_tags<A0>(_a0: A0) -> Vec<String> { Vec::new() }
+    pub fn item_tag_members<A0>(_a0: A0) -> Vec<String> { Vec::new() }
     pub fn item_max_stack_size<A0>(_a0: A0) -> Option<u32> { None }
     pub fn burn_time<A0>(_a0: A0) -> Option<u32> { None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CustomRecipe { pub id: String, pub json: String }
