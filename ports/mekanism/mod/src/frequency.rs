@@ -1,7 +1,7 @@
 //! Named frequencies (`Frequency`, `FrequencyIdentity`, `FrequencyManager`, `GuiFrequencySelector`): the teleporter's and the quantum entangloporter's. A frequency has a
 //! name (16 characters at most), a security (public: anyone's, found by name; private: its owner's), and its owner. A block keeps the frequency it is set to in its own bytes;
-//! the frequencies the screen lists are the ones that the blocks around hold (the original keeps them in the world's saved data until someone deletes them: here a frequency
-//! no block holds is gone, which is the one difference). Not in: the trusted security (it needs the security system of the original), and the colour of the entangloporter's.
+//! the frequencies the screen lists are the ones in the registry: every one made on a screen, kept in the world's data (`world-data`, as the original's `FrequencyManager` keeps them in the
+//! saved data) until its owner deletes it, with those the blocks around hold. Not in: the trusted security (it needs the security system of the original), and the colour of the entangloporter's.
 use super::*;
 
 /// `FrequencyManager.MAX_FREQ_LENGTH`.
@@ -69,6 +69,68 @@ pub fn decode(data: &[u8], at: usize) -> (Option<Freq>, usize) {
     let owner = parts.pop().unwrap_or_default();
     let name = parts.pop().unwrap_or_default();
     (Some(Freq { name, private: flag == 2, owner, owner_name }), i)
+}
+
+/// The key the registry is kept under in the world's data.
+pub const WORLD_KEY: &str = "mekanism:frequencies";
+
+/// The registry as bytes: a count, then each frequency.
+pub fn encode_registry(list: &[Freq]) -> Vec<u8> {
+    let mut out = (list.len().min(u16::MAX as usize) as u16).to_le_bytes().to_vec();
+    for f in list.iter().take(u16::MAX as usize) {
+        encode(&Some(f.clone()), &mut out);
+    }
+    out
+}
+
+/// The registry in `data` (what is not a frequency is left out).
+pub fn decode_registry(data: &[u8]) -> Vec<Freq> {
+    let Some(head) = data.get(..2) else { return Vec::new() };
+    let n = usize::from(u16::from_le_bytes([head[0], head[1]]));
+    let mut at = 2;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let (f, next) = decode(data, at);
+        if next <= at {
+            break;
+        }
+        at = next;
+        out.extend(f);
+    }
+    out
+}
+
+impl Mekanism {
+    /// The frequencies there are: the registry in the world's data (read the first time) and any a block holds that the registry lacks (kept in its bytes before the registry
+    /// existed, or from a world that did not have it); the registry is written back when it grew.
+    pub(crate) fn frequencies_known(&mut self, in_blocks: &[Freq]) -> Vec<Freq> {
+        let registry = self.freq_registry.get_or_insert_with(|| horizon_mod_sdk::server::world_data::get(WORLD_KEY).map(|d| decode_registry(&d)).unwrap_or_default());
+        let before = registry.len();
+        for f in in_blocks {
+            if !registry.iter().any(|r| r.key() == f.key()) {
+                registry.push(f.clone());
+            }
+        }
+        if registry.len() != before {
+            let bytes = encode_registry(registry);
+            let _ = horizon_mod_sdk::server::world_data::set(WORLD_KEY, &bytes);
+        }
+        registry.clone()
+    }
+
+    /// A frequency the player made or chose: it joins the registry (and the world's data) if it was not there.
+    pub(crate) fn frequency_made(&mut self, f: &Freq) {
+        self.frequencies_known(std::slice::from_ref(f));
+    }
+
+    /// `FrequencyManager.remove`: a frequency is gone from the registry and from the world's data.
+    pub(crate) fn frequency_deleted(&mut self, key: &str) {
+        if let Some(registry) = self.freq_registry.as_mut() {
+            registry.retain(|f| f.key() != key);
+            let bytes = encode_registry(registry);
+            let _ = horizon_mod_sdk::server::world_data::set(WORLD_KEY, &bytes);
+        }
+    }
 }
 
 /// What a screen can choose from: the public frequencies and the private ones of the viewer (`getPublicFrequencies`, `getPrivateFrequencies`).
@@ -259,5 +321,13 @@ mod tests {
         // only the owner deletes
         assert_eq!(apply(&Action::Delete, &Some(f("mine", true, "me")), &l, "me", "Me"), Some(None));
         assert_eq!(apply(&Action::Delete, &Some(f("pub", false, "a")), &l, "me", "Me"), None);
+    }
+
+    #[test]
+    fn the_registry_survives_its_bytes() {
+        let list = vec![f("a", false, "u1"), f("b", true, "u2")];
+        assert_eq!(decode_registry(&encode_registry(&list)), list);
+        assert_eq!(decode_registry(&[]), Vec::new());
+        assert_eq!(decode_registry(&[5, 0, 1]), Vec::new());
     }
 }

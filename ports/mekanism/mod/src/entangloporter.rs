@@ -87,7 +87,8 @@ impl Mekanism {
         let mut out = Vec::new();
         let mut by: HashMap<String, (frequency::Freq, Vec<&BlockEntity>)> = HashMap::new();
         let mut frequency_of: HashMap<(String, i32, i32, i32), Option<frequency::Freq>> = HashMap::new();
-        let known: Vec<frequency::Freq> = qes.iter().filter_map(|e| decode(&e.data).and_then(|d| d.0)).collect();
+        let in_blocks: Vec<frequency::Freq> = qes.iter().filter_map(|e| decode(&e.data).and_then(|d| d.0)).collect();
+        let known = self.frequencies_known(&in_blocks);
         let mut deleted: Vec<String> = Vec::new();
         for e in qes {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
@@ -110,6 +111,8 @@ impl Mekanism {
                     if next.is_none() {
                         // `FrequencyManager.remove`: the frequency is gone for every block that held it.
                         deleted.extend(f.as_ref().map(frequency::Freq::key));
+                    } else if let Some(made) = &next {
+                        self.frequency_made(made);
                     }
                     f = next;
                 }
@@ -121,6 +124,9 @@ impl Mekanism {
                 by.entry(freq.key()).or_insert_with(|| (freq.clone(), Vec::new())).1.push(*e);
             }
             frequency_of.insert(key, f);
+        }
+        for key in &deleted {
+            self.frequency_deleted(key);
         }
         // The list a screen shows is the viewer's: the player that used it last, or else the owner of its private frequency.
         let viewer_of = |this: &Mekanism, key: &(String, i32, i32, i32), f: &Option<frequency::Freq>| -> frequency::Listing {

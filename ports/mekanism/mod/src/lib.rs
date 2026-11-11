@@ -481,6 +481,8 @@ struct Mekanism {
     teleporter_texts: Vec<(String, BlockPos, i32, String, String, String)>,
     /// The player that last used a block's frequency selector (id and name), by block.
     freq_viewer: HashMap<(String, i32, i32, i32), (String, String)>,
+    /// Every frequency there is (`frequency.rs`), read from the world's data the first time it is needed.
+    freq_registry: Option<Vec<frequency::Freq>>,
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
@@ -2283,6 +2285,7 @@ impl ServerMod for Mekanism {
             teleporter_buttons: Vec::new(),
             teleporter_texts: Vec::new(),
             freq_viewer: HashMap::new(),
+            freq_registry: None,
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),

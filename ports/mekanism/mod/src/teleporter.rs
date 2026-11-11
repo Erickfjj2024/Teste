@@ -167,7 +167,8 @@ impl Mekanism {
         let mut out = Vec::new();
         let mut table: Vec<(String, String, [i32; 3], Option<usize>)> = Vec::new();
         let mut info: HashMap<(String, i32, i32, i32), (Option<frequency::Freq>, Option<usize>)> = HashMap::new();
-        let known: Vec<frequency::Freq> = parts.iter().filter_map(|e| decode(&e.data)).collect();
+        let in_blocks: Vec<frequency::Freq> = parts.iter().filter_map(|e| decode(&e.data)).collect();
+        let known = self.frequencies_known(&in_blocks);
         let mut deleted: Vec<String> = Vec::new();
         for e in parts {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
@@ -190,6 +191,8 @@ impl Mekanism {
                     if next.is_none() {
                         // `FrequencyManager.remove`: the frequency is gone for every block that held it.
                         deleted.extend(freq.as_ref().map(frequency::Freq::key));
+                    } else if let Some(made) = &next {
+                        self.frequency_made(made);
                     }
                     freq = next;
                 }
@@ -212,6 +215,9 @@ impl Mekanism {
                 table.push((f.key(), e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z], frame.map(|f| f.0)));
             }
             info.insert(key, (freq, frame.map(|f| f.0)));
+        }
+        for key in &deleted {
+            self.frequency_deleted(key);
         }
         let players = players::online();
         for e in parts {
