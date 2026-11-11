@@ -69,6 +69,7 @@ pub mod server {
     pub fn set_forced<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
   }
   pub mod world { use super::*;
+    pub fn block_hardness<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Option<f32> { None }
     pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn pull_items<A0, A1, A2, A3, A4, A5, A6>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5, _a6: A6) -> Result<(), String> { Ok(()) }
     pub fn mine_block<A0,A1,A2,A3,A4,A5,A6,A7,A8,A9>(_a0:A0,_a1:A1,_a2:A2,_a3:A3,_a4:A4,_a5:A5,_a6:A6,_a7:A7,_a8:A8,_a9:A9) -> Result<(), String> { Ok(()) }
