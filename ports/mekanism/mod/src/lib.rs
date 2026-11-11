@@ -461,6 +461,8 @@ struct Mekanism {
     bin_buttons: Vec<(String, BlockPos, i32)>,
     alarm_set: HashSet<(String, i32, i32, i32)>,
     miner_buttons: Vec<(String, BlockPos, i32)>,
+    /// What the text boxes of the screens confirmed (FORK-20, `menu_input`): dimension, block, widget id and text, until the machine's tick takes them.
+    text_inputs: Vec<(String, BlockPos, i32, String)>,
     radiation: radiation::Manager,
     miner_work: HashMap<(String, i32, i32, i32), miner::Work>,
     bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
@@ -2231,6 +2233,7 @@ impl ServerMod for Mekanism {
             bin_buttons: Vec::new(),
             alarm_set: HashSet::new(),
             miner_buttons: Vec::new(),
+            text_inputs: Vec::new(),
             radiation: radiation::Manager::default(),
             miner_work: HashMap::new(),
             bin_inserts: HashMap::new(),
@@ -2252,7 +2255,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().redirect(bounding::BLOCK, 0, 1)))
+        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().on_net().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2646,6 +2649,15 @@ impl ServerMod for Mekanism {
     }
 
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
+    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
+        if channel != horizon_mod_sdk::server::menu_input::channel("mekanism") {
+            return;
+        }
+        if let Some(input) = horizon_mod_sdk::server::menu_input::decode(data) {
+            self.text_inputs.push((player.dimension.clone(), input.pos, input.id, input.text));
+        }
+    }
+
     fn menu_button(&mut self, player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
         let block = e.state.split('[').next()?;
         if block == miner::MINER {
@@ -3090,6 +3102,16 @@ impl ServerMod for Mekanism {
                 });
             } else if block.ends_with("_energy_cube") {
                 out.extend(self.cube(e, block));
+            }
+        }
+        // What a text box confirmed (FORK-20) goes to its machine; one whose machine is not here this tick is dropped.
+        for (dimension, pos, id, text) in std::mem::take(&mut self.text_inputs) {
+            let Some(e) = entities.iter().find(|e| e.dimension == dimension && e.pos == pos) else { continue };
+            let block = e.state.split('[').next().unwrap_or("");
+            if block == oredictionificator::BLOCK {
+                out.extend(self.oredictionificator_text(e, id, &text));
+            } else if block == resistive_heater::BLOCK {
+                out.extend(self.resistive_text(e, id, &text));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.

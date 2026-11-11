@@ -1672,19 +1672,12 @@ HEAT_TIP = 'Temperature: {{{t}}} K\nTransferred: {{{x}}} K/t\nDissipated: {{{d}}
 
 def resistive_heater_menu(m):
     """GuiResistiveHeater: the inner screen (the temperature and the usage), the charge slot at 15, 35, the power bar, and the energy, heat and redstone
-    tabs. Its numbers are `resistive_heater.rs::screen_numbers`. The original has a text field for the usage (7 digits, `PacketGuiSetEnergy`); the
-    screens of the port have no field yet, so eight buttons move it by 1000, 100, 10 and 1 Forge Energy up or down (7600 to 7607)."""
+    tabs. Its numbers are `resistive_heater.rs::screen_numbers`. The original has a text field for the usage (7 digits, `PacketGuiSetEnergy`): the
+    screen has it too (widget 7600, FORK-20 part 2), with the field empty until typed in; the usage is the line above it."""
     panel = heater_common(m, (15, 35), (164, 15))
     panel.alpha_composite(gui_sprite('slot/power'), (14, 34))
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 80, 42, 3), (48, 23))
     panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (164, 15))
-    steps = [-1000, -100, -10, -1, 1, 10, 100, 1000]
-    minus, plus = gui_sprite('button/minus'), gui_sprite('button/plus')
-    for i, step in enumerate(steps):
-        b = nine_slice(gui_sprite('button'), 10, 12, 2)
-        icon = (minus if step < 0 else plus).resize((8, 5), 0)
-        b.alpha_composite(icon, (1, 3))
-        panel.alpha_composite(b, (48 + 10 * i, 51))
     texture = save_gui(panel, m)
     title = MACHINE_NAMES.get(m, 'Resistive Heater')
     widgets = [
@@ -1695,9 +1688,7 @@ def resistive_heater_menu(m):
         {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 52, 'y': 28, 'text': 'Temperature: {8} K', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 52, 'y': 38, 'text': 'Usage: {4+5} FE/t', 'color': '#00CD00', 'scale': 85}]
-    for i, step in enumerate(steps):
-        widgets.append({'type': 'button', 'x': 48 + 10 * i, 'y': 51, 'w': 10, 'h': 12, 'id': 7600 + i,
-                        'tooltip': f'Usage {"+" if step > 0 else "-"}{abs(step)} FE/t'})
+    widgets.append({'type': 'textfield', 'x': 50, 'y': 51, 'w': 76, 'h': 12, 'id': 7600, 'validator': 'digit', 'max_length': 7})
     widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
                 {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
                  'tooltip': 'Using: {6+7} FE/t\nNeeded: {10+11} FE\nUnit: Forge Energy'},
@@ -1735,7 +1726,8 @@ def oredictionificator_menu(m):
     the large progress arrow at 94, 119, the output slot at 164, 115, and the redstone tab. Its numbers are `oredictionificator.rs::menu_numbers`: 0 it
     converted this tick, 1 the redstone control, 2 how many filters, 3 to 5 whether each of the first three is on. **What the screens of the port cannot
     do yet:** show scroll the list, and make or edit a filter (a text field for the tag and a choice of the result). The first three filters' tag and result are
-    shown (`set-menu-text`, API 34), and their switches work; the "new filter" button is drawn but does nothing. FORK-20 in `PROPOSTA-API.wit`."""
+    shown (`set-menu-text`, API 34), and their switches work (shift-click: the filter's next result); the text box makes a filter from a typed tag (FORK-20 part 2),
+    its first result needs `item-tag-members` (not in the host yet). FORK-20 in `PROPOSTA-API.wit`."""
     width, height = 236, 230
     panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
@@ -1761,7 +1753,8 @@ def oredictionificator_menu(m):
         {'type': 'text', 'x': width - 68, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 94, 'y': 119, 'w': 48, 'h': 8,
          'value': {'data': 0}, 'max': {'const': 1}, 'direction': 'right', 'tooltip': 'Converting'},
-        {'type': 'text', 'x': 14, 'y': 91, 'text': 'New Filter (needs a text field: not available yet)', 'color': '#808080', 'scale': 85},
+        {'type': 'text', 'x': 14, 'y': 76, 'text': 'New filter: type a tag (c:ores/iron) and confirm', 'color': '#808080', 'scale': 70},
+        {'type': 'textfield', 'x': 12, 'y': 88, 'w': 198, 'h': 16, 'id': 7790, 'validator': 'id', 'max_length': 100},
         ]
     for i in range(3):
         # a row: the tag (text 2i) and the result (text 2i + 1) of the filter, in the colour of its state (green on, red off)
@@ -1773,7 +1766,7 @@ def oredictionificator_menu(m):
     for i in range(3):
         for count in range(i + 1, 4):
             widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 2}, 'eq': count}}, 'widgets': [
-                {'type': 'button', 'x': 10, 'y': 18 + 22 * i, 'w': 202, 'h': 22, 'id': 7700 + i, 'tooltip': f'Switch filter {i + 1} on or off'}]})
+                {'type': 'button', 'x': 10, 'y': 18 + 22 * i, 'w': 202, 'h': 22, 'id': 7700 + i, 'shift_id': 7740 + i, 'tooltip': f'Switch filter {i + 1} on or off (shift: next result)'}]})
     widgets += shift_x(redstone_widgets(1), width - 176)
     return {'slots': 2, 'data_slots': 6, 'results': [1],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[56, 115], [164, 115]], 'width': width, 'height': height,

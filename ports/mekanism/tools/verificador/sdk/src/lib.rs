@@ -171,8 +171,18 @@ pub mod server {
     pub fn on_blocks(self) -> Self { self }
     pub fn on_damage(self) -> Self { self }
     pub fn on_item_release(self) -> Self { self }
+    pub fn on_net(self) -> Self { self }
     pub fn redirect(self, _block: &str, _flag_at: u32, _pos_at: u32) -> Self { self }
     pub fn new() -> Self { Self::default() }
+  }
+  pub mod menu_input {
+    use super::BlockPos;
+    #[derive(Clone, Debug, PartialEq)] pub struct MenuInput { pub pos: BlockPos, pub id: i32, pub text: String }
+    pub fn channel(mod_id: &str) -> String { format!("{mod_id}:menu_text") }
+    pub fn decode(data: &[u8]) -> Option<MenuInput> {
+        let int = |at: usize| data.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        Some(MenuInput { pos: BlockPos { x: int(0)?, y: int(4)?, z: int(8)? }, id: int(12)?, text: String::from_utf8(data.get(16..)?.to_vec()).ok()? })
+    }
   }
   pub trait ServerMod: Sized {
     fn init() -> Result<(Self, Registration), String>;
@@ -190,6 +200,7 @@ pub mod server {
     fn item_released(&mut self, player: &Player, stack: ItemStack, hand: &str, ticks_held: u32) -> bool { true }
     fn item_shot(&mut self, player: &Player, stack: ItemStack, projectiles: Vec<u32>) {}
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }
+    fn net_message(&mut self, _player: &Player, _channel: &str, _data: &[u8]) {}
     fn multiblock_changed(&mut self, group: &str, dimension: &str, structures: Vec<Structure>) -> Vec<BlockEntityUpdate> { Vec::new() }
     fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> { Vec::new() }
   }

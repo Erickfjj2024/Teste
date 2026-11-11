@@ -626,3 +626,7 @@ set-entity-fire: func(dimension: string, id: u32, ticks: s32) -> result<_, strin
 // `world.mine-block` já faz o que a quebra do trator faz (drops no contêiner de destino); falta a dureza para o custo em energia (100 000 J por ponto de dureza)
 // e os itens soltos atingidos pelo feixe (items-in-box / take-dropped-item do FORK-10, passo 6).
 block-hardness: func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>;   // Block.defaultDestroyTime; none for unloaded; negative for unbreakable
+
+// ---- Oredictionificator: resultado do filtro (mekanism/oredictionificator.rs) ----
+// O filtro novo (digitado no campo de texto, FORK-20 parte 2) escolhe o resultado entre os itens da tag (getPossibleFilters / FilterButton).
+// recipe-types.item-tag-members: func(tag: string) -> list<string>;   // ids dos itens da tag de item, na ordem do jogo; vazio se a tag não existe

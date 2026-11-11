@@ -231,6 +231,30 @@ pub fn menu_texts(state: &State) -> Vec<String> {
 
 /// A button of its screen: a filter switched on or off (`TOGGLE_FILTER_STATE`, `BUTTON_TOGGLE_FILTER_BASE + index`), or the redstone tab.
 pub const BUTTON_TOGGLE_FILTER_BASE: i32 = 7700;
+/// A filter's row clicked with shift: the next result of its tag (`FilterButton`'s arrows in the original's filter screen).
+pub const BUTTON_NEXT_RESULT_BASE: i32 = 7740;
+/// The text box of the screen: the tag of a new filter (`GuiOredictionificator`'s "new filter", reduced to the tag and the first result).
+pub const TEXT_NEW_FILTER: i32 = 7790;
+
+/// `addFilter` for a tag typed in the screen: refused for a tag that may not be filtered on (`isPossibleFilter`) or that a filter already has; the result
+/// is the tag's first item (`getPossibleFilters`), empty when the game lists none.
+pub fn add_filter(state: &mut State, tag: &str, members: &[String]) -> bool {
+    let tag = tag.trim();
+    if !is_possible_filter(tag) || state.filters.iter().any(|f| f.filter_tag == tag) {
+        return false;
+    }
+    state.filters.push(ItemFilter::new(tag.to_owned(), members.first().cloned().unwrap_or_default()));
+    true
+}
+
+/// The next result of a filter among its tag's items (wraps; an unknown current result goes to the first).
+pub fn next_result(filter: &mut ItemFilter, members: &[String]) {
+    if members.is_empty() {
+        return;
+    }
+    let at = members.iter().position(|m| *m == filter.selected_output).map_or(0, |i| (i + 1) % members.len());
+    filter.selected_output = members[at].clone();
+}
 
 impl Mekanism {
     /// Server tick handler for Oredictionificators (`onUpdateServer`).
@@ -298,6 +322,10 @@ impl Mekanism {
             state.redstone_control = state.redstone_control.next();
         } else if id == crate::redstone::PREVIOUS {
             state.redstone_control = state.redstone_control.previous();
+        } else if id >= BUTTON_NEXT_RESULT_BASE && ((id - BUTTON_NEXT_RESULT_BASE) as usize) < state.filters.len() {
+            let f = &mut state.filters[(id - BUTTON_NEXT_RESULT_BASE) as usize];
+            let members = crate::fork_utilidades::item_tag_members(&f.filter_tag);
+            next_result(f, &members);
         } else if id >= BUTTON_TOGGLE_FILTER_BASE && ((id - BUTTON_TOGGLE_FILTER_BASE) as usize) < state.filters.len() {
             let f = &mut state.filters[(id - BUTTON_TOGGLE_FILTER_BASE) as usize];
             f.enabled = !f.enabled;
@@ -305,18 +333,36 @@ impl Mekanism {
             return None;
         }
         self.send_oredictionificator_texts(e, &state);
-        Some(BlockEntityUpdate {
+        Some(self.oredictionificator_update(e, &state))
+    }
+
+    /// The tag a text box confirmed (`TEXT_NEW_FILTER`) for the machine `e`: a new filter, or nothing when the tag is refused.
+    pub(crate) fn oredictionificator_text(&mut self, e: &BlockEntity, id: i32, text: &str) -> Option<BlockEntityUpdate> {
+        if id != TEXT_NEW_FILTER {
+            return None;
+        }
+        let mut state = decode(&e.data);
+        let tag = text.trim();
+        if !add_filter(&mut state, tag, &crate::fork_utilidades::item_tag_members(tag.trim())) {
+            return None;
+        }
+        self.send_oredictionificator_texts(e, &state);
+        Some(self.oredictionificator_update(e, &state))
+    }
+
+    fn oredictionificator_update(&self, e: &BlockEntity, state: &State) -> BlockEntityUpdate {
+        BlockEntityUpdate {
             dimension: e.dimension.clone(),
             pos: e.pos,
-            data: encode(&state),
+            data: encode(state),
             items: None,
             energy: None,
             energy_faces: None,
             tanks: None,
             tank_faces: None,
-            menu_data: Some(menu_numbers(&state)),
+            menu_data: Some(menu_numbers(state)),
             transmitter_faces: None,
-        })
+        }
     }
 }
 
@@ -504,5 +550,35 @@ mod tests {
         assert_eq!((texts[0].as_str(), texts[1].as_str()), ("c:ores/tin", "m:tin_ore"));
         assert_eq!(texts[3], "(no result chosen)");
         assert_eq!((texts[4].as_str(), texts[5].as_str()), ("", ""));
+    }
+
+    #[test]
+    fn test_add_filter_from_typed_tag() {
+        let members = vec!["mekanism:ingot_tin".to_owned(), "mekanism:ingot_lead".to_owned()];
+        let mut state = State::default();
+        // refused: not filterable, and a repeat
+        assert!(!add_filter(&mut state, "forge:ores/tin", &members));
+        assert!(!add_filter(&mut state, "c:gems/diamond", &members));
+        assert!(add_filter(&mut state, " c:ingots/tin ", &members));
+        assert!(!add_filter(&mut state, "c:ingots/tin", &members));
+        assert_eq!(state.filters.len(), 1);
+        assert_eq!(state.filters[0].selected_output, "mekanism:ingot_tin");
+        // no members known: the filter exists with no result
+        assert!(add_filter(&mut state, "c:ores/lead", &[]));
+        assert_eq!(state.filters[1].selected_output, "");
+    }
+
+    #[test]
+    fn test_next_result_wraps() {
+        let members = vec!["a:x".to_owned(), "b:y".to_owned()];
+        let mut f = ItemFilter::new("c:ores/tin".into(), String::new());
+        next_result(&mut f, &members);
+        assert_eq!(f.selected_output, "a:x");
+        next_result(&mut f, &members);
+        assert_eq!(f.selected_output, "b:y");
+        next_result(&mut f, &members);
+        assert_eq!(f.selected_output, "a:x");
+        next_result(&mut f, &[]);
+        assert_eq!(f.selected_output, "a:x");
     }
 }

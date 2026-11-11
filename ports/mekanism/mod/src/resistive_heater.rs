@@ -337,6 +337,8 @@ impl ResistiveHeater {
 /// The buttons of its screen that change the usage by a number of Forge Energy: the original has a text field (`GuiTextField`, up to 7 digits, sent as
 /// `PacketGuiSetEnergy`), and the screens of the port have no field yet, so the usage moves in steps (`BUTTON_USAGE_BASE + i`).
 pub const BUTTON_USAGE_BASE: i32 = 7600;
+/// The screen's text box for the usage (`GuiResistiveHeater`'s `GuiTextField`, 7 digits).
+pub const TEXT_USAGE: i32 = 7600;
 pub const USAGE_STEPS: [i64; 8] = [-1000, -100, -10, -1, 1, 10, 100, 1000];
 /// What the field takes at most: 7 digits.
 pub const MAX_USAGE_FE: i64 = 9_999_999;
@@ -352,6 +354,20 @@ impl ResistiveHeater {
             return false;
         }
         self.set_energy_usage((next as u64) * 5 / 2);
+        true
+    }
+
+    /// The usage a text box confirmed (`PacketGuiSetEnergy`): digits only, at most 7, in Forge Energy a tick; anything else is refused. Says whether it changed.
+    pub fn set_usage_text(&mut self, text: &str) -> bool {
+        let text = text.trim();
+        if text.is_empty() || text.len() > 7 || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        let joules = text.parse::<u64>().unwrap_or(0) * 5 / 2;
+        if joules == self.energy_usage_joules {
+            return false;
+        }
+        self.set_energy_usage(joules);
         true
     }
 
@@ -555,5 +571,20 @@ mod tests {
         assert_eq!(n[8], 300);
         assert_eq!(n[0] + (n[1] << 16), 70_000);
         assert_eq!(n[4], 40);
+    }
+
+    #[test]
+    fn a_confirmed_usage_text_sets_the_usage() {
+        let mut h = ResistiveHeater::default();
+        assert!(h.set_usage_text("1000"));
+        assert_eq!(h.usage_fe(), 1000);
+        assert!(!h.set_usage_text("1000"));
+        assert!(!h.set_usage_text(""));
+        assert!(!h.set_usage_text("12345678"));
+        assert!(!h.set_usage_text("-5"));
+        assert!(!h.set_usage_text("1e3"));
+        assert!(h.set_usage_text("9999999"));
+        // a whole number of Joules: 7 digits do not always come back the same (as with the step buttons)
+        assert_eq!(h.usage_fe(), 9_999_998);
     }
 }

@@ -352,6 +352,23 @@ fn run_dimension(entities: &[&BlockEntity], outside: HashMap<Pos, heat::HeatCapa
 impl crate::Mekanism {
     /// A button of the resistive heater's screen: the redstone tab, or a step of the usage. The capacity follows the usage (400 ticks of it), so the stored
     /// energy is cut to it and the game is told the new capacity.
+    /// The usage a text box of the heater's screen confirmed.
+    pub(crate) fn resistive_text(&mut self, e: &BlockEntity, id: i32, text: &str) -> Option<BlockEntityUpdate> {
+        if id != resistive_heater::TEXT_USAGE {
+            return None;
+        }
+        let mut h = resistive_heater::ResistiveHeater::decode(&e.data, heat::AMBIENT_TEMP)?;
+        h.energy_stored_fe = e.energy;
+        if !h.set_usage_text(text) {
+            return None;
+        }
+        let _ = world::set_energy_capacity(&e.dimension, e.pos.x, e.pos.y, e.pos.z, h.max_energy_fe().max(1));
+        let mut u = update(e, h.encode());
+        u.energy = Some(h.energy_stored_fe.min(h.max_energy_fe()));
+        u.menu_data = Some(h.screen_numbers());
+        Some(u)
+    }
+
     pub(crate) fn resistive_button(&mut self, e: &BlockEntity, id: i32) -> Option<BlockEntityUpdate> {
         let mut h = resistive_heater::ResistiveHeater::decode(&e.data, heat::AMBIENT_TEMP)?;
         h.energy_stored_fe = e.energy;
