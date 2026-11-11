@@ -216,6 +216,7 @@ impl Mekanism {
                     }
                 }
             }
+            self.suit_hud(&p.id, &pieces);
             if pieces.iter().all(Option::is_none) {
                 continue;
             }
@@ -399,7 +400,54 @@ pub fn hit_damage(stack: &ItemStack, damage: f32) -> f32 {
     damage + data.calculate_attack().0 as f32
 }
 
+/// The lines of the MekaSuit's HUD (`MekaSuitHUD`, API 41): for each worn piece its energy as a percent with a bar, and the jetpack's mode when the chest has
+/// the unit. Each is `(id, icon, text, fraction)`; a piece that is not worn gives an empty text, which takes its line away.
+pub fn suit_hud_lines(pieces: &[Option<mekasuit::MekaSuitItemStack>; 4]) -> Vec<(String, String, String, f32)> {
+    let names = ["head", "chest", "legs", "feet"];
+    let mut out = Vec::new();
+    for (i, piece) in pieces.iter().enumerate() {
+        let id = format!("mekanism:suit_{}", names[i]);
+        match piece {
+            Some(p) => {
+                let max = p.max_energy().max(1);
+                let fraction = (p.energy as f64 / max as f64).clamp(0.0, 1.0);
+                out.push((id, p.item.clone(), format!("Energy: {}%", (fraction * 100.0).round() as u32), (fraction * 100.0).round() as f32 / 100.0));
+            }
+            None => out.push((id, String::new(), String::new(), -1.0)),
+        }
+    }
+    let jetpack = pieces[mekasuit::ArmorSlot::Chest as usize].as_ref().filter(|b| b.modules.has_module(crate::modules::ModuleType::JetpackUnit));
+    out.push(match jetpack {
+        Some(b) => {
+            let mode = match mekasuit::jetpack_mode_of(b) {
+                crate::modules::JetpackMode::Normal => "Normal",
+                crate::modules::JetpackMode::Hover => "Hover",
+                crate::modules::JetpackMode::Vector => "Vector",
+                crate::modules::JetpackMode::Disabled => "Disabled",
+            };
+            ("mekanism:suit_jetpack".to_owned(), "mekanism:module_jetpack_unit".to_owned(), format!("Jetpack: {mode}"), -1.0)
+        }
+        None => ("mekanism:suit_jetpack".to_owned(), String::new(), String::new(), -1.0),
+    });
+    out
+}
+
 impl Mekanism {
+    /// Sends a player the HUD lines that changed since the last time (`players.set-hud-line`).
+    fn suit_hud(&mut self, player: &str, pieces: &[Option<mekasuit::MekaSuitItemStack>; 4]) {
+        for (id, icon, text, fraction) in suit_hud_lines(pieces) {
+            let key = (player.to_owned(), id.clone());
+            let now = (text.clone(), (fraction * 100.0) as i32);
+            let was = self.hud_sent.get(&key);
+            if was == Some(&now) || (was.is_none() && text.is_empty()) {
+                continue;
+            }
+            if players::set_hud_line(player, &id, &icon, &text, fraction) {
+                self.hud_sent.insert(key, now);
+            }
+        }
+    }
+
     /// The suit a player wears (head, chest, legs, feet), as read from the inventory of the last tick, with the stacks they came from.
     fn worn_suit(player: &str) -> Option<([Option<mekasuit::MekaSuitItemStack>; 4], [Option<ItemStack>; 4])> {
         let inv = player_items::get_inventory(player)?;
@@ -642,5 +690,18 @@ mod tests {
         assert_eq!(with_component(c, "mekanism:electric_bow_mode", "true"), r#"{"mekanism:electric_bow_mode":true,"minecraft:damage":3}"#);
         let d = r#"{"minecraft:damage":3}"#;
         assert_eq!(with_component(d, "mekanism:electric_bow_mode", "true"), r#"{"minecraft:damage":3,"mekanism:electric_bow_mode":true}"#);
+    }
+
+    #[test]
+    fn the_suit_hud_has_a_line_for_each_piece_worn() {
+        let mut helmet = mekasuit::MekaSuitItemStack::new(mekasuit::HELMET).unwrap();
+        helmet.energy = helmet.max_energy() / 2;
+        let pieces = [Some(helmet), None, None, None];
+        let lines = suit_hud_lines(&pieces);
+        assert_eq!(lines[0], ("mekanism:suit_head".to_owned(), mekasuit::HELMET.to_owned(), "Energy: 50%".to_owned(), 0.5));
+        // a piece not worn and a chest with no jetpack unit give empty lines (which take theirs away)
+        assert_eq!(lines[1].2, "");
+        assert_eq!(lines[4].0, "mekanism:suit_jetpack");
+        assert_eq!(lines[4].2, "");
     }
 }

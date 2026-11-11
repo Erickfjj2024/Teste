@@ -477,6 +477,8 @@ struct Mekanism {
     laser_texts: Vec<(String, BlockPos, i32, String)>,
     /// The steam mode presses on the turbine screens: dimension and the structure's minimum corner.
     turbine_buttons: Vec<(String, [i32; 3])>,
+    /// The HUD line each player last got, by line id: its text and bar, so only changes are sent.
+    hud_sent: HashMap<(String, String), (String, i32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -2262,6 +2264,7 @@ impl ServerMod for Mekanism {
             laser_buttons: Vec::new(),
             laser_texts: Vec::new(),
             turbine_buttons: Vec::new(),
+            hud_sent: HashMap::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
@@ -2570,10 +2573,16 @@ impl ServerMod for Mekanism {
                 return true;
             }
             if sneaking {
-                let mode = mode.next();
-                self.tool.insert(player.id.clone(), mode);
-                self.write_tool_mode(player, &stack, mode);
-                let _ = players::tell(&player.id, &format!("Configure State: {}", mode.label()));
+                // The original opens a radial menu on the mode key; here sneaking in the air does (the Android client has no mode key).
+                let entries: Vec<players::RadialEntry> = (0..8u8)
+                    .map(|n| players::RadialEntry { id: format!("configurator:{n}"), label: ToolMode::from_number(n).label().to_owned(), icon: String::new() })
+                    .collect();
+                if !players::open_radial_menu(&player.id, &entries, u32::from(mode as u8)) {
+                    let mode = mode.next();
+                    self.tool.insert(player.id.clone(), mode);
+                    self.write_tool_mode(player, &stack, mode);
+                    let _ = players::tell(&player.id, &format!("Configure State: {}", mode.label()));
+                }
                 return true;
             }
             return false;
@@ -2669,6 +2678,20 @@ impl ServerMod for Mekanism {
 
     /// A button of a machine's screen: the side configuration window's (a side, the eject toggle, the clear button).
     fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
+        // The choice of a radial menu (API 42): the configurator's mode.
+        if channel == "mekanism:radial" {
+            if let Some(n) = std::str::from_utf8(data).ok().and_then(|t| t.strip_prefix("configurator:")).and_then(|t| t.parse::<u8>().ok()).filter(|n| *n < 8) {
+                let held = player_items::get_inventory(&player.id)
+                    .and_then(|inv| inv.into_iter().take(9).flatten().find(|s| s.item == CONFIGURATOR));
+                if let Some(stack) = held {
+                    let mode = ToolMode::from_number(n);
+                    self.tool.insert(player.id.clone(), mode);
+                    self.write_tool_mode(player, &stack, mode);
+                    let _ = players::tell(&player.id, &format!("Configure State: {}", mode.label()));
+                }
+            }
+            return;
+        }
         if channel != horizon_mod_sdk::server::menu_input::channel("mekanism") {
             return;
         }
