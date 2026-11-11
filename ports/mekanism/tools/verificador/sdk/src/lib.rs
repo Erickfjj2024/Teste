@@ -79,6 +79,12 @@ pub mod server {
   pub mod chunks { use super::*;
     pub fn set_forced<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
   }
+  pub mod world_data {
+    pub fn get(key: &str) -> Option<Vec<u8>> { let _ = key; None }
+    pub fn set(key: &str, value: &[u8]) -> Result<(), String> { let _ = (key, value); Ok(()) }
+    pub fn remove(key: &str) { let _ = key; }
+    pub fn keys(prefix: &str) -> Vec<String> { let _ = prefix; Vec::new() }
+  }
   pub mod world { use super::*;
     pub fn set_comparator_output<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn break_blocks<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<u32, String> { Err(String::new()) }

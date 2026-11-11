@@ -1,0 +1,763 @@
+From e20f57c53164e1e9ad093351930436ea3814681b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 18:52:41 +0000
+Subject: [PATCH] world-data: mod values kept in the world (FORK-36, API 47)
+
+world-data.get/set/remove/keys keep byte values under <mod id>:<path> keys,
+up to 256 KiB each and 64 per mod, saved with the world in
+data/horizon/mod_world_data.bin (Mekanism's SavedData: frequencies, owners,
+security). Part of capability world. Harness: world-data step and check,
+kept across a reload; example world-data-probe.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game.rs             |   2 +
+ crates/horizon-client/src/game/mods.rs        |   8 +
+ crates/horizon-client/src/game/server_mods.rs |  46 ++++++
+ .../examples/world-data-probe/Cargo.toml      |  16 ++
+ .../world-data-probe/horizon-mod.toml         |   8 +
+ .../examples/world-data-probe/src/lib.rs      |  33 ++++
+ .../world-data-probe/tests/world_data.toml    |  26 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |   2 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  16 ++
+ crates/horizon-mods/src/api_level.rs          |   8 +-
+ crates/horizon-mods/src/lib.rs                |   1 +
+ crates/horizon-mods/src/manifest.rs           |   4 +
+ crates/horizon-mods/src/runtime.rs            |  55 ++++++-
+ crates/horizon-mods/src/testing.rs            |  23 +++
+ crates/horizon-mods/src/world_data.rs         | 146 ++++++++++++++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  15 +-
+ 19 files changed, 414 insertions(+), 7 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/world-data-probe/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/world-data-probe/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/world-data-probe/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/world-data-probe/tests/world_data.toml
+ create mode 100644 crates/horizon-mods/src/world_data.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index a6669460c..34c04b0b8 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -6120,6 +6120,13 @@ dependencies = [
+  "wayland-protocols-wlr",
+ ]
+ 
++[[package]]
++name = "world-data-probe"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "writeable"
+ version = "0.6.4"
+diff --git a/Cargo.toml b/Cargo.toml
+index 9d187183f..1ed4d678a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -47,6 +47,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/fuel-demo",
+     "crates/horizon-mod-sdk/examples/crafting-probe",
+     "crates/horizon-mod-sdk/examples/body-probe",
++    "crates/horizon-mod-sdk/examples/world-data-probe",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 551f0e5be..bdaaabff0 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -14557,6 +14557,8 @@ impl Game<'_> {
+         self.save_bossbars();
+         #[cfg(feature = "mods")]
+         self.save_mod_entities();
++        #[cfg(feature = "mods")]
++        self.save_mod_world_data();
+         self.save_schedule();
+         self.save_warden_tracker();
+         self.sync_level();
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index df8c9319d..ec50a2682 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -78,6 +78,14 @@ pub(super) struct ModsState {
+     /// tick.
+     #[cfg(feature = "mods")]
+     pub(super) block_writes: Vec<(String, horizon_mods::BlockChange)>,
++    /// Every mod's values kept in the world (FORK-36, `world-data`), the mods' generation they were last handed to, and whether
++    /// they changed since the world last saved.
++    #[cfg(feature = "mods")]
++    pub(super) world_data: std::collections::BTreeMap<String, Vec<u8>>,
++    #[cfg(feature = "mods")]
++    pub(super) world_data_at: Option<u64>,
++    #[cfg(feature = "mods")]
++    pub(super) world_data_changed: bool,
+     /// Every block state's collision boxes, by state id, for capability
+     /// `world`'s `get-collision`; made on the first lend.
+     #[cfg(feature = "mods")]
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 50e0c6b5d..d13addbbc 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -410,6 +410,51 @@ mod run {
+             self.mods.server && self.remote.is_none()
+         }
+ 
++        /// The mods' values kept in the world (FORK-36): read from the world's folder the first time, what the mods changed taken
++        /// back, and handed again to mods that (re)started since.
++        fn sync_mod_world_data(&mut self) {
++            if self.remote.is_some() {
++                return;
++            }
++            if self.mods.world_data_at.is_none()
++                && let Ok(bytes) = std::fs::read(self.world_root.join(horizon_mods::world_data::FILE))
++            {
++                match horizon_mods::world_data::decode(&bytes) {
++                    Some(all) => self.mods.world_data = all,
++                    None => log::warn!("the mods' world data could not be read; it starts empty"),
++                }
++            }
++            if self.mods.mods.store_world_data(&mut self.mods.world_data) {
++                self.mods.world_data_changed = true;
++            }
++            let generation = self.mods.mods.generation();
++            if self.mods.world_data_at != Some(generation) {
++                self.mods.mods.load_world_data(&self.mods.world_data);
++                self.mods.world_data_at = Some(generation);
++            }
++        }
++
++        /// Writes the mods' values kept in the world when they changed (with the world's save).
++        pub(in crate::game) fn save_mod_world_data(&mut self) {
++            if self.remote.is_some() || self.mods.world_data_at.is_none() {
++                return;
++            }
++            if self.mods.mods.store_world_data(&mut self.mods.world_data) {
++                self.mods.world_data_changed = true;
++            }
++            if !self.mods.world_data_changed {
++                return;
++            }
++            let path = self.world_root.join(horizon_mods::world_data::FILE);
++            if let Some(dir) = path.parent() {
++                let _ = std::fs::create_dir_all(dir);
++            }
++            match std::fs::write(&path, horizon_mods::world_data::encode(&self.mods.world_data)) {
++                Ok(()) => self.mods.world_data_changed = false,
++                Err(e) => log::warn!("the mods' world data was not written: {e}"),
++            }
++        }
++
+         /// The tick's end: joins and leaves, the tick's events, the tick hook.
+         pub(in crate::game) fn tick_server_mods(&mut self) {
+             if !self.options.execution_role.is_client() {
+@@ -420,6 +465,7 @@ mod run {
+             if !self.mods.server {
+                 return;
+             }
++            self.sync_mod_world_data();
+             let players = self.server_players(None);
+             let mut snapshot = self.mod_snapshot_with(players.clone());
+             if self.mods.world {
+diff --git a/crates/horizon-mod-sdk/examples/world-data-probe/Cargo.toml b/crates/horizon-mod-sdk/examples/world-data-probe/Cargo.toml
+new file mode 100644
+index 000000000..0b583aa1f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/world-data-probe/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "world-data-probe"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: values kept in the world (world-data)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/world-data-probe/horizon-mod.toml b/crates/horizon-mod-sdk/examples/world-data-probe/horizon-mod.toml
+new file mode 100644
+index 000000000..2f0038f13
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/world-data-probe/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "wdprobe"
++name = "World Data Probe"
++version = "0.1.0"
++description = "Test mod for world-data (FORK-36): it counts ticks in a value kept in the world, lists its keys, and tries the limits."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "world"]
+diff --git a/crates/horizon-mod-sdk/examples/world-data-probe/src/lib.rs b/crates/horizon-mod-sdk/examples/world-data-probe/src/lib.rs
+new file mode 100644
+index 000000000..bb937ada3
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/world-data-probe/src/lib.rs
+@@ -0,0 +1,33 @@
++//! World Data Probe (FORK-36, `world-data`): each tick it adds one to `wdprobe:counter` (a little-endian u32 kept in the world),
++//! writes the list of its keys under `wdprobe:frequencies/` into `wdprobe:list`, and on its first tick tries what the limits refuse
++//! (another mod's key, a value over 256 KiB) and writes the errors' count into `wdprobe:refused`. `wdprobe:drop` is removed when seen.
++use horizon_mod_sdk::server::{Registration, ServerMod, world_data};
++
++struct Probe {
++    tried: bool,
++}
++
++impl ServerMod for Probe {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Probe { tried: false }, Registration::new().on_tick()))
++    }
++    fn tick(&mut self, _tick: u64) {
++        let count = world_data::get("wdprobe:counter").and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes);
++        let _ = world_data::set("wdprobe:counter", &(count + 1).to_le_bytes());
++        let keys = world_data::keys("wdprobe:frequencies/");
++        let _ = world_data::set("wdprobe:list", keys.join(",").as_bytes());
++        if world_data::get("wdprobe:drop").is_some() {
++            world_data::remove("wdprobe:drop");
++        }
++        if !self.tried {
++            self.tried = true;
++            let refused = [world_data::set("mekanism:owners", &[1]), world_data::set("wdprobe:big", &vec![0; 256 * 1024 + 1])]
++                .iter()
++                .filter(|r| r.is_err())
++                .count() as u8;
++            let _ = world_data::set("wdprobe:refused", &[refused]);
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Probe);
+diff --git a/crates/horizon-mod-sdk/examples/world-data-probe/tests/world_data.toml b/crates/horizon-mod-sdk/examples/world-data-probe/tests/world_data.toml
+new file mode 100644
+index 000000000..250737f7a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/world-data-probe/tests/world_data.toml
+@@ -0,0 +1,26 @@
++[[step]]
++# A world opened with values kept from before (another mod's too, which this one neither sees nor changes).
++world-data = { "wdprobe:counter" = [5, 0, 0, 0], "wdprobe:frequencies/b" = [2], "wdprobe:frequencies/a" = [1], "wdprobe:drop" = [9], "other:x" = [7] }
++ticks = 2
++# Two ticks: 5 + 2; the keys under frequencies/ in order; drop removed; both tries refused.
++expect.world-data = [
++    "other:x [7]",
++    "wdprobe:counter [7, 0, 0, 0]",
++    "wdprobe:frequencies/a [1]",
++    "wdprobe:frequencies/b [2]",
++    "wdprobe:list [119, 100, 112, 114, 111, 98, 101, 58, 102, 114, 101, 113, 117, 101, 110, 99, 105, 101, 115, 47, 97, 44, 119, 100, 112, 114, 111, 98, 101, 58, 102, 114, 101, 113, 117, 101, 110, 99, 105, 101, 115, 47, 98]",
++    "wdprobe:refused [2]",
++]
++
++[[step]]
++# The mod starts again (its memory is gone): the values are still there, as in a world saved and opened again.
++reload = true
++ticks = 1
++expect.world-data = [
++    "other:x [7]",
++    "wdprobe:counter [8, 0, 0, 0]",
++    "wdprobe:frequencies/a [1]",
++    "wdprobe:frequencies/b [2]",
++    "wdprobe:list [119, 100, 112, 114, 111, 98, 101, 58, 102, 114, 101, 113, 117, 101, 110, 99, 105, 101, 115, 47, 97, 44, 119, 100, 112, 114, 111, 98, 101, 58, 102, 114, 101, 113, 117, 101, 110, 99, 105, 101, 115, 47, 98]",
++    "wdprobe:refused [2]",
++]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index d1b9428c0..eb1db0177 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -242,7 +242,7 @@ pub mod server {
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
+     pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
+-    pub use horizon::mods::{chunks, player_items};
++    pub use horizon::mods::{chunks, player_items, world_data};
+     pub use horizon::mods::recipe_types::{self, CookingRecipe, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index ed9482f82..b8581a741 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1777,6 +1777,21 @@ interface server-events {
+     item-hit: func(player: player, stack: item-stack, entity: u32, kind: string);
+ }
+ 
++/// Part of capability `world` (server mods, FORK-36): byte values the mod keeps in the world, saved with it (what Mekanism keeps in
++/// `SavedData`: frequencies, block owners, security). Keys are `<mod id>:<path>` (the path 1 to 128 bytes of `a-z 0-9 _ . / -`), a
++/// value holds up to 256 KiB, a mod keeps up to 64 values. The values are there from the first tick of the world (not during `init`)
++/// and are written when the world saves. API 47.
++interface world-data {
++    /// The value of `key`, if the mod set one in this world. API 47.
++    get: func(key: string) -> option<list<u8>>;
++    /// Sets `key` to `value`; an error for a key that is not the mod's, a value over 256 KiB or a 65th value. API 47.
++    set: func(key: string, value: list<u8>) -> result<_, string>;
++    /// Takes `key` away; nothing for a key the mod does not have. API 47.
++    remove: func(key: string);
++    /// The mod's keys that start with `prefix` (`mekanism:frequencies/`), in order. API 47.
++    keys: func(prefix: string) -> list<string>;
++}
++
+ /// A client mod: runs in the player's game.
+ world horizon-mod {
+     import log;
+@@ -1802,6 +1817,7 @@ world horizon-server-mod {
+     import player-items;
+     import chunks;
+     import %world;
++    import world-data;
+     export server-events;
+ }
+ 
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 9a1dce78c..fd873aac1 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 46;
++pub const LEVEL: u32 = 47;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 115] = [
++pub const FUNCTIONS: [(&str, u32); 119] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -84,6 +84,10 @@ pub const FUNCTIONS: [(&str, u32); 115] = [
+     ("entities.items-in-box", 37),
+     ("entities.take-dropped-item", 37),
+     ("entities.damage-entities-in-box", 45),
++    ("world-data.get", 47),
++    ("world-data.set", 47),
++    ("world-data.remove", 47),
++    ("world-data.keys", 47),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 3b0be6ee9..09be922bc 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -31,6 +31,7 @@ pub mod recipe_types;
+ mod runtime;
+ #[cfg(feature = "runtime")]
+ pub mod testing;
++pub mod world_data;
+ 
+ pub use content::Content;
+ pub use manifest::{Capability, Manifest, Package, Side, find};
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index 9f695667f..62dda72b0 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -246,6 +246,10 @@ impl Capability {
+         if interface == "log" || interface == "item-types" {
+             return Ok(None);
+         }
++        // The world's saved values are part of capability `world` (FORK-36).
++        if interface == "world-data" {
++            return Ok(Some(Capability::World));
++        }
+         // A recipe viewer's panel is part of capability `ui`.
+         if interface == "browser" {
+             return Ok(Some(Capability::Ui));
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 9ef54d041..d02adbf4e 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{chunks, entities, net, player_control, player_items, players, recipe_types, world as mod_world},
++    horizon::mods::{chunks, entities, net, player_control, player_items, players, recipe_types, world as mod_world, world_data},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -797,6 +797,10 @@ struct State {
+     /// not disk I/O time, so a loop of small-fuel, large-payload `set`s
+     /// needs its own budget.
+     storage_budget: u64,
++    /// Capability `world`'s `world-data` (FORK-36): the mod's values in the world in place, and whether they changed since the
++    /// game last took them.
++    world_data: std::collections::BTreeMap<String, Vec<u8>>,
++    world_data_dirty: bool,
+     limits: StoreLimits,
+     world: WorldSlot,
+     recipe_data: RecipeSlot,
+@@ -1181,6 +1185,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             chunks::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            world_data::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -1265,6 +1271,8 @@ impl Mods {
+             browser: BrowserState::default(),
+             data_dir,
+             storage_budget: STORAGE_WRITE_BUDGET,
++            world_data: std::collections::BTreeMap::new(),
++            world_data_dirty: false,
+             limits: StoreLimitsBuilder::new()
+                 .memory_size(MEMORY)
+                 .instances(16)
+@@ -1579,6 +1587,32 @@ impl Mods {
+         }
+         out
+     }
++    /// A world opened (FORK-36): each running mod gets its own of the world's saved values (`all`, every mod's), unchanged.
++    pub fn load_world_data(&mut self, all: &std::collections::BTreeMap<String, Vec<u8>>) {
++        for e in &mut self.entries {
++            if let Some(run) = e.run.as_mut() {
++                let data = run.store.data_mut();
++                data.world_data = crate::world_data::of_mod(all, &data.id);
++                data.world_data_dirty = false;
++            }
++        }
++    }
++    /// The values the running mods changed since the last call go back into `all` (every mod's, a mod not running keeps its own):
++    /// whether anything changed.
++    pub fn store_world_data(&mut self, all: &mut std::collections::BTreeMap<String, Vec<u8>>) -> bool {
++        let mut changed = false;
++        for e in &mut self.entries {
++            if let Some(run) = e.run.as_mut() {
++                let data = run.store.data_mut();
++                if data.world_data_dirty {
++                    crate::world_data::replace_mod(all, &data.id, &data.world_data);
++                    data.world_data_dirty = false;
++                    changed = true;
++                }
++            }
++        }
++        changed
++    }
+     /// Whether a running server mod asked for `mod-entities`.
+     pub fn hears_mod_entities(&self) -> bool {
+         self.entries.iter().filter_map(|e| e.run.as_ref()?.hooks.server()).any(|r| r.mod_entities)
+@@ -4035,6 +4069,25 @@ impl ui::Host for State {
+         self.ui.settings = clip_widgets(widgets);
+     }
+ }
++impl world_data::Host for State {
++    fn get(&mut self, key: String) -> Option<Vec<u8>> {
++        self.world_data.get(&key).cloned()
++    }
++    fn set(&mut self, key: String, value: Vec<u8>) -> Result<(), String> {
++        crate::world_data::put(&mut self.world_data, &self.id, &key, value)?;
++        self.world_data_dirty = true;
++        Ok(())
++    }
++    fn remove(&mut self, key: String) {
++        if self.world_data.remove(&key).is_some() {
++            self.world_data_dirty = true;
++        }
++    }
++    fn keys(&mut self, prefix: String) -> Vec<String> {
++        crate::world_data::keys(&self.world_data, &prefix)
++    }
++}
++
+ impl storage::Host for State {
+     fn get(&mut self, key: String) -> Option<Vec<u8>> {
+         storage_key_ok(&key)
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index d9e4dfa64..07c5ba9f7 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -83,6 +83,8 @@ pub struct TestGame {
+     pub entity_menus: std::collections::BTreeSet<u32>,
+     pub entity_menu_text: std::collections::BTreeMap<u32, Vec<String>>,
+     pub menu_returned: Vec<String>,
++    /// The values the mods keep in the world (FORK-36), every mod's.
++    pub world_data: std::collections::BTreeMap<String, Vec<u8>>,
+     /// Each mod entity's walk animation (FORK-10 5d).
+     pub walk_anims: std::collections::BTreeMap<u32, crate::entity_state::WalkAnim>,
+     next_mod_entity: u32,
+@@ -329,6 +331,7 @@ impl TestGame {
+             entity_menu_text: std::collections::BTreeMap::new(),
+             menu_returned: Vec::new(),
+             walk_anims: std::collections::BTreeMap::new(),
++            world_data: std::collections::BTreeMap::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
+             dropped: Vec::new(),
+@@ -353,6 +356,7 @@ impl TestGame {
+             self.menu_types = content.menu_types.clone();
+         }
+         self.mods = Mods::load(std::slice::from_ref(&self.hmod), |_| true, |_| false);
++        self.mods.load_world_data(&self.world_data);
+         match &self.mods.entries()[0].status {
+             Status::Failed(reason) => Err(format!("the mod didn't start: {reason}")),
+             _ if !self.mods.is_running() => Err("the mod has no code to run".into()),
+@@ -363,6 +367,8 @@ impl TestGame {
+     /// Stops the mod and starts it again, as a rebuild does in the game: its
+     /// memory starts over, its `storage` stays.
+     pub fn reload(&mut self) -> Result<(), String> {
++        // What it kept in the world is saved with it and read back, as a world that saves and opens again.
++        self.mods.store_world_data(&mut self.world_data);
+         self.mods = Mods::default();
+         self.start()
+     }
+@@ -1486,6 +1492,8 @@ pub struct ClockSet {
+ pub struct Step {
+     #[serde(default)]
+     reload: bool,
++    /// Server mods (FORK-36): the values kept in the world from now on, every mod's (`key = [bytes]`), as a world opened with them.
++    world_data: Option<std::collections::BTreeMap<String, Vec<u8>>>,
+     /// Leave the world: the mod reads no player and no clock until a step sets them.
+     #[serde(default)]
+     title_screen: bool,
+@@ -1655,6 +1663,8 @@ pub struct Expect {
+     entity_menu: Option<Vec<String>>,
+     /// Server mods (FORK-10 5b): the menu data and strings of the mod's entities that have any, as `"id data=[v,..] text=a|b"`.
+     mod_entity_menu: Option<Vec<String>>,
++    /// Server mods (FORK-36): every value kept in the world after the step, as `"key [bytes]"`.
++    world_data: Option<Vec<String>>,
+     /// Server mods (FORK-10 5d): the angles of the swinging bones of the mod's entities, as `"id bone=degrees,..."` (one decimal).
+     mod_entity_bones: Option<Vec<String>>,
+     /// Server mods (FORK-10 5b): what the entity menus closed so far handed back to the player, as `"item*count"`.
+@@ -1842,6 +1852,10 @@ impl Step {
+         if self.reload {
+             game.reload()?;
+         }
++        if let Some(values) = &self.world_data {
++            game.world_data.clone_from(values);
++            game.mods.load_world_data(values);
++        }
+         if self.title_screen {
+             game.player = None;
+             game.clock = None;
+@@ -2789,6 +2803,15 @@ impl Step {
+                 .collect();
+             same("mod-entity-menu", want, &got)?;
+         }
++        if let Some(want) = &e.world_data {
++            game.mods.store_world_data(&mut game.world_data);
++            let got: Vec<String> = game
++                .world_data
++                .iter()
++                .map(|(k, v)| format!("{k} [{}]", v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")))
++                .collect();
++            same("world-data", want, &got)?;
++        }
+         if let Some(want) = &e.mod_entity_bones {
+             let got: Vec<String> = game
+                 .mod_entities
+diff --git a/crates/horizon-mods/src/world_data.rs b/crates/horizon-mods/src/world_data.rs
+new file mode 100644
+index 000000000..c987426b4
+--- /dev/null
++++ b/crates/horizon-mods/src/world_data.rs
+@@ -0,0 +1,146 @@
++//! The data mods keep in the world (FORK-36, capability `world`'s `world-data`): byte values under `<mod id>:<path>` keys, saved with
++//! the world in [`FILE`] (what Mekanism keeps in `SavedData`: frequencies, block owners, security). The rules of a key and the limits
++//! are here, with the file's format; the runtime holds each mod's values during calls and the game reads and writes the file.
++use std::collections::BTreeMap;
++
++/// Where the values are, inside the world's folder.
++pub const FILE: &str = "data/horizon/mod_world_data.bin";
++/// The most bytes a value holds.
++pub const MAX_VALUE: usize = 256 * 1024;
++/// The most values a mod keeps.
++pub const MAX_VALUES: usize = 64;
++/// The most bytes of a key's path (after `<mod id>:`).
++pub const MAX_PATH: usize = 128;
++
++const MAGIC: &[u8; 4] = b"HWD1";
++
++/// Whether `key` is one of mod `mod_id`'s: `<mod id>:<path>`, the path 1 to [`MAX_PATH`] bytes of `a-z 0-9 _ . / -`, with no empty,
++/// `.` or `..` segment.
++pub fn key_ok(mod_id: &str, key: &str) -> bool {
++    let Some(path) = key.strip_prefix(mod_id).and_then(|k| k.strip_prefix(':')) else {
++        return false;
++    };
++    (1..=MAX_PATH).contains(&path.len())
++        && path.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_./-".contains(&b))
++        && path.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
++}
++
++/// Sets `key` of mod `mod_id` to `value` in `values` (that mod's): an error for a key that is not the mod's, a value over
++/// [`MAX_VALUE`], or a new key past [`MAX_VALUES`].
++pub fn put(values: &mut BTreeMap<String, Vec<u8>>, mod_id: &str, key: &str, value: Vec<u8>) -> Result<(), String> {
++    if !key_ok(mod_id, key) {
++        return Err(format!("{key:?} is not {mod_id}:<path> (a-z 0-9 _ . / -, 1 to {MAX_PATH} bytes)"));
++    }
++    if value.len() > MAX_VALUE {
++        return Err(format!("a value holds at most {} KiB", MAX_VALUE / 1024));
++    }
++    if !values.contains_key(key) && values.len() >= MAX_VALUES {
++        return Err(format!("a mod keeps at most {MAX_VALUES} values"));
++    }
++    values.insert(key.to_owned(), value);
++    Ok(())
++}
++
++/// The keys of `values` that start with `prefix`, in order.
++pub fn keys(values: &BTreeMap<String, Vec<u8>>, prefix: &str) -> Vec<String> {
++    values.keys().filter(|k| k.starts_with(prefix)).cloned().collect()
++}
++
++/// The values of mod `mod_id` among every mod's.
++pub fn of_mod(all: &BTreeMap<String, Vec<u8>>, mod_id: &str) -> BTreeMap<String, Vec<u8>> {
++    let prefix = format!("{mod_id}:");
++    all.iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(k, v)| (k.clone(), v.clone())).collect()
++}
++
++/// Puts mod `mod_id`'s values back among every mod's, in place of what it had.
++pub fn replace_mod(all: &mut BTreeMap<String, Vec<u8>>, mod_id: &str, values: &BTreeMap<String, Vec<u8>>) {
++    let prefix = format!("{mod_id}:");
++    all.retain(|k, _| !k.starts_with(&prefix));
++    all.extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
++}
++
++/// The file of `all`: `HWD1`, the count, then each key (2-byte length, UTF-8) and value (4-byte length, bytes), little-endian.
++pub fn encode(all: &BTreeMap<String, Vec<u8>>) -> Vec<u8> {
++    let mut out = MAGIC.to_vec();
++    out.extend((all.len() as u32).to_le_bytes());
++    for (k, v) in all {
++        out.extend((k.len() as u16).to_le_bytes());
++        out.extend(k.as_bytes());
++        out.extend((v.len() as u32).to_le_bytes());
++        out.extend(v);
++    }
++    out
++}
++
++/// The values a file holds; none for a file that is not one (a damaged file is not half read).
++pub fn decode(bytes: &[u8]) -> Option<BTreeMap<String, Vec<u8>>> {
++    let mut at = 0usize;
++    let mut take = |n: usize| {
++        let s = bytes.get(at..at + n)?;
++        at += n;
++        Some(s)
++    };
++    if take(4)? != MAGIC {
++        return None;
++    }
++    let count = u32::from_le_bytes(take(4)?.try_into().ok()?);
++    let mut all = BTreeMap::new();
++    for _ in 0..count {
++        let klen = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
++        let key = String::from_utf8(take(klen)?.to_vec()).ok()?;
++        let vlen = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
++        let value = take(vlen)?.to_vec();
++        all.insert(key, value);
++    }
++    (at == bytes.len()).then_some(all)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_key_is_the_mods_own_with_a_plain_path() {
++        assert!(key_ok("mekanism", "mekanism:frequencies/teleporter"));
++        assert!(key_ok("mekanism", "mekanism:owners"));
++        for bad in ["other:owners", "mekanism:", "mekanism", "mekanism:Owners", "mekanism:a//b", "mekanism:../x", "mekanism:a b", "mekanismx:a"] {
++            assert!(!key_ok("mekanism", bad), "{bad}");
++        }
++        assert!(key_ok("m", &format!("m:{}", "a".repeat(128))));
++        assert!(!key_ok("m", &format!("m:{}", "a".repeat(129))));
++    }
++
++    #[test]
++    fn values_have_a_size_and_a_count_limit() {
++        let mut v = BTreeMap::new();
++        assert!(put(&mut v, "m", "m:big", vec![0; MAX_VALUE]).is_ok());
++        assert!(put(&mut v, "m", "m:bigger", vec![0; MAX_VALUE + 1]).unwrap_err().contains("256 KiB"));
++        assert!(put(&mut v, "m", "x:y", vec![]).is_err());
++        for i in 1..MAX_VALUES {
++            put(&mut v, "m", &format!("m:k{i}"), vec![i as u8]).unwrap();
++        }
++        assert_eq!(v.len(), 64);
++        assert!(put(&mut v, "m", "m:one_more", vec![]).unwrap_err().contains("64 values"));
++        // Changing a key it has is not a new one.
++        assert!(put(&mut v, "m", "m:k1", vec![9]).is_ok());
++        assert_eq!(keys(&v, "m:k1"), ["m:k1", "m:k10", "m:k11", "m:k12", "m:k13", "m:k14", "m:k15", "m:k16", "m:k17", "m:k18", "m:k19"]);
++    }
++
++    #[test]
++    fn the_file_keeps_every_mods_values_and_a_mod_replaces_only_its_own() {
++        let mut all = BTreeMap::new();
++        all.insert("a:x".to_owned(), vec![1, 2]);
++        all.insert("b:y".to_owned(), vec![]);
++        all.insert("b:z".to_owned(), vec![3; 300]);
++        let bytes = encode(&all);
++        assert_eq!(decode(&bytes), Some(all.clone()));
++        assert_eq!(decode(&bytes[..bytes.len() - 1]), None, "a cut file");
++        assert_eq!(decode(b"nope"), None);
++        let mut b = of_mod(&all, "b");
++        assert_eq!(b.len(), 2);
++        b.remove("b:y");
++        b.insert("b:w".into(), vec![7]);
++        replace_mod(&mut all, "b", &b);
++        assert_eq!(all.keys().collect::<Vec<_>>(), ["a:x", "b:w", "b:z"]);
++    }
++}
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index e4235845c..111140fd0 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 46);
++    assert_eq!(LEVEL, 47);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index a6c32a449..4e798fdb5 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -38,7 +38,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `item-types`, `recipe-types`, `net`, `entities`, `player-items`, `chunks`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `item-types`, `recipe-types`, `net`, `entities`, `player-items`, `chunks`, `world`, `world-data`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -1388,3 +1388,16 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `item-shot` | `func(player: player, stack: item-stack, projectiles: list<u32>)` | The arrows of a shot exist (`ItemElectricBow.shoot`'s place in `ProjectileWeaponItem.shoot`): their entity ids, to light with `entities.set-entity-fire` or to charge for. Asked after `item-released` answered true. Nothing to answer. |
+ | `can-place` | `func(player: player, pos: block-pos, state: string) -> bool` | A player placed the mod's block `state` at `pos` (`registration.blocks`): asked right after the game set it, for the blocks of any mod that asked. Answer false to refuse: the block is taken away again and nothing is used up (a big machine whose model needs the blocks around it free). Where `BlockItem.canPlace` is in the original. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
++
++## `world-data`
++
++Access: not granted by any capability.
++
++Part of capability `world` (server mods, FORK-36): byte values the mod keeps in the world, saved with it (what Mekanism keeps in `SavedData`: frequencies, block owners, security). Keys are `<mod id>:<path>` (the path 1 to 128 bytes of `a-z 0-9 _ . / -`), a value holds up to 256 KiB, a mod keeps up to 64 values. The values are there from the first tick of the world (not during `init`) and are written when the world saves. API 47.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get` | `func(key: string) -> option<list<u8>>` | The value of `key`, if the mod set one in this world. API 47. |
++| `set` | `func(key: string, value: list<u8>) -> result<_, string>` | Sets `key` to `value`; an error for a key that is not the mod's, a value over 256 KiB or a 65th value. API 47. |
++| `remove` | `func(key: string)` | Takes `key` away; nothing for a key the mod does not have. API 47. |
++| `keys` | `func(prefix: string) -> list<string>` | The mod's keys that start with `prefix` (`mekanism:frequencies/`), in order. API 47. |
+-- 
+2.43.0
+
