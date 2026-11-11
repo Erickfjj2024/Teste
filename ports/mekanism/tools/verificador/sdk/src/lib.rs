@@ -20,7 +20,7 @@ pub mod server {
     pub fn teleport<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: Option<f32>, _a6: Option<f32>) -> Result<(), String> { Err(String::new()) }
     pub fn take_xp<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct EffectState { pub id: String, pub duration: i32, pub amplifier: i32 }
-    #[derive(Clone, Debug, Default, PartialEq)] pub struct PlayerState { pub velocity_x: f64, pub velocity_y: f64, pub velocity_z: f64, pub jumping: bool, pub sprinting: bool, pub flying: bool, pub may_fly: bool, pub fall_flying: bool, pub swimming: bool, pub in_water: bool, pub eyes_in_water: bool, pub in_lava: bool, pub air: i32, pub max_air: i32, pub fire_ticks: i32, pub passenger: bool, pub sleeping: bool, pub food: u32, pub saturation: f32, pub effects: Vec<EffectState> }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct PlayerState { pub velocity_x: f64, pub velocity_y: f64, pub velocity_z: f64, pub jumping: bool, pub sprinting: bool, pub flying: bool, pub may_fly: bool, pub fall_flying: bool, pub swimming: bool, pub in_water: bool, pub eyes_in_water: bool, pub in_lava: bool, pub air: i32, pub max_air: i32, pub fire_ticks: i32, pub passenger: bool, pub sleeping: bool, pub food: u32, pub saturation: f32, pub effects: Vec<EffectState>, pub blocking: bool }
     pub fn set_air<A0, A1>(_a0: A0, _a1: A1) -> Result<(), String> { Err(String::new()) }
     pub fn reduce_effect<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn reset_fall_distance<A0>(_a0: A0) -> Result<(), String> { Err(String::new()) }
@@ -50,8 +50,8 @@ pub mod server {
     pub struct DroppedItem { pub id: u32, pub stack: crate::server::ItemStack, pub x: f64, pub y: f64, pub z: f64 }
     pub fn items_in_box<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Vec<DroppedItem> { Vec::new() }
     pub fn take_dropped_item<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
-    pub struct DamageResult { pub id: u32, pub applied: f32, pub blocked: bool }
-    pub fn damage_entities_in_box<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Vec<DamageResult> { Vec::new() }
+    pub struct DamageResult { pub id: u32, pub player: Option<String>, pub applied: f32, pub blocked: bool }
+    pub fn damage_entities_in_box<A0, A1, A2, A3, A4, A5>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5) -> Vec<DamageResult> { Vec::new() }
     pub fn spawn_mod_entity<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: &[u8]) -> Result<u64, String> { Err(String::new()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Mob { pub id: u32, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub max_health: f32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct MobOptions { pub name: Option<String>, pub health: Option<f32>, pub no_ai: bool, pub invisible: bool, pub silent: bool, pub invulnerable: bool, pub no_gravity: bool }
