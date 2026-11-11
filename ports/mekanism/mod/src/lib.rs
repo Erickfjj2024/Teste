@@ -474,6 +474,7 @@ struct Mekanism {
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
+    laser_texts: Vec<(String, BlockPos, i32, String)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -2257,6 +2258,7 @@ impl ServerMod for Mekanism {
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
+            laser_texts: Vec::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
@@ -3137,6 +3139,8 @@ impl ServerMod for Mekanism {
                 out.extend(self.oredictionificator_text(e, id, &text));
             } else if block == resistive_heater::BLOCK {
                 out.extend(self.resistive_text(e, id, &text));
+            } else if block == laser::AMPLIFIER {
+                self.laser_texts.push((dimension, pos, id, text));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.

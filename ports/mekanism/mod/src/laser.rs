@@ -17,7 +17,14 @@ pub const RANGE: i32 = 64;
 pub const FIRE: u64 = fe(10_000);
 pub const AMPLIFIER_CAPACITY: u64 = fe(5_000_000_000);
 pub const LASER_CAPACITY: u64 = fe(2_000_000);
-/// The buttons of the amplifier's screen.
+/// The text boxes of the amplifier's screen (`GuiLaserAmplifier`: the minimum, the maximum and the delay), and its output tab (`GuiAmplifierTab`: left and
+/// right click move the mode on and back).
+pub const TEXT_MIN: i32 = 7300;
+pub const TEXT_MAX: i32 = 7301;
+pub const TEXT_DELAY: i32 = 7302;
+pub const OUTPUT_NEXT: i32 = 7310;
+pub const OUTPUT_PREVIOUS: i32 = 7311;
+/// The buttons of the amplifier's screen that moved the thresholds in steps, before the text boxes (the tests still use them).
 pub const MIN_DOWN_BIG: i32 = 7300;
 pub const MIN_DOWN: i32 = 7301;
 pub const MIN_UP: i32 = 7302;
@@ -130,11 +137,14 @@ pub struct Amp {
     pub max: u32,
     pub delay: u32,
     pub ticks: u32,
+    /// `RedstoneOutput`: 0 off, 1 entity detection, 2 energy contents.
+    pub output: u8,
+    pub control: crate::redstone::Control,
 }
 
 impl Default for Amp {
     fn default() -> Amp {
-        Amp { min: 0, max: AMPLIFIER_CAPACITY as u32, delay: 0, ticks: 0 }
+        Amp { min: 0, max: AMPLIFIER_CAPACITY as u32, delay: 0, ticks: 0, output: 0, control: crate::redstone::Control::Disabled }
     }
 }
 
@@ -143,6 +153,8 @@ pub fn encode_amp(a: &Amp) -> Vec<u8> {
     for v in [a.min, a.max, a.delay, a.ticks] {
         out.extend(v.to_le_bytes());
     }
+    out.push(a.output);
+    out.push(a.control as u8);
     out
 }
 
@@ -151,18 +163,57 @@ pub fn decode_amp(data: &[u8]) -> Option<Amp> {
         return None;
     }
     let u = |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
-    Some(Amp { min: u(1), max: u(5), delay: u(9), ticks: u(13) })
+    let output = data.get(17).copied().unwrap_or(0) % 3;
+    let control = crate::redstone::Control::from_byte(data.get(18).copied().unwrap_or(0));
+    Some(Amp { min: u(1), max: u(5), delay: u(9), ticks: u(13), output, control })
 }
 
 impl Amp {
     /// How much the amplifier fires this tick (`toFire`, extracted from what it holds): all of it up to the maximum threshold, once
     /// the delay has run and it holds the minimum.
-    pub fn to_fire(&self, energy: u64) -> u64 {
-        if self.ticks >= self.delay && energy >= u64::from(self.min) {
+    pub fn to_fire(&self, energy: u64, can_function: bool) -> u64 {
+        if self.ticks >= self.delay && energy >= u64::from(self.min) && can_function {
             energy.min(u64::from(self.max))
         } else {
             0
         }
+    }
+
+    /// `updateMinThreshold`: what the minimum box confirmed (the energy in Forge Energy), at most the capacity; a minimum over the maximum takes the maximum up.
+    pub fn set_min(&mut self, target: u64) -> bool {
+        let v = target.min(AMPLIFIER_CAPACITY) as u32;
+        if v == self.min {
+            return false;
+        }
+        self.min = v;
+        self.max = self.max.max(v);
+        true
+    }
+
+    /// `updateMaxThreshold`: the same for the maximum, which pulls the minimum down when it goes under it.
+    pub fn set_max(&mut self, target: u64) -> bool {
+        let v = target.min(AMPLIFIER_CAPACITY) as u32;
+        if v == self.max {
+            return false;
+        }
+        self.max = v;
+        self.min = self.min.min(v);
+        true
+    }
+
+    /// `setDelay`: ticks between two shots, never under 0.
+    pub fn set_delay(&mut self, delay: u32) -> bool {
+        let v = delay.min(1_000_000);
+        if v == self.delay {
+            return false;
+        }
+        self.delay = v;
+        true
+    }
+
+    /// `IHasMode`: the output tab on (left click) or back (right click).
+    pub fn step_output(&mut self, next: bool) {
+        self.output = (self.output + if next { 1 } else { 2 }) % 3;
     }
 
     /// The tick count after a tick (`ticks < delay ? ticks + 1 : 0`).
@@ -201,6 +252,7 @@ impl Mekanism {
     /// A tick of the lasers, amplifiers and focus matrices.
     pub(crate) fn run_lasers(&mut self, parts: &[&BlockEntity]) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.laser_buttons);
+        let texts = std::mem::take(&mut self.laser_texts);
         let mut out = Vec::new();
         for e in parts {
             let block = e.state.split('[').next().unwrap_or("");
@@ -261,7 +313,33 @@ impl Mekanism {
             if is_amp {
                 let a = amp.get_or_insert_with(Amp::default);
                 for (_, _, id) in presses.iter().filter(|(d, p, _)| *d == e.dimension && (p.x, p.y, p.z) == (at[0], at[1], at[2])) {
-                    a.press(*id);
+                    match *id {
+                        crate::redstone::NEXT => a.control = a.control.next(),
+                        crate::redstone::PREVIOUS => a.control = a.control.previous(),
+                        OUTPUT_NEXT => a.step_output(true),
+                        OUTPUT_PREVIOUS => a.step_output(false),
+                        id => a.press(id),
+                    }
+                }
+                for (_, _, id, text) in texts.iter().filter(|(d, p, _, _)| *d == e.dimension && (p.x, p.y, p.z) == (at[0], at[1], at[2])) {
+                    match *id {
+                        TEXT_MIN => {
+                            if let Some(v) = parse_energy_text(text) {
+                                a.set_min(v);
+                            }
+                        }
+                        TEXT_MAX => {
+                            if let Some(v) = parse_energy_text(text) {
+                                a.set_max(v);
+                            }
+                        }
+                        TEXT_DELAY => {
+                            if let Ok(v) = text.trim().parse::<u32>() {
+                                a.set_delay(v);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 // What lasers delivered fills the buffer (what does not fit is lost).
                 if let Some(inflow) = self.beams.remove(&(e.dimension.clone(), at)) {
@@ -269,7 +347,15 @@ impl Mekanism {
                 }
             }
             // `energyContainer.extract(toFire(), SIMULATE)`: the laser fires what it has up to its usage, the amplifier what it holds.
-            let to_fire = if is_tractor { energy } else { amp.as_ref().map_or(FIRE.min(energy), |a| a.to_fire(energy)) };
+            // `canFunction`: the amplifier's redstone control (`supportsMode` is true for all four).
+            let can_function = if is_amp {
+                let powered = world::get_redstone(&e.dimension, e.pos.x, e.pos.y, e.pos.z) > 0;
+                let last = self.last_power.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z), powered).unwrap_or(false);
+                amp.as_ref().is_none_or(|a| a.control.can_function(powered, last))
+            } else {
+                true
+            };
+            let to_fire = if is_tractor { energy } else { amp.as_ref().map_or(FIRE.min(energy), |a| a.to_fire(energy, can_function)) };
             let mut fired = 0;
             let mut items_update = None;
             let key = (e.dimension.clone(), at);
@@ -314,8 +400,16 @@ impl Mekanism {
                     half(u64::from(a.max), 16),
                     a.delay as i32,
                     fired.min(i32::MAX as u64) as i32,
+                    i32::from(a.output),
+                    a.control as i32,
                 ]
             });
+            if is_amp {
+                // `getRedstoneLevel`: the energy it holds in the contents mode (entity detection needs the laser's damage pass, which the host has not).
+                let level = if a.output == 2 { crate::redstone::level_from_contents(energy, cap) } else { 0 };
+                crate::redstone::set_comparator(&e.dimension, e.pos, level);
+                self.send_amplifier_texts(e, &a);
+            }
             out.push(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
@@ -333,7 +427,44 @@ impl Mekanism {
     }
 }
 
+/// What an energy text box takes (`parseLong`): digits, or scientific notation (`1E6`, `2.5e3`) that comes out whole; never under 0.
+pub fn parse_energy_text(text: &str) -> Option<u64> {
+    let t = text.trim();
+    if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'E' | b'e' | b'+')) {
+        return None;
+    }
+    if t.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(t.parse::<u64>().unwrap_or(u64::MAX));
+    }
+    let v: f64 = t.parse().ok()?;
+    (v.is_finite() && v >= 0.0 && v.fract() == 0.0 && v < 1e18).then_some(v as u64)
+}
+
+/// An energy the way a screen writes it (`EnergyDisplay`): two decimals at most, with the prefix of its size.
+pub fn format_energy(fe: u64) -> String {
+    let mut v = fe as f64;
+    let mut unit = 0;
+    while v >= 1000.0 && unit < 6 {
+        v /= 1000.0;
+        unit += 1;
+    }
+    let text = format!("{:.2}", (v * 100.0).round() / 100.0);
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!("{} {}FE", text, ["", "k", "M", "G", "T", "P", "E"][unit])
+}
+
 impl Mekanism {
+    /// The three lines the amplifier's screen writes beside its boxes (`MekanismLang.DELAY`, `NO_DELAY`, `MIN`, `MAX`), when they changed.
+    fn send_amplifier_texts(&mut self, e: &BlockEntity, a: &Amp) {
+        let delay = if a.delay > 0 { format!("Delay: {}", a.delay) } else { "No delay".to_owned() };
+        let texts = vec![delay, format!("Min: {}", format_energy(u64::from(a.min))), format!("Max: {}", format_energy(u64::from(a.max)))];
+        let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+        if self.menu_texts.get(&key) != Some(&texts) {
+            let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+            self.menu_texts.insert(key, texts);
+        }
+    }
+
     /// What a beam does to the block it hit (`TileEntityBasicLaser.onUpdateServer`): a block that receives lasers takes the energy; any other is worn
     /// down by it and broken when the progress reaches what its hardness asks for. The progress starts again when the beam moves to another block.
     fn laser_hits(&mut self, dim: &str, key: (String, [i32; 3]), target: [i32; 3], fired: u64) {
@@ -448,25 +579,25 @@ mod tests {
     fn the_amplifier_fires_what_it_holds_between_its_thresholds() {
         let mut a = Amp::default();
         // By default it fires all it holds, up to the capacity.
-        assert_eq!(a.to_fire(1_234), 1_234);
+        assert_eq!(a.to_fire(1_234, true), 1_234);
         a.min = 1_000;
         a.max = 5_000;
-        assert_eq!(a.to_fire(999), 0);
-        assert_eq!(a.to_fire(3_000), 3_000);
-        assert_eq!(a.to_fire(9_000), 5_000);
+        assert_eq!(a.to_fire(999, true), 0);
+        assert_eq!(a.to_fire(3_000, true), 3_000);
+        assert_eq!(a.to_fire(9_000, true), 5_000);
         a.delay = 2;
         a.ticks = 0;
-        assert_eq!(a.to_fire(3_000), 0);
+        assert_eq!(a.to_fire(3_000, true), 0);
         a.advance();
         a.advance();
-        assert_eq!(a.to_fire(3_000), 3_000);
+        assert_eq!(a.to_fire(3_000, true), 3_000);
         a.advance();
         assert_eq!(a.ticks, 0);
     }
 
     #[test]
     fn the_buttons_keep_the_minimum_under_the_maximum() {
-        let mut a = Amp { min: 0, max: 5000, delay: 0, ticks: 0 };
+        let mut a = Amp { min: 0, max: 5000, delay: 0, ticks: 0, ..Amp::default() };
         a.press(MIN_UP_BIG);
         assert_eq!((a.min, a.max), (100_000, 100_000));
         a.press(MAX_DOWN_BIG);
@@ -492,7 +623,7 @@ mod tests {
 
     #[test]
     fn an_amplifier_remembers_its_settings() {
-        let a = Amp { min: 5, max: 10, delay: 3, ticks: 2 };
+        let a = Amp { min: 5, max: 10, delay: 3, ticks: 2, output: 1, control: crate::redstone::Control::Low };
         assert_eq!(decode_amp(&encode_amp(&a)), Some(a));
         assert_eq!(decode_amp(&[0, 1, 2]), None);
     }
@@ -503,5 +634,44 @@ mod tests {
         assert_eq!(FIRE, 4_000);
         assert_eq!(LASER_CAPACITY, 800_000);
         assert_eq!(AMPLIFIER_CAPACITY, 2_000_000_000);
+    }
+
+    #[test]
+    fn the_boxes_set_the_thresholds_the_way_the_tile_does() {
+        let mut a = Amp::default();
+        assert!(a.set_min(5_000));
+        assert!(!a.set_min(5_000));
+        assert!(a.set_max(2_000));
+        assert_eq!((a.min, a.max), (2_000, 2_000));
+        assert!(a.set_min(9_000));
+        assert_eq!((a.min, a.max), (9_000, 9_000));
+        assert!(a.set_max(u64::MAX));
+        assert_eq!(a.max, AMPLIFIER_CAPACITY as u32);
+        assert!(a.set_delay(4));
+        a.step_output(true);
+        a.step_output(true);
+        assert_eq!(a.output, 2);
+        a.step_output(true);
+        assert_eq!(a.output, 0);
+        a.step_output(false);
+        assert_eq!(a.output, 2);
+        a.control = crate::redstone::Control::High;
+        let b = decode_amp(&encode_amp(&a)).unwrap();
+        assert_eq!(b, a);
+        // The redstone control keeps it quiet.
+        assert_eq!(a.to_fire(1_000, false), 0);
+    }
+
+    #[test]
+    fn the_energy_boxes_read_digits_and_scientific_notation() {
+        assert_eq!(parse_energy_text("1500"), Some(1500));
+        assert_eq!(parse_energy_text("1E6"), Some(1_000_000));
+        assert_eq!(parse_energy_text("2.5e3"), Some(2500));
+        assert_eq!(parse_energy_text("1.5"), None);
+        assert_eq!(parse_energy_text("abc"), None);
+        assert_eq!(parse_energy_text(""), None);
+        assert_eq!(format_energy(0), "0 FE");
+        assert_eq!(format_energy(1500), "1.5 kFE");
+        assert_eq!(format_energy(2_000_000_000), "2 GFE");
     }
 }

@@ -2101,36 +2101,62 @@ def fusion_controller_menu(m):
     return {'slots': 1, 'data_slots': 29, 'accepts': [{'slot': 0, 'items': ['mekanism:hohlraum']}],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[85, 39]], 'widgets': widgets}}
 
+def energy_gauge_fill():
+    """The energy sprite (its first frame, 16 by 16) tiled over the gauge's 64 by 48 contents."""
+    from PIL import Image
+    src = Image.open(find('textures/mek_liquid/energy.png', ASSET_DIRS)).convert('RGBA').crop((0, 0, 16, 16))
+    img = Image.new('RGBA', (64, 48))
+    for x in range(0, 64, 16):
+        for y in range(0, 48, 16):
+            img.paste(src, (x, y))
+    return save_gui(img, 'energy_gauge_fill')
+
 def laser_amplifier_menu(m):
-    """GuiLaserAmplifier (simplified): the energy it holds, the thresholds and the delay with buttons."""
+    """GuiLaserAmplifier (176 by 166): the standard energy gauge at 6, 10, the three text boxes (the delay at 96, 28, 36 by 11, four digits; the minimum at
+    96, 43 and the maximum at 96, 58, 72 by 11, ten characters, scientific notation allowed), their lines to the left (x 24, y 30, 45 and 60: "Delay: n" or
+    "No delay", "Min: ..." and "Max: ...", the screen's strings 0 to 2 from `laser.rs::send_amplifier_texts`), the title centred in what the gauge leaves, and
+    the tabs: energy ("Storing"), the output tab at 176, 109 (26 by 18, three icons: off, entity detection, energy contents; left click on, right click back)
+    and the redstone control. Numbers (`laser.rs`): 0-1 energy, 2-3 capacity, 4-5 minimum, 6-7 maximum, 8 delay, 9 shot, 10 output mode, 11 redstone control.
+    **Not in the port:** the original's entity detection mode needs the laser's damage pass (the host has no laser damage), so it gives no signal."""
+    from PIL import Image
     panel = nine_slice(gui_sprite('base'), 176, 166, 4)
     slot = gui_sprite('slot/normal')
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 12, 1), (7, 17))
+        panel.paste(slot, (7 + 18 * col, 141))
+    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 60, 2), (6, 10))
     texture = save_gui(panel, m)
     title = 'Laser Amplifier'
+    tabs = []
+    for k, name in enumerate(('off', 'entity', 'contents')):
+        holder = nine_slice(gui_sprite('holder_right'), 26, 18, 4)
+        icon = Image.open(find(f'gui/amplifier_{name}.png', ASSET_DIRS)).convert('RGBA')
+        holder.alpha_composite(icon.resize((18, 18), 0), (4, 0))
+        tabs.append(save_gui(holder, f'amplifier_tab_{name}'))
+    tips = ['Redstone Output: Off', 'Redstone Output: Entity Detection', 'Redstone Output: Energy Contents']
     widgets = [
-        {'type': 'sprite', 'texture': power_h_fill, 'x': 8, 'y': 18, 'w': 160, 'h': 10, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
-         'direction': 'right', 'tooltip': 'Energy: {value} / {max} FE'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'sprite', 'texture': energy_gauge_fill(), 'x': 7, 'y': 11, 'w': 16, 'h': 58, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
+         'direction': 'up', 'tooltip': 'Energy: {value} / {max} FE'},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 11, 'w': 16, 'h': 58},
+        {'type': 'text', 'x': 24 + (176 - 24 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 10, 'y': 33, 'text': 'Min {4+5}', 'color': '#00CD00', 'scale': 90},
-        {'type': 'text', 'x': 10, 'y': 47, 'text': 'Max {6+7}', 'color': '#00CD00', 'scale': 90},
-        {'type': 'text', 'x': 10, 'y': 61, 'text': 'Delay {8}  Firing {9}', 'color': '#00CD00', 'scale': 90},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    for row, (y, ids) in enumerate(((31, (7300, 7301, 7302, 7303)), (45, (7304, 7305, 7306, 7307)))):
-        for k, (bid, label) in enumerate(zip(ids, ('-100k', '-1k', '+1k', '+100k'))):
-            x = 86 + 21 * k
-            widgets.append({'type': 'text', 'x': x + 1, 'y': y + 2, 'text': label, 'color': '#404040', 'scale': 60})
-            widgets.append({'type': 'button', 'x': x, 'y': y, 'w': 20, 'h': 11, 'id': bid, 'tooltip': 'Threshold'})
-    for bid, label, x in ((7308, '-1', 112), (7309, '+1', 134)):
-        widgets.append({'type': 'text', 'x': x + 4, 'y': 62, 'text': label, 'color': '#404040'})
-        widgets.append({'type': 'button', 'x': x, 'y': 59, 'w': 20, 'h': 11, 'id': bid, 'tooltip': 'Delay'})
-    return {'slots': 1, 'data_slots': 10,
+        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 24, 'y': 30, 'text': '', 'text_data': 0, 'color': '#404040', 'scale': 85},
+        {'type': 'text', 'x': 24, 'y': 45, 'text': '', 'text_data': 1, 'color': '#404040', 'scale': 85},
+        {'type': 'text', 'x': 24, 'y': 60, 'text': '', 'text_data': 2, 'color': '#404040', 'scale': 85},
+        {'type': 'textfield', 'x': 96, 'y': 28, 'w': 36, 'h': 11, 'id': 7302, 'validator': 'digit', 'max_length': 4},
+        {'type': 'textfield', 'x': 96, 'y': 43, 'w': 72, 'h': 11, 'id': 7300, 'validator': 'any', 'max_length': 10},
+        {'type': 'textfield', 'x': 96, 'y': 58, 'w': 72, 'h': 11, 'id': 7301, 'validator': 'any', 'max_length': 10},
+        {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {0+1} FE'}]
+    for k in range(3):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 10}, 'eq': k}}, 'widgets': [
+            {'type': 'sprite', 'texture': tabs[k], 'x': 176, 'y': 109, 'w': 26, 'h': 18},
+            {'type': 'button', 'x': 176, 'y': 109, 'w': 26, 'h': 18, 'id': 7310, 'alt_id': 7311, 'tooltip': tips[k]}]})
+    widgets += redstone_widgets(11)
+    return {'slots': 1, 'data_slots': 12,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
 def laser_tractor_beam_menu(m):
@@ -2540,16 +2566,6 @@ def energy_cube_panel(name):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     panel.save(path)
     return f'{NS}:gui/{name}'
-
-def energy_gauge_fill():
-    """The energy sprite (its first frame, 16 by 16) tiled over the gauge's 64 by 48 contents."""
-    from PIL import Image
-    src = Image.open(find('textures/mek_liquid/energy.png', ASSET_DIRS)).convert('RGBA').crop((0, 0, 16, 16))
-    img = Image.new('RGBA', (64, 48))
-    for x in range(0, 64, 16):
-        for y in range(0, 48, 16):
-            img.paste(src, (x, y))
-    return save_gui(img, 'energy_gauge_fill')
 
 gauge_fill = energy_gauge_fill()
 gauge_overlay = copy_gui('gauge/overlay/wide', 'gauge_overlay_wide')
