@@ -429,6 +429,47 @@ pub fn kill_zone(dimension: &str, min: [i32; 3], burning: bool, tick_no: u64) {
     let _ = (dimension, min, burning, tick_no);
 }
 
+/// The injection rate box of the fuel page (`GuiFusionReactorFuel`, 103, 115, two digits).
+pub const INJECTION_TEXT: i32 = 7210;
+
+/// What the box confirmed (`setInjectionRateFromPacket`): the rate rounded down to an even number, at most `MAX_INJECTION`. Digits only; anything else is refused.
+pub fn set_injection_text(r: &mut Reactor, text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() || t.len() > 2 || !t.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let rate = t.parse::<u64>().unwrap_or(0);
+    let rate = (rate - rate % 2).min(MAX_INJECTION);
+    if rate == r.injection {
+        return false;
+    }
+    r.injection = rate;
+    r.water.amount = r.water.amount.min(water_capacity(r.injection));
+    r.steam.amount = r.steam.amount.min(steam_capacity(r.injection));
+    true
+}
+
+/// The strings of the screens: 0 the plasma, 1 the case, 2 the injection rate; the stats page's air-cooled lines 3 to 7 (minimum injection, ignition, most plasma, most casing,
+/// passive generation) and water-cooled ones 8 to 13 (the same four, the passive generation again and the steam production).
+pub fn screen_texts(r: &Reactor) -> Vec<String> {
+    let n = crate::evaporation::trim_number;
+    let rate = r.injection.max(r.last_burned);
+    let mut v = vec![
+        format!("Plasma: {} K", n(r.plasma)),
+        format!("Case: {} K", n(r.case)),
+        format!("Injection Rate: {}", r.injection),
+    ];
+    for active in [false, true] {
+        v.push(format!("Min. Inject Rate: {}", min_injection_rate(active)));
+        v.push(format!("Ignition Temp: {} K", n(ignition_temperature(active))));
+        v.push(format!("Max. Plasma Temp: {} K", n(max_plasma(rate, active))));
+        v.push(format!("Max. Casing Temp: {} K", n(max_casing(rate, active))));
+        v.push(format!("Passive Generation: {}/t", crate::laser::format_energy(passive_generation(max_casing(rate, active)))));
+    }
+    v.push(format!("Steam Production: {} mB/t", crate::boiler::thousands(steam_per_tick(max_casing(rate, true)))));
+    v
+}
+
 pub fn press(r: &mut Reactor, id: i32) {
     let step = match id {
         INJECTION_UP => 2,
@@ -602,6 +643,7 @@ impl Mekanism {
     /// A tick of the ports and controllers of the reactors.
     pub(crate) fn run_fusion(&mut self, parts: &[&BlockEntity], tick_no: u64) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.fusion_buttons);
+        let texts_in = std::mem::take(&mut self.fusion_texts);
         let mut by: HashMap<(String, [i32; 3]), Vec<&BlockEntity>> = HashMap::new();
         let mut invalid_parts: Vec<&BlockEntity> = Vec::new();
         for p in parts {
@@ -722,6 +764,11 @@ impl Mekanism {
                         press(&mut s.reactor, *id);
                     }
                 }
+                for (_, pos, id, text) in texts_in.iter().filter(|(d, _, _, _)| *d == key.0) {
+                    if *id == INJECTION_TEXT && group.iter().any(|g| (g.pos.x, g.pos.y, g.pos.z) == (pos.x, pos.y, pos.z)) {
+                        set_injection_text(&mut s.reactor, text);
+                    }
+                }
                 let ambient = world::get_environment(&group[0].dimension, group[0].pos.x, group[0].pos.y, group[0].pos.z).map_or(300.0, |e| generators::ambient_of(e.temperature));
                 if s.reactor.plasma < 1.0 {
                     s.reactor.plasma = ambient;
@@ -750,6 +797,9 @@ impl Mekanism {
 
             let half = |v: u64, sh: u32| ((v >> sh) & 0xFFFF) as i32;
             let kind = |t: &process::Tank, fallback: &str| chem::index(if t.amount == 0 { fallback } else { &t.chemical });
+            // The heat the casing gives the air (the original's `lastEnvironmentLoss` comes from the heat network; this is the casing's own share).
+            let ambient_now = world::get_environment(&group[0].dimension, group[0].pos.x, group[0].pos.y, group[0].pos.z).map_or(300.0, |e| generators::ambient_of(e.temperature));
+            let air_loss = (CASING_CONDUCTIVITY * (r.case - ambient_now)).max(0.0);
             let data = vec![
                 half(r.deuterium.amount, 0),
                 half(r.deuterium.amount, 16),
@@ -780,7 +830,23 @@ impl Mekanism {
                 half(r.energy, 16),
                 r.last_burned.min(i32::MAX as u64) as i32,
                 r.last_power.min(i32::MAX as u64) as i32,
+                (r.plasma / 500_000_000.0).clamp(0.0, 1.0).mul_add(1000.0, 0.0) as i32,
+                (r.case / 500_000_000.0).clamp(0.0, 1.0).mul_add(1000.0, 0.0) as i32,
+                air_loss.min(f64::from(i32::MAX)).floor() as i32,
+                ((air_loss * 10.0).floor() as i64 % 10) as i32,
+                ((air_loss * 100.0).floor() as i64 % 10) as i32,
+                i32::from(r.plasma > r.case),
+                i32::from(r.case > 0.0),
+                i32::from(r.case > 0.0 && r.water.amount > 0 && r.steam.amount < caps[4]),
             ];
+            let texts = screen_texts(&r);
+            for e in &group {
+                let tkey = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
+            }
             let _ = kind;
 
             let mut given_entries: Vec<([i32; 3], [u64; 6])> = Vec::new();
@@ -1123,5 +1189,31 @@ mod tests {
         r.fuel.amount = 0;
         r.deuterium.amount = 0;
         assert_eq!(logic_adapter_signal(&r, LogicMode::Depleted, false), 15);
+    }
+
+    #[test]
+    fn the_injection_box_rounds_down_to_an_even_rate() {
+        let mut r = Reactor { injection: 2, ..Reactor::default() };
+        assert!(set_injection_text(&mut r, "7"));
+        assert_eq!(r.injection, 6);
+        assert!(!set_injection_text(&mut r, "6"));
+        assert!(set_injection_text(&mut r, "99"));
+        assert_eq!(r.injection, 98);
+        assert!(!set_injection_text(&mut r, "123"));
+        assert!(!set_injection_text(&mut r, "x"));
+        assert!(set_injection_text(&mut r, "0"));
+        assert_eq!(r.injection, 0);
+    }
+
+    #[test]
+    fn the_stats_lines_follow_the_page() {
+        let r = Reactor { injection: 4, plasma: 300.0, case: 300.0, ..Reactor::default() };
+        let t = screen_texts(&r);
+        assert_eq!(t.len(), 14);
+        assert_eq!(t[0], "Plasma: 300 K");
+        assert_eq!(t[2], "Injection Rate: 4");
+        assert_eq!(t[3], format!("Min. Inject Rate: {}", min_injection_rate(false)));
+        assert_eq!(t[8], format!("Min. Inject Rate: {}", min_injection_rate(true)));
+        assert!(t[13].starts_with("Steam Production: "));
     }
 }

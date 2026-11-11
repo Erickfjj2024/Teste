@@ -2214,39 +2214,125 @@ def fission_port_menu(m):
                        'widgets': widgets, 'windows': [window]}}
 
 def fusion_controller_menu(m):
-    """GuiFusionReactorController (simplified): the hohlraum slot, deuterium, tritium, fuel, water and steam gauges, the injection rate, the heat."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
+    """GuiFusionReactorController (186 by 166) and its three pages. The main page: the hohlraum slot at 85, 39, "Formed" at 13, 16, the title at y 5, the player's inventory 5 to
+    the right of the usual place, the energy tab (storing and producing), the heat tab (dissipated) and, on the right at 186, the tabs of the heat (y 6), fuel (34) and stats
+    (62) pages, each a window with a back button at 6, 6. **Heat** (`GuiFusionReactorHeat`): the plasma temperature gauge at 12, 50 and the case temperature gauge at 66, 50 (a bar
+    over 500 million K, the screen's numbers 29 and 30), the arrows at 34, 76 (plasma over case), 88, 61 (case above 0) and 88, 91 (water going to steam), the small water
+    gauge at 120, 84, the small steam gauge at 156, 84 and the small energy gauge at 120, 46. **Fuel** (`GuiFusionReactorFuel`): the deuterium gauge (small) at 30, 64, the fuel
+    gauge (standard) at 84, 50 and the tritium gauge (small) at 138, 64, the arrows at 52, 76 and 106, 76 while it burns, the injection rate line at y 35 and its box at 103, 115
+    (two digits, `fusion.rs::INJECTION_TEXT`). **Stats** (`GuiFusionReactorStats`): the air-cooled lines from y 26 and the water-cooled ones from y 92 (the screen's strings
+    3 to 13). Numbers (`fusion.rs`): 0-1 deuterium, 2-3 tritium, 4-5 fuel, 6-7 water, 8-9 steam, 12-13 the water capacity, 14-15 the steam capacity, 16-20 what each holds, 21
+    the plasma in thousands of kelvin, 22 the case in tenths, 23 the injection rate, 24 burning, 25-26 the energy, 28 what it makes, 29 and 30 the temperature bars in thousandths,
+    31 to 33 the heat lost to the air (whole, tenths, hundredths: the original's figure comes from the heat network, this is the casing's own share), 34 plasma over case,
+    35 case above 0, 36 water turning to steam. **Not in the port:** the warning tab and the energy gauge's exact figures on the heat page."""
+    from PIL import Image
+    width, height = 186, 166
+    inv_x = 13
+    tank_small = nine_slice(gui_sprite('gauge/normal'), 18, 30, 2)
+    tank_std = nine_slice(gui_sprite('gauge/normal'), 18, 60, 2)
+    ov_small = copy_gui('gauge/overlay/small', 'gauge_overlay_small')
+    ov_std = copy_gui('gauge/overlay/standard', 'gauge_overlay_standard')
+    lava = Image.new('RGBA', (16, 58))
+    for y in range(58):
+        for x in range(16):
+            lava.putpixel((x, y), (255, 120 + (x * 7 + y * 3) % 40, 20, 255))
+    lava_tex = save_gui(lava, 'lava_gauge_fill')
+    arrows = {name: (gui_sprite(f'progress/{name}/empty'), save_gui(gui_sprite(f'progress/{name}/full'), f'fusion_{name}_full')) for name in ('small_right', 'small_left')}
+    def base_panel(extra=None):
+        panel = nine_slice(gui_sprite('base'), width, height, 4)
+        slot = gui_sprite('slot/normal')
+        for row in range(3):
+            for col in range(9):
+                panel.paste(slot, (inv_x - 1 + 18 * col, 83 + 18 * row))
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    panel.paste(slot, (84, 38))
-    for x in (7, 33, 59, 117, 143):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 24, 50, 2), (x, 18 if x in (7, 33, 59) else 18))
-    texture = save_gui(panel, m)
+            panel.paste(slot, (inv_x - 1 + 18 * col, 141))
+        return panel
+    main = base_panel()
+    main.paste(gui_sprite('slot/normal'), (84, 38))
+    texture = save_gui(main, m)
+    tab_icons = {}
+    for key, rel in (('heat', 'gui/heat.png'), ('fuel', None), ('stats', 'gui/stats.png')):
+        holder = nine_slice(gui_sprite('holder_right'), 26, 26, 4)
+        icon_path = find(rel, ASSET_DIRS) if rel else f'{SRC}/src/generators/resources/assets/mekanismgenerators/gui/fuel.png'
+        if icon_path and os.path.exists(icon_path):
+            icon = Image.open(icon_path).convert('RGBA')
+            holder.alpha_composite(icon.resize((18, 18), 0), (4, 4)) if icon.size != (18, 18) else holder.alpha_composite(icon, (4, 4))
+        tab_icons[key] = save_gui(holder, f'fusion_tab_{key}')
+    back = save_gui(gui_sprite('button/back'), 'fusion_back')
     title = 'Fusion Reactor'
-    widgets = []
-    # deuterium, tritium, fuel (data 0..5, capacity 10), water, steam (6..9, capacity 12..15), kinds 16..20
-    for x, (v, mx, kd) in zip((8, 34, 60, 118, 144), (([0, 1], {'const': 1000}, 16), ([2, 3], {'const': 1000}, 17), ([4, 5], {'const': 1000}, 18),
-                                                         ([6, 7], {'pair': [12, 13]}, 19), ([8, 9], {'pair': [14, 15]}, 20))):
-        widgets.append({'type': 'gauge', 'x': x, 'y': 19, 'w': 22, 'h': 48, 'value': {'pair': v}, 'max': mx,
-                        'kind': {'data': kd}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
-    widgets += [
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 86, 'y': 21, 'text': 'Hohlraum', 'color': '#404040', 'scale': 70},
-        {'type': 'text', 'x': 62, 'y': 59, 'text': 'Plasma {21} kK  Case {22}/10 K', 'color': '#00CD00', 'scale': 60},
-        {'type': 'text', 'x': 62, 'y': 67, 'text': 'Inject {23}  Burned {27}  +{28} FE/t', 'color': '#00CD00', 'scale': 60},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 24}, 'eq': 1}}, 'widgets': [
-        {'type': 'text', 'x': 86, 'y': 58, 'text': 'BURNING', 'color': '#CD0000', 'scale': 70}]})
-    for bid, label, x in ((7200, '-2', 88), (7201, '+2', 108)):
-        widgets.append({'type': 'text', 'x': x + 3, 'y': 53, 'text': label, 'color': '#404040'})
-        widgets.append({'type': 'button', 'x': x, 'y': 51, 'w': 18, 'h': 10, 'id': bid, 'tooltip': 'Injection rate'})
-    return {'slots': 1, 'data_slots': 29, 'accepts': [{'slot': 0, 'items': ['mekanism:hohlraum']}],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[85, 39]], 'widgets': widgets}}
+    def tabs_for(skip):
+        out = []
+        for key, y in (('heat', 6), ('fuel', 34), ('stats', 62)):
+            if key == skip:
+                continue
+            out += [{'type': 'sprite', 'texture': tab_icons[key], 'x': width, 'y': y, 'w': 26, 'h': 26},
+                    {'type': 'button', 'x': width, 'y': y, 'w': 26, 'h': 26, 'local': {'open': key}, 'tooltip': {'heat': 'Heat', 'fuel': 'Fuel', 'stats': 'Stats'}[key]}]
+        return out
+    side = [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {25+26} FE\nProducing: {28} FE/t'},
+            {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {31}.{32}{33} K/t'}]
+    def chem_gauge(x, y, w, h, first, cap, kind, ov, frame_h):
+        return [{'type': 'gauge', 'x': x + 1, 'y': y + 1, 'w': w, 'h': h, 'value': {'pair': [first, first + 1]}, 'max': cap, 'kind': {'data': kind},
+                 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
+                {'type': 'sprite', 'texture': ov, 'x': x + 1, 'y': y + 1, 'w': w, 'h': h}]
+    def arrow(name, x, y, flag):
+        empty, full = arrows[name]
+        return {'type': 'show', 'when': {'data': {'value': {'data': flag}, 'eq': 1}}, 'widgets': [{'type': 'sprite', 'texture': full, 'x': x, 'y': y, 'w': empty.size[0], 'h': empty.size[1]}]}
+    def window(key, panel, widgets, page_title):
+        tex = save_gui(panel, f'fusion_{key}_window')
+        content = [{'type': 'sprite', 'texture': back, 'x': 6, 'y': 6, 'w': 14, 'h': 14},
+                   {'type': 'button', 'x': 6, 'y': 6, 'w': 14, 'h': 14, 'local': 'close', 'tooltip': 'Back'},
+                   {'type': 'text', 'x': 18 + (width - 18 - text_width(page_title)) // 2, 'y': 5, 'text': page_title, 'color': '#404040'}] + side + tabs_for(key) + widgets
+        return {'id': key, 'x': 0, 'y': 0, 'width': width, 'height': height, 'texture': tex, 'widgets': content}
+    # heat
+    hp = nine_slice(gui_sprite('base'), width, height, 4)
+    hp.alpha_composite(tank_std, (12, 50))
+    hp.alpha_composite(tank_std, (66, 50))
+    hp.alpha_composite(tank_small, (120, 84))
+    hp.alpha_composite(tank_small, (156, 84))
+    hp.alpha_composite(tank_small, (120, 46))
+    for name, x, y in (('small_right', 34, 76), ('small_right', 88, 61), ('small_right', 88, 91)):
+        hp.alpha_composite(arrows[name][0], (x, y))
+    heat_w = [
+        {'type': 'sprite', 'texture': lava_tex, 'x': 13, 'y': 51, 'w': 16, 'h': 58, 'value': {'data': 29}, 'max': {'const': 1000}, 'direction': 'up', 'tooltip': 'Plasma: {21} kK'},
+        {'type': 'sprite', 'texture': ov_std, 'x': 13, 'y': 51, 'w': 16, 'h': 58},
+        {'type': 'sprite', 'texture': lava_tex, 'x': 67, 'y': 51, 'w': 16, 'h': 58, 'value': {'data': 30}, 'max': {'const': 1000}, 'direction': 'up', 'tooltip': 'Case: {22} (x0.1 K)'},
+        {'type': 'sprite', 'texture': ov_std, 'x': 67, 'y': 51, 'w': 16, 'h': 58},
+        arrow('small_right', 34, 76, 34), arrow('small_right', 88, 61, 35), arrow('small_right', 88, 91, 36)]
+    heat_w += chem_gauge(120, 84, 16, 28, 6, {'pair': [12, 13]}, 19, ov_small, 30)
+    heat_w += chem_gauge(156, 84, 16, 28, 8, {'pair': [14, 15]}, 20, ov_small, 30)
+    heat_w += [{'type': 'sprite', 'texture': energy_gauge_fill(), 'x': 121, 'y': 47, 'w': 16, 'h': 28, 'value': {'pair': [25, 26]}, 'max': {'const': 400000000}, 'direction': 'up',
+                'tooltip': 'Energy: {25+26} FE'},
+               {'type': 'sprite', 'texture': ov_small, 'x': 121, 'y': 47, 'w': 16, 'h': 28}]
+    # fuel
+    fp = nine_slice(gui_sprite('base'), width, height, 4)
+    fp.alpha_composite(tank_small, (30, 64))
+    fp.alpha_composite(tank_std, (84, 50))
+    fp.alpha_composite(tank_small, (138, 64))
+    fp.alpha_composite(arrows['small_right'][0], (52, 76))
+    fp.alpha_composite(arrows['small_left'][0], (106, 76))
+    fuel_w = chem_gauge(30, 64, 16, 28, 0, {'const': 1000}, 16, ov_small, 30) + chem_gauge(84, 50, 16, 58, 4, {'const': 1000}, 18, ov_std, 60) + chem_gauge(138, 64, 16, 28, 2, {'const': 1000}, 17, ov_small, 30)
+    fuel_w += [arrow('small_right', 52, 76, 24), arrow('small_left', 106, 76, 24),
+               {'type': 'text', 'x': 16 + (width - 32 - 70) // 2, 'y': 35, 'text': '', 'text_data': 2, 'color': '#404040', 'scale': 90},
+               {'type': 'text', 'x': 4, 'y': 117, 'text': 'Edit Rate:', 'color': '#404040', 'scale': 90},
+               {'type': 'textfield', 'x': 103, 'y': 115, 'w': 26, 'h': 11, 'id': 7210, 'validator': 'digit', 'max_length': 2}]
+    # stats
+    sp = nine_slice(gui_sprite('base'), width, height, 4)
+    stats_w = [{'type': 'text', 'x': 6, 'y': 26, 'text': 'Air-Cooled', 'color': '#00AA00'}, {'type': 'text', 'x': 6, 'y': 92, 'text': 'Water-Cooled', 'color': '#0000AA'}]
+    for k in range(5):
+        stats_w.append({'type': 'text', 'x': 6, 'y': 36 + 10 * k, 'text': '', 'text_data': 3 + k, 'color': '#404040', 'scale': 90})
+        stats_w.append({'type': 'text', 'x': 6, 'y': 102 + 10 * k, 'text': '', 'text_data': 8 + k, 'color': '#404040', 'scale': 90})
+    stats_w.append({'type': 'text', 'x': 6, 'y': 152, 'text': '', 'text_data': 13, 'color': '#404040', 'scale': 90})
+    windows = [window('heat', hp, heat_w, 'Heat'), window('fuel', fp, fuel_w, 'Fuel'), window('stats', sp, stats_w, 'Stats')]
+    widgets = [
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 148, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 13, 'y': 16, 'text': 'Formed', 'color': '#404040', 'scale': 90}] + side + tabs_for(None)
+    return {'slots': 1, 'data_slots': 37, 'accepts': [{'slot': 0, 'items': ['mekanism:hohlraum']}],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[85, 39]], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
+                       'widgets': widgets, 'windows': windows}}
 
 def energy_gauge_fill():
     """The energy sprite (its first frame, 16 by 16) tiled over the gauge's 64 by 48 contents."""
