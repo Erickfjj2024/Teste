@@ -2633,30 +2633,37 @@ def miner_menu(m):
                        'slots': [list(p) for p in buffer] + [list(p) for p in filters], 'widgets': widgets}}
 
 def induction_port_menu(m):
-    """GuiMatrix (simplified): the energy the matrix holds (in MFE), its capacity, what its providers move and what it is made of."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 83 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 141))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 12, 1), (7, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 162, 46, 3), (7, 33))
+    """GuiInductionMatrix (176 by 166): the medium energy gauge at 7, 16 (34 by 56), the inner screen at 49, 21 (84 by 46: the energy, the capacity, what went in and what
+    went out last tick, the screen's strings 0 to 3 from `induction.rs::screen_texts`), the element holder at 141, 16 (26 by 56) with the two charge slots at 145, 20 (an item
+    that holds energy gives it to the matrix, any other gives what it is worth) and 145, 50 (the matrix charges the item), the armor holder at the left, the energy tab (storing
+    and the in and out rates) and the title at the top. Numbers (`induction.rs`): 0-1 the energy in millions of Forge Energy, 2-3 the capacity, 4-5 the most it moves in a tick in
+    thousands, 6 cells, 7 providers, 8 the energy over the capacity in thousandths, 9-10 what went in last tick and 11-12 what went out, in thousands. **Not in the port:** the
+    matrix's second page (`GuiMatrixStats`), the warning tab, and the two slots are each port's own, not shared by the whole structure."""
+    width, height = 176, 166
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 34, 56, 2), (7, 16))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 84, 46, 3), (49, 21))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 26, 56, 2), (141, 16))
+    for y in (20, 50):
+        panel.alpha_composite(gui_sprite('slot/normal'), (144, y - 1))
     texture = save_gui(panel, m)
     title = 'Induction Matrix'
     widgets = [
-        {'type': 'sprite', 'texture': power_h_fill, 'x': 8, 'y': 18, 'w': 160, 'h': 10, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]},
-         'direction': 'right', 'tooltip': 'Energy: {value} / {max} MFE'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 11, 'y': 37, 'text': 'Stored: {0+1} MFE', 'color': '#00CD00'},
-        {'type': 'text', 'x': 11, 'y': 48, 'text': 'Capacity: {2+3} MFE', 'color': '#00CD00'},
-        {'type': 'text', 'x': 11, 'y': 59, 'text': 'Transfer: {4+5} kFE/t', 'color': '#00CD00'},
-        {'type': 'text', 'x': 11, 'y': 70, 'text': 'Cells {6}  Providers {7}', 'color': '#00CD00'},
-        {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.86', 'color': '#808080'}]
-    return {'slots': 1, 'data_slots': 8,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+        {'type': 'sprite', 'texture': armor_holder_left(), 'x': -26, 'y': 36, 'w': 26, 'h': 98},
+        {'type': 'sprite', 'texture': energy_gauge_fill(), 'x': 8, 'y': 17, 'w': 32, 'h': 54, 'value': {'data': 8}, 'max': {'const': 1000}, 'direction': 'up',
+         'tooltip': 'Energy: {0+1} / {2+3} MFE'},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 8, 'y': 17, 'w': 32, 'h': 54},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'}]
+    for k in range(4):
+        widgets.append({'type': 'text', 'x': 52, 'y': 24 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 80})
+    widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {0+1} / {2+3} MFE\nInput: {9+10} kFE/t\nOutput: {11+12} kFE/t'}]
+    return {'slots': 2, 'data_slots': 13, 'results': [],
+            'armor': {'x': -20, 'y': 41, 'offhand': 0},
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[145, 20], [145, 50]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets}}
 
 def pump_menu(m):
     """GuiElectricPump: the fluid gauge at 6, 13, the bucket slots at 28, 20 and 28, 51 with an arrow between them, the inner screen

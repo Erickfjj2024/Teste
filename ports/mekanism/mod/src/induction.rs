@@ -27,6 +27,58 @@ pub const PROVIDERS: [(&str, u64); 4] = [
 /// What a port is registered to hold: far more than a matrix can (the real room is set each tick).
 pub const SPEC_CAPACITY: u64 = 1 << 60;
 
+/// What an item that holds energy has: its energy, its most, and how much it takes in or gives a tick (`IStrictEnergyHandler` of the Meka-Tool and the MekaSuit pieces).
+pub fn item_energy(stack: &ItemStack) -> Option<(u64, u64, u64)> {
+    if stack.item == crate::meka_tool::MEKA_TOOL {
+        let d = crate::meka_tool::host_read_meka_tool(&stack.components);
+        return Some((d.energy, d.max_energy(), d.charge_rate()));
+    }
+    let piece = crate::mekasuit::MekaSuitItemStack::decode(&stack.item, stack.count, &stack.components)?;
+    Some((piece.energy, piece.max_energy(), piece.max_charge_rate()))
+}
+
+/// The item with `energy` in it (`None` for an item that holds none).
+pub fn with_item_energy(stack: &ItemStack, energy: u64) -> Option<ItemStack> {
+    if stack.item == crate::meka_tool::MEKA_TOOL {
+        let components = crate::equipment_world::with_energy(&stack.components, energy)?;
+        return Some(ItemStack { components, ..stack.clone() });
+    }
+    let mut piece = crate::mekasuit::MekaSuitItemStack::decode(&stack.item, stack.count, &stack.components)?;
+    piece.energy = energy.min(piece.max_energy());
+    Some(ItemStack { components: piece.encode(&stack.components), ..stack.clone() })
+}
+
+/// `EnergyInventorySlot.fillOrConvert` of the matrix (145, 20): an item that holds energy gives it to the matrix (as much as it has, the room and the item's rate allow), any
+/// other item the energy it is worth whole when that fits (`conversion`: redstone and the like). Returns the energy gained and the slot after.
+pub fn fill_step(slot: &Option<ItemStack>, room: u64) -> Option<(u64, Option<ItemStack>)> {
+    let stack = slot.as_ref()?;
+    if let Some((energy, _, rate)) = item_energy(stack) {
+        let gain = energy.min(room).min(rate);
+        if gain == 0 {
+            return None;
+        }
+        return Some((gain, with_item_energy(stack, energy - gain)));
+    }
+    cube::fill_from_slot(slot, 0, room).map(|(gain, left)| (gain, left))
+}
+
+/// `EnergyInventorySlot.drain` (145, 50): the matrix charges the item in the slot, as much as it has, the item's room and its rate allow. Returns the energy given and the slot after.
+pub fn drain_step(slot: &Option<ItemStack>, available: u64) -> Option<(u64, Option<ItemStack>)> {
+    let stack = slot.as_ref()?;
+    let (energy, max, rate) = item_energy(stack)?;
+    let give = max.saturating_sub(energy).min(available).min(rate);
+    if give == 0 {
+        return None;
+    }
+    Some((give, with_item_energy(stack, energy + give)))
+}
+
+/// The lines of the inner screen (`GuiInductionMatrix`): the energy, the capacity and what went in and out last tick.
+pub fn screen_texts(energy: u64, capacity: u64, input: u64, output: u64) -> Vec<String> {
+    let f = crate::laser::format_energy;
+    vec![format!("Energy: {}", f(energy)), format!("Capacity: {}", f(capacity)), format!("Input: {}/t", f(input)), format!("Output: {}/t", f(output))]
+}
+
 /// A found structure.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Found {
@@ -248,7 +300,26 @@ impl Mekanism {
             // Cap transfers by rate limit and available storage/energy (MatrixEnergyContainer.java:162-194)
             let allowed_input = total_input.min(found.rate).min(found.capacity.saturating_sub(total));
             let allowed_output = total_output.min(found.rate).min(total);
-            let next = (total + allowed_input - allowed_output).min(found.capacity);
+            let mut next = (total + allowed_input - allowed_output).min(found.capacity);
+            // The two charge slots of each port: the first fills the matrix from an item, the second charges an item from it.
+            let mut slot_updates: HashMap<[i32; 3], Vec<Option<ItemStack>>> = HashMap::new();
+            for p in &group {
+                let mut slots: Vec<Option<ItemStack>> = vec![p.items.first().cloned().flatten(), p.items.get(1).cloned().flatten()];
+                let mut changed = false;
+                if let Some((gain, left)) = fill_step(&slots[0], found.capacity.saturating_sub(next)) {
+                    next += gain;
+                    slots[0] = left;
+                    changed = true;
+                }
+                if let Some((give, now)) = drain_step(&slots[1], next) {
+                    next -= give;
+                    slots[1] = now;
+                    changed = true;
+                }
+                if changed {
+                    slot_updates.insert([p.pos.x, p.pos.y, p.pos.z], slots);
+                }
+            }
             self.matrices.insert(key.clone(), next);
             self.matrix_given.insert(key.clone(), next.min(found.rate));
 
@@ -263,7 +334,20 @@ impl Mekanism {
                 half(found.rate / 1000, 16),
                 i32::from(found.cells),
                 i32::from(found.providers),
+                ((next as f64 / found.capacity.max(1) as f64).clamp(0.0, 1.0) * 1000.0) as i32,
+                half(allowed_input / 1000, 0),
+                half(allowed_input / 1000, 16),
+                half(allowed_output / 1000, 0),
+                half(allowed_output / 1000, 16),
             ];
+            let texts = screen_texts(next, found.capacity, allowed_input, allowed_output);
+            for p in &group {
+                let tkey = (p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&p.dimension, p.pos.x, p.pos.y, p.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
+            }
 
             for p in &group {
                 // A sneak click with the configurator toggles whether the port takes energy in or gives it out
@@ -304,7 +388,7 @@ impl Mekanism {
                     dimension: p.dimension.clone(),
                     pos: p.pos,
                     data: if changed { port_data } else { p.data.clone() },
-                    items: None,
+                    items: slot_updates.get(&[p.pos.x, p.pos.y, p.pos.z]).cloned(),
                     energy: Some(port_energy),
                     energy_faces: Some(energy_faces),
                     tanks: None,
@@ -444,5 +528,45 @@ mod tests {
         // Energy remains untouched
         let next = stored + inserted - extracted;
         assert_eq!(next, stored);
+    }
+
+    fn suit_stack(energy: u64) -> ItemStack {
+        let mut piece = mekasuit::MekaSuitItemStack::new(mekasuit::HELMET).unwrap();
+        piece.energy = energy;
+        ItemStack { item: mekasuit::HELMET.to_owned(), count: 1, components: piece.encode("") }
+    }
+
+    #[test]
+    fn the_second_slot_charges_an_item_from_the_matrix() {
+        let slot = Some(suit_stack(0));
+        let (give, after) = drain_step(&slot, 10_000_000_000).unwrap();
+        let rate = item_energy(slot.as_ref().unwrap()).unwrap().2;
+        assert_eq!(give, rate);
+        assert_eq!(item_energy(after.as_ref().unwrap()).unwrap().0, rate);
+        // nothing available, or a full item, or no energy item: nothing
+        assert!(drain_step(&slot, 0).is_none());
+        let max = item_energy(slot.as_ref().unwrap()).unwrap().1;
+        assert!(drain_step(&Some(suit_stack(max)), 1_000).is_none());
+        assert!(drain_step(&Some(ItemStack { item: "minecraft:stick".into(), count: 1, components: String::new() }), 1_000).is_none());
+        assert!(drain_step(&None, 1_000).is_none());
+    }
+
+    #[test]
+    fn the_first_slot_fills_the_matrix_from_an_item() {
+        let (_, max, rate) = item_energy(&suit_stack(0)).unwrap();
+        let slot = Some(suit_stack(max));
+        let (gain, after) = fill_step(&slot, u64::MAX).unwrap();
+        assert_eq!(gain, rate.min(max));
+        assert_eq!(item_energy(after.as_ref().unwrap()).unwrap().0, max - gain);
+        // the room bounds it, an empty item gives nothing
+        let (small, _) = fill_step(&slot, 5).unwrap();
+        assert_eq!(small, 5);
+        assert!(fill_step(&Some(suit_stack(0)), 1_000).is_none());
+    }
+
+    #[test]
+    fn the_inner_screen_lines() {
+        let t = screen_texts(2_000_000, 8_000_000_000, 0, 1_500);
+        assert_eq!(t, vec!["Energy: 2 MFE".to_owned(), "Capacity: 8 GFE".to_owned(), "Input: 0 FE/t".to_owned(), "Output: 1.5 kFE/t".to_owned()]);
     }
 }

@@ -2009,7 +2009,7 @@ impl ServerMod for Mekanism {
         let mut port = kind(induction::PORT, true);
         port.keep_data = false;
         port.multiblock = Some(MultiblockSpec { group: induction::GROUP.into() });
-        port.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        port.container = Some(ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         port.energy = Some(EnergySpec { capacity: induction::SPEC_CAPACITY, max_receive: induction::SPEC_CAPACITY, max_extract: induction::SPEC_CAPACITY, faces: vec![FlowSide::Both; 6] });
         r = r.block_entity_kind(port);
         // The thermal evaporation plant: the walls only join it; valves and controller hold its two tanks (the controller also its four bucket slots).
