@@ -49,6 +49,10 @@ pub mod server {
     pub fn ingredient_items<A0>(_a0: A0) -> Vec<String> { Default::default() }
   }
   pub mod entities { use super::*;
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct EntityInBox { pub id: u32, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub vehicle: Option<u32>, pub player: Option<String> }
+    pub fn entities_in_box(dimension: &str, min: (f64, f64, f64), max: (f64, f64, f64)) -> Vec<EntityInBox> { let _ = (dimension, min, max); Vec::new() }
+    #[allow(clippy::too_many_arguments)]
+    pub fn teleport_entity(dimension: &str, id: u32, to_dimension: &str, x: f64, y: f64, z: f64, yaw: Option<f32>) -> Result<(), String> { let _ = (dimension, id, to_dimension, x, y, z, yaw); Ok(()) }
     pub struct DroppedItem { pub id: u32, pub stack: crate::server::ItemStack, pub x: f64, pub y: f64, pub z: f64 }
     pub fn items_in_box<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Vec<DroppedItem> { Vec::new() }
     pub fn take_dropped_item<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
