@@ -1930,65 +1930,115 @@ def dynamic_valve_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 19], [146, 51]], 'widgets': widgets}}
 
 def evaporation_menu(m):
-    """GuiThermalEvaporationController (simplified): the input and output gauges with their bucket slots, and the heat and speed."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    """GuiThermalEvaporationController (196 by 166): the fluid gauges at 6, 13 (input) and 172, 13 (output), the bucket slots at 28, 20 / 28, 51 and 152, 20 /
+    152, 51 with a down arrow beside each pair (32, 39 and 156, 39), the inner screen at 48, 19 (100 by 40: Formed, Height, Temperature and Production, the
+    screen's strings 0 to 3 from `evaporation.rs::screen_texts`), the temperature bar at 58, 62 (`GuiHorizontalRateBar`: the temperature over 3,000 K), the
+    title centred between the gauges, the player's inventory 10 to the right (the screen is 20 wider) and the heat tab (Dissipated). Numbers
+    (`evaporation.rs`): 0-1 input, 2-3 its capacity, 4-5 output, 6 and 7 what each holds, 8 temperature times ten, 9 sun, 10 rate times ten, 11 height,
+    12 to 14 the heat lost to the air (whole, tenths, hundredths). **Not in the port:** the warning tab (what is stopping the plant)."""
+    from PIL import Image
+    width, height = 196, 166
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
+    inv_x = 18
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+            panel.paste(slot, (inv_x - 1 + 18 * col, 83 + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    for x in (7, 133):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 36, 50, 2), (x, 18))
-    for x, y, kind in ((54, 19, 'input'), (54, 51, 'output'), (118, 19, 'input'), (118, 51, 'output')):
+        panel.paste(slot, (inv_x - 1 + 18 * col, 141))
+    for x in (6, 172):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 60, 2), (x, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 100, 40, 3), (48, 19))
+    for x, y, kind in ((28, 20, 'input'), (28, 51, 'output'), (152, 20, 'input'), (152, 51, 'output')):
         panel.alpha_composite(gui_sprite(f'slot/{kind}'), (x - 1, y - 1))
         panel.alpha_composite(gui_sprite(f'slot/overlay/{kind}'), (x - 1, y - 1))
+    for x in (32, 156):
+        panel.alpha_composite(gui_sprite('arrow/down'), (x, 39))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 80, 10, 1), (58, 62))
     texture = save_gui(panel, m)
     title = 'Thermal Evaporation Plant'
+    rate = Image.new('RGBA', (78, 8))
+    src = Image.open(find('gui/bar/horizontal_rate.png', ASSET_DIRS)).convert('RGBA') if find('gui/bar/horizontal_rate.png', ASSET_DIRS) else None
+    if src is not None:
+        rate.paste(src.crop((0, 0, 78, 8)), (0, 0))
+    else:
+        for x in range(78):
+            for y in range(8):
+                rate.putpixel((x, y), (255, 80, 40, 255))
+    rate_tex = save_gui(rate, 'bar_horizontal_rate')
     widgets = [
-        {'type': 'gauge', 'x': 8, 'y': 19, 'w': 34, 'h': 48, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]}, 'kind': {'data': 6},
+        {'type': 'gauge', 'x': 7, 'y': 14, 'w': 16, 'h': 58, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]}, 'kind': {'data': 6},
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
-        {'type': 'gauge', 'x': 134, 'y': 19, 'w': 34, 'h': 48, 'value': {'pair': [4, 5]}, 'max': {'const': 10000}, 'kind': {'data': 7},
+        {'type': 'gauge', 'x': 173, 'y': 14, 'w': 16, 'h': 58, 'value': {'pair': [4, 5]}, 'max': {'const': 10000}, 'kind': {'data': 7},
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 76, 'y': 20, 'text': 'Temp {8}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 76, 'y': 30, 'text': 'Height {11}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 76, 'y': 40, 'text': 'Sun {9}/4', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 76, 'y': 50, 'text': 'Rate {10}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    return {'slots': 4, 'data_slots': 12, 'results': [1, 3],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[54, 19], [54, 51], [118, 19], [118, 51]], 'widgets': widgets}}
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 173, 'y': 14, 'w': 16, 'h': 58},
+        {'type': 'text', 'x': 24 + (172 - 24 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 138, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+    for k in range(4):
+        widgets.append({'type': 'text', 'x': 51, 'y': 22 + 9 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 80})
+    widgets += [
+        {'type': 'sprite', 'texture': rate_tex, 'x': 59, 'y': 63, 'w': 78, 'h': 8, 'value': {'data': 8}, 'max': {'const': 30000}, 'direction': 'right',
+         'tooltip': 'Temperature: {8} K'},
+        {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {12}.{13}{14} K/t'}]
+    return {'slots': 4, 'data_slots': 15, 'results': [1, 3],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[28, 20], [28, 51], [152, 20], [152, 51]], 'width': width, 'height': height,
+                       'inventory_x': inv_x, 'inventory_y': 84, 'widgets': widgets}}
 
 def boiler_valve_menu(m):
-    """GuiThermoelectricBoiler (simplified): four gauges (water, steam, heated and cooled coolant), the water's bucket slots, the heat and the boiling."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
+    """GuiThermoelectricBoiler (218 by 166): four standard gauges, the heated coolant at 6, 13, the water at 26, 13, the steam at 174, 13 and the cooled
+    coolant at 194, 13; the two vertical rate bars at 44, 13 (the boil rate over the most it boiled) and 166, 13 (what the most it boiled is of what the
+    superheaters could hand over); the inner screen at 54, 23 (110 by 40: the temperature, the boil rate and the most it boils, the screen's strings 0 to 2
+    from `boiler.rs::screen_texts`); the title centred at y 5; the player's inventory 21 to the right of the usual place; and the heat tab. The boiler has no
+    slots. Numbers (`boiler.rs`): 0-3 water, 4-7 steam, 8-11 heated coolant, 12-15 cooled coolant (amount and capacity halves), 16-19 what each holds, 20
+    temperature times ten, 21 boil rate, 22 the most, 23 superheaters, 24 boil capacity, 25 the second bar in thousandths, 26 to 28 the heat lost to the air.
+    **Not in the port:** the boiler's second page (`GuiBoilerStats`, the tab on the right) and the warning tab."""
+    from PIL import Image
+    width, height = 218, 166
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
     slot = gui_sprite('slot/normal')
+    inv_x = 29
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
+            panel.paste(slot, (inv_x - 1 + 18 * col, 83 + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    for x in (7, 43, 99, 135):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 26, 50, 2), (x, 18))
-    for x, y, kind in ((73, 19, 'input'), (73, 51, 'output')):
-        panel.alpha_composite(gui_sprite(f'slot/{kind}'), (x - 1, y - 1))
-        panel.alpha_composite(gui_sprite(f'slot/overlay/{kind}'), (x - 1, y - 1))
+        panel.paste(slot, (inv_x - 1 + 18 * col, 141))
+    # the gauges, left to right: heated coolant, water, steam, cooled coolant (the port's tanks 2, 0, 1, 3)
+    order = [(6, 2), (26, 0), (174, 1), (194, 3)]
+    for x, _ in order:
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 60, 2), (x, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 110, 40, 3), (54, 23))
+    for x in (44, 166):
+        panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 58, 1), (x, 13))
     texture = save_gui(panel, m)
     title = 'Thermoelectric Boiler'
+    fill = None
+    rate_img = find('gui/bar/vertical_rate.png', ASSET_DIRS)
+    if rate_img:
+        fill = save_gui(Image.open(rate_img).convert('RGBA').crop((8, 0, 14, 58)), 'bar_vertical_rate')
     widgets = []
-    # water, steam, heated coolant, cooled coolant: data 0..15 in fours (amount halves, capacity halves), kinds at 16..19
-    for i, x in enumerate((8, 44, 100, 136)):
-        widgets.append({'type': 'gauge', 'x': x, 'y': 19, 'w': 24, 'h': 48, 'value': {'pair': [4 * i, 4 * i + 1]}, 'max': {'pair': [4 * i + 2, 4 * i + 3]},
-                        'kind': {'data': 16 + i}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+    for x, tank in order:
+        widgets.append({'type': 'gauge', 'x': x + 1, 'y': 14, 'w': 16, 'h': 58, 'value': {'pair': [4 * tank, 4 * tank + 1]}, 'max': {'pair': [4 * tank + 2, 4 * tank + 3]},
+                        'kind': {'data': 16 + tank}, 'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'})
+        widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': x + 1, 'y': 14, 'w': 16, 'h': 58})
     widgets += [
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 74, 'y': 39, 'text': '', 'color': '#00CD00'},
-        {'type': 'text', 'x': 34, 'y': 70, 'text': 'T {20}  Boil {21}/{22}  SH {23}', 'color': '#00CD00', 'scale': 70},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    return {'slots': 2, 'data_slots': 25, 'results': [1],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[73, 19], [73, 51]], 'widgets': widgets}}
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 168, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+    for k in range(3):
+        widgets.append({'type': 'text', 'x': 57, 'y': 26 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 85})
+    if fill:
+        widgets += [
+            {'type': 'sprite', 'texture': fill, 'x': 45, 'y': 14, 'w': 6, 'h': 58, 'value': {'data': 21}, 'max': {'data': 22}, 'direction': 'up', 'tooltip': 'Boil Rate: {21} mB/t'},
+            {'type': 'sprite', 'texture': fill, 'x': 167, 'y': 14, 'w': 6, 'h': 58, 'value': {'data': 25}, 'max': {'const': 1000}, 'direction': 'up', 'tooltip': 'Max Boil: {22} mB/t'}]
+    widgets += [
+        {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {26}.{27}{28} K/t'}]
+    return {'slots': 1, 'data_slots': 29, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
+                       'widgets': widgets}}
 
 def turbine_valve_menu(m):
     """GuiIndustrialTurbine (simplified): the energy bar, the steam gauge and what the turbine is made of and does."""
@@ -2177,31 +2227,44 @@ def laser_tractor_beam_menu(m):
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
 def sps_port_menu(m):
-    """GuiSPS (simplified): polonium and antimatter gauges, the progress toward the next antimatter and the energy the coils got."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    for x in (7, 143):
-        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 26, 50, 2), (x, 18))
+    """GuiSPS (176 by 182): two standard chemical gauges at 7, 17 (polonium) and 151, 17 (antimatter), the inner screen at 27, 17 (122 by 60: the status, and
+    while it works the energy input and the process rate, the screen's strings 0 to 2 from `sps.rs::screen_texts`), and the progress bar at 7, 79
+    (160 wide, a purple that goes from rgb(60, 45, 74) to rgb(100, 30, 170) along the bar, `GuiDynamicHorizontalRateBar`). The player's inventory label is at
+    height 92."""
+    from PIL import Image
+    width, height = 176, 182
+    panel, slot, inv_y = inventory_panel(width, height)
+    for x in (7, 151):
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 60, 2), (x, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 60, 3), (27, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 10, 1), (7, 79))
     texture = save_gui(panel, m)
+    bar = Image.new('RGBA', (160, 8))
+    for x in range(160):
+        t = x / 158
+        color = tuple(round(a + (b - a) * min(t, 1)) for a, b in zip((60, 45, 74), (100, 30, 170))) + (255,)
+        for y in range(8):
+            bar.putpixel((x, y), color)
+    bar_tex = save_gui(bar, 'sps_progress_bar')
     title = 'Supercritical Phase Shifter'
     widgets = [
-        {'type': 'gauge', 'x': 8, 'y': 19, 'w': 24, 'h': 48, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]}, 'kind': {'data': 8},
+        {'type': 'gauge', 'x': 8, 'y': 18, 'w': 16, 'h': 58, 'value': {'pair': [0, 1]}, 'max': {'pair': [2, 3]}, 'kind': {'data': 8},
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
-        {'type': 'gauge', 'x': 144, 'y': 19, 'w': 24, 'h': 48, 'value': {'pair': [4, 5]}, 'max': {'pair': [6, 7]}, 'kind': {'data': 9},
+        {'type': 'gauge', 'x': 152, 'y': 18, 'w': 16, 'h': 58, 'value': {'pair': [4, 5]}, 'max': {'pair': [6, 7]}, 'kind': {'data': 9},
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 40, 'y': 25, 'text': 'Progress {10}%', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 40, 'y': 37, 'text': 'Energy {11+12} FE/t', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 40, 'y': 49, 'text': 'Coils {13}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 8, 'y': 18, 'w': 16, 'h': 58},
+        {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 152, 'y': 18, 'w': 16, 'h': 58},
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'text', 'x': 30, 'y': 20, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 85},
+        {'type': 'text', 'x': 30, 'y': 31, 'text': '', 'text_data': 1, 'color': '#3CFE9A', 'scale': 85},
+        {'type': 'text', 'x': 30, 'y': 42, 'text': '', 'text_data': 2, 'color': '#3CFE9A', 'scale': 85},
+        {'type': 'sprite', 'texture': bar_tex, 'x': 8, 'y': 80, 'w': 160, 'h': 8, 'value': {'data': 10}, 'max': {'const': 100}, 'direction': 'right',
+         'tooltip': 'Progress: {percent}%'}]
     return {'slots': 1, 'data_slots': 15,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets}}
 
 def sorter_menu(m):
     """GuiLogisticalSorter (simplified): five filter slots (an item each), and the auto-eject and single-item switches."""

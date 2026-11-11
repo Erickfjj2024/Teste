@@ -128,6 +128,22 @@ pub fn validate(members: &[([i32; 3], Part)], min: [i32; 3], max: [i32; 3], insi
     Found { valid: true, min, coils }
 }
 
+/// The lines of the inner screen (`GuiSPS`): "Status: Active" or "Status: Idle"; while it processes also "Energy Input: ..." and "Process Rate: n mB/t"
+/// (`getProcessRate`: what it processed a tick over the input one mB of antimatter takes, to three decimals).
+pub fn screen_texts(s: &Sps) -> Vec<String> {
+    let active = s.last_processed > 0.0;
+    let mut v = vec![format!("Status: {}", if active { "Active" } else { "Idle" })];
+    if active {
+        v.push(format!("Energy Input: {}", crate::laser::format_energy(s.last_received)));
+        let rate = (s.last_processed / INPUT_PER_ANTIMATTER as f64 * 1000.0).round() / 1000.0;
+        v.push(format!("Process Rate: {rate} mB/t"));
+    } else {
+        v.push(String::new());
+        v.push(String::new());
+    }
+    v
+}
+
 /// The state of an SPS: the tanks, the progress toward the next mB of antimatter and the energy it got.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sps {
@@ -487,8 +503,15 @@ impl Mekanism {
                 found.coils as i32,
                 (st.last_processed * 100.0).min(f64::from(i32::MAX)) as i32,
             ];
+            // The inner screen's lines (`GuiSPS`): the status, and while it works the energy it takes and the rate it processes at.
+            let texts = screen_texts(&st);
             for p in &group {
                 let (x, y, z) = (p.pos.x, p.pos.y, p.pos.z);
+                let key = (p.dimension.clone(), x, y, z);
+                if self.menu_texts.get(&key) != Some(&texts) {
+                    let _ = world::set_menu_text(&p.dimension, x, y, z, &texts);
+                    self.menu_texts.insert(key, texts.clone());
+                }
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 0, &if st.input.amount >= caps[0] { vec![NOTHING.to_owned()] } else { vec![POLONIUM.to_owned()] });
                 let _ = world::set_tank_filter(&p.dimension, x, y, z, 1, &[NOTHING.to_owned()]);
                 // A sneak click with the configurator toggles whether the port takes in or gives out
@@ -710,5 +733,13 @@ mod tests {
         let encoded = encode(&bad, &Sps::default());
         let decoded = decode(&encoded);
         assert_eq!(decoded.map(|(f, _)| f.valid), Some(false));
+    }
+
+    #[test]
+    fn the_screen_lines_follow_gui_sps() {
+        let idle = Sps::default();
+        assert_eq!(screen_texts(&idle), vec!["Status: Idle".to_owned(), String::new(), String::new()]);
+        let working = Sps { last_processed: 500.0, last_received: 2_000_000, ..Sps::default() };
+        assert_eq!(screen_texts(&working), vec!["Status: Active".to_owned(), "Energy Input: 2 MFE".to_owned(), "Process Rate: 0.5 mB/t".to_owned()]);
     }
 }

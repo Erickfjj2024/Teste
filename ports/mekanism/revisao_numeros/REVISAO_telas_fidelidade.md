@@ -5,9 +5,9 @@
 | Tela | Estado | O que a revisão achou / fez |
 |---|---|---|
 | `laser_amplifier` | **refeita** | Faltavam os três campos de texto (atraso, mínimo, máximo), a aba de saída de redstone (3 modos), o controle de redstone, o medidor de energia padrão e o texto "No delay". Refeita; o mod ganhou o modo de saída, o controle e a leitura de notação científica. Falta: modo de detecção de entidade (o host não tem dano de laser). |
-| `sps_port` | a fazer | |
-| `thermal_evaporation_controller` | a fazer | |
-| `boiler_valve` | a fazer | |
+| `sps_port` | **refeita** | Tela de 176 por 182 com os medidores padrão, a tela interna (estado, energia, taxa) e a barra de progresso roxa; antes eram medidores errados e linhas inventadas. |
+| `thermal_evaporation_controller` | **refeita** | Largura 196, slots dos baldes em 28,20 / 28,51 / 152,20 / 152,51 (estavam em 54 e 118), medidores 6,13 e 172,13, tela interna com 4 linhas, barra de temperatura, aba de calor. A perda de calor para o ar passou a ser a do Java (`simulateEnvironment` lê a temperatura antes de somar o calor da rodada). |
+| `boiler_valve` | **refeita** | Largura 218, quatro medidores padrão (6, 26, 174, 194), duas barras verticais, tela interna (temperatura, taxa, máxima), sem slots (a antiga tinha slots de balde que o original não tem). Corrigida a ordem do calor: o ar dissipa a partir da temperatura anterior. Falta a segunda página (estatísticas) e a aba de aviso. |
 | `turbine_valve` | a fazer | |
 | `fission_reactor_port` | a fazer | |
 | `fusion_reactor_controller` | a fazer | |

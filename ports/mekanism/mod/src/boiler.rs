@@ -210,6 +210,8 @@ pub struct Boiler {
     /// (`handleHeat` queues it, the next `updateHeatCapacitors` commits it).
     pub bounds: Option<([i32; 3], [i32; 3])>,
     pub pending_heat: f64,
+    /// `lastEnvironmentLoss`: the heat the boiler gave the air last tick, in kelvin.
+    pub last_loss: f64,
 }
 
 pub struct Caps {
@@ -232,11 +234,12 @@ pub fn capacities(f: &Found) -> Caps {
 pub fn tick(b: &mut Boiler, f: &Found, ambient: f64) -> (u64, u64) {
     let capacity = CASING_HEAT * f64::from(f.blocks).max(1.0);
     let caps = capacities(f);
-    // What the heat blocks around gave since the last tick.
-    b.temperature += std::mem::take(&mut b.pending_heat) / capacity;
-    // The air takes heat away.
+    // The air takes heat away (`simulateEnvironment`, which reads the temperature as it was before this tick's heat is committed), and what the heat
+    // blocks around gave since the last tick is added with it (`updateHeatCapacitors`).
     let inv = AIR + INSULATION + CONDUCTION;
-    b.temperature -= (b.temperature - ambient) / inv;
+    let to_air = (b.temperature - ambient) / inv;
+    b.last_loss = to_air.max(0.0);
+    b.temperature += std::mem::take(&mut b.pending_heat) / capacity - to_air;
     // The heated coolant gives its heat and comes out cooled.
     if b.hot.amount > 0 && b.hot.chemical == HOT {
         let portion = COOLANT_CONDUCTIVITY * b.hot.amount as f64;
@@ -279,6 +282,36 @@ pub fn tick(b: &mut Boiler, f: &Found, ambient: f64) -> (u64, u64) {
 }
 
 /// How much the boiler could boil at most with its elements (`getBoilCapacity`).
+/// `GuiThermoelectricBoiler`'s second bar: `lastMaxBoil * waterThermalEnthalpy / (superheaters * heat transfer)`, at most 1.
+pub fn max_boil_level(max: u64, elements: u32) -> f64 {
+    if elements == 0 {
+        return 0.0;
+    }
+    (max as f64 * ENTHALPY / (f64::from(elements) * ELEMENT_TRANSFER)).min(1.0)
+}
+
+/// A whole number with a comma every three digits (`TextUtils.format`).
+pub fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The inner screen's lines (`GuiThermoelectricBoiler`): the temperature, the boil rate and the most it could boil.
+pub fn screen_texts(temperature: f64, rate: u64, max: u64) -> Vec<String> {
+    vec![
+        format!("Temperature: {} K", crate::evaporation::trim_number(temperature)),
+        format!("Boil Rate: {} mB/t", thousands(rate)),
+        format!("Max Boil: {} mB/t", thousands(max)),
+    ]
+}
+
 pub fn boil_capacity(f: &Found) -> u64 {
     (ELEMENT_TRANSFER * f64::from(f.elements) / ENTHALPY * EFFICIENCY) as u64
 }
@@ -470,7 +503,20 @@ impl Mekanism {
                 max as i32,
                 found.elements as i32,
                 boil_capacity(&found).min(i32::MAX as u64) as i32,
+                // The second rate bar (`GuiThermoelectricBoiler`): the most it could boil over what the superheaters can hand over, in thousandths.
+                (max_boil_level(max, found.elements) * 1000.0) as i32,
+                b.last_loss.floor() as i32,
+                ((b.last_loss * 10.0).floor() as i32) % 10,
+                ((b.last_loss * 100.0).floor() as i32) % 10,
             ]);
+            let texts = screen_texts(temperature, rate, max);
+            for v in &group {
+                let tkey = (v.dimension.clone(), v.pos.x, v.pos.y, v.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&v.dimension, v.pos.x, v.pos.y, v.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
+            }
             let full = |t: &process::Tank, cap: u64| if t.amount >= cap { vec![NOTHING.to_owned()] } else { Vec::new() };
             for v in &group {
                 let (x, y, z) = (v.pos.x, v.pos.y, v.pos.z);
@@ -773,5 +819,14 @@ mod tests {
         assert_eq!(b.steam.amount, 0);
         assert_eq!(b.hot.amount, 0);
         assert_eq!(b.cold.amount, 0);
+    }
+
+    #[test]
+    fn the_boiler_screen_lines() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(1234567), "1,234,567");
+        assert_eq!(screen_texts(373.5, 1200, 8000), vec!["Temperature: 373.5 K".to_owned(), "Boil Rate: 1,200 mB/t".to_owned(), "Max Boil: 8,000 mB/t".to_owned()]);
+        assert_eq!(max_boil_level(0, 0), 0.0);
+        assert!(max_boil_level(1_000_000_000, 1) <= 1.0);
     }
 }

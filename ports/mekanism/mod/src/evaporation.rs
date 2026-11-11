@@ -129,16 +129,43 @@ pub fn heat(temperature: f64, solars: u32, ambient: f64) -> f64 {
     heat_with(temperature, solars, ambient, 0.0)
 }
 
+/// `simulateEnvironment`'s return: what the plant above the air's temperature loses to it in a tick (`evaporationHeatDissipation` times the square root of
+/// the difference), 0 when it is not warmer.
+pub fn environment_loss(temperature: f64, ambient: f64) -> f64 {
+    if (temperature - ambient).abs() < 0.001 || temperature < ambient {
+        0.0
+    } else {
+        DISSIPATION * (temperature - ambient).sqrt()
+    }
+}
+
+/// A number the way the screens write it: two decimals at most.
+pub fn trim_number(v: f64) -> String {
+    let text = format!("{:.2}", (v * 100.0).round() / 100.0);
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// The inner screen's lines (`GuiThermalEvaporationController`): "Formed", the height, the temperature and the production a tick.
+pub fn screen_texts(height: u8, temperature: f64, rate: f64) -> Vec<String> {
+    vec![
+        "Formed".to_owned(),
+        format!("Height: {height}"),
+        format!("Temperature: {} K", trim_number(temperature)),
+        format!("Production: {} mB/t", trim_number(rate)),
+    ]
+}
+
 /// `heat` with `external` kelvin given by the heat blocks around, committed together with the solar generators' heat.
 pub fn heat_with(temperature: f64, solars: u32, ambient: f64, external: f64) -> f64 {
-    let mut t = temperature + f64::from(solars) * SOLAR + external;
-    let diff = (t - ambient).abs();
+    // `simulateEnvironment` reads the temperature as it is before this tick's heat is committed; the solar generators' heat and what the blocks around
+    // gave are queued with the air's share and all land together.
+    let queued = f64::from(solars) * SOLAR + external;
+    let diff = (temperature - ambient).abs();
     if diff < 0.001 {
-        return ambient;
+        return ambient + queued;
     }
     let incr = DISSIPATION * diff.sqrt();
-    t += if t > ambient { -incr } else { incr };
-    t
+    temperature + queued + if temperature > ambient { -incr } else { incr }
 }
 
 /// How fast the plant works at this temperature: whole recipes a tick, or one every so many ticks (`tempMultiplier`).
@@ -202,6 +229,8 @@ pub struct Plant {
     /// The box of the structure and the heat that conductors and heaters around gave it since its last tick, in joules.
     pub bounds: Option<([i32; 3], [i32; 3])>,
     pub pending_heat: f64,
+    /// `lastEnvironmentLoss`: the heat the plant lost to the air last tick, in kelvin.
+    pub last_loss: f64,
 }
 
 /// `evaporationHeatCapacity` (default 100) for each level of height: the plant's `VariableHeatCapacitor` (`EvaporationMultiblockData:137`).
@@ -407,6 +436,7 @@ impl Mekanism {
                 0
             };
             let external = std::mem::take(&mut plant.pending_heat) / heat_capacity(found.height);
+            plant.last_loss = environment_loss(plant.temperature.max(1.0), ambient);
             plant.temperature = heat_with(plant.temperature.max(1.0), solars, ambient, external);
             let mult = multiplier(plant.temperature, found.height);
             let ops = operations(mult, tick);
@@ -442,7 +472,11 @@ impl Mekanism {
                 solars as i32,
                 (rate * 10.0) as i32,
                 i32::from(found.height),
+                plant.last_loss.floor() as i32,
+                ((plant.last_loss * 10.0).floor() as i32) % 10,
+                ((plant.last_loss * 100.0).floor() as i32) % 10,
             ];
+            let texts = screen_texts(found.height, temperature, rate);
             let _ = host_render_multiblock_fluid(
                 &key.0,
                 found.min,
@@ -451,6 +485,11 @@ impl Mekanism {
                 if in_cap > 0 { input.amount as f64 / in_cap as f64 } else { 0.0 },
             ); // FORK-19 / FORK-31
             for m in &group {
+                let tkey = (m.dimension.clone(), m.pos.x, m.pos.y, m.pos.z);
+                if self.menu_texts.get(&tkey) != Some(&texts) {
+                    let _ = world::set_menu_text(&m.dimension, m.pos.x, m.pos.y, m.pos.z, &texts);
+                    self.menu_texts.insert(tkey, texts.clone());
+                }
                 let is_ctl = part_of(&m.state) == Some(Part::Controller);
                 let items = if is_ctl { ctl_items.clone() } else { None };
                 let tanks = vec![plus::as_tank(&input), plus::as_tank(&output)];
@@ -686,5 +725,20 @@ mod tests {
         let encoded = encode(&bad, AMBIENT as f32);
         let decoded = decode(&encoded);
         assert_eq!(decoded.map(|(f, _)| f.valid), Some(false));
+    }
+
+    #[test]
+    fn the_plant_loses_heat_to_the_air_only_when_warmer() {
+        assert_eq!(environment_loss(300.0, 300.0), 0.0);
+        assert_eq!(environment_loss(250.0, 300.0), 0.0);
+        assert!((environment_loss(400.0, 300.0) - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_screen_lines_follow_the_gui() {
+        assert_eq!(
+            screen_texts(18, 1234.5678, 0.5),
+            vec!["Formed".to_owned(), "Height: 18".to_owned(), "Temperature: 1234.57 K".to_owned(), "Production: 0.5 mB/t".to_owned()]
+        );
     }
 }
