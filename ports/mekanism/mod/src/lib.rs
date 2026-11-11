@@ -468,6 +468,7 @@ struct Mekanism {
     bin_buttons: Vec<(String, BlockPos, i32)>,
     alarm_set: HashSet<(String, i32, i32, i32)>,
     miner_buttons: Vec<(String, BlockPos, i32)>,
+    miner_texts: Vec<(String, BlockPos, i32, String)>,
     /// What the text boxes of the screens confirmed (FORK-20, `menu_input`): dimension, block, widget id and text, until the machine's tick takes them.
     text_inputs: Vec<(String, BlockPos, i32, String, String, String)>,
     radiation: radiation::Manager,
@@ -2272,6 +2273,7 @@ impl ServerMod for Mekanism {
             bin_buttons: Vec::new(),
             alarm_set: HashSet::new(),
             miner_buttons: Vec::new(),
+            miner_texts: Vec::new(),
             text_inputs: Vec::new(),
             radiation: radiation::Manager::default(),
             miner_work: HashMap::new(),
@@ -3256,6 +3258,8 @@ impl ServerMod for Mekanism {
                 self.qe_texts.push((dimension, pos, id, text, who, who_name));
             } else if block == sorter::SORTER {
                 self.sorter_texts.push((dimension, pos, id, text));
+            } else if block == miner::MINER {
+                self.miner_texts.push((dimension, pos, id, text));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.

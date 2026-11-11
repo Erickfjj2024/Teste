@@ -21,8 +21,9 @@ pub const DEFAULT_MIN_Y: i32 = 0;
 pub const DEFAULT_MAX_Y: i32 = 60;
 /// 27 slots of what was mined, then five filters.
 pub const BUFFER: usize = 27;
-pub const FILTERS: usize = 5;
-pub const SLOTS: usize = BUFFER + FILTERS;
+/// The energy slot (`EnergyInventorySlot.fillOrConvert`, 152, 20) after the 27 of the buffer.
+pub const ENERGY_SLOT: usize = BUFFER;
+pub const SLOTS: usize = BUFFER + 1;
 /// Positions scanned a tick, and the most queued.
 pub const SCAN_PER_TICK: usize = 512;
 pub const QUEUE_MAX: usize = 4096;
@@ -37,8 +38,18 @@ pub const TOGGLE_EJECT: i32 = 7807;
 pub const TOGGLE_SILK: i32 = 7808;
 pub const TOGGLE_INVERSE: i32 = 7809;
 pub const RESET: i32 = 7810;
+pub const START: i32 = 7811;
+pub const STOP: i32 = 7812;
+/// The filter list's rows (`ROW_BASE + row`), the delete button and the boxes of the config page: a new item filter, a new tag filter, the radius and the two heights.
+pub const ROW_BASE: i32 = 7830;
+pub const DELETE: i32 = 7860;
+pub const TEXT_ITEM: i32 = 7861;
+pub const TEXT_TAG: i32 = 7862;
+pub const TEXT_RADIUS: i32 = 7863;
+pub const TEXT_MIN: i32 = 7864;
+pub const TEXT_MAX: i32 = 7865;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub radius: u8,
     pub min_y: i32,
@@ -48,11 +59,14 @@ pub struct Settings {
     pub silk: bool,
     pub inverse: bool,
     pub delay: u32,
+    /// The filters (`filters.rs`) and the row selected in their list.
+    pub filters: Vec<filters::Filter>,
+    pub selected: Option<usize>,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { radius: DEFAULT_RADIUS, min_y: DEFAULT_MIN_Y, max_y: DEFAULT_MAX_Y, running: false, eject: false, silk: false, inverse: false, delay: 0 }
+        Settings { radius: DEFAULT_RADIUS, min_y: DEFAULT_MIN_Y, max_y: DEFAULT_MAX_Y, running: false, eject: false, silk: false, inverse: false, delay: 0, filters: Vec::new(), selected: None }
     }
 }
 
@@ -61,6 +75,8 @@ pub fn encode(s: &Settings) -> Vec<u8> {
     out.extend(s.min_y.to_le_bytes());
     out.extend(s.max_y.to_le_bytes());
     out.extend(s.delay.to_le_bytes());
+    out.push(s.selected.map_or(0, |i| i as u8 + 1));
+    filters::encode(&s.filters, &mut out);
     out
 }
 
@@ -78,6 +94,8 @@ pub fn decode(data: &[u8]) -> Option<Settings> {
         min_y: int(3),
         max_y: int(7),
         delay: int(11) as u32,
+        filters: filters::decode(data, 16).0,
+        selected: data.get(15).copied().filter(|b| *b > 0).map(|b| usize::from(b - 1)),
     })
 }
 
@@ -95,15 +113,65 @@ impl Settings {
             TOGGLE_SILK => self.silk = !self.silk,
             TOGGLE_INVERSE => self.inverse = !self.inverse,
             RESET => self.running = false,
+            START => self.running = true,
+            STOP => self.running = false,
+            DELETE => {
+                if let Some(i) = self.selected.take().filter(|i| *i < self.filters.len()) {
+                    self.filters.remove(i);
+                    return true;
+                }
+                return false;
+            }
+            r if (ROW_BASE..ROW_BASE + filters::ROWS as i32).contains(&r) => {
+                let i = (r - ROW_BASE) as usize;
+                if i < self.filters.len() {
+                    self.selected = (self.selected != Some(i)).then_some(i);
+                }
+                return false;
+            }
             _ => return false,
         }
         // The area changed: what was queued is stale.
         matches!(id, RADIUS_DOWN | RADIUS_UP | MIN_DOWN | MIN_UP | MAX_DOWN | MAX_UP | TOGGLE_INVERSE | RESET)
     }
+
+    /// What a confirmed box of the config page asks (`GuiDigitalMinerConfig.setText`): a new filter from an id or a tag, the radius (0 to the most), the lowest and the highest height
+    /// (each kept between the world's floor and ceiling and the other one). Says whether the area changed.
+    pub fn text(&mut self, id: i32, text: &str) -> bool {
+        match id {
+            TEXT_ITEM | TEXT_TAG => filters::add(&mut self.filters, id == TEXT_TAG, text),
+            TEXT_RADIUS => match text.trim().parse::<u32>() {
+                Ok(v) if v != u32::from(self.radius) => {
+                    self.radius = v.clamp(u32::from(MIN_RADIUS), u32::from(MAX_RADIUS)) as u8;
+                    true
+                }
+                _ => false,
+            },
+            TEXT_MIN => match text.trim().parse::<i32>() {
+                Ok(v) => {
+                    let v = v.clamp(-64, self.max_y);
+                    let changed = v != self.min_y;
+                    self.min_y = v;
+                    changed
+                }
+                Err(_) => false,
+            },
+            TEXT_MAX => match text.trim().parse::<i32>() {
+                Ok(v) => {
+                    let v = v.clamp(self.min_y, 319);
+                    let changed = v != self.max_y;
+                    self.max_y = v;
+                    changed
+                }
+                Err(_) => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 /// Whether a block is one the miner mines: not air, liquid or unbreakable, not its own, and named by a filter (or, inverse, not named).
-pub fn wants(block: &str, filters: &[String], inverse: bool) -> bool {
+pub fn wants(block: &str, list: &[filters::Filter], inverse: bool, tags: &dyn Fn(&str) -> Vec<String>) -> bool {
     let name = block.split('[').next().unwrap_or("");
     if name.ends_with(":air")
         || matches!(
@@ -114,7 +182,7 @@ pub fn wants(block: &str, filters: &[String], inverse: bool) -> bool {
     {
         return false;
     }
-    filters.iter().any(|f| f == name) != inverse
+    list.iter().any(|f| filters::matches(f, name, tags)) != inverse
 }
 
 /// The `index`th position of the area, from the top down, then across: `(dx, y, dz)` in the square of side `2r + 1`.
@@ -167,11 +235,12 @@ pub fn item_faces(back: usize) -> Vec<Vec<u32>> {
 impl Mekanism {
     pub(crate) fn run_miners(&mut self, miners: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.miner_buttons);
+        let texts_in = std::mem::take(&mut self.miner_texts);
         let mut out = Vec::new();
         for e in miners {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
             let known = decode(&e.data);
-            let mut s = known.unwrap_or_default();
+            let mut s = known.clone().unwrap_or_default();
             let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
             if known.is_none() {
                 let front = cube::facing_name(front_for(e));
@@ -181,9 +250,16 @@ impl Mekanism {
                 }
             }
             let work = self.miner_work.entry(key.clone()).or_default();
-            for (_, p, id) in presses.iter().filter(|(d, p, _)| *d == e.dimension && (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z)) {
-                let _ = p;
+            let here = |p: &BlockPos| (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z);
+            for (_, _, id) in presses.iter().filter(|(d, p, _)| *d == e.dimension && here(p)) {
                 if s.press(*id) {
+                    work.cursor = 0;
+                    work.queue.clear();
+                    work.finished = false;
+                }
+            }
+            for (_, _, id, text) in texts_in.iter().filter(|(d, p, _, _)| *d == e.dimension && here(p)) {
+                if s.text(*id, text) {
                     work.cursor = 0;
                     work.queue.clear();
                     work.finished = false;
@@ -196,8 +272,16 @@ impl Mekanism {
             }
             let _ = world::set_item_eject(&e.dimension, e.pos.x, e.pos.y, e.pos.z, s.eject);
             let mut items: Vec<Option<ItemStack>> = (0..SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
-            let filters: Vec<String> = items[BUFFER..].iter().flatten().map(|i| i.item.clone()).collect();
+            let list = s.filters.clone();
+            let tags = |id: &str| recipe_types::item_tags(id);
             let mut energy = e.energy;
+            // `EnergyInventorySlot.fillOrConvert` (152, 20): an item worth energy fills the buffer when it all fits.
+            let mut energy_item = false;
+            if let Some((now, left)) = cube::fill_from_slot(&items[ENERGY_SLOT], energy, CAPACITY) {
+                energy = now;
+                items[ENERGY_SLOT] = left;
+                energy_item = true;
+            }
             let mut status = 0; // 0 stopped, 1 searching, 2 mining, 3 no energy, 4 finished
             if s.running && !work.finished {
                 // The scan: a little each tick.
@@ -210,7 +294,7 @@ impl Mekanism {
                         };
                         work.cursor += 1;
                         let p = [e.pos.x + dx, y, e.pos.z + dz];
-                        if world::get_block(&e.dimension, p[0], p[1], p[2]).is_some_and(|b| wants(&b, &filters, s.inverse)) {
+                        if world::get_block(&e.dimension, p[0], p[1], p[2]).is_some_and(|b| wants(&b, &list, s.inverse, &tags)) {
                             work.queue.push(p);
                             if work.queue.len() >= QUEUE_MAX {
                                 break;
@@ -232,7 +316,7 @@ impl Mekanism {
                             // The next block that is still there to mine (top down).
                             while !work.queue.is_empty() {
                                 let p = work.queue.remove(0);
-                                let still = world::get_block(&e.dimension, p[0], p[1], p[2]).is_some_and(|b| wants(&b, &filters, s.inverse));
+                                let still = world::get_block(&e.dimension, p[0], p[1], p[2]).is_some_and(|b| wants(&b, &list, s.inverse, &tags));
                                 if still {
                                     let _ = world::mine_block(
                                         &e.dimension,
@@ -276,17 +360,23 @@ impl Mekanism {
                 work.queue.len().min(i32::MAX as usize) as i32,
                 work.mined.min(i32::MAX as u64) as i32,
                 status,
+                s.filters.len() as i32,
+                s.selected.map_or(0, |i| i as i32 + 1),
             ];
-            let _ = &mut items;
+            let texts = filters::texts(&s.filters, s.selected);
+            if self.menu_texts.get(&key) != Some(&texts) {
+                let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+                self.menu_texts.insert(key.clone(), texts);
+            }
             let data = encode(&s);
-            if energy == e.energy && data == e.data && menu == e.menu_data {
+            if energy == e.energy && data == e.data && menu == e.menu_data && !energy_item {
                 continue;
             }
             out.push(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
                 data,
-                items: None,
+                items: energy_item.then_some(items),
                 energy: (energy != e.energy).then_some(energy),
                 energy_faces: None,
                 tanks: None,
@@ -314,16 +404,48 @@ mod tests {
 
     #[test]
     fn it_mines_what_the_filters_name_or_everything_else() {
-        let f = vec!["minecraft:diamond_ore".to_owned()];
-        assert!(wants("minecraft:diamond_ore", &f, false));
-        assert!(!wants("minecraft:stone", &f, false));
-        assert!(wants("minecraft:stone", &f, true));
-        assert!(!wants("minecraft:diamond_ore", &f, true));
+        let f = vec![filters::Filter { tag: false, target: "minecraft:diamond_ore".into() }, filters::Filter { tag: true, target: "c:ores/tin".into() }];
+        let tags = |id: &str| if id == "mekanism:tin_ore" { vec!["c:ores/tin".to_owned()] } else { Vec::new() };
+        assert!(wants("minecraft:diamond_ore", &f, false, &tags));
+        assert!(wants("mekanism:tin_ore[x=1]", &f, false, &tags));
+        assert!(!wants("minecraft:stone", &f, false, &tags));
+        assert!(wants("minecraft:stone", &f, true, &tags));
+        assert!(!wants("minecraft:diamond_ore", &f, true, &tags));
         // Never air, liquids, bedrock or itself, even when inverse.
         for b in ["minecraft:air", "minecraft:water[level=0]", "minecraft:bedrock", MINER, "mekanism:bounding_block[part=none]"] {
-            assert!(!wants(b, &f, true), "{b}");
+            assert!(!wants(b, &f, true, &tags), "{b}");
         }
-        assert!(!wants("minecraft:stone", &[], false));
+        assert!(!wants("minecraft:stone", &[], false, &tags));
+    }
+
+    #[test]
+    fn the_config_boxes_set_the_area_and_make_filters() {
+        let mut s = Settings::default();
+        assert!(s.text(TEXT_RADIUS, "20"));
+        assert_eq!(s.radius, 20);
+        assert!(s.text(TEXT_RADIUS, "500"));
+        assert_eq!(s.radius, MAX_RADIUS);
+        assert!(!s.text(TEXT_RADIUS, "x"));
+        assert!(s.text(TEXT_MIN, "-30"));
+        assert_eq!(s.min_y, -30);
+        assert!(s.text(TEXT_MIN, "9999"));
+        assert_eq!(s.min_y, s.max_y);
+        assert!(s.text(TEXT_MAX, "100"));
+        assert_eq!(s.max_y, 100);
+        assert!(!s.text(TEXT_MAX, "100"));
+        assert!(s.text(TEXT_ITEM, "minecraft:coal_ore"));
+        assert!(!s.text(TEXT_ITEM, "minecraft:coal_ore"));
+        assert!(s.text(TEXT_TAG, "c:ores/coal"));
+        assert_eq!(s.filters.len(), 2);
+        assert!(!s.press(ROW_BASE + 1));
+        assert_eq!(s.selected, Some(1));
+        assert!(s.press(DELETE));
+        assert_eq!(s.filters.len(), 1);
+        assert!(s.press(START) || s.running);
+        assert!(s.running);
+        s.press(STOP);
+        assert!(!s.running);
+        assert_eq!(decode(&encode(&s)), Some(s));
     }
 
     #[test]
@@ -364,7 +486,7 @@ mod tests {
 
     #[test]
     fn a_miner_remembers_its_settings() {
-        let s = Settings { radius: 7, min_y: -20, max_y: 99, running: true, eject: true, silk: false, inverse: true, delay: 33 };
+        let s = Settings { radius: 7, min_y: -20, max_y: 99, running: true, eject: true, silk: false, inverse: true, delay: 33, filters: vec![filters::Filter { tag: true, target: "c:ores/iron".into() }], selected: Some(0) };
         assert_eq!(decode(&encode(&s)), Some(s));
         assert_eq!(decode(&[]), None);
     }

@@ -2620,57 +2620,115 @@ def bin_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[116, 34], [44, 34]], 'widgets': widgets}}
 
 def miner_menu(m):
-    """GuiDigitalMiner (simplified): five filter slots, the 27 slots of what it mined, and the start button, radius, heights and switches."""
-    H, INV = 238, 156
-    panel = nine_slice(gui_sprite('base'), 176, H, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, INV - 1 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, INV + 57))
-    buffer = [(8 + 18 * (i % 9), 44 + 18 * (i // 9)) for i in range(27)]
-    filters = [(8 + 18 * i, 20) for i in range(5)]
-    for x, y in buffer + filters:
-        panel.paste(slot, (x - 1, y - 1))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 160, 10, 1), (8, 100))
+    """GuiDigitalMiner (176 by 242) and its config page (`GuiDigitalMinerConfig`, 276 by 254, a window). The main page: the buffer's 27 slots at 8, 92, the energy slot at 152, 20, the inner
+    screen at 7, 19 (77 by 69: Idle, Running or Low power; the searcher's state; "To mine: n"), the three digital switches at 19, 56 (auto eject), 38, 56 (auto pull, which the port
+    has not) and 57, 56 (silk touch), the vertical power bar at 157, 39 (47 high), the Start, Stop, Config and Reset buttons at 87, 19 and 17 apart (61 by 18, each live only when the
+    original's is) and the energy tab. The config page: the left screen at 9, 17 (the filter count, the radius, the lowest and highest height with their boxes at 13, 45, 13, 71 and
+    13, 98), the inverse switch at 10, 115, the list of filters at 95, 17 (four rows of 29, as the sorter's), New Filter and Delete under it and the back button at 5, 5. Numbers
+    (`miner.rs`): 0 running, 1-2 energy, 3-4 its capacity, 5 radius, 6 and 7 the lowest and highest height, 8 eject, 9 silk, 10 inverse, 11 queue, 12 mined, 13 status (0 stopped, 1
+    searching, 2 mining, 3 no energy, 4 finished), 14 how many filters, 15 the selected row plus one; the strings 0 to 16 are `filters.rs::texts`. **Not in the port:** the auto pull switch,
+    the replace target of the inverse mode and its "requires replacement" switch, the visuals tab, the missing block slot, the mod-id filter and the warnings."""
+    from PIL import Image
+    width, height = 176, 242
+    panel, slot, inv_y = inventory_panel(width, height)
+    for i in range(27):
+        panel.alpha_composite(slot, (7 + 18 * (i % 9), 91 + 18 * (i // 9)))
+    panel.alpha_composite(gui_sprite('slot/power'), (151, 19))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 77, 69, 3), (7, 19))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 49, 1), (156, 38))
+    for k in range(4):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 61, 18, 2), (87, 19 + 17 * k))
+    for x in (19, 38, 57):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 16, 16, 2), (x, 56))
     texture = save_gui(panel, m)
     title = 'Digital Miner'
+    def switch_icon(name):
+        return save_gui(Image.open(find(f'gui/switch/{name}.png', ASSET_DIRS)).convert('RGBA').resize((10, 10), 0), f'switch_{name}')
     widgets = [
-        {'type': 'sprite', 'texture': power_h_fill, 'x': 9, 'y': 101, 'w': 158, 'h': 8, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]},
-         'direction': 'right', 'tooltip': 'Energy: {value} / {max} FE'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 100, 'y': 24, 'text': 'Filters', 'color': '#404040', 'scale': 90},
-        {'type': 'text', 'x': 8, 'y': 145, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 145, 'text': 'v0.1.86', 'color': '#808080'},
-        {'type': 'text', 'x': 66, 'y': 113, 'text': 'Radius {5}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 66, 'y': 125, 'text': 'Min Y {6}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 134, 'y': 125, 'text': 'Max Y {7}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 100, 'y': 113, 'text': 'Queue {11}  Mined {12}', 'color': '#00CD00', 'scale': 85}]
-    def button(x, y, w, label, bid, tip):
-        widgets.append({'type': 'text', 'x': x + 2, 'y': y + 2, 'text': label, 'color': '#404040', 'scale': 85})
-        widgets.append({'type': 'button', 'x': x, 'y': y, 'w': w, 'h': 11, 'id': bid, 'tooltip': tip})
-        panel.alpha_composite(nine_slice(gui_sprite('button'), w, 11, 2), (x, y))
-    # the buttons are painted into the texture after the widgets are listed, so build the texture again at the end
-    button(8, 112, 50, 'Start/Stop', 7800, 'Start or stop mining')
-    button(8, 124, 14, '-', 7801, 'Smaller radius')
-    button(24, 124, 14, '+', 7802, 'Larger radius')
-    button(8, 136, 14, '-', 7803, 'Lower minimum height')
-    button(24, 136, 14, '+', 7804, 'Higher minimum height')
-    button(42, 136, 14, '-', 7805, 'Lower maximum height')
-    button(58, 136, 14, '+', 7806, 'Higher maximum height')
-    for bid, x, label, data in ((7807, 80, 'Eject', 8), (7808, 114, 'Silk', 9), (7809, 144, 'Inv', 10)):
-        widgets.append({'type': 'text', 'x': x + 2, 'y': 138, 'text': label, 'color': '#404040', 'scale': 80})
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
-            {'type': 'text', 'x': x + 2 + 20, 'y': 138, 'text': '+', 'color': '#00CD00', 'scale': 80}]})
-        widgets.append({'type': 'button', 'x': x, 'y': 136, 'w': 30, 'h': 11, 'id': bid, 'tooltip': label})
-    for st, text, color in ((0, 'Stopped', '#808080'), (1, 'Searching', '#00CD00'), (2, 'Mining', '#00CD00'), (3, 'No energy', '#CD0000'), (4, 'Finished', '#00CD00')):
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 13}, 'eq': st}}, 'widgets': [
-            {'type': 'text', 'x': 112, 'y': 5, 'text': text, 'color': color, 'scale': 85}]})
-    texture = save_gui(panel, m)
-    return {'slots': 32, 'data_slots': 14,
-            'screen': {'texture': texture, 'own_labels': True, 'height': H, 'inventory_y': INV,
-                       'slots': [list(p) for p in buffer] + [list(p) for p in filters], 'widgets': widgets}}
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'sprite', 'texture': power_fill, 'x': 157, 'y': 39, 'w': 4, 'h': 47, 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'direction': 'up',
+         'tooltip': 'Energy: {value} / {max} FE'}]
+    for state, label, color in ((0, 'Idle', '#3CFE9A'), (1, 'Running', '#3CFE9A'), (2, 'Running', '#3CFE9A'), (3, 'Low Power', '#FF5555'), (4, 'Idle', '#3CFE9A')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 13}, 'eq': state}}, 'widgets': [{'type': 'text', 'x': 10, 'y': 22, 'text': label, 'color': color, 'scale': 85}]})
+    for state, label in ((0, 'Not ready'), (1, 'Searching...'), (2, 'Searching...'), (3, 'Paused'), (4, 'Finished')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 13}, 'eq': state}}, 'widgets': [{'type': 'text', 'x': 10, 'y': 32, 'text': label, 'color': '#3CFE9A', 'scale': 85}]})
+    widgets.append({'type': 'text', 'x': 10, 'y': 42, 'text': 'To mine: {11}', 'color': '#3CFE9A', 'scale': 85})
+    for x, name, data, bid, tip in ((19, 'eject', 8, 7807, 'Auto eject'), (38, 'input', None, None, 'Auto pull (not in the port yet)'), (57, 'silk', 9, 7808, 'Silk touch')):
+        widgets.append({'type': 'sprite', 'texture': switch_icon(name), 'x': x + 3, 'y': 59, 'w': 10, 'h': 10})
+        if data is not None:
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
+                {'type': 'text', 'x': x + 5, 'y': 70, 'text': 'On', 'color': '#3CFE9A', 'scale': 70}]})
+        b = {'type': 'button', 'x': x, 'y': 56, 'w': 16, 'h': 16, 'tooltip': tip}
+        if bid:
+            b['id'] = bid
+        widgets.append(b)
+    # Start and Stop each live only when the original's are: Start when it is not running, Stop when it is
+    for label, bid, y, live in (('Start', 7811, 19, (0, 4)), ('Stop', 7812, 36, (1, 2, 3))):
+        for st in range(5):
+            on = st in live
+            group = [{'type': 'text', 'x': 87 + (61 - text_width(label)) // 2, 'y': y + 5, 'text': label, 'color': '#404040' if on else '#808080'}]
+            if on:
+                group.append({'type': 'button', 'x': 87, 'y': y, 'w': 61, 'h': 18, 'id': bid, 'tooltip': label})
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 13}, 'eq': st}}, 'widgets': group})
+    for st in range(5):
+        on = st in (0, 4)
+        group = [{'type': 'text', 'x': 87 + (61 - text_width('Config')) // 2, 'y': 58, 'text': 'Config', 'color': '#404040' if on else '#808080'}]
+        if on:
+            group.append({'type': 'button', 'x': 87, 'y': 53, 'w': 61, 'h': 18, 'local': {'open': 'config'}, 'tooltip': 'Radius, heights and filters'})
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 13}, 'eq': st}}, 'widgets': group})
+    widgets += [{'type': 'text', 'x': 87 + (61 - text_width('Reset')) // 2, 'y': 75, 'text': 'Reset', 'color': '#404040'},
+                {'type': 'button', 'x': 87, 'y': 70, 'w': 61, 'h': 18, 'id': 7810, 'tooltip': 'Stop and start the search again'},
+                {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+                {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Capacity: {3+4} FE\nStored: {1+2} FE'}]
+    # the config page
+    cw, ch = 276, 254
+    cp = nine_slice(gui_sprite('base'), cw, ch, 4)
+    cp.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 85, 140, 3), (9, 17))
+    cp.alpha_composite(nine_slice(gui_sprite('element_holder'), 158, 118, 2), (95, 17))
+    cp.alpha_composite(nine_slice(gui_sprite('element_holder'), 158, 22, 2), (95, 135))
+    cp.alpha_composite(nine_slice(gui_sprite('button'), 100, 20, 2), (96, 136))
+    cp.alpha_composite(nine_slice(gui_sprite('button'), 52, 20, 2), (200, 136))
+    cp.alpha_composite(nine_slice(gui_sprite('button'), 16, 16, 2), (10, 115))
+    for i in range(4):
+        cp.alpha_composite(nine_slice(gui_sprite('button'), 156, 27, 2), (96, 18 + 29 * i))
+    for y in (45, 71, 98):
+        cp.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 38, 11, 2), (13, y))
+    ctitle = 'Digital Miner'
+    cfg = [
+        {'type': 'text', 'x': 14 + (cw - 14 - text_width(ctitle)) // 2, 'y': 5, 'text': ctitle, 'color': '#404040'},
+        {'type': 'button', 'x': 5, 'y': 5, 'w': 11, 'h': 14, 'local': 'close', 'tooltip': 'Back'},
+        {'type': 'text', 'x': 12, 'y': 22, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'text', 'x': 12, 'y': 35, 'text': 'Radius: {5}', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'textfield', 'x': 14, 'y': 46, 'w': 36, 'h': 9, 'id': 7863, 'validator': 'digit', 'max_length': 2},
+        {'type': 'text', 'x': 12, 'y': 61, 'text': 'Min Y: {6}', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'textfield', 'x': 14, 'y': 72, 'w': 36, 'h': 9, 'id': 7864, 'validator': 'any', 'max_length': 4},
+        {'type': 'text', 'x': 12, 'y': 88, 'text': 'Max Y: {7}', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'textfield', 'x': 14, 'y': 99, 'w': 36, 'h': 9, 'id': 7865, 'validator': 'any', 'max_length': 4},
+        {'type': 'sprite', 'texture': switch_icon('inverse'), 'x': 13, 'y': 118, 'w': 10, 'h': 10},
+        {'type': 'show', 'when': {'data': {'value': {'data': 10}, 'eq': 1}}, 'widgets': [{'type': 'text', 'x': 30, 'y': 120, 'text': 'Inverse: On', 'color': '#3CFE9A', 'scale': 75}]},
+        {'type': 'show', 'when': {'data': {'value': {'data': 10}, 'eq': 0}}, 'widgets': [{'type': 'text', 'x': 30, 'y': 120, 'text': 'Inverse: Off', 'color': '#FF5555', 'scale': 75}]},
+        {'type': 'button', 'x': 10, 'y': 115, 'w': 16, 'h': 16, 'id': 7809, 'tooltip': 'Inverse mode: mine everything the filters do not name'},
+        {'type': 'list', 'x': 97, 'y': 19, 'w': 154, 'h': 116, 'row_height': 29, 'first': 1, 'count': {'data': 14}, 'on_click': 7830, 'color': '#404040'},
+        {'type': 'text', 'x': 96 + (100 - text_width('New Filter')) // 2, 'y': 142, 'text': 'New Filter', 'color': '#404040'},
+        {'type': 'button', 'x': 96, 'y': 136, 'w': 100, 'h': 20, 'local': {'open': 'new_filter'}, 'tooltip': 'Make an item or tag filter'},
+        {'type': 'text', 'x': 200 + (52 - text_width('Delete')) // 2, 'y': 142, 'text': 'Delete', 'color': '#AA0000'},
+        {'type': 'button', 'x': 200, 'y': 136, 'w': 52, 'h': 20, 'id': 7860, 'tooltip': 'Delete the selected filter'}]
+    nw = nine_slice(gui_sprite('base'), 160, 90, 4)
+    nw.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 140, 12, 2), (10, 30))
+    nw.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 140, 12, 2), (10, 62))
+    new_w = [{'type': 'text', 'x': 20, 'y': 6, 'text': 'New Filter', 'color': '#404040'},
+             {'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'},
+             {'type': 'text', 'x': 10, 'y': 20, 'text': 'Block id (minecraft:diamond_ore), Enter:', 'color': '#404040', 'scale': 70},
+             {'type': 'textfield', 'x': 11, 'y': 31, 'w': 138, 'h': 10, 'id': 7861, 'validator': 'any', 'max_length': 100},
+             {'type': 'text', 'x': 10, 'y': 52, 'text': 'Tag (c:ores/iron), Enter:', 'color': '#404040', 'scale': 70},
+             {'type': 'textfield', 'x': 11, 'y': 63, 'w': 138, 'h': 10, 'id': 7862, 'validator': 'any', 'max_length': 100}]
+    windows = [{'id': 'config', 'x': -50, 'y': -6, 'width': cw, 'height': ch, 'texture': save_gui(cp, 'miner_config'), 'widgets': cfg},
+               {'id': 'new_filter', 'x': 8, 'y': 60, 'width': 160, 'height': 90, 'texture': save_gui(nw, 'miner_new_filter'), 'widgets': new_w}]
+    slots = [[8 + 18 * (i % 9), 92 + 18 * (i // 9)] for i in range(27)] + [[152, 20]]
+    return {'slots': 28, 'data_slots': 16, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets, 'windows': windows}}
 
 def induction_port_menu(m):
     """GuiInductionMatrix (176 by 166): the medium energy gauge at 7, 16 (34 by 56), the inner screen at 49, 21 (84 by 46: the energy, the capacity, what went in and what
