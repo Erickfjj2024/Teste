@@ -1,0 +1,462 @@
+From 47a869ea40c3f930186ade2643e49d805022f533 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 01:30:59 +0000
+Subject: [PATCH] FORK-10 (c): path-to and stop for mod entities, walking over
+ the ground
+
+mod-entity-update gains path-to (point and speed multiplier) and stop; the game walks the entity each tick at the kind's speed (x2.158 blocks a tick), over loaded blocks, climbing a block, dropping up to 3 and stopping at a wall or on arrival; a teleport clears the goal. Teleport was already in (a).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/mod_entities.rs   |  36 +++++-
+ crates/horizon-client/src/game/server_mods.rs |   1 +
+ .../robits/horizon/entity_kind/robit.json     |   2 +-
+ .../examples/entity-kinds/src/lib.rs          |   9 +-
+ .../examples/entity-kinds/tests/robits.toml   |  18 +--
+ crates/horizon-mod-sdk/wit/horizon.wit        |   6 +
+ crates/horizon-mods/src/entity_state.rs       | 121 ++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            |  37 +++++-
+ docs/api/mods-reference.md                    |   2 +
+ 9 files changed, 214 insertions(+), 18 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+index 2e1aebaa7..201434400 100644
+--- a/crates/horizon-client/src/game/mod_entities.rs
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -4,7 +4,7 @@
+ use super::Game;
+ use horizon_mods::{
+     content::EntityKind,
+-    entity_state::{CARRIER_TAG, FILE, ModEntityState, apply, carrier_snbt, decode, encode},
++    entity_state::{CARRIER_TAG, FILE, ModEntityState, WALK_FACTOR, Walk, apply, carrier_snbt, decode, encode, walk},
+ };
+ use std::{collections::HashMap, sync::OnceLock};
+ 
+@@ -84,6 +84,40 @@ impl Game<'_> {
+         self.mod_entities.list.len() != before
+     }
+ 
++    /// One tick of walking for the entities of the level in place that have a goal (FORK-10 c): `walk` over the loaded blocks, at the
++    /// kind's `speed` times the goal's multiplier; arriving or being blocked ends the goal.
++    pub(super) fn walk_mod_entities(&mut self) {
++        let Some(kinds) = MOD_KINDS.get() else {
++            return;
++        };
++        let dim = self.dim.id().to_owned();
++        for i in 0..self.mod_entities.list.len() {
++            let e = &self.mod_entities.list[i];
++            let (Some((goal, mult)), true) = (e.goal, e.dimension == dim) else {
++                continue;
++            };
++            let Some(kind) = kinds.get(&e.kind) else {
++                continue;
++            };
++            let (mut pos, mut yaw) = (e.pos, e.yaw);
++            // A chunk that is not loaded stops it where it is (its blocks read as air).
++            if !self.world.chunks.contains_key(&((pos[0].floor() as i32) >> 4, (pos[2].floor() as i32) >> 4)) {
++                continue;
++            }
++            let facts = self.res.facts();
++            let world = &self.world;
++            let solid = |x: i32, y: i32, z: i32| facts.get(world.block(x, y, z)).full_collision;
++            let step = f64::from(kind.speed) * f64::from(mult) * WALK_FACTOR;
++            let result = walk(&mut pos, &mut yaw, goal, step, f64::from(kind.height), &solid);
++            let e = &mut self.mod_entities.list[i];
++            e.pos = pos;
++            e.yaw = yaw;
++            if result != Walk::Moving {
++                e.goal = None;
++            }
++        }
++    }
++
+     /// Makes each entity of the level in place stand for itself on the clients (FORK-10 b): an `item_display` of the skin's model (see
+     /// `carrier_snbt`) summoned beside the entity, moved with it each tick, made again when the skin or the name changes, and again when
+     /// its chunk comes back. Carriers a save kept from an earlier run (the display is saved with the world, the entity's state is the
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 53d2f0ccb..63e32291b 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -537,6 +537,7 @@ mod run {
+             let kept = if kept.is_empty() { Vec::new() } else { self.mods.mods.entities_tick(self.ticks, &kept) };
+             self.return_world();
+             self.apply_mod_entity_ticks(kept);
++            self.walk_mod_entities();
+             self.sync_mod_entity_carriers();
+             self.apply_mod_entity_updates(updates);
+             self.apply_mod_entity_updates(menu_updates);
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+index 8d62cef7b..8a729748e 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+@@ -2,7 +2,7 @@
+   "width": 0.6,
+   "height": 0.65,
+   "max_health": 1.0,
+-  "speed": 0.3,
++  "speed": 0.25,
+   "skins": [
+     {
+       "id": "default",
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+index 28223af2c..d240a65a8 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -1,6 +1,6 @@
+ //! Robits (FORK-10): `robits:robit`, a living entity kind declared in `data/robits/horizon/entity_kind/robit.json`, drawn on the clients as an item display of the skin's model (`assets/robits/items/`). A message on
+ //! `robits:spawn` (a position as three little-endian whole numbers) spawns one; each tick the mod counts in its saved bytes and its
+-//! energy, takes the red skin from the second tick, is named Bolt on the third and teleports a block up, and removes the robit on the fifth.
++//! energy, takes the red skin from the second tick, walks a block east from the first, is named Bolt on the third, and removes the robit on the sixth.
+ use horizon_mod_sdk::server::{ModEntity, ModEntityUpdate, Player, Registration, ServerMod, entities};
+ 
+ struct Robits;
+@@ -35,8 +35,11 @@ impl ServerMod for Robits {
+                     energy: Some(e.energy + 10),
+                     skin: (count >= 2).then(|| "red".to_owned()),
+                     name: (count == 3).then(|| Some("Bolt".to_owned())),
+-                    teleport: (count == 3).then(|| (e.x, e.y + 1.0, e.z)),
+-                    remove: count >= 5,
++                    teleport: None,
++                    // From the first tick it walks a block east (FORK-10 c); from the sixth the mod removes it.
++                    path_to: (count == 1).then(|| (e.x + 1.0, e.y, e.z, 1.0)),
++                    stop: false,
++                    remove: count >= 6,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+index 10b1425c1..eb386106f 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -2,24 +2,24 @@
+ join = "Alex"
+ # The message spawns a robit of the mod's own kind (declared in content): it exists as the step ends, untouched.
+ net = { channel = "robits:spawn", data = [3, 0, 0, 0, 70, 0, 0, 0, 4, 0, 0, 0] }
+-expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=0 data=[0] skin=default name=-"]
++expect.mod-entities = ["1001 robits:robit 3.500 70.000 4.500 energy=0 data=[0] skin=default name=-"]
+ 
+ [[step]]
+-# One tick: the robit exists, the mod counted once and gave it energy; its skin is still the first.
++# One tick: the mod counted once, gave it energy and a goal a block east; it walked a first step (0.25 speed * 2.158 = 0.5395 a tick).
+ ticks = 1
+-expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=10 data=[1] skin=default name=-"]
++expect.mod-entities = ["1001 robits:robit 4.040 70.000 4.500 energy=10 data=[1] skin=default name=-"]
+ 
+ [[step]]
+-# The second tick takes the red skin.
++# The second tick takes the red skin and arrives at the goal, which ends the walk.
+ ticks = 1
+-expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=20 data=[2] skin=red name=-"]
++expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=20 data=[2] skin=red name=-"]
+ 
+ [[step]]
+-# The third names it Bolt and moves it a block up.
++# The third names it Bolt; it stays where it arrived.
+ ticks = 1
+-expect.mod-entities = ["1001 robits:robit 3.5 71 4.5 energy=30 data=[3] skin=red name=Bolt"]
++expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
+ 
+ [[step]]
+-# The fifth removes it, and nothing is left.
+-ticks = 2
++# A wall of the script's own blocks in front of a new goal is not part of this mod; the sixth tick removes the robit.
++ticks = 3
+ expect.mod-entities = []
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index f07a7b9fb..824b23d1f 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1517,6 +1517,12 @@ interface server-events {
+         name: option<option<string>>,
+         /// Moves it at once (as `/tp` does).
+         teleport: option<tuple<f64, f64, f64>>,
++        /// Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). It walks
++        /// there each tick over the ground, climbing a block and dropping up to 3, and stops when it arrives or a wall is in its way;
++        /// `some` of a new goal replaces the old, and a teleport clears it. The path is a straight line, not a search.
++        path-to: option<tuple<f64, f64, f64, f32>>,
++        /// Stops walking.
++        stop: bool,
+         /// Takes it out of the world with no death and no drops.
+         remove: bool,
+     }
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index b506ced8f..748d23b90 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -26,6 +26,8 @@ pub struct ModEntityState {
+     pub carrier: Option<u32>,
+     /// The skin and the name that carrier was made with, to make it again when either changes; not saved.
+     pub shown: Option<(String, Option<String>)>,
++    /// Where it walks to (the point and the speed multiplier), until it arrives, is blocked or is told to stop; not saved.
++    pub goal: Option<([f64; 3], f32)>,
+ }
+ 
+ /// The entities and whether the save was read.
+@@ -54,6 +56,7 @@ impl ModEntityState {
+             name: None,
+             carrier: None,
+             shown: None,
++            goal: None,
+         }
+     }
+ }
+@@ -107,6 +110,7 @@ pub fn decode(text: &str) -> Vec<ModEntityState> {
+                 name: r["name"].as_str().map(str::to_owned),
+                 carrier: None,
+                 shown: None,
++                goal: None,
+                 items: r["items"]
+                     .as_array()?
+                     .iter()
+@@ -144,6 +148,56 @@ pub fn carrier_snbt(kind: &EntityKind, skin: &str, name: Option<&str>) -> String
+     )
+ }
+ 
++/// Blocks a tick a mob of movement speed 1 walks (a player's 0.1 is 4.317 blocks a second): `speed * WALK_FACTOR` is the step.
++pub const WALK_FACTOR: f64 = 2.158;
++
++/// What a step toward a goal came to.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Walk {
++    /// Moved and is not there yet.
++    Moving,
++    /// Is at the goal (its x and z), so it stops.
++    Arrived,
++    /// A wall it cannot climb is in the way: it stays and stops.
++    Blocked,
++}
++
++/// One tick of walking from `pos` toward `goal` (x and z; the ground decides y) by `step` blocks over ground: it climbs one block, drops up
++/// to 3, and needs `height` blocks of room above its feet. `solid(x, y, z)` says whether a block cell stops it. It turns toward where
++/// it goes (`yaw` in degrees, 0 facing south). Straight steering, not a path search.
++pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height: f64, solid: &dyn Fn(i32, i32, i32) -> bool) -> Walk {
++    let (dx, dz) = (goal[0] - pos[0], goal[2] - pos[2]);
++    let dist = dx.hypot(dz);
++    if dist < 0.1 {
++        pos[0] = goal[0];
++        pos[2] = goal[2];
++        return Walk::Arrived;
++    }
++    let go = step.min(dist);
++    let (nx, nz) = (pos[0] + dx / dist * go, pos[2] + dz / dist * go);
++    let (cx, cz) = (nx.floor() as i32, nz.floor() as i32);
++    let rooms = height.ceil().max(1.0) as i32;
++    let free = |y: i32| (0..rooms).all(|k| !solid(cx, y + k, cz));
++    let feet = pos[1].floor() as i32;
++    let new_y = if free(feet) {
++        // Open ahead: drops while there is no floor, up to 3 blocks (else it stays on its level and falls back by the game's own gravity).
++        let mut y = feet;
++        while y > feet - 3 && !solid(cx, y - 1, cz) {
++            y -= 1;
++        }
++        if !solid(cx, y - 1, cz) { feet } else { y }
++    } else if free(feet + 1) {
++        feet + 1
++    } else {
++        return Walk::Blocked;
++    };
++    pos[0] = nx;
++    pos[2] = nz;
++    pos[1] = f64::from(new_y);
++    *yaw = (-dx.atan2(dz).to_degrees()) as f32;
++    if go >= dist { Walk::Arrived } else { Walk::Moving }
++}
++
+ /// The tag every carrier has, for the game to tell them from other displays.
+ pub const CARRIER_TAG: &str = "horizon_mod_entity";
+ 
+@@ -171,6 +225,16 @@ pub fn apply(e: &mut ModEntityState, kind: &EntityKind, u: &ModEntityUpdate) ->
+     }
+     if let Some((x, y, z)) = u.teleport {
+         e.pos = [x, y, z];
++        e.goal = None;
++    }
++    if let Some((x, y, z, speed)) = u.path_to
++        && [x, y, z].iter().all(|v| v.is_finite())
++        && speed.is_finite()
++    {
++        e.goal = Some(([x, y, z], speed.clamp(0.0, 8.0)));
++    }
++    if u.stop {
++        e.goal = None;
+     }
+     u.remove
+ }
+@@ -207,6 +271,8 @@ mod tests {
+             skin: None,
+             name: None,
+             teleport: None,
++            path_to: None,
++            stop: false,
+             remove: false,
+         }
+     }
+@@ -226,6 +292,61 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn walking_goes_over_flat_ground_climbs_a_block_drops_and_stops_at_a_wall() {
++        // A floor at y 63: cells at y 63 and below are solid; y 64 and above is air, but for the scene's own blocks.
++        let floor = |_: i32, y: i32, _: i32| y <= 63;
++        let (mut pos, mut yaw) = ([0.5, 64.0, 0.5], 0.0f32);
++        // 10 blocks east at 0.5 a tick: arrives on the 20th step, facing east (-90).
++        let mut steps = 0;
++        while walk(&mut pos, &mut yaw, [10.5, 64.0, 0.5], 0.5, 0.65, &floor) == Walk::Moving {
++            steps += 1;
++        }
++        assert_eq!((steps, pos), (19, [10.5, 64.0, 0.5]));
++        assert_eq!(yaw, -90.0);
++        // A step up of one block: the cell at x 2 is raised to y 64.
++        let step_up = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && y == 64);
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &step_up);
++        assert_eq!(pos[1], 65.0, "it climbs onto the block");
++        // A wall two blocks high stops it, and so does a ceiling that leaves too little room for its height.
++        let wall = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && (64..=65).contains(&y));
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        assert_eq!(walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &wall), Walk::Blocked);
++        assert_eq!(pos, [1.9, 64.0, 0.5]);
++        let low = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && y == 65);
++        assert_eq!(walk(&mut [1.9, 64.0, 0.5], &mut yaw, [5.5, 64.0, 0.5], 0.5, 1.8, &low), Walk::Blocked);
++        // A drop of one block: the floor ends at x 2 (the cell below is air down to 62).
++        let pit = |x: i32, y: i32, _: i32| y <= 62 || (x != 2 && y == 63);
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &pit);
++        assert_eq!(pos[1], 63.0, "it drops into the pit");
++    }
++
++    #[test]
++    fn a_path_to_sets_the_goal_a_teleport_or_a_stop_clears_it() {
++        let k = kind();
++        let mut e = ModEntityState::new(1, "minecraft:overworld", &k, [0.0; 3], vec![]);
++        let mut u = update(1);
++        u.path_to = Some((5.0, 64.0, 5.0, 1.5));
++        apply(&mut e, &k, &u);
++        assert_eq!(e.goal, Some(([5.0, 64.0, 5.0], 1.5)));
++        let mut stop = update(1);
++        stop.stop = true;
++        apply(&mut e, &k, &stop);
++        assert_eq!(e.goal, None);
++        apply(&mut e, &k, &u);
++        let mut tp = update(1);
++        tp.teleport = Some((9.0, 70.0, 9.0));
++        apply(&mut e, &k, &tp);
++        assert_eq!((e.goal, e.pos), (None, [9.0, 70.0, 9.0]));
++        // A goal that is not a number is ignored.
++        let mut bad = update(1);
++        bad.path_to = Some((f64::NAN, 0.0, 0.0, 1.0));
++        apply(&mut e, &k, &bad);
++        assert_eq!(e.goal, None);
++    }
++
+     #[test]
+     fn a_new_entity_has_full_health_the_first_skin_and_an_empty_container() {
+         let e = ModEntityState::new(7, "minecraft:overworld", &kind(), [1.0, 64.0, 2.0], vec![9]);
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index a0b706566..35a058b5b 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -73,6 +73,7 @@ pub struct TestGame {
+     pub mod_entities: Vec<crate::ModEntity>,
+     pub entity_kinds: Vec<crate::content::EntityKind>,
+     next_mod_entity: u32,
++    entity_goals: std::collections::BTreeMap<u32, ([f64; 3], f32)>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
+     /// The blocks packed into boxes (`world.pack-block`), by the box's position.
+@@ -278,6 +279,7 @@ impl TestGame {
+             mod_entities: Vec::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
++            entity_goals: Default::default(),
+             can_place_result: None,
+             packed: Default::default(),
+             crafts: Vec::new(),
+@@ -355,7 +357,10 @@ impl TestGame {
+     }
+     /// `entities-tick` with the mod's entities, and what it answers applied (as the game does: data, slots, energy, skin, name, a teleport, a removal).
+     fn tick_mod_entities(&mut self) {
+-        if self.mod_entities.is_empty() || !self.mods.hears_mod_entities() {
++        if self.mod_entities.is_empty() {
++            return;
++        }
++        if !self.mods.hears_mod_entities() {
+             return;
+         }
+         let list = self.mod_entities.clone();
+@@ -393,6 +398,27 @@ impl TestGame {
+             }
+             if let Some((x, y, z)) = u.teleport {
+                 (e.x, e.y, e.z) = (x, y, z);
++                self.entity_goals.remove(&u.id);
++            }
++            if let Some((x, y, z, speed)) = u.path_to {
++                self.entity_goals.insert(u.id, ([x, y, z], speed));
++            }
++            if u.stop {
++                self.entity_goals.remove(&u.id);
++            }
++        }
++        // Walking, over the script's blocks (a cell with a block that is not air stops it), as the game does.
++        let world = self.world.clone();
++        let solid = |x: i32, y: i32, z: i32| world.get(&(x, y, z)).is_some_and(|s| !s.starts_with("minecraft:air"));
++        for e in &mut self.mod_entities {
++            let Some((goal, mult)) = self.entity_goals.get(&e.id).copied() else { continue };
++            let Some(kind) = self.entity_kinds.iter().find(|k| k.id == e.kind) else { continue };
++            let (mut pos, mut yaw) = ([e.x, e.y, e.z], e.yaw);
++            let step = f64::from(kind.speed) * f64::from(mult) * crate::entity_state::WALK_FACTOR;
++            let r = crate::entity_state::walk(&mut pos, &mut yaw, goal, step, f64::from(kind.height), &solid);
++            (e.x, e.y, e.z, e.yaw) = (pos[0], pos[1], pos[2], yaw);
++            if r != crate::entity_state::Walk::Moving {
++                self.entity_goals.remove(&e.id);
+             }
+         }
+     }
+@@ -1405,7 +1431,7 @@ pub struct Expect {
+     teleports: Option<Vec<String>>,
+     xp_taken: Option<Vec<String>>,
+     sounds: Option<Vec<String>>,
+-    /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (name `-` for none).
++    /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (the coordinates with 3 decimals, name `-` for none).
+     mod_entities: Option<Vec<String>>,
+     /// Server mods (FORK-20): every `set-menu-text`, as `"dimension x y z text|text"`.
+     menu_text: Option<Vec<String>>,
+@@ -1877,7 +1903,10 @@ impl Step {
+                     game.snapshot();
+                     game.mods.entity_spawned(&game.mod_id(), *ticket, Some(id));
+                 }
+-                crate::EntityCommand::RemoveEntity { id } => game.mod_entities.retain(|e| e.id != *id),
++                crate::EntityCommand::RemoveEntity { id } => {
++                    game.mod_entities.retain(|e| e.id != *id);
++                    game.entity_goals.remove(id);
++                }
+                 _ => {}
+             }
+         }
+@@ -2327,7 +2356,7 @@ impl Step {
+                 .iter()
+                 .map(|m| {
+                     format!(
+-                        "{} {} {} {} {} energy={} data={:?} skin={} name={}",
++                        "{} {} {:.3} {:.3} {:.3} energy={} data={:?} skin={} name={}",
+                         m.id, m.kind, m.x, m.y, m.z, m.energy, m.data, m.skin, m.name.as_deref().unwrap_or("-")
+                     )
+                 })
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 03aa65d1f..f64d50eb4 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -1284,6 +1284,8 @@ What the mod makes of an entity in a tick; a none leaves that as it is.
+ | `skin` | `option<string>` | A skin id of the kind; an unknown one is ignored. |
+ | `name` | `option<option<string>>` | `some(none)` takes the name away. |
+ | `teleport` | `option<tuple<f64, f64, f64>>` | Moves it at once (as `/tp` does). |
++| `path-to` | `option<tuple<f64, f64, f64, f32>>` | Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). It walks there each tick over the ground, climbing a block and dropping up to 3, and stops when it arrives or a wall is in its way; `some` of a new goal replaces the old, and a teleport clears it. The path is a straight line, not a search. |
++| `stop` | `bool` | Stops walking. |
+ | `remove` | `bool` | Takes it out of the world with no death and no drops. |
+ 
+ ### record `block-entity-update`
+-- 
+2.43.0
+
