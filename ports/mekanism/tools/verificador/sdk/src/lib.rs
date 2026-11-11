@@ -3,6 +3,7 @@ pub mod server {
   pub use serde_json;
   pub mod players { use super::*;
     pub fn tell_overlay<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
+    pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct RadialEntry { pub id: String, pub label: String, pub icon: String }
     pub fn open_radial_menu<A0>(_a0: A0, _a1: &[RadialEntry], _a2: u32) -> bool { false }
     pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
@@ -50,7 +51,7 @@ pub mod server {
     pub struct DroppedItem { pub id: u32, pub stack: crate::server::ItemStack, pub x: f64, pub y: f64, pub z: f64 }
     pub fn items_in_box<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Vec<DroppedItem> { Vec::new() }
     pub fn take_dropped_item<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
-    pub fn spawn_mod_entity<A0, A1, A2, A3, A4, A5>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: A5) -> Result<u64, String> { Err(String::new()) }
+    pub fn spawn_mod_entity<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4, _a5: &[u8]) -> Result<u64, String> { Err(String::new()) }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Mob { pub id: u32, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub max_health: f32 }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct MobOptions { pub name: Option<String>, pub health: Option<f32>, pub no_ai: bool, pub invisible: bool, pub silent: bool, pub invulnerable: bool, pub no_gravity: bool }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct Display { pub translation: (f32,f32,f32), pub left_rotation: (f32,f32,f32,f32), pub scale: (f32,f32,f32), pub right_rotation: (f32,f32,f32,f32), pub interpolation: i32, pub teleport: i32 }
@@ -197,7 +198,13 @@ pub mod server {
         Some(MenuInput { pos: BlockPos { x: int(0)?, y: int(4)?, z: int(8)? }, id: int(12)?, text: String::from_utf8(data.get(16..)?.to_vec()).ok()? })
     }
   }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String> }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool }
   pub trait ServerMod: Sized {
+    fn entities_tick(&mut self, tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> { Vec::new() }
+    fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool { false }
+    fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }
+    fn mod_entity_died(&mut self, entity: ModEntity) {}
     fn init() -> Result<(Self, Registration), String>;
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {}
     fn tick(&mut self, tick: u64) {}

@@ -21,6 +21,7 @@ mod fuelwood_heater;
 mod hdpe_elytra;
 mod heat;
 mod laser_tractor;
+mod robit_world;
 mod meka_tool;
 mod mekasuit;
 mod modification_station;
@@ -85,7 +86,7 @@ use generators::GenKind;
 use redstone::Control;
 use sides::Mode;
 use machine::{Book, Io, Recipe, Stack, Status, step};
-use horizon_mod_sdk::server::{MultiblockSpec, Structure};
+use horizon_mod_sdk::server::{ModEntity, ModEntityUpdate, MultiblockSpec, Structure};
 use std::collections::{HashMap, HashSet};
 
 /// Where a machine's recipes come from.
@@ -481,6 +482,9 @@ struct Mekanism {
     hud_sent: HashMap<(String, String), (String, i32)>,
     /// How many ticks each player has glided in a row (`elytraFlightTick`'s counter).
     glide_ticks: HashMap<String, u32>,
+    /// The blows each Robit took since its last tick (paid in energy then), by entity id, and the furnace's recipes (smelting: input to output and count).
+    robit_damage: HashMap<u32, f64>,
+    robit_recipes: HashMap<String, (String, u32)>,
     fusion_buttons: Vec<(String, BlockPos, i32)>,
     /// The buttons players pressed on fission reactor screens.
     fission_buttons: Vec<(String, BlockPos, i32)>,
@@ -2268,6 +2272,8 @@ impl ServerMod for Mekanism {
             turbine_buttons: Vec::new(),
             hud_sent: HashMap::new(),
             glide_ticks: HashMap::new(),
+            robit_damage: HashMap::new(),
+            robit_recipes: HashMap::new(),
             fusion_buttons: Vec::new(),
             fission_buttons: Vec::new(),
             blades: Vec::new(),
@@ -2280,7 +2286,7 @@ impl ServerMod for Mekanism {
             qio: qio::QIOManager::new(),
             formed_structures: HashSet::new(),
             formed_blocks: HashSet::new(),
-        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().on_net().redirect(bounding::BLOCK, 0, 1)))
+        }, r.on_chunks().on_items().on_tick().on_blocks().on_damage().on_item_release().on_net().on_mod_entities().redirect(bounding::BLOCK, 0, 1)))
     }
 
     fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
@@ -2459,7 +2465,33 @@ impl ServerMod for Mekanism {
         if sneaking || !formed || !is_multiblock_port_or_valve(name) { BlockUse::Pass } else { BlockUse::Default }
     }
 
+    fn entities_tick(&mut self, _tick: u64, list: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
+        if self.robit_recipes.is_empty() {
+            for c in recipe_types::cooking_recipes("smelting") {
+                for input in &c.inputs {
+                    self.robit_recipes.entry(input.clone()).or_insert_with(|| (c.output.clone(), c.count));
+                }
+            }
+        }
+        robit_world::tick_all(&mut self.robit_damage, &self.robit_recipes, list)
+    }
+
+    fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool {
+        entity.kind == robit_world::KIND && self.robit_used(player, &entity, sneaking)
+    }
+
+    fn mod_entity_damaged(&mut self, entity: ModEntity, _source: DamageSource, amount: f32) -> f32 {
+        self.robit_hurt(&entity, amount)
+    }
+
+    fn mod_entity_died(&mut self, entity: ModEntity) {
+        self.robit_died(&entity);
+    }
+
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+        if stack.item == robit::ITEM_ID && self.robit_placed(player, &stack, pos) {
+            return true;
+        }
         if stack.item == electric_bow::ELECTRIC_BOW && self.electric_bow_mode(player, &stack, pos) {
             return true;
         }

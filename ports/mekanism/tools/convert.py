@@ -3285,6 +3285,24 @@ glang = read_json(f'{GGEN}/assets/{GSRC}/lang/en_us.json')
 
 # a creative tab with all of it
 tab_items = [f'{NS}:{n}' for n in sorted(kept_blocks)] + [f'{NS}:{n}' for n in sorted(kept_items)] 
+# The Robit (FORK-10): the entity kind with the skins of `robit.rs::ALL_SKINS` (the first texture of each; the original's variants are chosen by the entity),
+# each skin drawn as an item model: the Robit's own model (`models/item/robit.json`, or the allay costume's) with the skin's texture set, which the
+# original's `mekanism:robit` loader does at run time.
+_robit_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mod', 'src', 'robit.rs')).read()
+_robit_skins = re.findall(r'id: "mekanism:(\w+)",\s*name: "[^"]*",\s*textures: &\["mekanism:(\w+)"[^\]]*\],\s*required_advancement: [^\n]*\n\s*custom_model: (None|Some\("mekanism:item/(\w+)"\))', _robit_src)
+_robit_kind = {'width': 0.6, 'height': 0.65, 'max_health': 1.0, 'speed': 0.3, 'container_slots': 30, 'skins': []}
+for _sid, _tex, _cm, _model in _robit_skins:
+    _base = read_json(find(f'models/item/{_model or "robit"}.json', ASSET_DIRS))
+    _base.pop('loader', None)
+    _base['textures'] = {'robit': f'{NS}:entity/robit/{_tex}', 'particle': f'{NS}:entity/robit/{_tex}'}
+    put(f'{OUT}/assets/{NS}/models/item/robit_skin_{_sid}.json', _base)
+    put(f'{OUT}/assets/{NS}/items/robit_skin_{_sid}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/robit_skin_{_sid}'}})
+    _robit_kind['skins'].append({'id': f'{NS}:{_sid}', 'texture': f'{NS}:entity/robit/{_tex}', 'model': f'{NS}:robit_skin_{_sid}'})
+put(f'{OUT}/data/{NS}/horizon/entity_kind/robit.json', _robit_kind)
+# the Robit item itself shows the default skin's model (the original's loader sets the texture, which the port's models carry)
+put(f'{OUT}/assets/{NS}/models/item/robit.json', read_json(f'{OUT}/assets/{NS}/models/item/robit_skin_robit.json'))
+for _png in glob.glob(f'{GEN}/assets/{NS}/textures/entity/robit/*.png'):
+    put(f'{OUT}/assets/{NS}/textures/entity/robit/{os.path.basename(_png)}', src=_png)
 put(f'{OUT}/data/{NS}/horizon/creative_tab/mekanism.json', {'title': 'Mekanism', 'icon': f'{NS}:steel_casing', 'items': tab_items})
 
 

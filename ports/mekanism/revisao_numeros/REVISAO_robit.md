@@ -24,3 +24,12 @@ O Robit do port é uma **simulação**: anda em linha reta um passo por tick (0,
 
 ## Ainda não conferido / Not yet checked
 A tela do Robit (5 abas: principal, inventário, fundição, aparência, configurações), `interactAt` (configurador e shift), `IEntitySecurityUtils`, a renderização e os modelos por skin, `RobitAIPickup` (a busca do item mais próximo) e o drop ao morrer.
+
+
+## Ligação ao jogo / Wiring into the game (FORK-10 a a f, d2)
+
+**PT-BR.** `robit_world.rs` liga `robit.rs` ao tipo de entidade `mekanism:robit` (conteúdo gerado em `entity_kind/robit.json`, 13 skins, 30 slots, 0,6 x 0,65, vida 1, velocidade 0,3):
+o item usado numa Chargepad livre coloca o Robit com a energia, o nome, a skin, o dono, a segurança e os 30 slots do item; o clique abre o armazenamento (27 slots, como baú); sneak + clique o devolve como item; um golpe vira gasto de energia no próximo tick (e a vida volta ao máximo); a morte solta o conteúdo; sem casa ele some, e sem Chargepad na casa ele cai como item. Cada tick roda `RobitEntity::tick` (seguir o dono, recolher itens, fornalha interna, custo de energia de andar, voltar para casa sem energia).
+**Diferenças:** sem tela com abas (inventário, fornalha, crafting, bigorna e botões ficam de fora), a fornalha não aparece no menu; a skin usa só a primeira textura de cada grupo; o modelo é de item (sem animação); outros danos além do golpe do jogador não chegam; o andar é em linha reta; o item guarda os dados em `minecraft:custom_data` (sem os componentes próprios do original). Nada foi visto no jogo.
+
+**EN.** `robit_world.rs` wires `robit.rs` to the `mekanism:robit` entity kind (generated content): placing the item on a free Chargepad, the chest-like menu, sneak-click packing, hits paid in energy, drops on death, the home rules and the per-tick follow, pick-up, furnace and energy costs. Differences as above; nothing seen in game.
