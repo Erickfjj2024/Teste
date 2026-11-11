@@ -2,8 +2,8 @@
 //! nine frames). Teleporters on the same frequency send what stands in their opening to the nearest other one, for energy: 100 plus 2 for each
 //! block of distance (and 1000 more to change dimension).
 //!
-//! Frequencies are numbers (1 and up; 0 is none) chosen with buttons, as the quantum entangloporter's. Only players are teleported (mobs, items
-//! and vehicles are not), nothing is shown in the opening and there is no sound.
+//! Frequencies are named ones (`frequency.rs`), chosen on the screen's list or made with its boxes, as the quantum entangloporter's. Only players are teleported
+//! (mobs, items and vehicles are not), nothing is shown in the opening and there is no sound.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -15,11 +15,10 @@ pub const BASE_COST: u64 = 1_000;
 pub const DISTANCE_COST: f64 = 10.0;
 pub const DIMENSION_PENALTY: u64 = 10_000;
 pub const CAPACITY: u64 = fe(5_000_000);
-pub const MAX_FREQUENCY: u8 = 99;
 /// Ticks the destination waits after receiving someone.
 pub const DELAY: u32 = 5;
-pub const FREQUENCY_DOWN: i32 = 7600;
-pub const FREQUENCY_UP: i32 = 7601;
+/// The first id of the frequency selector's buttons and boxes (`frequency::id_*`).
+pub const FREQ_BASE: i32 = 8100;
 
 pub fn direction(face: usize) -> [i32; 3] {
     laser::direction(face)
@@ -121,12 +120,18 @@ pub fn inside(point: [f64; 3], bounds: ([i32; 3], [i32; 3])) -> bool {
     (0..3).all(|i| point[i] >= f64::from(bounds.0[i]) && point[i] < f64::from(bounds.1[i]) + 1.0)
 }
 
-pub fn encode(frequency: u8) -> Vec<u8> {
-    vec![1, frequency]
+pub fn encode(frequency: &Option<frequency::Freq>) -> Vec<u8> {
+    let mut out = vec![1];
+    frequency::encode(frequency, &mut out);
+    out
 }
 
-pub fn decode(data: &[u8]) -> Option<u8> {
-    (data.len() >= 2 && data[0] == 1).then(|| data[1])
+/// The frequency a teleporter's bytes hold (none when it has none or no bytes yet).
+pub fn decode(data: &[u8]) -> Option<frequency::Freq> {
+    if data.first() != Some(&1) {
+        return None;
+    }
+    frequency::decode(data, 1).0
 }
 
 #[derive(Default)]
@@ -141,19 +146,31 @@ pub struct Frames {
 impl Mekanism {
     pub(crate) fn run_teleporters(&mut self, parts: &[&BlockEntity], tick: u64) -> Vec<BlockEntityUpdate> {
         let presses = std::mem::take(&mut self.teleporter_buttons);
+        let texts_in = std::mem::take(&mut self.teleporter_texts);
         let mut out = Vec::new();
-        let mut table: Vec<(u8, String, [i32; 3], usize)> = Vec::new();
-        let mut info: HashMap<(String, i32, i32, i32), (u8, Option<usize>)> = HashMap::new();
+        let mut table: Vec<(String, String, [i32; 3], usize)> = Vec::new();
+        let mut info: HashMap<(String, i32, i32, i32), (Option<frequency::Freq>, Option<usize>)> = HashMap::new();
+        let known: Vec<frequency::Freq> = parts.iter().filter_map(|e| decode(&e.data)).collect();
         for e in parts {
             let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
-            let mut freq = decode(&e.data).unwrap_or(0);
-            for (_, p, id) in presses.iter().filter(|(d, p, _)| *d == e.dimension && (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z)) {
-                let _ = p;
-                freq = match *id {
-                    FREQUENCY_UP => (freq + 1).min(MAX_FREQUENCY),
-                    FREQUENCY_DOWN => freq.saturating_sub(1),
-                    _ => freq,
-                };
+            let mut freq = decode(&e.data);
+            // What the screen asked for, by the player that did (`GuiFrequencySelector`): the list a private frequency is chosen from is that player's.
+            let asked: Vec<(frequency::Action, String, String)> = presses
+                .iter()
+                .filter(|(d, p, _, _, _)| *d == e.dimension && (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z))
+                .filter_map(|(_, _, id, who, name)| frequency::button_action(*id, FREQ_BASE).map(|a| (a, who.clone(), name.clone())))
+                .chain(
+                    texts_in
+                        .iter()
+                        .filter(|(d, p, _, _, _, _)| *d == e.dimension && (p.x, p.y, p.z) == (e.pos.x, e.pos.y, e.pos.z))
+                        .filter_map(|(_, _, id, text, who, name)| frequency::text_action(*id, FREQ_BASE, text).map(|a| (a, who.clone(), name.clone()))),
+                )
+                .collect();
+            for (action, who, name) in asked {
+                self.freq_viewer.insert(key.clone(), (who.clone(), name.clone()));
+                if let Some(next) = frequency::apply(&action, &freq, &frequency::listing(&known, &who), &who, &name) {
+                    freq = next;
+                }
             }
             // The frame is looked for once a second.
             let cached = self.frames.found.get(&key).copied();
@@ -165,24 +182,32 @@ impl Mekanism {
                     f
                 }
             };
-            info.insert(key, (freq, frame.map(|f| f.0)));
-            if freq > 0 {
+            if let Some(f) = &freq {
                 if let Some((face, _)) = frame {
-                    table.push((freq, e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z], face));
+                    table.push((f.key(), e.dimension.clone(), [e.pos.x, e.pos.y, e.pos.z], face));
                 }
             }
+            info.insert(key, (freq, frame.map(|f| f.0)));
         }
         let players = players::online();
         for e in parts {
             let pos = [e.pos.x, e.pos.y, e.pos.z];
             let key = (e.dimension.clone(), pos[0], pos[1], pos[2]);
-            let (freq, frame) = info[&key];
+            let (freq, frame) = info[&key].clone();
             let mut energy = e.energy;
-            let others: Vec<(String, [i32; 3], usize)> =
-                table.iter().filter(|t| t.0 == freq).map(|t| (t.1.clone(), t.2, t.3)).collect();
+            // `EnergyInventorySlot.fillOrConvert` (153, 7): an item that is worth energy fills the buffer when it all fits.
+            let mut items_update = None;
+            if let Some((now, left)) = cube::fill_from_slot(&e.items.first().cloned().flatten(), energy, CAPACITY) {
+                energy = now;
+                items_update = Some(vec![left]);
+            }
+            let others: Vec<(String, [i32; 3], usize)> = match &freq {
+                Some(f) => table.iter().filter(|t| t.0 == f.key()).map(|t| (t.1.clone(), t.2, t.3)).collect(),
+                None => Vec::new(),
+            };
             let dest = closest((&e.dimension, pos), &others).cloned();
             // 0 no frequency, 1 no frame, 2 no destination, 3 not enough energy, 4 ready.
-            let mut status = if freq == 0 {
+            let mut status = if freq.is_none() {
                 0
             } else if frame.is_none() {
                 1
@@ -221,15 +246,33 @@ impl Mekanism {
                 }
             }
             let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
-            let menu = vec![i32::from(freq), status, half(energy, 0), half(energy, 16), half(CAPACITY, 0), half(CAPACITY, 16), others.len() as i32];
-            if energy == e.energy && menu == e.menu_data && decode(&e.data) == Some(freq) {
+            // The list the screen shows is the viewer's: the player that used it last, or else the owner of its private frequency.
+            let viewer = self.freq_viewer.get(&key).map(|(id, _)| id.clone()).or_else(|| freq.as_ref().filter(|f| f.private).map(|f| f.owner.clone())).unwrap_or_default();
+            let listing = frequency::listing(&known, &viewer);
+            let menu = vec![
+                i32::from(freq.is_some()),
+                status,
+                half(energy, 0),
+                half(energy, 16),
+                half(CAPACITY, 0),
+                half(CAPACITY, 16),
+                others.len() as i32,
+                listing.public.len() as i32,
+                listing.private.len() as i32,
+            ];
+            let texts = frequency::texts(&freq, &listing);
+            if self.menu_texts.get(&key) != Some(&texts) {
+                let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &texts);
+                self.menu_texts.insert(key.clone(), texts);
+            }
+            if energy == e.energy && menu == e.menu_data && decode(&e.data) == freq && e.data.first() == Some(&1) && items_update.is_none() {
                 continue;
             }
             out.push(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
-                data: encode(freq),
-                items: None,
+                data: encode(&freq),
+                items: items_update,
                 energy: (energy != e.energy).then_some(energy),
                 energy_faces: None,
                 tanks: None,
@@ -300,7 +343,9 @@ mod tests {
 
     #[test]
     fn a_teleporter_remembers_its_frequency() {
-        assert_eq!(decode(&encode(12)), Some(12));
+        let f = frequency::Freq { name: "Home".into(), private: true, owner: "u1".into(), owner_name: "Alex".into() };
+        assert_eq!(decode(&encode(&Some(f.clone()))), Some(f));
+        assert_eq!(decode(&encode(&None)), None);
         assert_eq!(decode(&[]), None);
     }
 }

@@ -21,6 +21,7 @@ mod fuelwood_heater;
 mod hdpe_elytra;
 mod heat;
 mod laser_tractor;
+mod frequency;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -459,19 +460,24 @@ struct Mekanism {
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
     sorter_buttons: Vec<(String, BlockPos, i32)>,
     /// The shared buffers of the quantum entangloporters, by frequency, and the buttons pressed on their screens.
-    entangled: HashMap<u8, entangloporter::Shared>,
-    qe_buttons: Vec<(String, BlockPos, i32)>,
+    entangled: HashMap<String, entangloporter::Shared>,
+    qe_buttons: Vec<(String, BlockPos, i32, String, String)>,
+    qe_texts: Vec<(String, BlockPos, i32, String, String, String)>,
     bin_buttons: Vec<(String, BlockPos, i32)>,
     alarm_set: HashSet<(String, i32, i32, i32)>,
     miner_buttons: Vec<(String, BlockPos, i32)>,
     /// What the text boxes of the screens confirmed (FORK-20, `menu_input`): dimension, block, widget id and text, until the machine's tick takes them.
-    text_inputs: Vec<(String, BlockPos, i32, String)>,
+    text_inputs: Vec<(String, BlockPos, i32, String, String, String)>,
     radiation: radiation::Manager,
     miner_work: HashMap<(String, i32, i32, i32), miner::Work>,
     bin_inserts: HashMap<(String, i32, i32, i32), Vec<(String, u32)>>,
     bin_shown: HashMap<(String, i32, i32, i32), u64>,
     bin_set: HashSet<(String, i32, i32, i32)>,
-    teleporter_buttons: Vec<(String, BlockPos, i32)>,
+    /// Presses and confirmed boxes of the teleporter's frequency selector, with the player's id and name.
+    teleporter_buttons: Vec<(String, BlockPos, i32, String, String)>,
+    teleporter_texts: Vec<(String, BlockPos, i32, String, String, String)>,
+    /// The player that last used a block's frequency selector (id and name), by block.
+    freq_viewer: HashMap<(String, i32, i32, i32), (String, String)>,
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
@@ -2257,6 +2263,7 @@ impl ServerMod for Mekanism {
             sorter_buttons: Vec::new(),
             entangled: HashMap::new(),
             qe_buttons: Vec::new(),
+            qe_texts: Vec::new(),
             bin_buttons: Vec::new(),
             alarm_set: HashSet::new(),
             miner_buttons: Vec::new(),
@@ -2267,6 +2274,8 @@ impl ServerMod for Mekanism {
             bin_shown: HashMap::new(),
             bin_set: HashSet::new(),
             teleporter_buttons: Vec::new(),
+            teleporter_texts: Vec::new(),
+            freq_viewer: HashMap::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
@@ -2739,7 +2748,7 @@ impl ServerMod for Mekanism {
             return;
         }
         if let Some(input) = horizon_mod_sdk::server::menu_input::decode(data) {
-            self.text_inputs.push((player.dimension.clone(), input.pos, input.id, input.text));
+            self.text_inputs.push((player.dimension.clone(), input.pos, input.id, input.text, player.id.clone(), player.name.clone()));
         }
     }
 
@@ -2754,11 +2763,11 @@ impl ServerMod for Mekanism {
             return None;
         }
         if block == teleporter::TELEPORTER {
-            self.teleporter_buttons.push((e.dimension.clone(), e.pos, id));
+            self.teleporter_buttons.push((e.dimension.clone(), e.pos, id, player.id.clone(), player.name.clone()));
             return None;
         }
         if block == entangloporter::BLOCK {
-            self.qe_buttons.push((e.dimension.clone(), e.pos, id));
+            self.qe_buttons.push((e.dimension.clone(), e.pos, id, player.id.clone(), player.name.clone()));
             return None;
         }
         if block == assemblicator::BLOCK {
@@ -3207,7 +3216,7 @@ impl ServerMod for Mekanism {
             }
         }
         // What a text box confirmed (FORK-20) goes to its machine; one whose machine is not here this tick is dropped.
-        for (dimension, pos, id, text) in std::mem::take(&mut self.text_inputs) {
+        for (dimension, pos, id, text, who, who_name) in std::mem::take(&mut self.text_inputs) {
             let Some(e) = entities.iter().find(|e| e.dimension == dimension && e.pos == pos) else { continue };
             let block = e.state.split('[').next().unwrap_or("");
             if block == oredictionificator::BLOCK {
@@ -3220,6 +3229,10 @@ impl ServerMod for Mekanism {
                 self.fission_texts.push((dimension, pos, id, text));
             } else if block == fusion::CONTROLLER {
                 self.fusion_texts.push((dimension, pos, id, text));
+            } else if block == teleporter::TELEPORTER {
+                self.teleporter_texts.push((dimension, pos, id, text, who, who_name));
+            } else if block == entangloporter::BLOCK {
+                self.qe_texts.push((dimension, pos, id, text, who, who_name));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.

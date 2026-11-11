@@ -2481,69 +2481,84 @@ def sorter_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None, None] + [[x, 24] for x in xs], 'widgets': widgets}}
 
 def entangloporter_menu(m):
-    """GuiQuantumEntangloporter (simplified): the frequency number with its buttons, the shared item slot and what the frequency holds."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    panel.paste(slot, (151, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 20, 14, 2), (8, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 20, 14, 2), (74, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 160, 44, 3), (8, 36))
+    """GuiQuantumEntangloporter (176 by 240): the title at the top, the frequency selector at 27, 14 (`frequency_selector`) and the energy tab (what the frequency stores). The original has no
+    slot on its screen; the port keeps the frequency's shared item slot at 153, 7 (an entangloporter's item buffer) so that it can be seen and used. Numbers (`entangloporter.rs`):
+    0 has a frequency, 1-2 the energy in thousands, 3-4 the fluid, 5-6 the chemical, 7 and 8 what each holds, 9 how many entangloporters share it, 10 the item count, 11 and 12 how many
+    public and private frequencies the lists hold. **Not in the port:** the heat tab (the entangloporter's heat transfer is not modelled) and the warning tab."""
+    width, height = 176, 240
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.paste(slot, (152, 6))
+    selector = frequency_selector(8200, 'sec', panel, 27, 14, 11, 12, 3, 19)
     texture = save_gui(panel, m)
     title = 'Quantum Entangloporter'
     widgets = [
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 14, 'y': 20, 'text': '-', 'color': '#404040'},
-        {'type': 'text', 'x': 80, 'y': 20, 'text': '+', 'color': '#404040'},
-        {'type': 'text', 'x': 34, 'y': 20, 'text': 'Frequency {0}', 'color': '#404040'},
-        {'type': 'text', 'x': 12, 'y': 40, 'text': 'Energy {1+2} kFE', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 12, 'y': 50, 'text': 'Fluid {3+4} mB', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 12, 'y': 60, 'text': 'Chemical {5+6} mB', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 12, 'y': 70, 'text': 'Entangloporters {9}', 'color': '#00CD00', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    widgets.append({'type': 'button', 'x': 8, 'y': 17, 'w': 20, 'h': 14, 'id': 7500, 'tooltip': 'Previous frequency'})
-    widgets.append({'type': 'button', 'x': 74, 'y': 17, 'w': 20, 'h': 14, 'id': 7501, 'tooltip': 'Next frequency'})
-    return {'slots': 1, 'data_slots': 11,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[152, 18]], 'widgets': widgets}}
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 93, 'text': 'v0.1.86', 'color': '#808080'},
+        {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
+        {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {1+2} kFE\nUnit: Forge Energy'}] + selector
+    return {'slots': 1, 'data_slots': 13,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[153, 7]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets}}
+
+def frequency_selector(prefix_base, sec_var, panel, origin_x, origin_y, public_count, private_count, first_public, first_private):
+    """`GuiFrequencySelector` (132 by 121 at `origin_x`, `origin_y`): the public, trusted and private buttons (38 by 20, 4 apart; the trusted one is drawn off, the port has no
+    trusted security), the list of 42 high with the name of each frequency (a click on a row sets the block to it, which the original does with its Set button), the frequency,
+    owner and security lines under it (the screen's strings 0 to 2), the name box at 23, 99 (98 by 11, Enter makes or joins the frequency of that name in the chosen security),
+    and the Delete button (60 by 18, only the owner deletes). The tab chosen is the screen's variable `sec_var` (0 public, 1 private)."""
+    from PIL import Image
+    x, y = origin_x, origin_y
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 42, 3), (x, y + 22))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 98, 11, 2), (x + 23, y + 99))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 60, 18, 2), (x + 62, y + 113))
+    pub = Image.open(find('gui/button/public.png', ASSET_DIRS)).convert('RGBA')
+    pri = Image.open(find('gui/button/private.png', ASSET_DIRS)).convert('RGBA')
+    pub_tex, pri_tex = save_gui(pub, 'frequency_public'), save_gui(pri, 'frequency_private')
+    w = []
+    for k, (tex, bx) in enumerate(((pub_tex, 0), (pri_tex, 84))):
+        w.append({'type': 'sprite', 'texture': tex, 'x': x + bx, 'y': y, 'w': 38, 'h': 20})
+        w.append({'type': 'show', 'when': {'local': {'var': sec_var, 'eq': k}}, 'widgets': [
+            {'type': 'text', 'x': x + bx + 3, 'y': y + 6, 'text': ('Public', 'Private')[k], 'color': '#FFFFFF', 'scale': 70}]})
+        w.append({'type': 'button', 'x': x + bx, 'y': y, 'w': 38, 'h': 20, 'local': {'set': {'var': sec_var, 'value': k}}, 'tooltip': ('Public', 'Private')[k]})
+    w.append({'type': 'text', 'x': x + 44, 'y': y + 6, 'text': 'Trusted', 'color': '#808080', 'scale': 70})
+    w.append({'type': 'show', 'when': {'local': {'var': sec_var, 'eq': 0}}, 'widgets': [
+        {'type': 'list', 'x': x + 1, 'y': y + 23, 'w': 120, 'h': 40, 'row_height': 10, 'first': first_public, 'count': {'data': public_count},
+         'on_click': prefix_base, 'color': '#3CFE9A'},
+        {'type': 'textfield', 'x': x + 24, 'y': y + 100, 'w': 96, 'h': 9, 'id': prefix_base + 33, 'validator': 'any', 'max_length': 16}]})
+    w.append({'type': 'show', 'when': {'local': {'var': sec_var, 'eq': 1}}, 'widgets': [
+        {'type': 'list', 'x': x + 1, 'y': y + 23, 'w': 120, 'h': 40, 'row_height': 10, 'first': first_private, 'count': {'data': private_count},
+         'on_click': prefix_base + 16, 'color': '#3CFE9A'},
+        {'type': 'textfield', 'x': x + 24, 'y': y + 100, 'w': 96, 'h': 9, 'id': prefix_base + 34, 'validator': 'any', 'max_length': 16}]})
+    for k, line in enumerate(range(3)):
+        w.append({'type': 'text', 'x': x, 'y': y + 67 + 10 * k, 'text': '', 'text_data': k, 'color': '#404040', 'scale': 85})
+    w.append({'type': 'text', 'x': x + 64 + (56 - text_width('Delete')) // 2, 'y': y + 118, 'text': 'Delete', 'color': '#AA0000'})
+    w.append({'type': 'button', 'x': x + 62, 'y': y + 113, 'w': 60, 'h': 18, 'id': prefix_base + 32, 'tooltip': 'Delete the frequency (only its owner can)'})
+    return w
 
 def teleporter_menu(m):
-    """GuiTeleporter (simplified): the frequency number with its buttons, the energy bar, and the status."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 162, 12, 1), (7, 17))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 20, 14, 2), (8, 34))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 20, 14, 2), (74, 34))
-    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 160, 24, 3), (8, 52))
+    """GuiTeleporter (176 by 240): the title at the top, the energy slot at 153, 7, the vertical power bar at 158, 26 and the frequency selector at 27, 14
+    (`frequency_selector`); the status is the line at 7, 7 (the original draws an icon). Numbers (`teleporter.rs`): 0 has a frequency, 1 the status (0 none, 1 no frame, 2 no
+    destination, 3 not enough energy, 4 ready), 2-3 the energy, 4-5 its capacity, 6 how many teleporters are on the frequency, 7 and 8 how many public and private frequencies the
+    lists hold. The strings (`frequency.rs::texts`): 0 the frequency, 1 its owner, 2 its security, 3 to 18 the public rows and 19 to 34 the private ones."""
+    width, height = 176, 240
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(gui_sprite('slot/power'), (152, 6))
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (157, 25))
+    selector = frequency_selector(8100, 'sec', panel, 27, 14, 7, 8, 3, 19)
     texture = save_gui(panel, m)
     title = 'Teleporter'
     widgets = [
-        {'type': 'sprite', 'texture': power_h_fill, 'x': 8, 'y': 18, 'w': 160, 'h': 10, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]},
-         'direction': 'right', 'tooltip': 'Energy: {value} / {max} FE'},
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 14, 'y': 37, 'text': '-', 'color': '#404040'},
-        {'type': 'text', 'x': 80, 'y': 37, 'text': '+', 'color': '#404040'},
-        {'type': 'text', 'x': 34, 'y': 37, 'text': 'Frequency {0}', 'color': '#404040'},
-        {'type': 'text', 'x': 12, 'y': 66, 'text': 'Teleporters on it: {6}', 'color': '#404040', 'scale': 85},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    for st, text, color in ((0, 'No frequency', '#CD0000'), (1, 'No frame', '#CD0000'), (2, 'No link found', '#CD0000'),
-                            (3, 'Not enough energy', '#CD0000'), (4, 'Ready', '#00CD00')):
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [
-            {'type': 'text', 'x': 12, 'y': 58, 'text': text, 'color': color}]})
-    widgets.append({'type': 'button', 'x': 8, 'y': 34, 'w': 20, 'h': 14, 'id': 7600, 'tooltip': 'Previous frequency'})
-    widgets.append({'type': 'button', 'x': 74, 'y': 34, 'w': 20, 'h': 14, 'id': 7601, 'tooltip': 'Next frequency'})
-    return {'slots': 1, 'data_slots': 7,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+        {'type': 'sprite', 'texture': power_fill, 'x': 158, 'y': 26, 'w': 4, 'h': 52, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]}, 'direction': 'up',
+         'tooltip': 'Energy: {value} / {max} FE'},
+        {'type': 'text', 'x': 22 + (130 - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 128, 'y': height - 93, 'text': 'v0.1.86', 'color': '#808080'}]
+    for st, text, color in ((0, 'No frequency', '#CD0000'), (1, 'No frame', '#CD0000'), (2, 'No link', '#CD0000'), (3, 'No energy', '#CD0000'), (4, 'Ready', '#00AA00')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [{'type': 'text', 'x': 7, 'y': 7, 'text': text, 'color': color, 'scale': 80}]})
+    widgets += selector
+    return {'slots': 1, 'data_slots': 9, 'results': [], 'accepts': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[153, 7]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets}}
 
 def bin_menu(m):
     """The bin's screen (it has none in the original: items are put in by using them and taken by punching): an input slot, the output
