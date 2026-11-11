@@ -185,6 +185,7 @@ pub mod server {
     pub fn on_damage(self) -> Self { self }
     pub fn on_item_release(self) -> Self { self }
     pub fn on_mod_entities(self) -> Self { self }
+    pub fn on_block_break_start(self) -> Self { self }
     pub fn on_net(self) -> Self { self }
     pub fn redirect(self, _block: &str, _flag_at: u32, _pos_at: u32) -> Self { self }
     pub fn new() -> Self { Self::default() }
@@ -217,6 +218,7 @@ pub mod server {
     fn can_place(&mut self, player: &Player, pos: BlockPos, state: &str) -> bool { true }
     fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 { amount }
     fn item_hit_damage(&mut self, player: &Player, stack: ItemStack, kind: &str, damage: f32) -> f32 { damage }
+    fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool { false }
     fn item_released(&mut self, player: &Player, stack: ItemStack, hand: &str, ticks_held: u32) -> bool { true }
     fn item_shot(&mut self, player: &Player, stack: ItemStack, projectiles: Vec<u32>) {}
     fn menu_button(&mut self, _player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> { None }
