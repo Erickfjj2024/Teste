@@ -12,6 +12,30 @@ pub enum Control {
     Pulse,
 }
 
+/// `MekanismUtils.redstoneLevelFromContents(amount, capacity)`: 0 for nothing, 1 to 15 over the fill (`Mth.lerpDiscrete`: the fraction times 14, rounded down, plus one
+/// when there is anything).
+pub fn level_from_contents(amount: u64, capacity: u64) -> u8 {
+    if capacity == 0 || amount == 0 {
+        return 0;
+    }
+    let fraction = (amount as f64 / capacity as f64).min(1.0) as f32;
+    ((fraction * 14.0).floor() as u8 + 1).min(15)
+}
+
+thread_local! {
+    /// The signal each block entity gave comparators last, so that the host is only told when it changes.
+    static COMPARATOR: std::cell::RefCell<HashMap<(String, [i32; 3]), u8>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Gives the comparators around a block entity its signal (`getRedstoneLevel`, `FORK-38`'s `world.set-comparator-output`), when it is not what they last read.
+pub fn set_comparator(dimension: &str, pos: BlockPos, level: u8) {
+    let key = (dimension.to_owned(), [pos.x, pos.y, pos.z]);
+    let changed = COMPARATOR.with(|c| c.borrow_mut().insert(key, level) != Some(level));
+    if changed {
+        let _ = world::set_comparator_output(dimension, pos.x, pos.y, pos.z, level);
+    }
+}
+
 /// The screen's buttons: the tab, left and right click.
 pub const NEXT: i32 = 6000;
 pub const PREVIOUS: i32 = 6001;
@@ -165,5 +189,15 @@ mod tests {
         assert_eq!((saved[37], saved[39]), (2, 3));
         assert_eq!((data.len(), data[31]), (32, 1));
         assert_eq!((data[16], data[17], data[18], data[19], data[20]), (2, 4464, 1, 200, 4));
+    }
+
+    #[test]
+    fn the_comparator_level_follows_lerp_discrete() {
+        assert_eq!(level_from_contents(0, 1000), 0);
+        assert_eq!(level_from_contents(1, 1000), 1);
+        assert_eq!(level_from_contents(500, 1000), 8);
+        assert_eq!(level_from_contents(999, 1000), 14);
+        assert_eq!(level_from_contents(1000, 1000), 15);
+        assert_eq!(level_from_contents(5, 0), 0);
     }
 }

@@ -3118,6 +3118,17 @@ impl ServerMod for Mekanism {
                 out.extend(self.cube(e, block));
             }
         }
+        // The comparators beside the cubes and the tanks read their fill (`getRedstoneLevel`).
+        for e in &entities {
+            let block = e.state.split('[').next().unwrap_or("");
+            if block.ends_with("_energy_cube") {
+                let (capacity, _) = cube_capacity(block);
+                redstone::set_comparator(&e.dimension, e.pos, redstone::level_from_contents(e.energy, capacity));
+            } else if let Some(t) = MACHINES.iter().find(|d| d.block == block).and_then(|d| d.tank.as_ref()) {
+                let held = e.tanks.first().map_or(0, |t| t.amount);
+                redstone::set_comparator(&e.dimension, e.pos, redstone::level_from_contents(held, t.capacity));
+            }
+        }
         // What a text box confirmed (FORK-20) goes to its machine; one whose machine is not here this tick is dropped.
         for (dimension, pos, id, text) in std::mem::take(&mut self.text_inputs) {
             let Some(e) = entities.iter().find(|e| e.dimension == dimension && e.pos == pos) else { continue };

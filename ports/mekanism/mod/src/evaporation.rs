@@ -228,7 +228,7 @@ pub fn comparator_level(amount: u64, capacity: u64) -> u8 {
 /// Level is discrete 0..15 based on input tank content ratio.
 // FORK-21
 pub fn host_set_comparator_output(dimension: &str, pos: [i32; 3], level: u8) -> Result<(), &'static str> {
-    let _ = (dimension, pos, level);
+    crate::redstone::set_comparator(dimension, BlockPos { x: pos[0], y: pos[1], z: pos[2] }, level);
     Ok(())
 }
 

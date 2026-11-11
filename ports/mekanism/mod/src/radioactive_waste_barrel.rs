@@ -146,12 +146,7 @@ impl WasteBarrel {
     /// Redstone comparator output level (0 to 15).
     /// Java: `TileEntityRadioactiveWasteBarrel.java:164` -> `MekanismUtils.redstoneLevelFromContents`
     pub fn redstone_level(&self) -> u8 {
-        if self.tank.amount == 0 {
-            0
-        } else {
-            let scaled = (self.tank.amount as f64 / CAPACITY as f64) * 15.0;
-            scaled.floor() as u8
-        }
+        crate::redstone::level_from_contents(self.tank.amount, CAPACITY)
     }
 
     /// Inserts radioactive chemical into this barrel.
@@ -401,6 +396,7 @@ impl Mekanism {
             }
             let before = state.tank.clone();
             state.tick(tick);
+            crate::redstone::set_comparator(&b.dimension, b.pos, state.redstone_level());
             if state.active && state.tank.amount > 0 {
                 let below_key = (key.0.clone(), key.1, key.2 - 1, key.3);
                 if let Some(below) = states.get_mut(&below_key) {
@@ -663,9 +659,9 @@ mod tests {
         let mut barrel = WasteBarrel::new();
         assert_eq!(barrel.redstone_level(), 0);
 
-        // Half full = level 7
+        // Half full = level 8 (`Mth.lerpDiscrete`: floor(0.5 * 14) + 1)
         barrel.tank.amount = CAPACITY / 2; // 256_000
-        assert_eq!(barrel.redstone_level(), 7);
+        assert_eq!(barrel.redstone_level(), 8);
 
         // Completely full = level 15
         barrel.tank.amount = CAPACITY; // 512_000
