@@ -5,7 +5,6 @@ pub mod server {
     pub fn tell_overlay<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
     pub fn open_item_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
-    pub fn open_item_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct RadialEntry { pub id: String, pub label: String, pub icon: String }
     pub fn open_radial_menu<A0>(_a0: A0, _a1: &[RadialEntry], _a2: u32) -> bool { false }
     pub fn set_hud_line<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> bool { false }
@@ -93,6 +92,7 @@ pub mod server {
   }
   pub mod world { use super::*;
     pub fn set_comparator_output<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
+    pub fn set_redstone_output<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: u8, _a5: bool) -> Result<(), String> { Err(String::new()) }
     pub fn break_blocks<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<u32, String> { Err(String::new()) }
     pub fn block_hardness<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Option<f32> { None }
     pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
@@ -216,8 +216,6 @@ pub mod server {
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenu { pub menu: String, pub slot: u32, pub stack: Option<ItemStack>, pub items: Vec<Option<ItemStack>>, pub menu_data: Vec<i32> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>> }
-  #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenu { pub menu: String, pub slot: u32, pub stack: Option<ItemStack>, pub items: Vec<Option<ItemStack>>, pub menu_data: Vec<i32> }
-  #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool }
   pub trait ServerMod: Sized {
     fn item_menu_tick(&mut self, player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> { None }
     fn item_menu_button(&mut self, player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> { None }
@@ -225,9 +223,6 @@ pub mod server {
     fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool { false }
     fn entities_tick(&mut self, tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> { Vec::new() }
     fn mod_entity_used(&mut self, player: &Player, entity: ModEntity, sneaking: bool) -> bool { false }
-    fn item_menu_tick(&mut self, player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> { None }
-    fn item_menu_button(&mut self, player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> { None }
-    fn item_menu_taken(&mut self, player: &Player, menu: ItemMenu, slot: u32, stack: ItemStack) -> Option<ItemMenuUpdate> { None }
     fn entity_menu_button(&mut self, player: &Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> { None }
     fn entity_menu_taken(&mut self, player: &Player, entity: ModEntity, slot: u32, stack: ItemStack) -> Option<ModEntityUpdate> { None }
     fn mod_entity_damaged(&mut self, entity: ModEntity, source: DamageSource, amount: f32) -> f32 { amount }
