@@ -2730,6 +2730,28 @@ def miner_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
                        'widgets': widgets, 'windows': windows}}
 
+def dictionary_menu(m):
+    """GuiDictionary (176 by 171): the slot to put an item in at 5, 5 (the original's target at 6, 6), the list of its tags at 7, 29 (162 by 42, four rows: the strings 1 on, the first string says
+    what is shown), the "Tag Type" dropdown at 113, 73 (here only Item, the one the host can list) and the player's inventory under them. Numbers (`item_menus.rs`): 0 how many tags.
+    **Not in the port:** the other tag types (block, fluid, entity, enchantment, chemical...)."""
+    width, height = 176, 171
+    panel, slot, inv_y = inventory_panel(width, height)
+    panel.alpha_composite(gui_sprite('slot/normal'), (5, 5))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 162, 42, 3), (7, 29))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 56, 14, 2), (113, 73))
+    texture = save_gui(panel, m)
+    title = 'Dictionary'
+    widgets = [
+        {'type': 'text', 'x': 28 + (width - 28 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 28, 'y': 17, 'text': '', 'text_data': 0, 'color': '#404040', 'scale': 75},
+        {'type': 'text', 'x': 8, 'y': height - 96, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': 76, 'text': 'Tag Type', 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 117, 'y': 77, 'text': 'Item', 'color': '#404040'},
+        {'type': 'list', 'x': 9, 'y': 31, 'w': 158, 'h': 40, 'row_height': 10, 'first': 1, 'count': {'data': 0}, 'on_click': 7000, 'color': '#3CFE9A'}]
+    return {'slots': 1, 'data_slots': 1, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[6, 6]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+                       'widgets': widgets}}
+
 def induction_port_menu(m):
     """GuiInductionMatrix (176 by 166): the medium energy gauge at 7, 16 (34 by 56), the inner screen at 49, 21 (84 by 46: the energy, the capacity, what went in and what
     went out last tick, the screen's strings 0 to 3 from `induction.rs::screen_texts`), the element holder at 141, 16 (26 by 56) with the two charge slots at 146, 21 (the matrix charges the item, PLUS) and 146, 51 (an item that
@@ -2828,6 +2850,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/teleporter.json', teleporter_menu('teleporter
 for _b in BINS:
     put(f'{OUT}/data/{NS}/horizon/menu/{_b}.json', bin_menu(_b))
 put(f'{OUT}/data/{NS}/horizon/menu/digital_miner.json', miner_menu('digital_miner'))
+put(f'{OUT}/data/{NS}/horizon/menu/dictionary.json', dictionary_menu('dictionary'))
 put(f'{OUT}/data/{NS}/horizon/menu/induction_port.json', induction_port_menu('induction_port'))
 for m in MACHINES:
     if m in ('electric_pump', 'fluidic_plenisher'):

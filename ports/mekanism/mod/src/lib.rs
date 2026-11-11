@@ -23,6 +23,7 @@ mod heat;
 mod laser_tractor;
 mod frequency;
 mod filters;
+mod item_menus;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -483,6 +484,8 @@ struct Mekanism {
     freq_viewer: HashMap<(String, i32, i32, i32), (String, String)>,
     /// Every frequency there is (`frequency.rs`), read from the world's data the first time it is needed.
     freq_registry: Option<Vec<frequency::Freq>>,
+    /// What each open item menu of a player was last given (so only changes are sent).
+    item_menu_sent: HashMap<(String, String), Vec<String>>,
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
@@ -2286,6 +2289,7 @@ impl ServerMod for Mekanism {
             teleporter_texts: Vec::new(),
             freq_viewer: HashMap::new(),
             freq_registry: None,
+            item_menu_sent: HashMap::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
@@ -2504,6 +2508,10 @@ impl ServerMod for Mekanism {
         entity.kind == robit_world::KIND && self.robit_used(player, &entity, sneaking)
     }
 
+    fn item_menu_tick(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
+        self.item_menu_tick_of(player, &menu)
+    }
+
     fn entity_menu_button(&mut self, player: &Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> {
         if entity.kind == robit_world::KIND { self.robit_button(player, &entity, id) } else { None }
     }
@@ -2526,6 +2534,9 @@ impl ServerMod for Mekanism {
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if stack.item == robit::ITEM_ID && self.robit_placed(player, &stack, pos) {
+            return true;
+        }
+        if stack.item == item_menus::DICTIONARY_ITEM && self.dictionary_used(player, &stack) {
             return true;
         }
         if stack.item == electric_bow::ELECTRIC_BOW && self.electric_bow_mode(player, &stack, pos) {
