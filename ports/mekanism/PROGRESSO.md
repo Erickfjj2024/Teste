@@ -6,14 +6,14 @@
 |---|---:|---:|---:|
 | Dados e recursos (receitas, texturas, lang, tags…) / data and assets | 15 | 32.3% | 4.8 |
 | Lógica Rust conferida com o Java / logic checked against Java | 25 | 48.6% | 12.1 |
-| Módulos ligados ao lib.rs / modules wired in | 10 | 75.7% | 7.6 |
+| Módulos ligados ao lib.rs / modules wired in | 10 | 77.1% | 7.7 |
 | API nova do Horizon (FORK-n) implementada / new Horizon API implemented | 25 | 22.9% | 5.7 |
 | Build real, .hmod e APK / real build, .hmod and APK | 10 | 0.0% | 0.0 |
 | Testado em jogo contra o original / tested in game | 15 | 0.0% | 0.0 |
 
-**TOTAL: 30.3%**
+**TOTAL: 30.4%**
 
-Módulos Rust: 70; conferidos: 34; ligados ao lib.rs: 53. FORK-n implementados: 8/35.
+Módulos Rust: 70; conferidos: 34; ligados ao lib.rs: 54. FORK-n implementados: 8/35.
 
 Pendentes de conferência / unreviewed: alarm, bin, capmask, cardboard_box, chem, chem_table, chemical_fluids, combiner, config, continuous, equipment_world, factory, fork_equipamento, fork_qio_calor, fork_utilidades, heat_world, laser_tractor, machine, modification_station, personal_storage, process, radiation, radioactive_waste_barrel, reaction, redstone, sawmill, security, seismic_vibrator, sides, sorter, sparkle, tank, teleporter, transporter_special, upgrades, worldgen
 
