@@ -3362,6 +3362,9 @@ for d in ASSET_DIRS:
         lang.update(read_json(p))
 keep = {f'item.{NS}.{n}' for n in kept_items} | {f'block.{NS}.{n}' for n in kept_blocks}
 out = {k: v for k, v in lang.items() if k in keep}
+# the sound subtitles (every sound event ships), the colour names, and the screen titles of the machines that are kept
+out.update({k: v for k, v in lang.items() if k.startswith(('sound_event.mekanism.', 'color.mekanism.'))})
+out.update({k: v for k, v in lang.items() if k.startswith('container.mekanism.') and k[len('container.mekanism.'):] in kept_blocks})
 for g in GENERATORS + TURBINE + FISSION + FUSION:
     out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 out[f'block.{NS}.bounding_block'] = 'Bounding Block'
