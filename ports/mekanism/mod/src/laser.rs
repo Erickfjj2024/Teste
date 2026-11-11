@@ -3,11 +3,15 @@
 //! buffer with it, a laser focus matrix heats the fusion reactor's plasma. The laser fires 4,000 FE a tick while it has them; the amplifier fires
 //! as much as its threshold says (between its minimum and maximum; by default all it holds) every `delay` ticks.
 //!
-//! Not here: digging blocks, hurting or burning what the beam crosses, the visible beam, the tractor beam, and redstone modes.
+//! Digging: what the beam hits that does not receive lasers is worn down by the energy (hardness times 40,000 FE) and then broken as a player with a tool would
+//! (`world.break-blocks`). The laser tractor beam is a laser that takes everything it holds, and that picks up the items inside its beam (`items-in-box`).
+//!
+//! Not here: hurting or burning what the beam crosses (the host has no laser damage yet), the visible beam, and redstone modes.
 use super::*;
 
 pub const LASER: &str = "mekanism:laser";
 pub const AMPLIFIER: &str = "mekanism:laser_amplifier";
+pub const TRACTOR: &str = "mekanism:laser_tractor_beam";
 pub const RANGE: i32 = 64;
 /// `usage.laser` (what the laser fires a tick), `storage.laserAmplifier` and `storage.laser`, in Forge Energy.
 pub const FIRE: u64 = fe(10_000);
@@ -78,6 +82,45 @@ pub fn facing_for(yaw: f32, pitch: f32) -> usize {
 pub fn trace(from: [i32; 3], face: usize, range: i32, solid: impl Fn([i32; 3]) -> bool) -> Option<[i32; 3]> {
     let d = direction(face);
     (1..=range).map(|i| [from[0] + d[0] * i, from[1] + d[1] * i, from[2] + d[2] * i]).find(|p| solid(*p))
+}
+
+/// What the tool that breaks a block for a laser carries: the original breaks with a fully charged Atomic Disassembler, which counts as the right tool for
+/// everything; the netherite pickaxe is the nearest the host has.
+pub const BREAK_TOOL: &str = "minecraft:netherite_pickaxe";
+
+/// `getEnergyScale`: how thick the beam is for the energy it fires, 0.1 to 0.6 (a tenth of a block for each `FIRE`).
+pub fn energy_scale(fired: u64) -> f64 {
+    ((fired as f64 / FIRE as f64) / 10.0).min(0.6)
+}
+
+/// One tick of digging (`onUpdateServer`): the progress after the energy this tick fired is added; at the energy the block's hardness asks for
+/// (`laserEnergyPerHardness`) it is broken and the progress starts again. A block with a negative hardness (unbreakable) is not worn at all.
+pub fn dig_step(progress: u64, fired: u64, hardness: f32) -> (u64, bool) {
+    if hardness < 0.0 {
+        return (progress, false);
+    }
+    let progress = progress.saturating_add(fired);
+    if progress as f64 >= f64::from(hardness) * crate::laser_tractor::LASER_ENERGY_PER_HARDNESS_FE as f64 {
+        (0, true)
+    } else {
+        (progress, false)
+    }
+}
+
+/// The box of the tractor beam (`getLaserBox`): from the laser's front to the block the beam hit (the whole of that block, where what it breaks drops),
+/// as wide as the beam is thick.
+pub fn beam_box(at: [i32; 3], face: usize, target: [i32; 3], scale: f64) -> ([f64; 3], [f64; 3]) {
+    let d = direction(face);
+    let half = scale / 2.0;
+    let mut min = [0.0; 3];
+    let mut max = [0.0; 3];
+    for axis in 0..3 {
+        let a = f64::from(at[axis]) + 0.5 + f64::from(d[axis]) * 0.501;
+        let b = f64::from(target[axis]) + if d[axis] == 0 { 0.5 } else { 0.5 + f64::from(d[axis]) * 0.5 };
+        min[axis] = a.min(b) - if d[axis] == 0 { half } else { 0.0 };
+        max[axis] = a.max(b) + if d[axis] == 0 { half } else { 0.0 };
+    }
+    (min, max)
 }
 
 /// What an amplifier remembers: its thresholds and delay, and the ticks counted.
@@ -192,6 +235,7 @@ impl Mekanism {
                 continue;
             }
             let is_amp = block == AMPLIFIER;
+            let is_tractor = block == TRACTOR;
             let mut amp = if is_amp { decode_amp(&e.data) } else { Some(Amp::default()) };
             // A new block looks toward the player that placed it.
             let mut facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
@@ -206,8 +250,14 @@ impl Mekanism {
                 }
             }
             let face = face_of(&facing);
-            let cap = if is_amp { AMPLIFIER_CAPACITY } else { LASER_CAPACITY };
+            let cap = if is_amp { AMPLIFIER_CAPACITY } else if is_tractor { crate::laser_tractor::CAPACITY_FE } else { LASER_CAPACITY };
             let mut energy = e.energy;
+            if is_tractor {
+                // What lasers delivered fills the buffer, as the amplifier's does.
+                if let Some(inflow) = self.beams.remove(&(e.dimension.clone(), at)) {
+                    energy = (energy + inflow).min(cap);
+                }
+            }
             if is_amp {
                 let a = amp.get_or_insert_with(Amp::default);
                 for (_, _, id) in presses.iter().filter(|(d, p, _)| *d == e.dimension && (p.x, p.y, p.z) == (at[0], at[1], at[2])) {
@@ -219,16 +269,25 @@ impl Mekanism {
                 }
             }
             // `energyContainer.extract(toFire(), SIMULATE)`: the laser fires what it has up to its usage, the amplifier what it holds.
-            let to_fire = amp.as_ref().map_or(FIRE.min(energy), |a| a.to_fire(energy));
+            let to_fire = if is_tractor { energy } else { amp.as_ref().map_or(FIRE.min(energy), |a| a.to_fire(energy)) };
             let mut fired = 0;
+            let mut items_update = None;
+            let key = (e.dimension.clone(), at);
             if to_fire > 0 {
                 energy -= to_fire;
                 fired = to_fire;
                 let dim = e.dimension.clone();
                 let target = trace(at, face, RANGE, |p| world::get_collision(&dim, p[0], p[1], p[2]).is_some_and(|c| !c.is_empty()));
                 if let Some(t) = target {
-                    *self.beams.entry((dim, t)).or_default() += fired;
+                    self.laser_hits(&dim, key.clone(), t, fired);
+                    if is_tractor {
+                        items_update = self.tractor_pick_up(e, at, face, t, fired);
+                    }
+                } else {
+                    self.digging.remove(&key);
                 }
+            } else {
+                self.digging.remove(&key);
             }
             if let Some(a) = amp.as_mut() {
                 a.advance();
@@ -237,7 +296,9 @@ impl Mekanism {
             let mut faces = vec![FlowSide::Input; 6];
             if !is_amp {
                 faces = vec![FlowSide::None; 6];
-                faces[opposite(face)] = FlowSide::Input;
+                if !is_tractor {
+                    faces[opposite(face)] = FlowSide::Input;
+                }
             }
             let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
             let a = amp.unwrap_or_default();
@@ -259,7 +320,7 @@ impl Mekanism {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
                 data: if is_amp { encode_amp(&a) } else { vec![1] },
-                items: None,
+                items: items_update,
                 energy: (energy != e.energy).then_some(energy),
                 energy_faces: Some(faces),
                 tanks: None,
@@ -269,6 +330,54 @@ impl Mekanism {
             });
         }
         out
+    }
+}
+
+impl Mekanism {
+    /// What a beam does to the block it hit (`TileEntityBasicLaser.onUpdateServer`): a block that receives lasers takes the energy; any other is worn
+    /// down by it and broken when the progress reaches what its hardness asks for. The progress starts again when the beam moves to another block.
+    fn laser_hits(&mut self, dim: &str, key: (String, [i32; 3]), target: [i32; 3], fired: u64) {
+        let state = world::get_block(dim, target[0], target[1], target[2]).unwrap_or_default();
+        let block = state.split('[').next().unwrap_or("");
+        if matches!(block, AMPLIFIER | TRACTOR | fusion::MATRIX) {
+            self.digging.remove(&key);
+            *self.beams.entry((dim.to_owned(), target)).or_default() += fired;
+            return;
+        }
+        let Some(hardness) = world::block_hardness(dim, target[0], target[1], target[2]) else { return };
+        let progress = match self.digging.get(&key) {
+            Some((at, progress)) if *at == target => *progress,
+            _ => 0,
+        };
+        let (progress, broke) = dig_step(progress, fired, hardness);
+        if broke {
+            let _ = world::break_blocks(dim, &[(target[0], target[1], target[2])], BREAK_TOOL, false, 0);
+            self.digging.remove(&key);
+        } else {
+            self.digging.insert(key, (target, progress));
+        }
+    }
+
+    /// `handleHitItem` for the items inside the tractor beam: what fits in the 27 slots is taken from the item entity (what does not, stays).
+    /// Returns the slots when something went in.
+    fn tractor_pick_up(&mut self, e: &BlockEntity, at: [i32; 3], face: usize, target: [i32; 3], fired: u64) -> Option<Vec<Option<ItemStack>>> {
+        let (min, max) = beam_box(at, face, target, energy_scale(fired));
+        let mut slots: Vec<Option<ItemStack>> = (0..crate::laser_tractor::SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
+        let mut changed = false;
+        for item in entities::items_in_box(&e.dimension, (min[0], min[1], min[2]), (max[0], max[1], max[2])) {
+            let max_stack = crate::bin::stack_size(&item.stack.item) as u32;
+            let mut trial = slots.clone();
+            let left = crate::qio_transfer::insert_into_container(&mut trial, &item.stack.item, item.stack.count, &item.stack.components, max_stack);
+            let taken = item.stack.count - left;
+            if taken == 0 {
+                continue;
+            }
+            if entities::take_dropped_item(&e.dimension, item.id, taken).is_ok() {
+                slots = trial;
+                changed = true;
+            }
+        }
+        changed.then_some(slots)
     }
 }
 
@@ -287,6 +396,43 @@ fn nearest_look(e: &BlockEntity) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digging_wears_a_block_down_by_its_hardness() {
+        // Stone, 1.5: 60,000 FE; a laser fires 4,000 FE a tick.
+        let mut progress = 0;
+        let mut ticks = 0;
+        loop {
+            ticks += 1;
+            let (p, broke) = dig_step(progress, FIRE, 1.5);
+            progress = p;
+            if broke {
+                break;
+            }
+            assert!(ticks < 100);
+        }
+        assert_eq!(ticks, 15);
+        assert_eq!(progress, 0);
+        // Bedrock is never worn, and a block of no hardness breaks at once.
+        assert_eq!(dig_step(5, FIRE, -1.0), (5, false));
+        assert_eq!(dig_step(0, 1, 0.0), (0, true));
+    }
+
+    #[test]
+    fn the_beam_gets_thicker_with_the_energy() {
+        assert!((energy_scale(FIRE) - 0.1).abs() < 1e-9);
+        assert!((energy_scale(FIRE * 3) - 0.3).abs() < 1e-9);
+        assert_eq!(energy_scale(FIRE * 100), 0.6);
+    }
+
+    #[test]
+    fn the_tractor_box_runs_from_its_front_to_the_end_of_the_target() {
+        let (min, max) = beam_box([0, 64, 0], EAST, [5, 64, 0], 0.2);
+        assert!((min[0] - 1.001).abs() < 1e-9 && (max[0] - 6.0).abs() < 1e-9);
+        assert!((min[1] - 64.4).abs() < 1e-9 && (max[1] - 64.6).abs() < 1e-9);
+        let (min, max) = beam_box([0, 64, 0], WEST, [-5, 64, 0], 0.2);
+        assert!((min[0] + 5.0).abs() < 1e-9 && (max[0] + 0.001).abs() < 1e-9, "{min:?} {max:?}");
+    }
 
     #[test]
     fn a_beam_stops_at_the_first_solid_block() {

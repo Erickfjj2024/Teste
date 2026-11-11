@@ -172,7 +172,7 @@ INDUCTION = ['induction_casing', 'induction_port', *[f'{t}_induction_cell' for t
 EVAPORATION = ['thermal_evaporation_block', 'thermal_evaporation_valve', 'thermal_evaporation_controller']
 DYNAMIC = ['dynamic_tank', 'dynamic_valve', *INDUCTION, *EVAPORATION]
 BINS = [f'{t}_bin' for t in ('basic', 'advanced', 'elite', 'ultimate', 'creative')]
-LASERS = ['digital_miner', 'industrial_alarm', 'laser', 'laser_amplifier', 'supercharged_coil', 'logistical_sorter', 'quantum_entangloporter']
+LASERS = ['digital_miner', 'industrial_alarm', 'laser', 'laser_amplifier', 'laser_tractor_beam', 'supercharged_coil', 'logistical_sorter', 'quantum_entangloporter']
 SPS = ['sps_casing', 'sps_port']
 BOILER = ['boiler_casing', 'boiler_valve', 'pressure_disperser', 'superheating_element']
 TELEPORT = ['teleporter', 'teleporter_frame']
@@ -472,7 +472,7 @@ ELECTRIC = [m for m in MACHINES if m not in FLUID_TANKS and m not in CHEM_TANKS]
 CHEMICAL_BLOCKS = [m for m in PROCESS_MACHINES + CONTINUOUS_MACHINES + CHEM_TANKS if m != 'chemical_crystallizer' or True]
 FLUID_BLOCKS = ['chemical_washer', 'electrolytic_separator', 'rotary_condensentrator', 'pressurized_reaction_chamber', *FLUID_TANKS]
 # the ports and valves of the multiblocks, and the lasers, join what they hold
-PORTS_ENERGY = ['teleporter', 'induction_port', 'turbine_valve', 'fusion_reactor_port', 'sps_port', 'laser', 'laser_amplifier', 'quantum_entangloporter']
+PORTS_ENERGY = ['teleporter', 'induction_port', 'turbine_valve', 'fusion_reactor_port', 'sps_port', 'laser', 'laser_amplifier', 'laser_tractor_beam', 'quantum_entangloporter']
 PORTS_CHEMICAL = ['dynamic_valve', 'boiler_valve', 'turbine_valve', 'fission_reactor_port', 'fusion_reactor_port', 'sps_port',
                   'thermal_evaporation_valve', 'quantum_entangloporter']
 PORTS_FLUID = ['dynamic_valve', 'boiler_valve', 'turbine_vent', 'fission_reactor_port', 'fusion_reactor_port', 'thermal_evaporation_valve',
@@ -2133,6 +2133,23 @@ def laser_amplifier_menu(m):
     return {'slots': 1, 'data_slots': 10,
             'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
 
+def laser_tractor_beam_menu(m):
+    """GuiLaserTractorBeam (176 by 166): 27 output slots in three rows of nine at 8, 16 and the player's inventory under them."""
+    width, height = 176, 166
+    panel, slot, inv_y = inventory_panel(width, height)
+    for y in range(3):
+        for x in range(9):
+            panel.paste(slot, (7 + 18 * x, 15 + 18 * y))
+    texture = save_gui(panel, m)
+    title = 'Laser Tractor Beam'
+    widgets = [{'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+               {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+    slots = [[8 + x * 18, 16 + y * 18] for y in range(3) for x in range(9)]
+    return {'slots': 27, 'data_slots': 0, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def sps_port_menu(m):
     """GuiSPS (simplified): polonium and antimatter gauges, the progress toward the next antimatter and the energy the coils got."""
     panel = nine_slice(gui_sprite('base'), 176, 166, 4)
@@ -2424,6 +2441,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/turbine_valve.json', turbine_valve_menu('turb
 put(f'{OUT}/data/{NS}/horizon/menu/fission_reactor_port.json', fission_port_menu('fission_reactor_port'))
 put(f'{OUT}/data/{NS}/horizon/menu/fusion_reactor_controller.json', fusion_controller_menu('fusion_reactor_controller'))
 put(f'{OUT}/data/{NS}/horizon/menu/laser_amplifier.json', laser_amplifier_menu('laser_amplifier'))
+put(f'{OUT}/data/{NS}/horizon/menu/laser_tractor_beam.json', laser_tractor_beam_menu('laser_tractor_beam'))
 put(f'{OUT}/data/{NS}/horizon/menu/sps_port.json', sps_port_menu('sps_port'))
 put(f'{OUT}/data/{NS}/horizon/menu/logistical_sorter.json', sorter_menu('logistical_sorter'))
 put(f'{OUT}/data/{NS}/horizon/menu/quantum_entangloporter.json', entangloporter_menu('quantum_entangloporter'))

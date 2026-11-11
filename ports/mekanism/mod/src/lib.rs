@@ -451,6 +451,8 @@ struct Mekanism {
     fusions: HashMap<(String, [i32; 3]), fusion::Shared>,
     /// The energy lasers delivered to the blocks they hit, until those take it.
     beams: HashMap<(String, [i32; 3]), u64>,
+    /// The block each laser is wearing down, and how much energy it has put in it.
+    digging: HashMap<(String, [i32; 3]), ([i32; 3], u64)>,
     /// The machine each bounding block just placed belongs to, until the block writes it down.
     bound_owner: HashMap<(String, i32, i32, i32), [i32; 3]>,
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
@@ -2100,6 +2102,17 @@ impl ServerMod for Mekanism {
         amp.energy = Some(EnergySpec { capacity: laser::AMPLIFIER_CAPACITY, max_receive: laser::AMPLIFIER_CAPACITY, max_extract: 0, faces: vec![FlowSide::Input; 6] });
         amp.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(amp);
+        // The laser tractor beam: lasers fill it (nothing outside does), and its 27 slots only give out (the original's output slots).
+        let mut tractor = kind(laser::TRACTOR, true);
+        tractor.energy = Some(EnergySpec { capacity: laser_tractor::CAPACITY_FE, max_receive: laser_tractor::CAPACITY_FE, max_extract: 0, faces: vec![FlowSide::None; 6] });
+        tractor.container = Some(ContainerSpec {
+            slots: laser_tractor::SLOTS as u32,
+            faces: vec![(0..laser_tractor::SLOTS as u32).collect(); 6],
+            inputs: Vec::new(),
+            outputs: (0..laser_tractor::SLOTS as u32).collect(),
+            menu: true,
+        });
+        r = r.block_entity_kind(tractor);
         // The SPS: casing and coils only join the structure; the ports take the energy and hold the polonium and the antimatter.
         for part in [sps::CASING, sps::COIL] {
             let mut k = kind(part, false);
@@ -2225,6 +2238,7 @@ impl ServerMod for Mekanism {
             reactors: HashMap::new(),
             fusions: HashMap::new(),
             beams: HashMap::new(),
+            digging: HashMap::new(),
             bound_owner: HashMap::new(),
             spses: HashMap::new(),
             sorter_buttons: Vec::new(),
@@ -3041,7 +3055,7 @@ impl ServerMod for Mekanism {
         }
         let laser_parts: Vec<&BlockEntity> = entities
             .iter()
-            .filter(|e| matches!(e.state.split('[').next(), Some(laser::LASER | laser::AMPLIFIER | fusion::MATRIX)))
+            .filter(|e| matches!(e.state.split('[').next(), Some(laser::LASER | laser::AMPLIFIER | laser::TRACTOR | fusion::MATRIX)))
             .collect();
         if !laser_parts.is_empty() {
             out.extend(self.run_lasers(&laser_parts));
