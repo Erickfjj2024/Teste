@@ -48,7 +48,7 @@ pub fn with_item_energy(stack: &ItemStack, energy: u64) -> Option<ItemStack> {
     Some(ItemStack { components: piece.encode(&stack.components), ..stack.clone() })
 }
 
-/// `EnergyInventorySlot.fillOrConvert` of the matrix (145, 20): an item that holds energy gives it to the matrix (as much as it has, the room and the item's rate allow), any
+/// `EnergyInventorySlot.fillOrConvert` of the matrix (the bottom slot, 146, 51): an item that holds energy gives it to the matrix (as much as it has, the room and the item's rate allow), any
 /// other item the energy it is worth whole when that fits (`conversion`: redstone and the like). Returns the energy gained and the slot after.
 pub fn fill_step(slot: &Option<ItemStack>, room: u64) -> Option<(u64, Option<ItemStack>)> {
     let stack = slot.as_ref()?;
@@ -62,7 +62,7 @@ pub fn fill_step(slot: &Option<ItemStack>, room: u64) -> Option<(u64, Option<Ite
     cube::fill_from_slot(slot, 0, room).map(|(gain, left)| (gain, left))
 }
 
-/// `EnergyInventorySlot.drain` (145, 50): the matrix charges the item in the slot, as much as it has, the item's room and its rate allow. Returns the energy given and the slot after.
+/// `EnergyInventorySlot.drain` (the top slot, 146, 21): the matrix charges the item in the slot, as much as it has, the item's room and its rate allow. Returns the energy given and the slot after.
 pub fn drain_step(slot: &Option<ItemStack>, available: u64) -> Option<(u64, Option<ItemStack>)> {
     let stack = slot.as_ref()?;
     let (energy, max, rate) = item_energy(stack)?;
@@ -297,29 +297,39 @@ impl Mekanism {
                 }
             }
 
-            // Cap transfers by rate limit and available storage/energy (MatrixEnergyContainer.java:162-194)
-            let allowed_input = total_input.min(found.rate).min(found.capacity.saturating_sub(total));
-            let allowed_output = total_output.min(found.rate).min(total);
-            let mut next = (total + allowed_input - allowed_output).min(found.capacity);
-            // The two charge slots of each port: the first fills the matrix from an item, the second charges an item from it.
+            // `MatrixMultiblockData.tick`: the charge slots take their pick first, so the structure's rate is used up by them before the ports (`MatrixEnergyContainer` caps what goes in
+            // and what goes out each by `transferCap`). The top slot charges an item from the matrix (`drain`), the bottom one fills the matrix from an item (`fillOrConvert`).
             let mut slot_updates: HashMap<[i32; 3], Vec<Option<ItemStack>>> = HashMap::new();
+            let (mut budget_in, mut budget_out) = (found.rate, found.rate);
+            let (mut slots_in, mut slots_out) = (0u64, 0u64);
+            let mut level = total;
             for p in &group {
                 let mut slots: Vec<Option<ItemStack>> = vec![p.items.first().cloned().flatten(), p.items.get(1).cloned().flatten()];
                 let mut changed = false;
-                if let Some((gain, left)) = fill_step(&slots[0], found.capacity.saturating_sub(next)) {
-                    next += gain;
-                    slots[0] = left;
+                if let Some((give, now)) = drain_step(&slots[0], level.min(budget_out)) {
+                    level -= give;
+                    budget_out -= give;
+                    slots_out += give;
+                    slots[0] = now;
                     changed = true;
                 }
-                if let Some((give, now)) = drain_step(&slots[1], next) {
-                    next -= give;
-                    slots[1] = now;
+                if let Some((gain, left)) = fill_step(&slots[1], found.capacity.saturating_sub(level).min(budget_in)) {
+                    level += gain;
+                    budget_in -= gain;
+                    slots_in += gain;
+                    slots[1] = left;
                     changed = true;
                 }
                 if changed {
                     slot_updates.insert([p.pos.x, p.pos.y, p.pos.z], slots);
                 }
             }
+            // The ports: what the networks put in and took out, within what is left of the rate and of the room.
+            let allowed_input = total_input.min(budget_in).min(found.capacity.saturating_sub(level));
+            let allowed_output = total_output.min(budget_out).min(level);
+            let next = (level + allowed_input - allowed_output).min(found.capacity);
+            // what the screen shows as the last tick's traffic includes the slots'
+            let (shown_in, shown_out) = (allowed_input + slots_in, allowed_output + slots_out);
             self.matrices.insert(key.clone(), next);
             self.matrix_given.insert(key.clone(), next.min(found.rate));
 
@@ -335,12 +345,12 @@ impl Mekanism {
                 i32::from(found.cells),
                 i32::from(found.providers),
                 ((next as f64 / found.capacity.max(1) as f64).clamp(0.0, 1.0) * 1000.0) as i32,
-                half(allowed_input / 1000, 0),
-                half(allowed_input / 1000, 16),
-                half(allowed_output / 1000, 0),
-                half(allowed_output / 1000, 16),
+                half(shown_in / 1000, 0),
+                half(shown_in / 1000, 16),
+                half(shown_out / 1000, 0),
+                half(shown_out / 1000, 16),
             ];
-            let texts = screen_texts(next, found.capacity, allowed_input, allowed_output);
+            let texts = screen_texts(next, found.capacity, shown_in, shown_out);
             for p in &group {
                 let tkey = (p.dimension.clone(), p.pos.x, p.pos.y, p.pos.z);
                 if self.menu_texts.get(&tkey) != Some(&texts) {
@@ -376,7 +386,9 @@ impl Mekanism {
                     (found.rate.max(1), avail, vec![FlowSide::Output; 6])
                 } else {
                     // Input port: energy is 0, room to insert up to rate & remaining capacity
-                    let room = (found.capacity.saturating_sub(next)).min(found.rate);
+                    // What an input port can take in a tick is the structure's room within its rate, shared among the input ports (the sum may not pass the rate, or the rest would be lost).
+                    let inputs = group.iter().filter(|g| !mode_of(&g.data)).count().max(1) as u64;
+                    let room = (found.capacity.saturating_sub(next)).min(found.rate) / inputs;
                     (room.max(1), 0, vec![FlowSide::Input; 6])
                 };
 
@@ -537,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn the_second_slot_charges_an_item_from_the_matrix() {
+    fn the_top_slot_charges_an_item_from_the_matrix() {
         let slot = Some(suit_stack(0));
         let (give, after) = drain_step(&slot, 10_000_000_000).unwrap();
         let rate = item_energy(slot.as_ref().unwrap()).unwrap().2;
@@ -552,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn the_first_slot_fills_the_matrix_from_an_item() {
+    fn the_bottom_slot_fills_the_matrix_from_an_item() {
         let (_, max, rate) = item_energy(&suit_stack(0)).unwrap();
         let slot = Some(suit_stack(max));
         let (gain, after) = fill_step(&slot, u64::MAX).unwrap();

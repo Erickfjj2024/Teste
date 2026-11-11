@@ -2732,8 +2732,8 @@ def miner_menu(m):
 
 def induction_port_menu(m):
     """GuiInductionMatrix (176 by 166): the medium energy gauge at 7, 16 (34 by 56), the inner screen at 49, 21 (84 by 46: the energy, the capacity, what went in and what
-    went out last tick, the screen's strings 0 to 3 from `induction.rs::screen_texts`), the element holder at 141, 16 (26 by 56) with the two charge slots at 145, 20 (an item
-    that holds energy gives it to the matrix, any other gives what it is worth) and 145, 50 (the matrix charges the item), the armor holder at the left, the energy tab (storing
+    went out last tick, the screen's strings 0 to 3 from `induction.rs::screen_texts`), the element holder at 141, 16 (26 by 56) with the two charge slots at 146, 21 (the matrix charges the item, PLUS) and 146, 51 (an item that
+    holds energy gives it to the matrix, any other gives what it is worth, MINUS), the armor holder at the left, the energy tab (storing
     and the in and out rates) and the title at the top. Numbers (`induction.rs`): 0-1 the energy in millions of Forge Energy, 2-3 the capacity, 4-5 the most it moves in a tick in
     thousands, 6 cells, 7 providers, 8 the energy over the capacity in thousandths, 9-10 what went in last tick and 11-12 what went out, in thousands. **Not in the port:** the
     matrix's second page (`GuiMatrixStats`), the warning tab, and the two slots are each port's own, not shared by the whole structure."""
@@ -2742,8 +2742,10 @@ def induction_port_menu(m):
     panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 34, 56, 2), (7, 16))
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 84, 46, 3), (49, 21))
     panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 26, 56, 2), (141, 16))
-    for y in (20, 50):
-        panel.alpha_composite(gui_sprite('slot/normal'), (144, y - 1))
+    # the two charge slots at 146, 21 (the top one charges an item, PLUS) and 146, 51 (the bottom one fills the matrix from an item, MINUS)
+    for y, overlay in ((21, 'slot/overlay/plus'), (51, 'slot/overlay/minus')):
+        panel.alpha_composite(gui_sprite('slot/normal'), (145, y - 1))
+        panel.alpha_composite(gui_sprite(overlay), (145, y - 1))
     texture = save_gui(panel, m)
     title = 'Induction Matrix'
     widgets = [
@@ -2760,7 +2762,7 @@ def induction_port_menu(m):
                 {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {0+1} / {2+3} MFE\nInput: {9+10} kFE/t\nOutput: {11+12} kFE/t'}]
     return {'slots': 2, 'data_slots': 13, 'results': [],
             'armor': {'x': -20, 'y': 41, 'offhand': 0},
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[145, 20], [145, 50]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 21], [146, 51]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
                        'widgets': widgets}}
 
 def pump_menu(m):
