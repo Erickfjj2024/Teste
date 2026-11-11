@@ -2450,35 +2450,60 @@ def sps_port_menu(m):
                        'widgets': widgets}}
 
 def sorter_menu(m):
-    """GuiLogisticalSorter (simplified): five filter slots (an item each), and the auto-eject and single-item switches."""
-    panel = nine_slice(gui_sprite('base'), 176, 166, 4)
-    slot = gui_sprite('slot/normal')
-    for row in range(3):
-        for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 84 + 18 * row))
-    for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 142))
-    xs = [44 + 18 * i for i in range(5)]
-    for x in xs:
-        panel.paste(slot, (x - 1, 23))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 70, 14, 2), (8, 50))
-    panel.alpha_composite(nine_slice(gui_sprite('button'), 70, 14, 2), (98, 50))
+    """GuiLogisticalSorter (276 by 254, `GuiFilterHolder`): the left screen at 9, 17 (85 by 140: the filter count, then "Single Item", "Round Robin" and "Auto Eject" with their On or Off
+    and "Default" under them), the toggle buttons at 12, 46 (single item), 12, 76 (round robin, which the port has not) and 12, 106 (auto eject), the holder of the filters at 95, 17
+    (158 by 118: four rows 29 high, the list of the screen's strings 1 to 16 from `filters.rs::texts`, a click on a row selects it), the holder of the new filter button at 95, 135 and the
+    player's inventory at 58, 172. The new filter button (96, 136) opens the window that makes an item filter or a tag filter from a typed id; the Delete button takes the selected one away.
+    Numbers (`sorter.rs`): 0 auto eject, 1 single item, 2 how many filters, 3 the selected row plus one. **Not in the port:** the default colour slot, the colour of each filter, the
+    mod-id filter, minimum and maximum counts, the round robin and the filters' order and on/off switches."""
+    width, height = 276, 254
+    inv_x = 58
+    panel, slot, inv_y = inventory_panel(width, height, inv_x)
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 85, 140, 3), (9, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 158, 118, 2), (95, 17))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 158, 22, 2), (95, 135))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 100, 20, 2), (96, 136))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 52, 20, 2), (200, 136))
+    for y in (46, 76, 106):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 14, 14, 2), (12, y))
+    for i in range(4):
+        panel.alpha_composite(nine_slice(gui_sprite('button'), 156, 27, 2), (96, 18 + 29 * i))
     texture = save_gui(panel, m)
     title = 'Logistical Sorter'
     widgets = [
-        {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 27, 'text': 'Filters', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
-    for bid, x, label, data in ((7400, 8, 'Auto-eject', 0), (7401, 98, 'Single item', 1)):
-        widgets.append({'type': 'text', 'x': x + 4, 'y': 53, 'text': label, 'color': '#404040'})
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
-            {'type': 'text', 'x': x + 52, 'y': 53, 'text': 'ON', 'color': '#00CD00'}]})
-        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 0}}, 'widgets': [
-            {'type': 'text', 'x': x + 52, 'y': 53, 'text': 'off', 'color': '#CD0000'}]})
-        widgets.append({'type': 'button', 'x': x, 'y': 50, 'w': 70, 'h': 14, 'id': bid, 'tooltip': label})
-    return {'slots': 7, 'data_slots': 2,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None, None] + [[x, 24] for x in xs], 'widgets': widgets}}
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': inv_x, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': 12, 'y': 21, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'text', 'x': 11, 'y': 36, 'text': 'Single Item', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'text', 'x': 11, 'y': 66, 'text': 'Round Robin', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'text', 'x': 23, 'y': 79, 'text': 'Off', 'color': '#808080', 'scale': 80},
+        {'type': 'text', 'x': 11, 'y': 96, 'text': 'Auto Eject', 'color': '#3CFE9A', 'scale': 80},
+        {'type': 'text', 'x': 11, 'y': 126, 'text': 'Default', 'color': '#3CFE9A', 'scale': 80}]
+    for data, y in ((1, 49), (0, 109)):
+        for state, label, color in ((1, 'On', '#3CFE9A'), (0, 'Off', '#FF5555')):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': state}}, 'widgets': [
+                {'type': 'text', 'x': 23, 'y': y, 'text': label, 'color': color, 'scale': 80}]})
+    widgets += [
+        {'type': 'button', 'x': 12, 'y': 46, 'w': 14, 'h': 14, 'id': 7401, 'tooltip': 'Single item: sends one item at a time'},
+        {'type': 'button', 'x': 12, 'y': 106, 'w': 14, 'h': 14, 'id': 7400, 'tooltip': 'Auto eject: sends every item, filters or not'},
+        {'type': 'list', 'x': 97, 'y': 19, 'w': 154, 'h': 116, 'row_height': 29, 'first': 1, 'count': {'data': 2}, 'on_click': 7410, 'color': '#404040'},
+        {'type': 'text', 'x': 96 + (100 - text_width('New Filter')) // 2, 'y': 142, 'text': 'New Filter', 'color': '#404040'},
+        {'type': 'button', 'x': 96, 'y': 136, 'w': 100, 'h': 20, 'local': {'open': 'new'}, 'tooltip': 'Make an item or tag filter'},
+        {'type': 'text', 'x': 200 + (52 - text_width('Delete')) // 2, 'y': 142, 'text': 'Delete', 'color': '#AA0000'},
+        {'type': 'button', 'x': 200, 'y': 136, 'w': 52, 'h': 20, 'id': 7450, 'tooltip': 'Delete the selected filter'}]
+    win = nine_slice(gui_sprite('base'), 160, 90, 4)
+    win.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 140, 12, 2), (10, 30))
+    win.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 140, 12, 2), (10, 62))
+    new_w = [{'type': 'text', 'x': 20, 'y': 6, 'text': 'New Filter', 'color': '#404040'},
+             {'type': 'button', 'x': 6, 'y': 6, 'w': 12, 'h': 12, 'local': 'close', 'tooltip': 'Close'},
+             {'type': 'text', 'x': 10, 'y': 20, 'text': 'Item id (minecraft:iron_ingot), Enter:', 'color': '#404040', 'scale': 70},
+             {'type': 'textfield', 'x': 11, 'y': 31, 'w': 138, 'h': 10, 'id': 7451, 'validator': 'any', 'max_length': 100},
+             {'type': 'text', 'x': 10, 'y': 52, 'text': 'Tag (c:ingots/iron), Enter:', 'color': '#404040', 'scale': 70},
+             {'type': 'textfield', 'x': 11, 'y': 63, 'w': 138, 'h': 10, 'id': 7452, 'validator': 'any', 'max_length': 100}]
+    window = {'id': 'new', 'x': 58, 'y': 60, 'width': 160, 'height': 90, 'texture': save_gui(win, 'sorter_new_filter'), 'widgets': new_w}
+    return {'slots': 2, 'data_slots': 4,
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None, None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': inv_y,
+                       'widgets': widgets, 'windows': [window]}}
 
 def entangloporter_menu(m):
     """GuiQuantumEntangloporter (176 by 240): the title at the top, the frequency selector at 27, 14 (`frequency_selector`) and the energy tab (what the frequency stores). The original has no

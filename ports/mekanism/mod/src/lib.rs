@@ -22,6 +22,7 @@ mod hdpe_elytra;
 mod heat;
 mod laser_tractor;
 mod frequency;
+mod filters;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -459,6 +460,7 @@ struct Mekanism {
     bound_owner: HashMap<(String, i32, i32, i32), [i32; 3]>,
     spses: HashMap<(String, [i32; 3]), sps::Shared>,
     sorter_buttons: Vec<(String, BlockPos, i32)>,
+    sorter_texts: Vec<(String, BlockPos, i32, String)>,
     /// The shared buffers of the quantum entangloporters, by frequency, and the buttons pressed on their screens.
     entangled: HashMap<String, entangloporter::Shared>,
     qe_buttons: Vec<(String, BlockPos, i32, String, String)>,
@@ -2263,6 +2265,7 @@ impl ServerMod for Mekanism {
             bound_owner: HashMap::new(),
             spses: HashMap::new(),
             sorter_buttons: Vec::new(),
+            sorter_texts: Vec::new(),
             entangled: HashMap::new(),
             qe_buttons: Vec::new(),
             qe_texts: Vec::new(),
@@ -3251,6 +3254,8 @@ impl ServerMod for Mekanism {
                 self.teleporter_texts.push((dimension, pos, id, text, who, who_name));
             } else if block == entangloporter::BLOCK {
                 self.qe_texts.push((dimension, pos, id, text, who, who_name));
+            } else if block == sorter::SORTER {
+                self.sorter_texts.push((dimension, pos, id, text));
             }
         }
         // A click whose cube did not tick (it was not there) is dropped after a few ticks.
