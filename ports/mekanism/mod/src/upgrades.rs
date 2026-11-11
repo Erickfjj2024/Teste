@@ -73,6 +73,17 @@ pub fn base_slots(def: &Def) -> usize {
     }
 }
 
+/// The charge slot of a machine (`EnergyInventorySlot`): the one the pressurized chamber and the rotary condensentrator have among their own, after the
+/// upgrade slots for the rest. The pump, the factories and the generators have theirs in their own code, the tanks none.
+pub fn charge_slot(def: &Def) -> Option<usize> {
+    match (def.kind, def.layout) {
+        (Kind::Reaction, _) => Some(2),
+        (Kind::Continuous, Layout::Rotary) => Some(4),
+        (Kind::Pump | Kind::Factory | Kind::Generator | Kind::Tank, _) => None,
+        _ => Some(base_slots(def) + 2),
+    }
+}
+
 fn fraction(installed: u8, k: usize) -> f64 {
     f64::from(installed) / f64::from(MAX[k])
 }
@@ -283,6 +294,16 @@ pub fn window_numbers(ticks_required: u32, progress: u32, counts: &[u8; 8], usag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_charge_slot_comes_after_the_upgrade_slots_except_where_a_machine_has_it_among_its_own() {
+        let of = |block: &str| crate::MACHINES.iter().find(|d| d.block == block).and_then(charge_slot);
+        assert_eq!(of("mekanism:enrichment_chamber"), Some(4), "input, output, then the two upgrade slots");
+        assert_eq!(of("mekanism:precision_sawmill"), Some(5));
+        assert_eq!(of("mekanism:pressurized_reaction_chamber"), Some(2));
+        assert_eq!(of("mekanism:rotary_condensentrator"), Some(4));
+        assert_eq!(of("mekanism:electric_pump"), None);
+    }
 
     fn upgrade(kind: &str, n: u32) -> Option<Stack> {
         Some(Stack { item: format!("mekanism:upgrade_{kind}"), count: n, components: String::new() })

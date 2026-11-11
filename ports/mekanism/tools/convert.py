@@ -1166,14 +1166,22 @@ def upgrade_tab_widgets():
     return [{'type': 'sprite', 'texture': save_gui(holder, 'upgrade_tab'), 'x': 176, 'y': 6, 'w': 26, 'h': 18},
             {'type': 'button', 'x': 176, 'y': 6, 'w': 26, 'h': 18, 'local': {'open': 'upgrades'}, 'tooltip': 'Upgrades'}]
 
-def with_upgrades(menu, machine, base, c):
-    """Adds the upgrade window, its tab, its two slots (the filter and the take-only one) and its screen numbers to a menu."""
-    menu['slots'] = base + 2
+def power_slot(layout):
+    """The place of a layout's charge slot: its `slot/power` frame."""
+    return next((x, y) for sprite, x, y in layout['frames'] if sprite == 'slot/power')
+
+
+def with_upgrades(menu, machine, base, c, charge=None):
+    """Adds the upgrade window, its tab, its two slots (the filter and the take-only one) and its screen numbers to a menu. `charge` is where the
+    machine's charge slot is drawn (mod `upgrades.rs::charge_slot`: the slot after the upgrade ones); the pressurized chamber and the rotary have it among their own."""
+    menu['slots'] = base + 2 + (charge is not None)
     menu['results'] = list(menu.get('results', [])) + [base + 1]
     menu['accepts'] = [{'slot': base, 'items': [f'{NS}:upgrade_{UPGRADES[k]}' for k in upgrade_support(machine)]}]
+    if charge is not None:
+        menu['accepts'].append({'slot': base + 2, 'items': ['minecraft:redstone', 'minecraft:redstone_block']})
     menu['data_slots'] = c + 16
     screen = menu['screen']
-    screen['slots'] = list(screen['slots']) + [None, None]
+    screen['slots'] = list(screen['slots']) + [None, None] + ([list(charge)] if charge is not None else [])
     screen['widgets'] = list(screen['widgets']) + upgrade_tab_widgets()
     screen['windows'] = list(screen.get('windows', [])) + [upgrade_window(machine, base, c)]
     return menu
@@ -1297,7 +1305,8 @@ def process_menu(m):
             'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
                        'height': L.get('height', 166), 'inventory_y': 84 + L.get('inv_shift', 0),
                        'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                    'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, ctl + 15)}]}}, m, len(L['slots']), ctl0)
+                                    'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, ctl + 15)}]}}, m, len(L['slots']), ctl0,
+                         charge=None if L.get('rotary') or L.get('timed') else power_slot(L))
 
 # ---- the storage tanks (GuiFluidTank, GuiChemicalTank): the player's armor in a holder at the left, as the original
 ARMOR_LEFT = {'x': -20, 'y': 67, 'offhand': 0}
@@ -2888,7 +2897,7 @@ for m in MACHINES:
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
                    + redstone_widgets(16) + energy_tab_widgets(16, MACHINE_USAGE[m]),
                    'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
-                                'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 31)}]}}, m, len(layout['slots']), 16))
+                                'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, 31)}]}}, m, len(layout['slots']), 16, charge=power_slot(layout)))
 
 
 

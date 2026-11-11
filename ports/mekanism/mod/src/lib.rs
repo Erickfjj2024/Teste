@@ -1706,6 +1706,21 @@ fn flow_side(f: u8) -> FlowSide {
     }
 }
 
+impl Mekanism {
+    /// The machine's charge slot (`EnergyInventorySlot.fillOrConvert`): an item that holds energy gives it, any other item the energy it is worth
+    /// whole when that fits. `e` is changed in place; true when something went in.
+    fn charge_from_slot(&self, def: &Def, e: &mut BlockEntity) -> bool {
+        let Some(at) = upgrades::charge_slot(def) else { return false };
+        let Some(Some(stack)) = e.items.get(at) else { return false };
+        let capacity = upgrades::max_energy(base_capacity(def), upgrades::counts_of(def, e)[upgrades::ENERGY]);
+        let slot = Some(stack.clone());
+        let Some((gain, left)) = induction::fill_step(&slot, capacity.saturating_sub(e.energy)) else { return false };
+        e.energy += gain;
+        e.items[at] = left;
+        true
+    }
+}
+
 impl ServerMod for Mekanism {
     fn init() -> Result<(Self, Registration), String> {
         let mut r = Registration::new();
@@ -1822,7 +1837,7 @@ impl ServerMod for Mekanism {
             if def.kind != Kind::Tank
                 && let Some(c) = &mut k.container
             {
-                c.slots += 2;
+                c.slots += 2 + u32::from(upgrades::charge_slot(def).is_some_and(|s| s >= upgrades::base_slots(def)));
             }
             if def.kind == Kind::Generator {
                 // It gives its energy by the faces the generator tick sets (the front, the bottom for the solar one).
@@ -3226,6 +3241,7 @@ impl ServerMod for Mekanism {
                 if def.kind != Kind::Tank {
                     self.read_control(def, &e2);
                     self.force = self.tick_upgrades(def, &mut e2);
+                    self.force |= self.charge_from_slot(def, &mut e2);
                 }
                 let e = &e2;
                 out.extend(match def.kind {
