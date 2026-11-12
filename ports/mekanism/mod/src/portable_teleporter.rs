@@ -88,7 +88,12 @@ impl Mekanism {
         };
         let here = [player.x.floor() as i32, player.y.floor() as i32, player.z.floor() as i32];
         let dest = teleporter::closest((&player.dimension, here), &others).cloned();
-        let cost = dest.as_ref().map_or(0, |(d, p, _)| teleporter::trip_cost(&player.dimension, [player.x, player.y, player.z], d, *p));
+        // A creative player pays nothing (`!player.isCreative()`).
+        let cost = if player.game_mode == GameMode::Creative {
+            0
+        } else {
+            dest.as_ref().map_or(0, |(d, p, _)| teleporter::trip_cost(&player.dimension, [player.x, player.y, player.z], d, *p))
+        };
         let (energy, capacity) = recipe_types::item_energy(stack).map_or((0, CAPACITY), |i| (i.stored, i.capacity));
         let status = status_of(freq.is_some(), others.len(), energy, cost);
         let half = |v: u64, s: u32| ((v >> s) & 0xFFFF) as i32;
@@ -160,10 +165,16 @@ impl Mekanism {
             if data.get(1) != Some(&4) {
                 return None;
             }
-            let (after, took) = recipe_types::item_energy_extract(&stack, cost, false);
-            if took < cost || player_items::compare_and_set_slot(&player.id, menu.slot, Some(&stack), Some(&after)).is_err() {
-                return None;
+            if cost > 0 {
+                let (after, took) = recipe_types::item_energy_extract(&stack, cost, false);
+                if took < cost || player_items::compare_and_set_slot(&player.id, menu.slot, Some(&stack), Some(&after)).is_err() {
+                    return None;
+                }
             }
+            // `didTeleport.add` and `teleDelay = 5`: the destination does not send the player on at once.
+            let dkey = (dest_dim.clone(), dest_pos[0], dest_pos[1], dest_pos[2]);
+            self.frames.arrived.entry(dkey.clone()).or_default().insert(player.id.clone());
+            self.frames.delay.insert(dkey, teleporter::DELAY);
             let t = teleporter::target(dest_pos, dest_face);
             let _ = player_control::teleport(&player.id, &dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, None, None);
             return Some(ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
