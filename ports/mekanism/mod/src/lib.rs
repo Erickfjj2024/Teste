@@ -24,6 +24,7 @@ mod laser_tractor;
 mod frequency;
 mod filters;
 mod item_menus;
+mod portable_teleporter;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -486,6 +487,10 @@ struct Mekanism {
     freq_registry: Option<Vec<frequency::Freq>>,
     /// What each open item menu of a player was last given (so only changes are sent).
     item_menu_sent: HashMap<(String, String), Vec<String>>,
+    /// The teleporters of every frequency last tick (key, dimension, position, face of the frame), for the Portable Teleporter's destinations.
+    teleporter_table: Vec<(String, String, [i32; 3], Option<usize>)>,
+    /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
+    portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
     sorter_set: HashSet<(String, i32, i32, i32)>,
     laser_buttons: Vec<(String, BlockPos, i32)>,
@@ -2326,6 +2331,8 @@ impl ServerMod for Mekanism {
             freq_viewer: HashMap::new(),
             freq_registry: None,
             item_menu_sent: HashMap::new(),
+            teleporter_table: Vec::new(),
+            portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
             laser_buttons: Vec::new(),
@@ -2545,6 +2552,10 @@ impl ServerMod for Mekanism {
         entity.kind == robit_world::KIND && self.robit_used(player, &entity, sneaking)
     }
 
+    fn item_menu_button(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu, id: i32) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
+        if menu.menu == portable_teleporter::MENU { self.portable_teleporter_button(player, &menu, id) } else { None }
+    }
+
     fn item_menu_tick(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
         self.item_menu_tick_of(player, &menu)
     }
@@ -2571,6 +2582,9 @@ impl ServerMod for Mekanism {
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if stack.item == robit::ITEM_ID && self.robit_placed(player, &stack, pos) {
+            return true;
+        }
+        if stack.item == portable_teleporter::ITEM && self.portable_teleporter_used(player, &stack) {
             return true;
         }
         if stack.item == item_menus::DICTIONARY_ITEM && self.dictionary_used(player, &stack) {
@@ -2815,6 +2829,11 @@ impl ServerMod for Mekanism {
             return;
         }
         if let Some(input) = horizon_mod_sdk::server::menu_input::decode(data) {
+            if input.pos.x == i32::MIN && input.pos.y == 1 {
+                // a text box of an item's menu: the position is `(i32::MIN, 1, slot)`
+                self.portable_texts.push((player.id.clone(), input.id, input.text));
+                return;
+            }
             if input.pos.x == i32::MIN {
                 // a text box of an entity's menu: the position is `(i32::MIN, 0, entity id)`; the Robit's rename box is 10
                 if input.id == 10 && !input.text.trim().is_empty() {

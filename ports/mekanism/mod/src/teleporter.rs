@@ -219,6 +219,8 @@ impl Mekanism {
         for key in &deleted {
             self.frequency_deleted(key);
         }
+        // The Portable Teleporter's destinations.
+        self.teleporter_table = table.clone();
         let players = players::online();
         for e in parts {
             let pos = [e.pos.x, e.pos.y, e.pos.z];

@@ -272,6 +272,10 @@ for n, model in items.items():
         # Equippable(slot): a player wears it in its armor slot, one at a time (the worn model is still to do)
         item['max_stack_size'] = 1
         item['components'] = {'minecraft:equippable': {'slot': WORN[n]}}
+    if n == 'portable_teleporter':
+        # ItemPortableTeleporter: 1,000,000 J of energy (400,000 FE) charged at 5,000 J (2,000 FE) a call; a trip's cost is taken whole
+        item['max_stack_size'] = 1
+        item['energy'] = {'capacity': 400000, 'max_insert': 2000, 'max_extract': 400000}
     put(f'{OUT}/data/{NS}/horizon/item/{n}.json', item)
     put(f'{OUT}/assets/{NS}/items/{n}.json', {'model': {'type': 'minecraft:model', 'model': model}})
 
@@ -2652,6 +2656,30 @@ def teleporter_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[153, 7]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
                        'widgets': widgets}}
 
+def portable_teleporter_menu(m):
+    """GuiPortableTeleporter (176 by 172): the status at 7, 7 (the original draws an icon), the vertical power bar at 158, 26, the frequency selector at 27, 14
+    (`frequency_selector`) and the Teleport button at 42, 147 (92 by 20). Numbers and strings as the teleporter block's (`portable_teleporter.rs::portable_view`). The original shows no
+    player inventory; the host has no menu without one yet, so it is drawn under the panel (FORK request: a menu without the inventory and with no slots)."""
+    width, height = 176, 172
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (157, 25))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 92, 20, 2), (42, 147))
+    selector = frequency_selector(8300, 'sec', panel, 27, 14, 7, 8, 3, 19)
+    texture = save_gui(panel, m)
+    title = 'Portable Teleporter'
+    widgets = [
+        {'type': 'sprite', 'texture': power_fill, 'x': 158, 'y': 26, 'w': 4, 'h': 52, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]}, 'direction': 'up',
+         'tooltip': 'Energy: {value} / {max} FE'},
+        {'type': 'text', 'x': 22 + (130 - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'}]
+    for st, text, color in ((0, 'No frequency', '#CD0000'), (2, 'No link', '#CD0000'), (3, 'No energy', '#CD0000'), (4, 'Ready', '#00AA00')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [{'type': 'text', 'x': 7, 'y': 7, 'text': text, 'color': color, 'scale': 80}]})
+    widgets += selector
+    widgets.append({'type': 'text', 'x': 42 + (92 - text_width('Teleport')) // 2, 'y': 153, 'text': 'Teleport', 'color': '#FFFFFF'})
+    widgets.append({'type': 'button', 'x': 42, 'y': 147, 'w': 92, 'h': 20, 'id': 8390, 'tooltip': 'Teleport'})
+    return {'slots': 1, 'data_slots': 9, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[-40, -40]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': height + 4,
+                       'widgets': widgets}}
+
 def bin_menu(m):
     """The bin's screen (it has none in the original: items are put in by using them and taken by punching): an input slot, the output
     stack, what it holds, and the switches for ejecting down and locking the item."""
@@ -2909,6 +2937,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/sps_port.json', sps_port_menu('sps_port'))
 put(f'{OUT}/data/{NS}/horizon/menu/logistical_sorter.json', sorter_menu('logistical_sorter'))
 put(f'{OUT}/data/{NS}/horizon/menu/quantum_entangloporter.json', entangloporter_menu('quantum_entangloporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/teleporter.json', teleporter_menu('teleporter'))
+put(f'{OUT}/data/{NS}/horizon/menu/portable_teleporter.json', portable_teleporter_menu('portable_teleporter'))
 for _b in BINS:
     put(f'{OUT}/data/{NS}/horizon/menu/{_b}.json', bin_menu(_b))
 put(f'{OUT}/data/{NS}/horizon/menu/digital_miner.json', miner_menu('digital_miner'))

@@ -25,6 +25,9 @@ pub fn dictionary_view(item: Option<&str>, tags: &[String]) -> (Vec<String>, Vec
 impl Mekanism {
     /// One tick of an open item menu of the mod.
     pub(crate) fn item_menu_tick_of(&mut self, player: &Player, menu: &ItemMenu) -> Option<ItemMenuUpdate> {
+        if menu.menu == crate::portable_teleporter::MENU {
+            return self.portable_teleporter_tick(player, menu);
+        }
         if menu.menu != DICTIONARY_MENU {
             return None;
         }
