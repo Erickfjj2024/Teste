@@ -39,6 +39,13 @@ pub mod server {
     pub fn crafting_matches<A0>(_a0: A0, _a1: &Vec<Option<ItemStack>>) -> bool { false }
     pub fn item_tags<A0>(_a0: A0) -> Vec<String> { Vec::new() }
     pub fn item_tag_members<A0>(_a0: A0) -> Vec<String> { Vec::new() }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct Durability { pub damage: u32, pub max_damage: u32 }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct AnvilAnswer { pub output: ItemStack, pub cost: i32, pub material_cost: u32 }
+    pub fn item_durability(stack: &ItemStack) -> Option<Durability> { let _ = stack; None }
+    pub fn item_set_damage(stack: &ItemStack, damage: u32) -> Option<ItemStack> { let _ = (stack, damage); None }
+    pub fn item_repairs_with(stack: &ItemStack, material: &ItemStack) -> bool { let _ = (stack, material); false }
+    pub fn item_enchantments(stack: &ItemStack) -> Vec<(String, u32)> { let _ = stack; Vec::new() }
+    pub fn anvil_result(left: &ItemStack, right: Option<&ItemStack>, name: Option<&str>) -> Option<AnvilAnswer> { let _ = (left, right, name); None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct EnergyInfo { pub stored: u64, pub capacity: u64, pub max_insert: u64, pub max_extract: u64 }
     pub fn item_energy(stack: &ItemStack) -> Option<EnergyInfo> { let _ = stack; None }
     pub fn item_energy_insert(stack: &ItemStack, amount: u64, simulate: bool) -> (ItemStack, u64) { let _ = (amount, simulate); (stack.clone(), 0) }
