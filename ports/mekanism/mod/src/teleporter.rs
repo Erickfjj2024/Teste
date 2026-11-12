@@ -134,7 +134,7 @@ pub fn opening(pos: [i32; 3], face: usize) -> ([i32; 3], [i32; 3]) {
 }
 
 /// How many entities ride `root`, directly or through others (`fillIndirectPassengers`).
-pub fn passengers_of(all: &[horizon_mod_sdk::server::EntityInBox], root: u32) -> usize {
+pub fn passengers_of(all: &[entities::EntityInBox], root: u32) -> usize {
     let mut found = vec![root];
     let mut i = 0;
     while i < found.len() {
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn passengers_count_through_the_ones_they_ride() {
-        let e = |id: u32, vehicle: Option<u32>| horizon_mod_sdk::server::EntityInBox { id, vehicle, ..Default::default() };
+        let e = |id: u32, vehicle: Option<u32>| entities::EntityInBox { id, vehicle, ..Default::default() };
         let all = [e(1, None), e(2, Some(1)), e(3, Some(2)), e(4, None)];
         assert_eq!(passengers_of(&all, 1), 2);
         assert_eq!(passengers_of(&all, 4), 0);
