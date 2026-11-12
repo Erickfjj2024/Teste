@@ -1,0 +1,1612 @@
+From 3c2d490992928d271ad523c48f34d50798771c28 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 08:10:16 +0000
+Subject: [PATCH] Item grid widget for menus: the QIO Dashboard's catalogue
+ (API 55)
+
+A menu screen takes an item_grid widget (columns by rows of cells) showing
+entries the mod gives: world.set-menu-grid for a block's menu (kept while
+the game runs, sent on open), an item menu's menu-grid. Counts past 999 are
+abbreviated (1.2k), the wheel and a bar scroll it, the hovered cell's
+tooltip gives the item and its whole count. A press on a cell goes to the
+mod's new export menu-grid-click with the entry, button, Shift and the
+cursor stack; its answer sets the cursor and fills the inventory. Search is
+the menu's text box. Example qio-demo.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   1 +
+ .../horizon-client/src/game/menu_screens.rs   |  94 ++++++++-
+ crates/horizon-client/src/game/mods.rs        |   7 +
+ .../horizon-client/src/game/native_hooks.rs   |  12 +-
+ crates/horizon-client/src/game/native_net.rs  |   1 +
+ crates/horizon-client/src/game/server_mods.rs | 110 +++++++++++
+ .../examples/item-menu-demo/src/lib.rs        |   2 +-
+ .../examples/qio-demo/Cargo.toml              |  16 ++
+ .../data/qio/horizon/menu/dashboard.json      |  13 ++
+ .../examples/qio-demo/horizon-mod.toml        |   9 +
+ .../examples/qio-demo/src/lib.rs              |  82 ++++++++
+ .../examples/qio-demo/tests/qio.toml          |  43 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |  29 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  36 +++-
+ crates/horizon-mods/src/api_level.rs          |   5 +-
+ crates/horizon-mods/src/content.rs            |  21 ++
+ crates/horizon-mods/src/runtime.rs            |  39 +++-
+ crates/horizon-mods/src/screen.rs             | 183 ++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 109 ++++++++++-
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    | 181 ++++++++++-------
+ 23 files changed, 918 insertions(+), 87 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/qio-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/qio-demo/data/qio/horizon/menu/dashboard.json
+ create mode 100644 crates/horizon-mod-sdk/examples/qio-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/qio-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 24c777d0b..0bc683349 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3772,6 +3772,13 @@ version = "0.1.30"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+ 
++[[package]]
++name = "qio-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "quick-error"
+ version = "2.0.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index 27672463c..1ed849bc4 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -52,6 +52,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/teleport-probe",
+     "crates/horizon-mod-sdk/examples/energy-items-demo",
+     "crates/horizon-mod-sdk/examples/anvil-probe",
++    "crates/horizon-mod-sdk/examples/qio-demo",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 364de63b4..25fdbfb85 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -300,6 +300,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::BreakBlocks { positions, .. } => format!("break {} block(s)", positions.len()),
+             Output::SetComparator { level, .. } => format!("comparator output {level}"),
++            Output::SetMenuGrid { entries, .. } => format!("menu grid of {} entries", entries.len()),
+             Output::SetItemTransport { setting, .. } => format!("transporter config {setting:?}"),
+             Output::SetRedstone { level, strong, .. } => format!("redstone output {level} (strong {strong})"),
+             Output::SetMenuText { texts, .. } => format!("set {} menu text(s)", texts.len()),
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 9bf888d33..12dc13b24 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -48,6 +48,35 @@ pub(super) fn end_drag() -> Option<i32> {
+ /// screen being drawn.
+ static MENU_TEXT: Mutex<Option<HashMap<[i32; 3], Vec<String>>>> = Mutex::new(None);
+ static SCREEN_AT: Mutex<Option<[i32; 3]>> = Mutex::new(None);
++/// The item grids' entries the server sent, by the position of their menu (API 55).
++static MENU_GRID: Mutex<Option<HashMap<[i32; 3], Vec<horizon_mods::screen::GridEntry>>>> = Mutex::new(None);
++/// A press on a grid cell waiting to go to the server: its entry, button and Shift.
++static GRID_PRESS: Mutex<Option<(u32, u8, bool)>> = Mutex::new(None);
++
++/// A `horizon:menu_grid` message arrived: the item grid of the menu at its position.
++pub(super) fn remember_menu_grid(data: &[u8]) {
++    let Some((pos, entries)) = horizon_mods::screen::decode_menu_grid(data) else {
++        return;
++    };
++    if let Ok(mut m) = MENU_GRID.lock() {
++        let map = m.get_or_insert_with(HashMap::new);
++        if map.len() >= MENU_TEXT_BLOCKS && !map.contains_key(&pos) {
++            map.clear();
++        }
++        map.insert(pos, entries);
++    }
++}
++
++/// The open screen's item grid entries.
++fn menu_grid() -> Vec<horizon_mods::screen::GridEntry> {
++    let Some(at) = SCREEN_AT.lock().ok().and_then(|s| *s) else { return Vec::new() };
++    MENU_GRID.lock().ok().and_then(|m| m.as_ref()?.get(&at).cloned()).unwrap_or_default()
++}
++
++/// The press on a grid cell made since the last call, for the server.
++pub(super) fn take_grid_press() -> Option<(u32, u8, bool)> {
++    GRID_PRESS.lock().ok()?.take()
++}
+ 
+ /// The readings each graph of the open screen keeps (FORK-20 part 4), by the graph's place, with the tick of the last reading.
+ static GRAPHS: Mutex<Option<HashMap<(i32, i32), (u64, horizon_mods::screen::GraphHistory)>>> = Mutex::new(None);
+@@ -358,6 +387,41 @@ impl Game<'_> {
+                         self.native_fill(batch, [ox + (*x + *w) as f32 - 2.0, oy + *y as f32 + at, 2.0, bar_h], 0xFF80_8080);
+                     }
+                 }
++                Widget::ItemGrid { x, y, columns, rows, cell } => {
++                    let entries = menu_grid();
++                    let total = entries.len() as i64;
++                    let top = horizon_mods::screen::grid_top(locals, *columns, *rows, total);
++                    let c = f32::from(*cell);
++                    let (gx, gy) = (ox + *x as f32, oy + *y as f32);
++                    for r in 0..i64::from(*rows) {
++                        for col in 0..i64::from(*columns) {
++                            let cell_rect = [gx + col as f32 * c, gy + r as f32 * c, c, c];
++                            // A slot's frame: dark top left, light bottom right, grey inside.
++                            self.native_fill(batch, cell_rect, 0xFF37_3737);
++                            self.native_fill(batch, [cell_rect[0] + 1.0, cell_rect[1] + 1.0, c - 1.0, c - 1.0], 0xFFFF_FFFF);
++                            self.native_fill(batch, [cell_rect[0] + 1.0, cell_rect[1] + 1.0, c - 2.0, c - 2.0], 0xFF8B_8B8B);
++                            let index = (top + r) * i64::from(*columns) + col;
++                            let Some(e) = entries.get(index as usize) else { continue };
++                            let inset = ((c - 16.0) / 2.0).max(0.0);
++                            self.native_item(batch, &e.item, [cell_rect[0] + inset, cell_rect[1] + inset], c.min(16.0));
++                            let count = horizon_mods::screen::abbreviate(e.count);
++                            let width = count.len() as f32 * 6.0;
++                            self.native_text(batch, &count, [cell_rect[0] + c - width, cell_rect[1] + c - 8.0], 0xFFFF_FFFF, true);
++                            if cursor[0] >= cell_rect[0] && cursor[0] < cell_rect[0] + c && cursor[1] >= cell_rect[1] && cursor[1] < cell_rect[1] + c {
++                                self.native_fill(batch, [cell_rect[0] + 1.0, cell_rect[1] + 1.0, c - 2.0, c - 2.0], 0x80FF_FFFF);
++                            }
++                        }
++                    }
++                    // The bar at its right: the place of the rows shown among all of them.
++                    let lines = (total + i64::from(*columns) - 1) / i64::from(*columns);
++                    let h = f32::from(*rows) * c;
++                    self.native_fill(batch, [gx + f32::from(*columns) * c + 1.0, gy, 4.0, h], 0xFF37_3737);
++                    if lines > i64::from(*rows) {
++                        let bar = (h * f32::from(*rows) / lines as f32).max(6.0);
++                        let at = (h - bar) * top as f32 / (lines - i64::from(*rows)) as f32;
++                        self.native_fill(batch, [gx + f32::from(*columns) * c + 1.0, gy + at, 4.0, bar], 0xFFC6_C6C6);
++                    }
++                }
+                 Widget::TextField { x, y, w, h, id, max_length, text_data, .. } => {
+                     let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
+                     let mut focused = false;
+@@ -556,6 +620,7 @@ impl Game<'_> {
+         let screen = screen_of(block)?;
+         let mut l = LOCALS.lock().ok()?;
+         let mut now = l.take().unwrap_or_default();
++        now.grid_total = menu_grid().len() as i64;
+         // A press on the title edge of an open window, over none of its buttons, takes the window to drag.
+         let grab = open_window(screen, &now).map(|w| {
+             let o = window_origin(w, &now);
+@@ -610,6 +675,13 @@ impl Game<'_> {
+         }
+         match result {
+             Press::Send(id) => Some(id),
++            // A grid cell: its entry goes to the server (`menu-grid-click`) once the press is handled.
++            Press::Grid(index) => {
++                if let Ok(mut g) = GRID_PRESS.lock() {
++                    *g = Some((index, u8::from(alt), self.has_shift_down()));
++                }
++                Some(LOCAL_PRESS)
++            }
+             Press::Local | Press::Field(_) | Press::Row { .. } => Some(LOCAL_PRESS),
+         }
+     }
+@@ -626,6 +698,7 @@ impl Game<'_> {
+             return false;
+         };
+         let mut now = l.take().unwrap_or_default();
++        now.grid_total = menu_grid().len() as i64;
+         let took = scroll_lists(screen, &data, &mut now, at, delta.signum() as i64 * (delta.abs().ceil() as i64).max(1));
+         *l = Some(now);
+         took
+@@ -701,8 +774,23 @@ impl Game<'_> {
+         data: &[i32],
+         at: [f32; 2],
+     ) -> Vec<String> {
+-        screen_of(block)
+-            .and_then(|s| hovered(s, data, &locals(), at))
+-            .unwrap_or_default()
++        let Some(screen) = screen_of(block) else { return Vec::new() };
++        // Over a grid cell: the item and its whole count.
++        let mut l = locals();
++        let entries = menu_grid();
++        l.grid_total = entries.len() as i64;
++        for w in showing(&screen.widgets, data, &l) {
++            if let Widget::ItemGrid { x, y, columns, rows, cell } = w {
++                let c = f32::from(*cell);
++                let (col, row) = ((at[0] - *x as f32) / c, (at[1] - *y as f32) / c);
++                if col >= 0.0 && row >= 0.0 && col < f32::from(*columns) && row < f32::from(*rows) {
++                    let index = (horizon_mods::screen::grid_top(&l, *columns, *rows, l.grid_total) + row as i64) * i64::from(*columns) + col as i64;
++                    if let Some(e) = entries.get(index as usize) {
++                        return vec![self.pack.names.display_item(&e.item), format!("{}", e.count)];
++                    }
++                }
++            }
++        }
++        hovered(screen, data, &l, at).unwrap_or_default()
+     }
+ }
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index bbb93ef5c..e32638c14 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -115,6 +115,12 @@ pub(super) struct ModsState {
+     /// The item menus open (round 4, item 2), one at most a player.
+     #[cfg(feature = "mods")]
+     pub(super) item_menus: Vec<OpenItemMenu>,
++    /// The last item grid each block's menu showed (`world.set-menu-grid`), for a player who opens it; not saved.
++    #[cfg(feature = "mods")]
++    pub(super) menu_grids: std::collections::HashMap<[i32; 3], Vec<horizon_mods::screen::GridEntry>>,
++    /// Grid presses the mods answered this tick, for the players' cursors and inventories: the player and the answer.
++    #[cfg(feature = "mods")]
++    pub(super) grid_answers: Vec<(u128, horizon_mods::GridAnswer)>,
+     /// Every block state's collision boxes, by state id, for capability
+     /// `world`'s `get-collision`; made on the first lend.
+     #[cfg(feature = "mods")]
+@@ -950,6 +956,7 @@ impl Game<'_> {
+                 | Output::SetComparator { .. }
+                 | Output::SetRedstone { .. }
+                 | Output::SetItemTransport { .. }
++                | Output::SetMenuGrid { .. }
+                 | Output::BreakBlocks { .. }
+                 | Output::SpawnParticles { .. }
+                 | Output::SetTankFilter { .. }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index dc513c414..78577b03c 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4119,7 +4119,10 @@ impl Game<'_> {
+             m.items.resize(slots, None);
+         }
+         #[cfg(feature = "mods")]
+-        self.send_menu_text_to_actor(key);
++        {
++            self.send_menu_text_to_actor(key);
++            self.send_menu_grid_to_actor(key);
++        }
+         true
+     }
+     /// Why the mod block at `key` has no menu to open, for the message the
+@@ -4513,6 +4516,13 @@ impl Game<'_> {
+         let Some(button) = button else {
+             return false;
+         };
++        // A press on an item grid cell (API 55): its entry goes to the server's mod.
++        if let Some((index, button, shift)) = super::menu_screens::take_grid_press() {
++            let _ = self.native_net_send_to_server(
++                horizon_mods::screen::GRID_CLICK_CHANNEL,
++                &horizon_mods::screen::encode_grid_click(index, button, shift),
++            );
++        }
+         // A press that stays on this client (a window opening, a tab chosen) is not a menu button.
+         if button == super::menu_screens::LOCAL_PRESS {
+             self.audio.play_button_click();
+diff --git a/crates/horizon-client/src/game/native_net.rs b/crates/horizon-client/src/game/native_net.rs
+index 69eb489a4..d5273ab1a 100644
+--- a/crates/horizon-client/src/game/native_net.rs
++++ b/crates/horizon-client/src/game/native_net.rs
+@@ -100,6 +100,7 @@ impl Game<'_> {
+         match mod_net::decode(data) {
+             Ok(m) if m.channel == horizon_mods::screen::MENU_TEXT_CHANNEL => super::menu_screens::remember_menu_text(&m.data),
+             Ok(m) if m.channel == horizon_mods::screen::HUD_CHANNEL => super::mod_hud::remember_hud_line(&m.data),
++            Ok(m) if m.channel == horizon_mods::screen::MENU_GRID_CHANNEL => super::menu_screens::remember_menu_grid(&m.data),
+             Ok(m) if m.channel == horizon_mods::screen::RADIAL_CHANNEL => self.open_mod_radial(&m.data),
+             Ok(m) => self.native_net_from_server(&m.channel, &m.data),
+             Err(e) => log::debug!("Horizon: a bad mod message: {e}"),
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 7dbe6b69e..137c54d3c 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -41,6 +41,15 @@ pub(super) enum ModEvent {
+         channel: String,
+         data: Vec<u8>,
+     },
++    /// A player pressed entry `index` of the item grid of their open mod menu (`target`).
++    #[cfg(feature = "mods")]
++    GridClick {
++        who: Who,
++        target: horizon_mods::GridTarget,
++        index: u32,
++        button: u8,
++        shift: bool,
++    },
+     /// A player pressed a content mod's key (`<mod>:<name>`).
+     Key {
+         who: Who,
+@@ -631,6 +640,17 @@ mod run {
+                             self.mods.mods.net_message(&p, &channel, &data);
+                         }
+                     }
++                    ModEvent::GridClick { who: w, target, index, button, shift } => {
++                        let Some(p) = who(&w) else { continue };
++                        let Who::Uuid(uuid) = w else { continue };
++                        let carried = self
++                            .lan
++                            .as_ref()
++                            .and_then(|h| h.hub.guests.iter().find(|g| g.uuid == uuid)?.carried.as_ref().map(Self::mod_stack));
++                        if let Some(a) = self.mods.mods.menu_grid_click(&p, &target, index, button, shift, carried.as_ref()) {
++                            self.mods.grid_answers.push((uuid, a));
++                        }
++                    }
+                     ModEvent::Key { who: w, key } => {
+                         if let Some(p) = who(&w) {
+                             let used = self.mods.mods.key_pressed(&p, &key);
+@@ -695,6 +715,7 @@ mod run {
+             self.lend_world();
+             self.tick_item_menus();
+             self.return_world();
++            self.apply_grid_answers();
+             self.mirror_mod_entity_menus();
+             self.walk_mod_entities();
+             self.mod_entity_hazards();
+@@ -1407,6 +1428,61 @@ mod run {
+             self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
+             true
+         }
++        /// A mod's `world.set-menu-grid`: kept for the block while the game runs, and sent to the players with its menu open.
++        pub(in crate::game) fn native_set_menu_grid(&mut self, pos: [i32; 3], entries: Vec<horizon_mods::screen::GridEntry>) {
++            let key = (pos[0], pos[1], pos[2]);
++            if !matches!(self.world.block_entities.get(&key), Some(horizon_client_render::containers::BlockEntity::Mod(_))) {
++                return;
++            }
++            let viewers: Vec<u128> = self
++                .lan
++                .as_ref()
++                .map(|h| h.hub.guests.iter().filter(|g| g.menu.as_ref().is_some_and(|m| m.pos == Some(key))).map(|g| g.uuid).collect())
++                .unwrap_or_default();
++            let bytes = horizon_mods::screen::encode_menu_grid(pos, &entries);
++            for uuid in viewers {
++                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++            }
++            self.mods.menu_grids.insert(pos, entries);
++        }
++
++        /// The last grid of the block at `key`'s menu, to the acting player: its menu just opened.
++        pub(in crate::game) fn send_menu_grid_to_actor(&mut self, key: (i32, i32, i32)) {
++            let pos = [key.0, key.1, key.2];
++            let Some(entries) = self.mods.menu_grids.get(&pos) else {
++                return;
++            };
++            let bytes = horizon_mods::screen::encode_menu_grid(pos, entries);
++            let ints = self.acting_player_uuid();
++            let uuid = ints.iter().fold(0u128, |acc, i| (acc << 32) | u128::from(*i as u32));
++            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++        }
++
++        /// The grid presses the mods answered (`menu-grid-click`): each player's cursor becomes the answer's, and its stacks for
++        /// the inventory go in (what does not fit falls).
++        fn apply_grid_answers(&mut self) {
++            let answers = std::mem::take(&mut self.mods.grid_answers);
++            if answers.is_empty() {
++                return;
++            }
++            let Some(mut host) = self.lan.take() else {
++                return;
++            };
++            for (uuid, a) in answers {
++                let Some(gi) = host.hub.guests.iter().position(|g| g.uuid == uuid) else { continue };
++                let carried = a.carried.as_ref().and_then(|s| self.game_stack(s));
++                let net = host.hub.stack(&carried);
++                host.hub.guests[gi].carried = carried;
++                host.hub.guests[gi].send(&C::SetCursorItem(play::SetCursorItem { item: net }));
++                let stacks: Vec<horizon_client::items::ItemStack> = a.to_inventory.iter().filter_map(|s| self.game_stack(s)).collect();
++                if !stacks.is_empty() {
++                    self.lan_place_back(&mut host, gi, stacks);
++                    host.hub.send_inventory(gi);
++                }
++            }
++            self.lan = Some(host);
++        }
++
+         /// A mod's Transporter Config change: kept in the entity (`eject_color`, `strict_input`, `transmitter_color`).
+         pub(in crate::game) fn native_set_item_transport(&mut self, pos: [i32; 3], setting: horizon_mods::TransportSetting) {
+             use horizon_mods::TransportSetting as T;
+@@ -2843,6 +2919,12 @@ mod run {
+                 let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, t);
+                 let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+             }
++            if let Some(g) = &u.menu_grid {
++                let entries: Vec<horizon_mods::screen::GridEntry> =
++                    g.iter().map(|e| horizon_mods::screen::GridEntry { item: e.item.clone(), components: e.components.clone(), count: e.count }).collect();
++                let bytes = horizon_mods::screen::encode_menu_grid(ENTITY_MENU_TEXT_AT, &entries);
++                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++            }
+             if u.close {
+                 self.mods.item_menus[i].closing = true;
+             }
+@@ -3154,6 +3236,27 @@ mod run {
+             if !self.hears_players() {
+                 return;
+             }
++            // A press on an item grid cell (API 55): the player's open menu, an item menu's or a block's, names the target.
++            if channel == horizon_mods::screen::GRID_CLICK_CHANNEL {
++                let Some((index, button, shift)) = horizon_mods::screen::decode_grid_click(data) else { return };
++                let key = self.lan.as_ref().and_then(|h| h.hub.guests.iter().find(|g| g.uuid == player)?.menu.as_ref()?.pos);
++                let Some(key) = key else { return };
++                let dimension = self.dim.id().to_owned();
++                let target = if key.0 == i32::MAX - 17 && key.1 == crate::game::minecarts::CART_KEY_Y {
++                    let Some(m) = self.mods.item_menus.iter().find(|m| m.conn as i32 == key.2) else { return };
++                    horizon_mods::GridTarget { menu: m.menu.clone(), dimension, pos: None, slot: Some(m.slot) }
++                } else {
++                    let Some(menu) = self.mod_menu_at(key) else { return };
++                    horizon_mods::GridTarget {
++                        menu: menu.to_owned(),
++                        dimension,
++                        pos: Some(horizon_mods::BlockPos { x: key.0, y: key.1, z: key.2 }),
++                        slot: None,
++                    }
++                };
++                self.mods.events.push(ModEvent::GridClick { who: Who::Uuid(player), target, index, button, shift });
++                return;
++            }
+             // A press of a content mod's key: its id, one the content declares, reaches the mod's `key-pressed`.
+             if channel == horizon_mods::screen::KEY_CHANNEL {
+                 let Ok(key) = std::str::from_utf8(data) else { return };
+@@ -3651,6 +3754,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} pulled items in another level");
+                     }
+                 }
++                Output::SetMenuGrid { name, dimension, pos, entries } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_menu_grid(pos, entries);
++                    } else {
++                        log::debug!("Horizon: mod {name} set a menu grid in another level");
++                    }
++                }
+                 Output::SetItemTransport { name, dimension, pos, setting } => {
+                     if dimension == self.dim.id() {
+                         self.native_set_item_transport(pos, setting);
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+index 46b3a71c8..74e3123fe 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+@@ -9,7 +9,7 @@ struct Demo {
+ }
+ 
+ fn update() -> ItemMenuUpdate {
+-    ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: false }
++    ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: false, menu_grid: None }
+ }
+ 
+ impl ServerMod for Demo {
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/qio-demo/Cargo.toml
+new file mode 100644
+index 000000000..5fba44458
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/qio-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "qio-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: an item grid (QIO Dashboard)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/data/qio/horizon/menu/dashboard.json b/crates/horizon-mod-sdk/examples/qio-demo/data/qio/horizon/menu/dashboard.json
+new file mode 100644
+index 000000000..1ace0be43
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/qio-demo/data/qio/horizon/menu/dashboard.json
+@@ -0,0 +1,13 @@
++{
++  "slots": 0,
++  "screen": {
++    "width": 176,
++    "height": 200,
++    "inventory_y": 118,
++    "slots": [],
++    "widgets": [
++      {"type": "textfield", "x": 8, "y": 6, "w": 120, "h": 12, "id": 1, "max_length": 32},
++      {"type": "item_grid", "x": 7, "y": 22, "columns": 8, "rows": 5}
++    ]
++  }
++}
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/qio-demo/horizon-mod.toml
+new file mode 100644
+index 000000000..4ac4f520d
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/qio-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "qio"
++name = "QIO Grid Demo"
++version = "0.1.0"
++description = "Test mod for the item grid (API 55): a QIO-like catalogue shown in a scrolling grid, searched, sorted, taken from and stored into."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["registries", "players", "world", "net"]
++experimental = ["net"]
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/qio-demo/src/lib.rs
+new file mode 100644
+index 000000000..18d955256
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/qio-demo/src/lib.rs
+@@ -0,0 +1,82 @@
++//! QIO Grid Demo (API 55, the item grid of Mekanism's QIO Dashboard): a catalogue of item counts past a stack's size, shown in the
++//! `item_grid` of `qio:dashboard` (a player menu, as the Portable QIO Dashboard's), largest first, filtered by the search box. A press
++//! takes from it (left a stack, right half of one, Shift-left a stack into the inventory) or, with a stack on the cursor, stores it.
++//! A message on `qio:open` opens it; on `qio:block` the grid of the block menu at 1 77 1 is set (a block's dashboard).
++use horizon_mod_sdk::server::{
++    GridAnswer, GridTarget, ItemMenu, ItemMenuUpdate, ItemStack, Player, Registration, ServerMod, menu_input, players, world,
++};
++use std::collections::BTreeMap;
++
++const STACK: u64 = 64;
++
++struct Qio {
++    catalogue: BTreeMap<String, u64>,
++    search: String,
++    /// The items in the order the grid shows them now: a press's index is a place in it.
++    shown: Vec<String>,
++}
++
++impl Qio {
++    /// The catalogue's items matching the search, largest count first (then by id).
++    fn listed(&self) -> Vec<(String, u64)> {
++        let mut v: Vec<(String, u64)> =
++            self.catalogue.iter().filter(|(id, n)| **n > 0 && id.contains(&self.search)).map(|(id, n)| (id.clone(), *n)).collect();
++        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
++        v
++    }
++    fn entries(&mut self) -> Vec<horizon_mod_sdk::server::GridEntry> {
++        let listed = self.listed();
++        self.shown = listed.iter().map(|(id, _)| id.clone()).collect();
++        listed.into_iter().map(|(item, count)| horizon_mod_sdk::server::GridEntry { item, components: String::new(), count }).collect()
++    }
++}
++
++impl ServerMod for Qio {
++    fn init() -> Result<(Self, Registration), String> {
++        let catalogue = [("minecraft:stone", 12_345u64), ("minecraft:dirt", 64), ("minecraft:diamond", 3), ("minecraft:cobblestone", 1_500_000)]
++            .into_iter()
++            .map(|(id, n)| (id.to_owned(), n))
++            .collect();
++        Ok((Qio { catalogue, search: String::new(), shown: Vec::new() }, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        match channel {
++            "qio:open" => {
++                let _ = players::open_player_menu(&player.id, "qio:dashboard");
++            }
++            "qio:block" => {
++                let entries = self.entries();
++                let _ = world::set_menu_grid(&player.dimension, 1, 77, 1, &entries);
++            }
++            // The search box: its text filters the list.
++            "qio:menu_text" => {
++                if let Some(input) = menu_input::decode(data) {
++                    self.search = input.text;
++                }
++            }
++            _ => {}
++        }
++    }
++    fn item_menu_tick(&mut self, _player: &Player, _menu: ItemMenu) -> Option<ItemMenuUpdate> {
++        Some(ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: false, menu_grid: Some(self.entries()) })
++    }
++    fn menu_grid_click(&mut self, _player: &Player, _target: GridTarget, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<GridAnswer> {
++        // A stack on the cursor goes into the catalogue.
++        if let Some(c) = carried {
++            *self.catalogue.entry(c.item).or_default() += u64::from(c.count);
++            return Some(GridAnswer { carried: None, to_inventory: Vec::new() });
++        }
++        let item = self.shown.get(index as usize)?.clone();
++        let have = self.catalogue.get(&item).copied().unwrap_or(0);
++        let want = if button == 1 { STACK / 2 } else { STACK };
++        let n = want.min(have);
++        if n == 0 {
++            return None;
++        }
++        self.catalogue.insert(item.clone(), have - n);
++        let stack = ItemStack { item, count: n as u32, components: String::new() };
++        Some(if shift { GridAnswer { carried: None, to_inventory: vec![stack] } } else { GridAnswer { carried: Some(stack), to_inventory: Vec::new() } })
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Qio);
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml b/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
+new file mode 100644
+index 000000000..30c6027c0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
+@@ -0,0 +1,43 @@
++[[step]]
++join = "Alex"
++net = { channel = "qio:open" }
++expect.item-menu-open = ["Alex 4294967295 qio:dashboard"]
++
++[[step]]
++# A tick: the grid shows the catalogue, largest first (counts past a stack's size).
++ticks = 1
++expect.item-menu-grid = ["minecraft:cobblestone*1500000", "minecraft:stone*12345", "minecraft:dirt*64", "minecraft:diamond*3"]
++
++[[step]]
++# Left on entry 1 (the stone): a stack on the cursor.
++grid-click = { index = 1 }
++expect.carried = "minecraft:stone*64"
++
++[[step]]
++# With a stack on the cursor, a press stores it, whatever the cell.
++grid-click = { index = 3 }
++expect.carried = "-"
++
++[[step]]
++# Right on the dirt: half a stack; Shift-left on the diamonds: all 3 into the inventory.
++grid-click = { index = 2, button = 1 }
++expect.carried = "minecraft:dirt*32"
++
++[[step]]
++carried = "-"
++grid-click = { index = 3, shift = true }
++expect.carried = "-"
++expect.to-inventory = ["minecraft:diamond*3"]
++
++[[step]]
++# The search box (`qio:menu_text`, position (i32::MIN, 1, -1), box 1, "stone") filters it: cobblestone and stone.
++net = { channel = "qio:menu_text", data = [0, 0, 0, 128, 1, 0, 0, 0, 255, 255, 255, 255, 1, 0, 0, 0, 115, 116, 111, 110, 101] }
++
++[[step]]
++ticks = 1
++expect.item-menu-grid = ["minecraft:cobblestone*1500000", "minecraft:stone*12345"]
++
++[[step]]
++# A block's menu grid (`world.set-menu-grid`).
++net = { channel = "qio:block" }
++expect.menu-grid = ["minecraft:overworld 1 77 1 2: minecraft:cobblestone*1500000, minecraft:stone*12345"]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index e716e6acf..3db58afc2 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -235,7 +235,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, GridAnswer, GridEntry, GridTarget, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -320,6 +320,19 @@ pub mod server {
+         }
+         /// One of the mod's own entities died of damage. When [`Registration::on_mod_entities`] is set.
+         fn mod_entity_died(&mut self, _entity: ModEntity) {}
++        /// A player pressed entry `index` of the item grid of one of the mod's menus (`target`), holding `carried`: the cursor's
++        /// stack after and stacks for their inventory; none leaves the cursor.
++        fn menu_grid_click(
++            &mut self,
++            _player: &Player,
++            _target: GridTarget,
++            _index: u32,
++            _button: u8,
++            _shift: bool,
++            _carried: Option<ItemStack>,
++        ) -> Option<GridAnswer> {
++            None
++        }
+         /// A player pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id) while playing: true when the
+         /// mod used the press.
+         fn key_pressed(&mut self, _player: &Player, _key: &str) -> bool {
+@@ -681,7 +694,7 @@ macro_rules! export_server_mod {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+                 Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, DamageSource, Player, Registration,
+-                ItemMenu, ItemMenuUpdate, ItemStack, ModEntity, ModEntityUpdate, ServerMod, Structure,
++                GridAnswer, GridTarget, ItemMenu, ItemMenuUpdate, ItemStack, ModEntity, ModEntityUpdate, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+                 static STATE: RefCell<Option<$t>> = const { RefCell::new(None) };
+@@ -765,6 +778,18 @@ macro_rules! export_server_mod {
+                 fn mod_entity_died(entity: ModEntity) {
+                     with(|m| m.mod_entity_died(entity));
+                 }
++                fn menu_grid_click(
++                    player: Player,
++                    target: GridTarget,
++                    index: u32,
++                    button: u8,
++                    shift: bool,
++                    carried: Option<ItemStack>,
++                ) -> Option<GridAnswer> {
++                    let mut out = None;
++                    with(|m| out = m.menu_grid_click(&player, target, index, button, shift, carried));
++                    out
++                }
+                 fn key_pressed(player: Player, key: String) -> bool {
+                     let mut out = false;
+                     with(|m| out = m.key_pressed(&player, &key));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index a8f6a16f2..4708e8fe0 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -726,6 +726,7 @@ interface players {
+ /// experimental): the blocks of the server's loaded chunks, and changes to
+ /// them through the server's own block updates.
+ interface %world {
++    use item-types.{grid-entry};
+     record block-change {
+         x: s32,
+         y: s32,
+@@ -832,6 +833,11 @@ interface %world {
+     /// `"redstone_emitter": true` and that has a block entity gives it; it is kept with the block entity (saved), and the blocks around
+     /// are updated when it changes. Made after the call; an error past 256 a call. API 50.
+     set-redstone-output: func(dimension: string, x: s32, y: s32, z: s32, level: u8, strong: bool) -> result<_, string>;
++    /// Sets the entries the `item_grid` widget of the menu of the block entity at the position shows (up to 4096, the rest left out),
++    /// in the order the mod gives them (its sort and its search filter, read from the menu's `textfield`): to the players with that menu
++    /// open now, and kept while the game runs (not saved) for a player who opens it later. Made after the call; an error past 8 a
++    /// call. API 55.
++    set-menu-grid: func(dimension: string, x: s32, y: s32, z: s32, entries: list<grid-entry>) -> result<_, string>;
+     /// Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept
+     /// with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them
+     /// when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block
+@@ -1331,6 +1337,13 @@ interface item-types {
+         count: u32,
+         components: string,
+     }
++    /// One entry of a menu's item grid (an `item_grid` widget, Mekanism's QIO catalogue): an item type and how many, past a stack's
++    /// size (up to 2^64).
++    record grid-entry {
++        item: string,
++        components: string,
++        count: u64,
++    }
+ }
+ 
+ /// Capability `chunks`, server mods only (manifest `api = "0.3"`,
+@@ -1386,7 +1399,7 @@ interface player-items {
+ /// in each event is as the server saw them when it happened.
+ interface server-events {
+     use players.{player};
+-    use item-types.{item-stack};
++    use item-types.{item-stack, grid-entry};
+ 
+     /// What hurts a player (`player-damaged`): the damage type and what the
+     /// game knows of it.
+@@ -1717,6 +1730,22 @@ interface server-events {
+         menu-text: option<list<string>>,
+         /// Closes it (its slots' items go back to the player).
+         close: bool,
++        /// What its `item_grid` shows (up to 4096 entries), API 55; none leaves it.
++        menu-grid: option<list<grid-entry>>,
++    }
++    /// The menu whose item grid a player pressed (`menu-grid-click`): its type and, for a block's, where the block is; for an item
++    /// menu, the player's slot it is over (4294967295 for `open-player-menu`'s).
++    record grid-target {
++        menu: string,
++        dimension: string,
++        pos: option<block-pos>,
++        slot: option<u32>,
++    }
++    /// What a press on a grid cell does to the player's stacks: the cursor's stack after it, and stacks to put in the player's
++    /// inventory (what does not fit falls at their feet), as a shift-click's.
++    record grid-answer {
++        carried: option<item-stack>,
++        to-inventory: list<item-stack>,
+     }
+     /// What the mod makes of an entity in a tick; a none leaves that as it is.
+     record mod-entity-update {
+@@ -1825,6 +1854,11 @@ interface server-events {
+     /// `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with
+     /// no screen open, as the player bound it in Controls. True when the mod used the press. API 53.
+     key-pressed: func(player: player, key: string) -> bool;
++    /// `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`): `button` 0 left, 1 right,
++    /// 2 middle, `shift` with Shift held, `carried` the stack on their cursor now. The mod takes from its catalogue or puts the cursor's
++    /// stack in and answers the cursor's stack after (Mekanism's QIO Dashboard: left takes a stack, right half of one, shift into the
++    /// inventory, a carried stack is stored); none leaves the cursor as it was. API 55.
++    menu-grid-click: func(player: player, target: grid-target, index: u32, button: u8, shift: bool, carried: option<item-stack>) -> option<grid-answer>;
+     /// Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48.
+     item-menu-tick: func(player: player, menu: item-menu) -> option<item-menu-update>;
+     /// `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index c18006775..c46c0ae66 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 54;
++pub const LEVEL: u32 = 55;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 136] = [
++pub const FUNCTIONS: [(&str, u32); 137] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -105,6 +105,7 @@ pub const FUNCTIONS: [(&str, u32); 136] = [
+     ("world.set-item-eject-color", 54),
+     ("world.set-item-strict-input", 54),
+     ("world.set-transmitter-color", 54),
++    ("world.set-menu-grid", 55),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index b4b43fa38..4f4bdb457 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -820,6 +820,18 @@ pub enum Widget {
+         #[serde(default)]
+         tooltip: Option<String>,
+     },
++    /// A grid of item cells (Mekanism's QIO Dashboard catalogue): `columns` by `rows` cells of `cell` pixels from `x`, `y`, showing the
++    /// entries its mod gives (`world.set-menu-grid`, an item menu's `menu-grid`: item, components, count up to 2^64) from the scroll
++    /// down, the count abbreviated over 999 (`1.2k`); the wheel and the bar at its right scroll it by rows, and a press on a cell
++    /// goes to the mod (`menu-grid-click`). One a screen.
++    ItemGrid {
++        x: i32,
++        y: i32,
++        columns: u16,
++        rows: u16,
++        #[serde(default = "default_cell")]
++        cell: u16,
++    },
+     #[serde(rename = "textfield")]
+     TextField {
+         x: i32,
+@@ -845,6 +857,9 @@ pub struct GraphSeries {
+     pub color: String,
+ }
+ 
++fn default_cell() -> u16 {
++    18
++}
+ fn default_samples() -> u16 {
+     40
+ }
+@@ -1125,6 +1140,12 @@ fn check_widget(
+                 return Err(format!("{name}: a neighbour's side is 0 to 5"));
+             }
+         }
++        Widget::ItemGrid { x, y, columns, rows, cell } => {
++            if !(1..=16).contains(columns) || !(1..=16).contains(rows) || !(8..=32).contains(cell) {
++                return Err(format!("{name}: an item grid has 1 to 16 columns and rows of 8 to 32 pixels"));
++            }
++            rect(*x, *y, i32::from(*columns) * i32::from(*cell) + 6, i32::from(*rows) * i32::from(*cell))?;
++        }
+         Widget::Graph { x, y, w, h, series, samples, min_scale, tooltip } => {
+             rect(*x, *y, *w, *h)?;
+             if series.is_empty() || series.len() > 8 {
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 7533ac620..c8b3dda89 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, GridAnswer, GridEntry as ModGridEntry, GridTarget, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::{EffectState, Motion, PlayerState},
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -482,6 +482,8 @@ pub enum Output {
+     BreakBlocks { name: String, dimension: String, positions: Vec<[i32; 3]>, tool: String, silk_touch: bool, fortune: u32 },
+     /// `players.open-entity-menu`: the container of a mod entity, opened as a chest for a player.
+     EntityMenu { name: String, mod_id: String, player: String, dimension: String, id: u32 },
++    /// `world.set-menu-grid`: the entries of the item grid of a block entity's menu, for the players with it open.
++    SetMenuGrid { name: String, dimension: String, pos: [i32; 3], entries: Vec<crate::screen::GridEntry> },
+     /// `world.set-redstone-output`: the signal a mod block gives (round 4, item 4).
+     SetRedstone { name: String, dimension: String, pos: [i32; 3], level: u8, strong: bool },
+     /// `players.open-item-menu`: a menu type of the mod opened over a player's slot (round 4, item 2).
+@@ -1781,6 +1783,26 @@ impl Mods {
+         let (ns, _) = menu.split_once(':')?;
+         self.entries.iter().position(|e| e.run.as_ref().is_some_and(|r| r.hooks.server().is_some()) && e.manifest.as_ref().is_some_and(|m| m.id == ns))
+     }
++    /// `player` pressed entry `index` of the item grid of `target` (a menu of a mod's), holding `carried`: what the mod that owns the
++    /// menu type makes of the cursor and the player's inventory.
++    pub fn menu_grid_click(
++        &mut self,
++        player: &ServerPlayer,
++        target: &GridTarget,
++        index: u32,
++        button: u8,
++        shift: bool,
++        carried: Option<&ModItemStack>,
++    ) -> Option<GridAnswer> {
++        let i = self.menu_owner(&target.menu)?;
++        let a = self
++            .call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_menu_grid_click(&mut run.store, player, target, index, button, shift, carried),
++                Hooks::Client(..) => Ok(None),
++            })
++            .flatten()?;
++        (a.to_inventory.len() <= 64).then_some(a)
++    }
+     /// `player` pressed key `key` (`<mod>:<name>`, a content key mapping): whether the mod that owns it used the press.
+     pub fn key_pressed(&mut self, player: &ServerPlayer, key: &str) -> bool {
+         let Some(i) = self.menu_owner(key) else { return false };
+@@ -2586,7 +2608,8 @@ pub const NO_SLOT: u32 = u32::MAX;
+ 
+ /// Whether a mod's update of an item menu is in bounds: 256 slots, 256 data slots and the menu strings' limits.
+ pub fn item_menu_update_ok(u: &ItemMenuUpdate) -> bool {
+-    u.items.as_ref().is_none_or(|s| s.len() <= 256)
++    u.menu_grid.as_ref().is_none_or(|g| g.len() <= crate::screen::GRID_ENTRIES)
++        && u.items.as_ref().is_none_or(|s| s.len() <= 256)
+         && u.menu_data.as_ref().is_none_or(|d| d.len() <= 256)
+         && u.menu_text.as_ref().is_none_or(|t| {
+             t.len() <= crate::content::MENU_TEXTS && t.iter().all(|s| s.len() <= crate::content::MENU_TEXT_BYTES)
+@@ -2936,6 +2959,18 @@ impl mod_world::Host for State {
+         self.out.push(Output::SetComparator { name: self.name.clone(), dimension, pos: [x, y, z], level: level.min(15) });
+         Ok(())
+     }
++    fn set_menu_grid(&mut self, dimension: String, x: i32, y: i32, z: i32, entries: Vec<ModGridEntry>) -> Result<(), String> {
++        if self.out.iter().filter(|o| matches!(o, Output::SetMenuGrid { .. })).count() >= 8 {
++            return Err("at most 8 menu grids a call".into());
++        }
++        let entries = entries
++            .into_iter()
++            .take(crate::screen::GRID_ENTRIES)
++            .map(|e| crate::screen::GridEntry { item: e.item, components: e.components, count: e.count })
++            .collect();
++        self.out.push(Output::SetMenuGrid { name: self.name.clone(), dimension, pos: [x, y, z], entries });
++        Ok(())
++    }
+     fn set_redstone_output(&mut self, dimension: String, x: i32, y: i32, z: i32, level: u8, strong: bool) -> Result<(), String> {
+         let made = self.out.iter().filter(|o| matches!(o, Output::SetRedstone { .. })).count();
+         if made >= BLOCKS_PER_CALL {
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index 767e98d4b..f6dd9bab0 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -23,6 +23,113 @@ pub struct Locals {
+     pub vars: BTreeMap<String, i64>,
+     /// How far the open window was dragged from where the screen puts it.
+     pub offset: [f32; 2],
++    /// How many entries the screen's item grid has now (the client sets it from what the server sent).
++    pub grid_total: i64,
++}
++
++/// The variable an item grid keeps its scroll (in rows) in.
++pub const GRID_SCROLL: &str = "@grid";
++
++/// The first row an item grid of `columns` by `rows` shows of `total` entries, from the locals.
++pub fn grid_top(locals: &Locals, columns: u16, rows: u16, total: i64) -> i64 {
++    let lines = (total + i64::from(columns) - 1) / i64::from(columns.max(1));
++    locals.var(GRID_SCROLL).clamp(0, (lines - i64::from(rows)).max(0))
++}
++
++/// A count as a grid cell shows it: as it is to 999, then `1.2k`, `12k`, `123k`, `1.2M`... (one decimal under 10, none over).
++pub fn abbreviate(count: u64) -> String {
++    if count < 1000 {
++        return count.to_string();
++    }
++    const UNITS: [&str; 6] = ["k", "M", "G", "T", "P", "E"];
++    let mut value = count as f64;
++    let mut unit = 0;
++    value /= 1000.0;
++    while value >= 1000.0 && unit + 1 < UNITS.len() {
++        value /= 1000.0;
++        unit += 1;
++    }
++    if value < 10.0 {
++        let tenths = (value * 10.0).floor() / 10.0;
++        format!("{tenths:.1}{}", UNITS[unit]).replace(".0", "")
++    } else {
++        format!("{}{}", value.floor() as u64, UNITS[unit])
++    }
++}
++
++/// One entry of an item grid: the item, its components (SNBT) and how many.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct GridEntry {
++    pub item: String,
++    pub components: String,
++    pub count: u64,
++}
++
++/// The most entries a grid shows.
++pub const GRID_ENTRIES: usize = 4096;
++
++/// The channel a menu's grid entries travel on, host to client.
++pub const MENU_GRID_CHANNEL: &str = "horizon:menu_grid";
++/// The channel a press on a grid cell travels on, client to host.
++pub const GRID_CLICK_CHANNEL: &str = "horizon:grid_click";
++
++/// A menu's grid as the channel carries it: the position (as `encode_menu_text`), the count, then each entry as its item and
++/// components (two-byte lengths) and its count (eight bytes), little-endian.
++pub fn encode_menu_grid(pos: [i32; 3], entries: &[GridEntry]) -> Vec<u8> {
++    let mut out = Vec::new();
++    for v in pos {
++        out.extend(v.to_le_bytes());
++    }
++    let entries = &entries[..entries.len().min(GRID_ENTRIES)];
++    out.extend((entries.len() as u32).to_le_bytes());
++    for e in entries {
++        for text in [&e.item, &e.components] {
++            let bytes = &text.as_bytes()[..text.len().min(u16::MAX as usize)];
++            out.extend((bytes.len() as u16).to_le_bytes());
++            out.extend(bytes);
++        }
++        out.extend(e.count.to_le_bytes());
++    }
++    out
++}
++
++/// The position and entries of [`encode_menu_grid`].
++pub fn decode_menu_grid(data: &[u8]) -> Option<([i32; 3], Vec<GridEntry>)> {
++    let mut at = 0usize;
++    let mut take = |n: usize| {
++        let s = data.get(at..at + n)?;
++        at += n;
++        Some(s)
++    };
++    let int = |b: &[u8]| i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
++    let pos = [int(take(4)?), int(take(4)?), int(take(4)?)];
++    let count = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
++    let mut out = Vec::with_capacity(count.min(GRID_ENTRIES));
++    for _ in 0..count.min(GRID_ENTRIES) {
++        let mut text = || -> Option<String> {
++            let len = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
++            String::from_utf8(take(len)?.to_vec()).ok()
++        };
++        let item = text()?;
++        let components = text()?;
++        let count = u64::from_le_bytes(take(8)?.try_into().ok()?);
++        out.push(GridEntry { item, components, count });
++    }
++    Some((pos, out))
++}
++
++/// A press on a grid cell as the channel carries it: the entry's index (four bytes), the button (0 left, 1 right, 2 middle) and
++/// whether Shift was held.
++pub fn encode_grid_click(index: u32, button: u8, shift: bool) -> Vec<u8> {
++    let mut out = index.to_le_bytes().to_vec();
++    out.push(button);
++    out.push(u8::from(shift));
++    out
++}
++
++/// The index, button and Shift of [`encode_grid_click`].
++pub fn decode_grid_click(data: &[u8]) -> Option<(u32, u8, bool)> {
++    (data.len() == 6).then(|| (u32::from_le_bytes([data[0], data[1], data[2], data[3]]), data[4].min(2), data[5] != 0))
+ }
+ 
+ /// The variable a list that starts at string `first` keeps its scroll in.
+@@ -113,6 +220,8 @@ pub enum Press {
+     Row { button: i32, first: u16 },
+     /// Menu button `id`, for the server.
+     Send(i32),
++    /// Entry `index` of the item grid (its place in the mod's list, the scroll counted), for the server.
++    Grid(u32),
+     /// Something here: a local action, or a press a window took.
+     Local,
+ }
+@@ -141,6 +250,28 @@ fn press_in(
+     }) {
+         return Some(row);
+     }
++    // The item grid: a cell is its entry; the bar at its right moves the scroll to where it is pressed.
++    let grid = showing(widgets, data, locals).into_iter().find_map(|w| match w {
++        Widget::ItemGrid { x, y, columns, rows, cell } => Some((*x, *y, *columns, *rows, *cell)),
++        _ => None,
++    });
++    if let Some((x, y, columns, rows, cell)) = grid {
++        let (c, r) = (i32::from(cell), i32::from(columns));
++        let (w, h) = (r * c, i32::from(rows) * c);
++        if inside(at, x, y, w, h) {
++            let col = ((at[0] - x as f32) / c as f32) as i64;
++            let row = ((at[1] - y as f32) / c as f32) as i64;
++            let index = (grid_top(locals, columns, rows, locals.grid_total) + row) * i64::from(columns) + col;
++            return Some(if index < locals.grid_total { Press::Grid(index as u32) } else { Press::Local });
++        }
++        if inside(at, x + w, y, 6, h) {
++            let lines = (locals.grid_total + i64::from(columns) - 1) / i64::from(columns);
++            let max = (lines - i64::from(rows)).max(0);
++            let to = ((at[1] - y as f32) / h as f32 * max as f32).round() as i64;
++            locals.vars.insert(GRID_SCROLL.to_owned(), to.clamp(0, max));
++            return Some(Press::Local);
++        }
++    }
+     if let Some(id) = showing(widgets, data, locals).into_iter().find_map(|w| match w {
+         Widget::TextField { x, y, w, h, id, .. } if inside(at, *x, *y, *w, *h) => Some(*id),
+         _ => None,
+@@ -223,6 +354,20 @@ pub fn scroll_lists(screen: &MenuScreen, data: &[i32], locals: &mut Locals, at:
+         }
+         None => (&screen.widgets, at),
+     };
++    // The item grid scrolls by rows.
++    let grid = showing(widgets, data, locals).into_iter().find_map(|w| match w {
++        Widget::ItemGrid { x, y, columns, rows, cell } => {
++            let (c, cols) = (i32::from(*cell), i32::from(*columns));
++            inside(rel, *x, *y, cols * c + 6, i32::from(*rows) * c).then_some((*columns, *rows))
++        }
++        _ => None,
++    });
++    if let Some((columns, rows)) = grid {
++        let lines = (locals.grid_total + i64::from(columns) - 1) / i64::from(columns);
++        let now = grid_top(locals, columns, rows, locals.grid_total);
++        locals.vars.insert(GRID_SCROLL.to_owned(), (now - notches).clamp(0, (lines - i64::from(rows)).max(0)));
++        return true;
++    }
+     let hit = showing(widgets, data, locals).into_iter().find_map(|w| match w {
+         Widget::List { x, y, w, h, row_height, first, count, .. } if inside(rel, *x, *y, *w, *h) => {
+             Some((*first, read(count, data), list_rows(*h, *row_height)))
+@@ -347,6 +492,44 @@ pub fn hovered(screen: &MenuScreen, data: &[i32], locals: &Locals, at: [f32; 2])
+ 
+ #[cfg(test)]
+ mod tests {
++
++    #[test]
++    fn grid_counts_are_abbreviated_as_mekanism_shows_them() {
++        assert_eq!(abbreviate(0), "0");
++        assert_eq!(abbreviate(999), "999");
++        assert_eq!(abbreviate(1000), "1k");
++        assert_eq!(abbreviate(1250), "1.2k");
++        assert_eq!(abbreviate(12_345), "12k");
++        assert_eq!(abbreviate(999_999), "999k");
++        assert_eq!(abbreviate(1_500_000), "1.5M");
++        assert_eq!(abbreviate(u64::MAX), "18E");
++    }
++
++    #[test]
++    fn a_grid_travels_whole_and_a_cell_press_is_its_entry_with_the_scroll() {
++        let entries: Vec<GridEntry> = (0..50)
++            .map(|i| GridEntry { item: format!("minecraft:item_{i}"), components: if i == 3 { "{\"x\":1}".into() } else { String::new() }, count: 1u64 << i })
++            .collect();
++        let bytes = encode_menu_grid([i32::MIN, 0, 0], &entries);
++        assert_eq!(decode_menu_grid(&bytes), Some(([i32::MIN, 0, 0], entries.clone())));
++        assert_eq!(decode_menu_grid(&bytes[..bytes.len() - 1]), None);
++        assert_eq!(decode_grid_click(&encode_grid_click(77, 1, true)), Some((77, 1, true)));
++        // A 9 by 3 grid of 18 pixels at 8, 18, with 50 entries (6 lines).
++        let screen: MenuScreen = serde_json::from_str(r#"{"slots": [], "widgets": [{"type": "item_grid", "x": 8, "y": 18, "columns": 9, "rows": 3}]}"#).unwrap();
++        let mut locals = Locals { grid_total: 50, ..Locals::default() };
++        // The 2nd cell of the 2nd row is entry 10.
++        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 18.0 + 2.0, 18.0 + 18.0 + 2.0], false), Some(Press::Grid(10)));
++        // Two notches down: the top is row 2, so that cell is entry 28; the wheel stops at the last full page (row 3).
++        assert!(scroll_lists(&screen, &[], &mut locals, [20.0, 30.0], -2));
++        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 18.0 + 2.0, 18.0 + 18.0 + 2.0], false), Some(Press::Grid(28)));
++        assert!(scroll_lists(&screen, &[], &mut locals, [20.0, 30.0], -9));
++        assert_eq!(grid_top(&locals, 9, 3, 50), 3);
++        // Past the last entry is nothing to take; the bar's bottom scrolls to the end, its top back to the start.
++        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 8.0 * 18.0 + 2.0, 18.0 + 2.0 * 18.0 + 2.0], false), Some(Press::Local));
++        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 9.0 * 18.0 + 2.0, 18.0], false), Some(Press::Local));
++        assert_eq!(grid_top(&locals, 9, 3, 50), 0);
++    }
++
+     use super::*;
+ 
+     #[test]
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 8a2578fb7..c1cadf412 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -71,6 +71,9 @@ pub struct TestGame {
+     pub release_result: Option<bool>,
+     /// What the last `block_break_start` answered.
+     pub break_start_result: Option<bool>,
++    /// Each player's cursor stack (for grid presses) and the stacks the last grid press put in the inventory.
++    pub carried: std::collections::BTreeMap<String, crate::ModItemStack>,
++    pub to_inventory: Vec<String>,
+     /// What the last `key_pressed` answered, and each player's held hotbar slot.
+     pub key_result: Option<bool>,
+     pub selected_slots: Vec<(String, u32)>,
+@@ -423,6 +426,8 @@ impl TestGame {
+             entity_used_result: None,
+             break_start_result: None,
+             key_result: None,
++            carried: std::collections::BTreeMap::new(),
++            to_inventory: Vec::new(),
+             selected_slots: Vec::new(),
+             entity_damage_result: None,
+             mod_entities: Vec::new(),
+@@ -579,6 +584,9 @@ impl TestGame {
+         if let Some(t) = u.menu_text {
+             m.text = t;
+         }
++        if let Some(g) = u.menu_grid {
++            m.grid = g.into_iter().map(|e| crate::screen::GridEntry { item: e.item, components: e.components, count: e.count }).collect();
++        }
+         if u.close {
+             let mut m = self.item_menus.remove(i);
+             let back = crate::entity_state::close_menu(&mut m.items, 0, &results);
+@@ -1502,6 +1510,24 @@ pub struct HarnessItemMenu {
+     pub items: Vec<Option<crate::ModItemStack>>,
+     pub data: Vec<i32>,
+     pub text: Vec<String>,
++    /// What its item grid shows (API 55).
++    pub grid: Vec<crate::screen::GridEntry>,
++}
++
++/// A press on an item grid cell (API 55): entry `index` with `button` (0 left, 1 right, 2 middle) and Shift, of the actor's open item
++/// menu, or of the block menu at `pos` (menu type `menu`).
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct GridClickSet {
++    index: u32,
++    #[serde(default)]
++    button: u8,
++    #[serde(default)]
++    shift: bool,
++    #[serde(default)]
++    pos: Option<[i32; 3]>,
++    #[serde(default)]
++    menu: Option<String>,
+ }
+ 
+ /// A stack the actor puts in slot `slot` of their open item menu (`-` for none).
+@@ -1774,6 +1800,9 @@ pub struct Step {
+     /// Server mods: the actor presses a mod's key (`<mod>:<name>`) while playing, and holds this hotbar slot from now on.
+     key_press: Option<String>,
+     selected: Option<u32>,
++    /// Server mods (API 55): the actor's cursor stack from now on (`-` for none), and a press on an item grid cell.
++    carried: Option<String>,
++    grid_click: Option<GridClickSet>,
+     /// Server mods (FORK-10 5b): the actor puts stacks in slots of an entity's open menu (`-` empties one), presses one of its
+     /// buttons, takes from one of its result slots, or closes it.
+     entity_menu_set: Option<Vec<EntityMenuSlotSet>>,
+@@ -1851,6 +1880,13 @@ pub struct Expect {
+     hit_damage_result: Option<f32>,
+     /// Server mods: whether the mod let the step's `release-item` shoot.
+     release_result: Option<bool>,
++    /// Server mods (API 55): the entries of the actor's open item menu's grid after the step, as `"item*count"` (components after),
++    /// every `set-menu-grid`, as `"dimension x y z n: item*count, ..."` (the first 4), the actor's cursor stack (`-` for none) and
++    /// what the last grid press put in the inventory.
++    item_menu_grid: Option<Vec<String>>,
++    menu_grid: Option<Vec<String>>,
++    carried: Option<String>,
++    to_inventory: Option<Vec<String>>,
+     /// Server mods: whether the mod used the step's `key-press`.
+     key_result: Option<bool>,
+     /// Server mods: whether the mod cancelled the normal break of the step's `break-start`.
+@@ -2168,6 +2204,8 @@ impl Step {
+             || self.item_menu_take.is_some()
+             || self.item_menu_set.is_some()
+             || self.key_press.is_some()
++            || self.carried.is_some()
++            || self.grid_click.is_some()
+             || self.selected.is_some()
+             || self.close_item_menu
+             || self.entity_menu_take.is_some()
+@@ -2346,6 +2384,43 @@ impl Step {
+             let stack = parse_stack(&b.stack).ok_or("break-start: a stack is item*count")?;
+             game.break_start_result = Some(game.mods.block_break_start(who, &stack, b.pos, &b.state));
+         }
++        if let (Some(c), Some(who)) = (&self.carried, &who) {
++            match parse_stack(c) {
++                Some(stack) => {
++                    game.carried.insert(who.id.clone(), stack);
++                }
++                None => {
++                    game.carried.remove(&who.id);
++                }
++            }
++        }
++        if let (Some(g), Some(who)) = (&self.grid_click, &who) {
++            let target = match g.pos {
++                Some(p) => crate::GridTarget {
++                    menu: g.menu.clone().ok_or("grid-click: a block's menu names its menu type")?,
++                    dimension: "minecraft:overworld".into(),
++                    pos: Some(crate::BlockPos { x: p[0], y: p[1], z: p[2] }),
++                    slot: None,
++                },
++                None => {
++                    let m = game.item_menus.iter().find(|m| m.player == who.id).ok_or("grid-click: no item menu is open")?;
++                    crate::GridTarget { menu: m.menu.clone(), dimension: "minecraft:overworld".into(), pos: None, slot: Some(m.slot) }
++                }
++            };
++            game.snapshot();
++            let carried = game.carried.get(&who.id).cloned();
++            if let Some(a) = game.mods.menu_grid_click(who, &target, g.index, g.button, g.shift, carried.as_ref()) {
++                match a.carried {
++                    Some(c) => {
++                        game.carried.insert(who.id.clone(), c);
++                    }
++                    None => {
++                        game.carried.remove(&who.id);
++                    }
++                }
++                game.to_inventory = a.to_inventory.iter().map(|s| show_stack(&Some(s.clone()))).collect();
++            }
++        }
+         if let (Some(key), Some(who)) = (&self.key_press, &who) {
+             game.snapshot();
+             game.key_result = Some(game.mods.key_pressed(who, key));
+@@ -2435,7 +2510,7 @@ impl Step {
+         }
+         if let (true, Some(who)) = (self.close_item_menu, &who) {
+             let i = mine(game, who).ok_or("close-item-menu: no item menu is open")?;
+-            game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
++            game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true, menu_grid: None });
+         }
+         if let Some(id) = self.close_entity_menu {
+             if !game.entity_menus.remove(&id) {
+@@ -2538,9 +2613,9 @@ impl Step {
+             let Some(t) = game.menu_types.iter().find(|t| &t.id == menu) else { continue };
+             let slots = usize::from(t.slots);
+             if let Some(i) = game.item_menus.iter().position(|m| &m.player == player) {
+-                game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
++                game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true, menu_grid: None });
+             }
+-            game.item_menus.push(HarnessItemMenu { player: player.clone(), slot: *slot, menu: menu.clone(), items: vec![None; slots], data: Vec::new(), text: Vec::new() });
++            game.item_menus.push(HarnessItemMenu { player: player.clone(), slot: *slot, menu: menu.clone(), items: vec![None; slots], data: Vec::new(), text: Vec::new(), grid: Vec::new() });
+         }
+         // A mod entity spawned or removed (FORK-10): the spawn is answered with its id, as the game does.
+         // An entity's menu opened (FORK-10 5b): a kind with a menu type gets its virtual slots, empty, past the container's.
+@@ -3131,6 +3206,34 @@ impl Step {
+                 .collect();
+             same("mod-entity-menu", want, &got)?;
+         }
++        let shown = |e: &crate::screen::GridEntry| format!("{}*{}{}", e.item, e.count, e.components);
++        if let Some(want) = &e.item_menu_grid {
++            let got: Vec<String> = game.item_menus.first().map(|m| m.grid.iter().map(shown).collect()).unwrap_or_default();
++            same("item-menu-grid", want, &got)?;
++        }
++        if let Some(want) = &e.menu_grid {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::SetMenuGrid { dimension, pos, entries, .. } => {
++                        let first: Vec<String> = entries.iter().take(4).map(shown).collect();
++                        Some(format!("{dimension} {} {} {} {}: {}", pos[0], pos[1], pos[2], entries.len(), first.join(", ")))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("menu-grid", want, &got)?;
++        }
++        if let Some(want) = &e.carried {
++            let id = game.players.first().map(|p| p.id.clone()).unwrap_or_default();
++            let got = game.carried.get(&id).map_or_else(|| "-".to_owned(), |s| show_stack(&Some(s.clone())));
++            if &got != want {
++                return Err(format!("carried: expected {want}, got {got}"));
++            }
++        }
++        if let Some(want) = &e.to_inventory {
++            same("to-inventory", want, &game.to_inventory)?;
++        }
+         if let Some(want) = e.key_result {
+             if game.key_result != Some(want) {
+                 return Err(format!("key-result: expected {want}, got {:?}", game.key_result));
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index fc7e9292c..274991e13 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 53 is `players.open-player-menu` and `player-items.selected-slot`, 54 is `world.set-item-eject-color`, `set-item-strict-input` and `set-transmitter-color`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 53 is `players.open-player-menu` and `player-items.selected-slot`, 54 is `world.set-item-eject-color`, `set-item-strict-input` and `set-transmitter-color`, 55 is `world.set-menu-grid`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 54);
++    assert_eq!(LEVEL, 55);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index f93568359..b3967af0d 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -696,76 +696,6 @@ One choice of a radial menu.
+ | `open-player-menu` | `func(player: string, menu: string) -> bool` | Opens menu type `menu` of the mod for one player with no item behind it (Mekanism's Module Tweaker, opened by a key): as `open-item-menu` in all else, its `item-menu` has `slot` 4294967295 and no `stack`, it closes only when the player or the mod closes it, and a `textfield`'s message carries `(i32::MIN, 1, -1)`. True when asked; false for a player who is not online or a menu of another mod. API 53. |
+ | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+ 
+-## `world`
+-
+-Access: capability `world`.
+-
+-Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the blocks of the server's loaded chunks, and changes to them through the server's own block updates.
+-
+-### record `block-change`
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `x` | `s32` |  |
+-| `y` | `s32` |  |
+-| `z` | `s32` |  |
+-| `state` | `string` | `minecraft:oak_log[axis=y]`; properties left out take the block's defaults, `minecraft:stone` alone is the default state. |
+-
+-### record `environment`
+-
+-The sky and weather where a position is: what a solar panel or a wind turbine reads.
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `day-time` | `u64` | The ticks of the day, 0 to 23999 (0 is 6:00). |
+-| `rain` | `f32` | How hard it rains and how hard it thunders in the dimension, 0 to 1 (the dimension has no weather but the overworld). |
+-| `thunder` | `f32` |  |
+-| `temperature` | `f32` | The biome's temperature and downfall, and whether it rains or snows in it. |
+-| `downfall` | `f32` |  |
+-| `precipitation` | `bool` |  |
+-| `has-skylight` | `bool` | Whether the dimension has a sky (the overworld). |
+-
+-### record `collision-box`
+-
+-One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `min-x` | `f64` |  |
+-| `min-y` | `f64` |  |
+-| `min-z` | `f64` |  |
+-| `max-x` | `f64` |  |
+-| `max-y` | `f64` |  |
+-| `max-z` | `f64` |  |
+-
+-| Function | Signature | What it does |
+-| --- | --- | --- |
+-| `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
+-| `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
+-| `get-environment` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<environment>` | The sky and weather at a position, as of this call: none where no chunk is loaded. |
+-| `get-redstone` | `func(dimension: string, x: s32, y: s32, z: s32) -> u8` | The redstone signal reaching a block of the mod that carries a block entity, 0 to 15 (the strongest of the six neighbours, what a dispenser reads), as of the start of this tick: 0 for any other position. |
+-| `set-energy-capacity` | `func(dimension: string, x: s32, y: s32, z: s32, capacity: u64) -> result<_, string>` | Sets how much energy a block entity of the mod holds at most, in place of its kind's `energy.capacity` (a machine whose upgrades raise it): 0 gives the kind's back. What it holds above the new capacity is lost. |
+-| `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
+-| `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
+-| `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
+-| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
+-| `set-capabilities-enabled` | `func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>` | Closes or opens, for everything outside the block entity (hoppers and droppers, pipes, tubes and cables, other machines), the three kinds of capability it carries: its `items` container, its `fluids` (tanks) and its `energy`. A closed capability gives and takes nothing through any face, whatever the faces say; the contents, the faces and the mod's own reads and writes are untouched, so a structure that becomes valid again finds everything where it was. All three are open until closed. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. API 24. |
+-| `break-blocks` | `func(dimension: string, positions: list<tuple<s32, s32, s32>>, tool: string, silk-touch: bool, fortune: u32) -> result<u32, string>` | Breaks up to 4096 blocks as a player holding `tool` would (the Meka-Tool's vein mining and blasting; FORK-34's `mine-block` for many blocks): each loaded block that is not air, a fluid or unbreakable (negative hardness; bedrock, barriers, portals, command blocks) is replaced by air and its drops, worked out with the tool (`silk-touch`, `fortune` 0 to 3 as its enchantments), fall at its place. Returns how many blocks it will break, counted at the call; they are broken after the call returns. The tool is not worn, no experience is given, and protection (spawn, adventure mode) is not asked: the mod checks what it needs. API 39. |
+-| `set-comparator-output` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8) -> result<_, string>` | Sets the signal a comparator reads from the mod's block entity at the position, 0 to 15 (`getAnalogOutputSignal`: Mekanism's tanks, bins and multiblock valves give the fill level), instead of the one its container gives; the comparators around are told. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. A level past 15 is 15. API 38. |
+-| `block-hardness` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>` | The block's destroy time (`BlockBehaviour.defaultDestroyTime`, what a pickaxe's speed is divided into; 0 for air and plants, 1.5 for stone, 50 for obsidian), negative for what cannot be broken (bedrock is -1); none where no chunk of the dimension is loaded. A mod that bills energy by hardness (the Laser Tractor Beam, 100 000 J a point) reads it. API 35. |
+-| `set-redstone-output` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8, strong: bool) -> result<_, string>` | Sets the redstone signal the mod's block at the position gives, 0 to 15 (round 4, item 4; Mekanism's `AttributeRedstoneEmitter`: the laser amplifier, the logic adapters, the alarms' readers): to every side, and with `strong` it also powers the blocks it touches through them (`getDirectSignal`), as a lever does. Only a block whose content says `"redstone_emitter": true` and that has a block entity gives it; it is kept with the block entity (saved), and the blocks around are updated when it changes. Made after the call; an error past 256 a call. API 50. |
+-| `set-menu-text` | `func(dimension: string, x: s32, y: s32, z: s32, texts: list<string>) -> result<_, string>` | Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block entity. An error for more than 64 strings or one over 256 bytes. API 34. |
+-| `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
+-| `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
+-| `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
+-| `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32, replacement: option<string>) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. `replacement` is the state (`mymod:box`) put where the block was, as Mekanism's box takes the place of what it packs; `into` may then be the same position (the replacement's own block entity keeps it), or none leaves air there. Once, after this call returns. API 32. |
+-| `unpack-block` | `func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>` | Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the block's state and its block entity as they were packed, replacing whatever is there; the box is empty again. Once, after this call returns. An error for a box that holds nothing or a position not loaded. API 32. |
+-| `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
+-| `set-item-eject-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | The colour the block entity's ejected items carry into an item network (Mekanism's Transporter Config: one of the 18 transporter colours, 0 to 17; none for no colour). A coloured stack goes only through plain transporters and those of its colour, and a plain one through plain transporters only (`set-transmitter-color`). It counts only while ejection is on (`set-item-eject`). Kept with the entity. An error for a colour past 17. API 54. |
+-| `set-item-strict-input` | `func(dimension: string, x: s32, y: s32, z: s32, strict: bool) -> result<_, string>` | Strict input (Mekanism's Transporter Config): the block entity takes items from an item network only when their colour is its own eject colour (none takes plain stacks alone). Only while its ejection is on; other ways of putting items in (a hopper, a player) are not checked. Kept with the entity. API 54. |
+-| `set-transmitter-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | Paints an item transmitter (a kind with `transmitter` of medium items, Mekanism's logistical transporter): 0 to 17, none for plain. A painted one carries stacks of its colour alone, a plain one carries any colour (Mekanism's `TransporterPathfinder`). Kept with the entity. An error for a colour past 17. API 54. |
+-| `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
+-
+ ## `player-control`
+ 
+ Access: capability `player-control`.
+@@ -885,6 +815,91 @@ An item stack. `components` is the SNBT of its data components (`{"minecraft:dam
+ | `count` | `u32` |  |
+ | `components` | `string` |  |
+ 
++### record `grid-entry`
++
++One entry of a menu's item grid (an `item_grid` widget, Mekanism's QIO catalogue): an item type and how many, past a stack's size (up to 2^64).
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `string` |  |
++| `components` | `string` |  |
++| `count` | `u64` |  |
++
++
++## `world`
++
++Access: capability `world`.
++
++Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the blocks of the server's loaded chunks, and changes to them through the server's own block updates.
++
++### type `grid-entry`
++
++`type grid-entry = grid-entry`
++
++### record `block-change`
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `s32` |  |
++| `y` | `s32` |  |
++| `z` | `s32` |  |
++| `state` | `string` | `minecraft:oak_log[axis=y]`; properties left out take the block's defaults, `minecraft:stone` alone is the default state. |
++
++### record `environment`
++
++The sky and weather where a position is: what a solar panel or a wind turbine reads.
++
++| Field | Type | |
++| --- | --- | --- |
++| `day-time` | `u64` | The ticks of the day, 0 to 23999 (0 is 6:00). |
++| `rain` | `f32` | How hard it rains and how hard it thunders in the dimension, 0 to 1 (the dimension has no weather but the overworld). |
++| `thunder` | `f32` |  |
++| `temperature` | `f32` | The biome's temperature and downfall, and whether it rains or snows in it. |
++| `downfall` | `f32` |  |
++| `precipitation` | `bool` |  |
++| `has-skylight` | `bool` | Whether the dimension has a sky (the overworld). |
++
++### record `collision-box`
++
++One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
++
++| Field | Type | |
++| --- | --- | --- |
++| `min-x` | `f64` |  |
++| `min-y` | `f64` |  |
++| `min-z` | `f64` |  |
++| `max-x` | `f64` |  |
++| `max-y` | `f64` |  |
++| `max-z` | `f64` |  |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
++| `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
++| `get-environment` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<environment>` | The sky and weather at a position, as of this call: none where no chunk is loaded. |
++| `get-redstone` | `func(dimension: string, x: s32, y: s32, z: s32) -> u8` | The redstone signal reaching a block of the mod that carries a block entity, 0 to 15 (the strongest of the six neighbours, what a dispenser reads), as of the start of this tick: 0 for any other position. |
++| `set-energy-capacity` | `func(dimension: string, x: s32, y: s32, z: s32, capacity: u64) -> result<_, string>` | Sets how much energy a block entity of the mod holds at most, in place of its kind's `energy.capacity` (a machine whose upgrades raise it): 0 gives the kind's back. What it holds above the new capacity is lost. |
++| `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
++| `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
++| `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
++| `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
++| `set-capabilities-enabled` | `func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>` | Closes or opens, for everything outside the block entity (hoppers and droppers, pipes, tubes and cables, other machines), the three kinds of capability it carries: its `items` container, its `fluids` (tanks) and its `energy`. A closed capability gives and takes nothing through any face, whatever the faces say; the contents, the faces and the mod's own reads and writes are untouched, so a structure that becomes valid again finds everything where it was. All three are open until closed. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. API 24. |
++| `break-blocks` | `func(dimension: string, positions: list<tuple<s32, s32, s32>>, tool: string, silk-touch: bool, fortune: u32) -> result<u32, string>` | Breaks up to 4096 blocks as a player holding `tool` would (the Meka-Tool's vein mining and blasting; FORK-34's `mine-block` for many blocks): each loaded block that is not air, a fluid or unbreakable (negative hardness; bedrock, barriers, portals, command blocks) is replaced by air and its drops, worked out with the tool (`silk-touch`, `fortune` 0 to 3 as its enchantments), fall at its place. Returns how many blocks it will break, counted at the call; they are broken after the call returns. The tool is not worn, no experience is given, and protection (spawn, adventure mode) is not asked: the mod checks what it needs. API 39. |
++| `set-comparator-output` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8) -> result<_, string>` | Sets the signal a comparator reads from the mod's block entity at the position, 0 to 15 (`getAnalogOutputSignal`: Mekanism's tanks, bins and multiblock valves give the fill level), instead of the one its container gives; the comparators around are told. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. A level past 15 is 15. API 38. |
++| `block-hardness` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>` | The block's destroy time (`BlockBehaviour.defaultDestroyTime`, what a pickaxe's speed is divided into; 0 for air and plants, 1.5 for stone, 50 for obsidian), negative for what cannot be broken (bedrock is -1); none where no chunk of the dimension is loaded. A mod that bills energy by hardness (the Laser Tractor Beam, 100 000 J a point) reads it. API 35. |
++| `set-redstone-output` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8, strong: bool) -> result<_, string>` | Sets the redstone signal the mod's block at the position gives, 0 to 15 (round 4, item 4; Mekanism's `AttributeRedstoneEmitter`: the laser amplifier, the logic adapters, the alarms' readers): to every side, and with `strong` it also powers the blocks it touches through them (`getDirectSignal`), as a lever does. Only a block whose content says `"redstone_emitter": true` and that has a block entity gives it; it is kept with the block entity (saved), and the blocks around are updated when it changes. Made after the call; an error past 256 a call. API 50. |
++| `set-menu-grid` | `func(dimension: string, x: s32, y: s32, z: s32, entries: list<grid-entry>) -> result<_, string>` | Sets the entries the `item_grid` widget of the menu of the block entity at the position shows (up to 4096, the rest left out), in the order the mod gives them (its sort and its search filter, read from the menu's `textfield`): to the players with that menu open now, and kept while the game runs (not saved) for a player who opens it later. Made after the call; an error past 8 a call. API 55. |
++| `set-menu-text` | `func(dimension: string, x: s32, y: s32, z: s32, texts: list<string>) -> result<_, string>` | Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block entity. An error for more than 64 strings or one over 256 bytes. API 34. |
++| `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
++| `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
++| `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
++| `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32, replacement: option<string>) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. `replacement` is the state (`mymod:box`) put where the block was, as Mekanism's box takes the place of what it packs; `into` may then be the same position (the replacement's own block entity keeps it), or none leaves air there. Once, after this call returns. API 32. |
++| `unpack-block` | `func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>` | Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the block's state and its block entity as they were packed, replacing whatever is there; the box is empty again. Once, after this call returns. An error for a box that holds nothing or a position not loaded. API 32. |
++| `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
++| `set-item-eject-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | The colour the block entity's ejected items carry into an item network (Mekanism's Transporter Config: one of the 18 transporter colours, 0 to 17; none for no colour). A coloured stack goes only through plain transporters and those of its colour, and a plain one through plain transporters only (`set-transmitter-color`). It counts only while ejection is on (`set-item-eject`). Kept with the entity. An error for a colour past 17. API 54. |
++| `set-item-strict-input` | `func(dimension: string, x: s32, y: s32, z: s32, strict: bool) -> result<_, string>` | Strict input (Mekanism's Transporter Config): the block entity takes items from an item network only when their colour is its own eject colour (none takes plain stacks alone). Only while its ejection is on; other ways of putting items in (a hopper, a player) are not checked. Kept with the entity. API 54. |
++| `set-transmitter-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | Paints an item transmitter (a kind with `transmitter` of medium items, Mekanism's logistical transporter): 0 to 17, none for plain. A painted one carries stacks of its colour alone, a plain one carries any colour (Mekanism's `TransporterPathfinder`). Kept with the entity. An error for a colour past 17. API 54. |
++| `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
+ 
+ ## `recipe-types`
+ 
+@@ -1126,6 +1141,10 @@ What the server calls in a server mod (manifest `api = "0.3"`, experimental). On
+ 
+ `type item-stack = item-stack`
+ 
++### type `grid-entry`
++
++`type grid-entry = grid-entry`
++
+ ### record `damage-source`
+ 
+ What hurts a player (`player-damaged`): the damage type and what the game knows of it.
+@@ -1402,6 +1421,27 @@ What the mod changes in an open item menu; a none leaves that as it is.
+ | `menu-data` | `option<list<s32>>` | Its data slots (16 bits each on the wire, up to 256). |
+ | `menu-text` | `option<list<string>>` | Its strings (up to 64 of up to 256 bytes): a `text` widget with `text_data: n` shows string `n`. |
+ | `close` | `bool` | Closes it (its slots' items go back to the player). |
++| `menu-grid` | `option<list<grid-entry>>` | What its `item_grid` shows (up to 4096 entries), API 55; none leaves it. |
++
++### record `grid-target`
++
++The menu whose item grid a player pressed (`menu-grid-click`): its type and, for a block's, where the block is; for an item menu, the player's slot it is over (4294967295 for `open-player-menu`'s).
++
++| Field | Type | |
++| --- | --- | --- |
++| `menu` | `string` |  |
++| `dimension` | `string` |  |
++| `pos` | `option<block-pos>` |  |
++| `slot` | `option<u32>` |  |
++
++### record `grid-answer`
++
++What a press on a grid cell does to the player's stacks: the cursor's stack after it, and stacks to put in the player's inventory (what does not fit falls at their feet), as a shift-click's.
++
++| Field | Type | |
++| --- | --- | --- |
++| `carried` | `option<item-stack>` |  |
++| `to-inventory` | `list<item-stack>` |  |
+ 
+ ### record `mod-entity-update`
+ 
+@@ -1458,6 +1498,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
+ | `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
+ | `key-pressed` | `func(player: player, key: string) -> bool` | `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with no screen open, as the player bound it in Controls. True when the mod used the press. API 53. |
++| `menu-grid-click` | `func(player: player, target: grid-target, index: u32, button: u8, shift: bool, carried: option<item-stack>) -> option<grid-answer>` | `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`): `button` 0 left, 1 right, 2 middle, `shift` with Shift held, `carried` the stack on their cursor now. The mod takes from its catalogue or puts the cursor's stack in and answers the cursor's stack after (Mekanism's QIO Dashboard: left takes a stack, right half of one, shift into the inventory, a carried stack is stored); none leaves the cursor as it was. API 55. |
+ | `item-menu-tick` | `func(player: player, menu: item-menu) -> option<item-menu-update>` | Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48. |
+ | `item-menu-button` | `func(player: player, menu: item-menu, id: s32) -> option<item-menu-update>` | `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus. |
+ | `item-menu-taken` | `func(player: player, menu: item-menu, slot: u32, stack: item-stack) -> option<item-menu-update>` | `player` took `stack` out of result slot `slot` of one of the mod's item menus (the menu as it is after the take): the mod uses up what made it. |
+-- 
+2.43.0
+

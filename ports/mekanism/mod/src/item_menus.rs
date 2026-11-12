@@ -42,7 +42,7 @@ impl Mekanism {
             return None;
         }
         self.item_menu_sent.insert(key, texts.clone());
-        Some(ItemMenuUpdate { items: None, menu_data: Some(data), menu_text: Some(texts), close: false })
+        Some(ItemMenuUpdate { items: None, menu_data: Some(data), menu_text: Some(texts), close: false, menu_grid: None })
     }
 
     /// A use of the Dictionary opens its screen over the slot it is in.

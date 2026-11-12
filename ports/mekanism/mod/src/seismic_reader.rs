@@ -122,7 +122,7 @@ impl Mekanism {
             return None;
         }
         self.item_menu_sent.insert(key, strings.clone());
-        Some(ItemMenuUpdate { items: Some(slots), menu_data: Some(data), menu_text: Some(strings), close: false })
+        Some(ItemMenuUpdate { items: Some(slots), menu_data: Some(data), menu_text: Some(strings), close: false, menu_grid: None })
     }
 
     /// The up and down buttons move the arrow a layer (`scrollBar.adjustScroll`).
@@ -139,7 +139,7 @@ impl Mekanism {
     /// The icons cannot be taken: the screen puts them back.
     pub(crate) fn seismic_reader_taken(&mut self, player: &Player) -> Option<ItemMenuUpdate> {
         let column = self.readers.columns.get(&player.id)?;
-        Some(ItemMenuUpdate { items: Some(icons(column)), menu_data: None, menu_text: None, close: false })
+        Some(ItemMenuUpdate { items: Some(icons(column)), menu_data: None, menu_text: None, close: false, menu_grid: None })
     }
 }
 

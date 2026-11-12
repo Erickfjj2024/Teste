@@ -132,7 +132,7 @@ impl Mekanism {
             return None;
         }
         self.item_menu_sent.insert(key, texts.clone());
-        Some(ItemMenuUpdate { items: None, menu_data: Some(data), menu_text: Some(texts), close: false })
+        Some(ItemMenuUpdate { items: None, menu_data: Some(data), menu_text: Some(texts), close: false, menu_grid: None })
     }
 
     /// A frequency action of the screen: the item's frequency after it (the item is written back).
@@ -177,7 +177,7 @@ impl Mekanism {
             self.frames.delay.insert(dkey, teleporter::DELAY);
             let t = teleporter::target(dest_pos, dest_face);
             let _ = player_control::teleport(&player.id, &dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, None, None);
-            return Some(ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
+            return Some(ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true, menu_grid: None });
         }
         let action = frequency::button_action(id, FREQ_BASE)?;
         self.portable_apply(player, &mut stack, menu.slot, freq, &action);

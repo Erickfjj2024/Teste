@@ -106,6 +106,7 @@ pub mod server {
   pub mod world { use super::*;
     pub fn set_comparator_output<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn set_redstone_output<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: u8, _a5: bool) -> Result<(), String> { Err(String::new()) }
+    pub fn set_menu_grid(dimension: &str, x: i32, y: i32, z: i32, entries: &[super::GridEntry]) -> Result<(), String> { let _ = (dimension, x, y, z, entries); Ok(()) }
     pub fn set_item_eject_color(dimension: &str, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> { let _ = (dimension, x, y, z, color); Ok(()) }
     pub fn set_item_strict_input(dimension: &str, x: i32, y: i32, z: i32, strict: bool) -> Result<(), String> { let _ = (dimension, x, y, z, strict); Ok(()) }
     pub fn set_transmitter_color(dimension: &str, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> { let _ = (dimension, x, y, z, color); Ok(()) }
@@ -230,10 +231,14 @@ pub mod server {
   }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String>, pub menu_data: Vec<i32> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenu { pub menu: String, pub slot: u32, pub stack: Option<ItemStack>, pub items: Vec<Option<ItemStack>>, pub menu_data: Vec<i32> }
-  #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool, pub menu_grid: Option<Vec<GridEntry>> }
+  #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct GridEntry { pub item: String, pub components: String, pub count: u64 }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct GridTarget { pub menu: String, pub dimension: String, pub pos: Option<BlockPos>, pub slot: Option<u32> }
+  #[derive(Clone, Debug, Default, PartialEq)] pub struct GridAnswer { pub carried: Option<ItemStack>, pub to_inventory: Vec<ItemStack> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>> }
   pub trait ServerMod: Sized {
     fn key_pressed(&mut self, player: &Player, key: &str) -> bool { false }
+    fn menu_grid_click(&mut self, player: &Player, target: GridTarget, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<GridAnswer> { None }
     fn item_menu_tick(&mut self, player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> { None }
     fn item_menu_button(&mut self, player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> { None }
     fn item_menu_taken(&mut self, player: &Player, menu: ItemMenu, slot: u32, stack: ItemStack) -> Option<ItemMenuUpdate> { None }
