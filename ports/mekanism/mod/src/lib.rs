@@ -40,6 +40,7 @@ mod oredictionificator;
 mod personal_storage;
 mod module_tweaker;
 mod qio_dashboard;
+mod qio_world;
 mod qio_transfer;
 mod radioactive_waste_barrel;
 mod resistive_heater;
@@ -499,6 +500,13 @@ struct Mekanism {
     /// What each open Seismic Reader screen reads.
     readers: seismic_reader::Readers,
     tweakers: module_tweaker::Views,
+    qio_freqs: Option<Vec<frequency::Freq>>,
+    qio_buttons: Vec<(String, BlockPos, i32, String, String)>,
+    qio_texts: Vec<(String, BlockPos, i32, String, String, String)>,
+    qio_viewers: HashMap<qio_world::BlockKey, String>,
+    qio_arrays: HashMap<qio_world::BlockKey, qio_world::ArrayCache>,
+    qio_views: HashMap<qio_world::BlockKey, qio_world::DashView>,
+    qio_board_freq: HashMap<qio_world::BlockKey, String>,
     /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
     block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
     transporter_cfg: Option<transporter_config::Registry>,
@@ -2061,6 +2069,10 @@ impl ServerMod for Mekanism {
         let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(array);
+        // The Dashboard's one slot is a port addition: where items are put in until the host sends a click on an empty cell of the grid.
+        let mut dashboard = kind(qio_dashboard::BLOCK, true);
+        dashboard.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(dashboard);
         let mut adapter = kind(qio::BLOCK_REDSTONE_ADAPTER, true);
         adapter.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(adapter);
@@ -2364,6 +2376,13 @@ impl ServerMod for Mekanism {
             teleporter_table: Vec::new(),
             readers: seismic_reader::Readers::default(),
             tweakers: module_tweaker::Views::new(),
+            qio_freqs: None,
+            qio_buttons: Vec::new(),
+            qio_texts: Vec::new(),
+            qio_viewers: HashMap::new(),
+            qio_arrays: HashMap::new(),
+            qio_views: HashMap::new(),
+            qio_board_freq: HashMap::new(),
             block_owners: None,
             transporter_cfg: None,
             transporter_dirty: HashSet::new(),
@@ -2621,6 +2640,10 @@ impl ServerMod for Mekanism {
         } else {
             None
         }
+    }
+
+    fn menu_grid_click(&mut self, _player: &Player, target: horizon_mod_sdk::server::GridTarget, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<horizon_mod_sdk::server::GridAnswer> {
+        if target.menu.ends_with("qio_dashboard") { self.qio_grid_click(&target, index, button, shift, carried) } else { None }
     }
 
     fn key_pressed(&mut self, player: &Player, key: &str) -> bool {
@@ -2934,6 +2957,10 @@ impl ServerMod for Mekanism {
         if block == security_desk::BLOCK {
             self.desk_viewer.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z), player.id.clone());
             self.desk_presses.push((e.dimension.clone(), e.pos, id, player.id.clone()));
+            return None;
+        }
+        if block == qio::BLOCK_DRIVE_ARRAY || block == qio_dashboard::BLOCK {
+            self.qio_buttons.push((e.dimension.clone(), e.pos, id, player.id.clone(), player.name.clone()));
             return None;
         }
         if block == miner::MINER {
@@ -3319,8 +3346,9 @@ impl ServerMod for Mekanism {
             out.extend(self.run_waste_barrels(&waste_barrels, tick));
         }
         let drive_arrays: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_DRIVE_ARRAY)).collect();
-        if !drive_arrays.is_empty() {
-            out.extend(self.qio.run_drive_arrays(&drive_arrays, tick));
+        let dashboards: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio_dashboard::BLOCK)).collect();
+        if !drive_arrays.is_empty() || !dashboards.is_empty() || !self.qio_buttons.is_empty() || !self.qio.frequencies.is_empty() {
+            out.extend(self.run_qio(&drive_arrays, &dashboards, tick));
         }
         let redstone_adapters: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(qio::BLOCK_REDSTONE_ADAPTER)).collect();
         if !redstone_adapters.is_empty() {
@@ -3440,6 +3468,8 @@ impl ServerMod for Mekanism {
                 self.teleporter_texts.push((dimension, pos, id, text, who, who_name));
             } else if block == entangloporter::BLOCK {
                 self.qe_texts.push((dimension, pos, id, text, who, who_name));
+            } else if block == qio::BLOCK_DRIVE_ARRAY || block == qio_dashboard::BLOCK {
+                self.qio_texts.push((dimension, pos, id, text, who, who_name));
             } else if block == sorter::SORTER {
                 self.sorter_texts.push((dimension, pos, id, text));
             } else if block == miner::MINER {

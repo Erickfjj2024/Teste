@@ -191,7 +191,7 @@ for m in HEAT_CONDUCTORS + HEAT_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 OPEN_MACHINES |= set(HEAT_CONDUCTORS + HEAT_MACHINES)
 # Utilities: machines with a screen or a charge slot, the personal storages, the cardboard box (hardness/resistance of the original blocks).
-UTILITY_MACHINES = ['qio_drive_array', 'qio_redstone_adapter', 'radioactive_waste_barrel', 'modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel', 'security_desk']
+UTILITY_MACHINES = ['qio_drive_array', 'qio_dashboard', 'qio_redstone_adapter', 'radioactive_waste_barrel', 'modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel', 'security_desk']
 for m in UTILITY_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 BLOCKS['cardboard_box'] = ('minecraft:beacon', {'hardness': 0.5, 'explosion_resistance': 0.6, 'requires_tool': False}, 'machine')
@@ -311,7 +311,7 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
     if n in OPEN_MACHINES:
         block['state_properties'] = {'lit': {'type': 'boolean'}}
         if n not in FLUID_TANKS:
-            block['state_properties']['facing'] = {'type': 'enum', 'values': ['north', 'east', 'south', 'west'] + (['up', 'down'] if n in LASERS else [])}
+            block['state_properties']['facing'] = {'type': 'enum', 'values': ['north', 'east', 'south', 'west'] + (['up', 'down'] if n in LASERS or n == 'qio_dashboard' else [])}
     # AttributeRedstoneEmitter (API 50): wires connect to it and it gives the level the mod sets (`world::set_redstone_output`)
     if n in ('laser_amplifier', 'qio_redstone_adapter'):
         block['redstone_emitter'] = True
@@ -1937,10 +1937,71 @@ def personal_storage_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
 
+def qio_frequency_tab(menu, text_at, width):
+    """GuiQIOFrequencyTab (-26, 6, 26 by 18) and the selector it opens (here a window, 160 by 154: `frequency_selector` at 14, 18). The menu's two last numbers (added here: `at` and
+    `at + 1`) are how many public and private frequencies the lists hold; the selector's strings (`frequency.rs::texts`, 35 of them) start at string `text_at`. Ids 8500 and up (`qio_world.rs`)."""
+    from PIL import Image
+    at = menu['data_slots']
+    menu['data_slots'] = at + 2
+    win = nine_slice(gui_sprite('base'), 160, 154, 4)
+    win.alpha_composite(gui_sprite('button/close'), (6, 6))
+    selector = frequency_selector(8500, 'qsec', win, 14, 18, at, at + 1, text_at + 3, text_at + 19, text_at)
+    title = 'Set Frequency'
+    widgets = [{'type': 'text', 'x': 20 + (134 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+               {'type': 'button', 'x': 6, 'y': 6, 'w': 8, 'h': 12, 'local': 'close', 'tooltip': 'Close'}] + selector
+    screen = menu['screen']
+    tab = tab_sprite('tab_qio_frequency', 'button/frequency', None, 18)
+    screen['widgets'] = list(screen['widgets']) + [
+        {'type': 'sprite', 'texture': tab, 'x': -26, 'y': 6, 'w': 26, 'h': 18},
+        {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 18, 'local': {'open': 'qio_frequency'}, 'tooltip': 'Set Frequency'}]
+    screen['windows'] = list(screen.get('windows', [])) + [{'id': 'qio_frequency', 'x': (width - 160) // 2, 'y': 26, 'width': 160, 'height': 154,
+                                                              'texture': save_gui(win, 'qio_frequency_window'), 'widgets': widgets}]
+    return menu
+
+def qio_dashboard_menu(m):
+    """GuiQIODashboard (178 by 211: `16 + 8 * 18 + 18` wide, `43 + 4 * 18 + 96` tall, the defaults of `qioItemViewerSlotsX` and `Y`): the frequency's inner screen at 7, 15 (162 by 12), the search box
+    at 50, 28 (the text arrives on `qio_world.rs::SEARCH_BOX`), the item grid at 7, 43 (8 by 4 cells of 18), the sort button at 115, 116 (41 by 12; a click for the next of name, size, mod and
+    registry name) and the direction button at 157, 116 (12 by 12). Strings (`qio_world.rs`): 0 the frequency, 1 to 35 the selector's. Numbers: 0 has a frequency, 3 the sort,
+    4 whether it is ascending, 5 `insertIntoFrequency`, 6 and 7 the selector's lists' sizes. The port's one slot (where items are put in) is at 74, 117. Not here: the three crafting windows, the resize controls, the
+    auto-focus and rejects tabs (client settings) and the target direction tab."""
+    width, height, cols, rows = 178, 211, 8, 4
+    panel, slot, inv_y = inventory_panel(width, height)
+    inner = gui_sprite('inner_screen').resize((16, 16), 0)
+    panel.alpha_composite(nine_slice(inner, width - 16, 12, 3), (7, 15))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), width - 50 - 10, 12, 2), (50, 28))
+    for r in range(rows):
+        for c in range(cols):
+            panel.alpha_composite(slot, (6 + 18 * c, 42 + 18 * r))
+    panel.alpha_composite(slot, (73, 116))
+    sort_x, sort_y = width - 9 - 54, 43 + rows * 18 + 1
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 41, 12, 2), (sort_x, sort_y))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 12, 12, 2), (width - 9 - 12, sort_y))
+    texture = save_gui(panel, m)
+    title = 'QIO Dashboard'
+    widgets = [
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'text', 'x': sort_x - 5 - text_width('Sort:'), 'y': height - 93, 'text': 'Sort:', 'color': '#404040'},
+        {'type': 'text', 'x': 10, 'y': 18, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 90},
+        {'type': 'text', 'x': 46 - text_width('Search:'), 'y': 31, 'text': 'Search:', 'color': '#404040'},
+        {'type': 'textfield', 'x': 51, 'y': 29, 'w': width - 50 - 10 - 2, 'h': 10, 'id': 8562, 'validator': 'any', 'max_length': 50},
+        {'type': 'item_grid', 'x': 7, 'y': 43, 'columns': cols, 'rows': rows, 'cell': 18}]
+    for k, label in enumerate(('Name', 'Size', 'Mod', 'Registry')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 3}, 'eq': k}}, 'widgets': [
+            {'type': 'text', 'x': sort_x + 3, 'y': sort_y + 2, 'text': label, 'color': '#FFFFFF', 'scale': 80}]})
+    widgets.append({'type': 'button', 'x': sort_x, 'y': sort_y, 'w': 41, 'h': 12, 'id': 8560, 'tooltip': 'Sort by name, size, mod or registry name'})
+    for asc, icon in ((1, 'button/arrow_up'), (0, 'button/arrow_down')):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 4}, 'eq': asc}}, 'widgets': [
+            {'type': 'sprite', 'texture': copy_gui(icon, 'qio_sort_' + ('asc' if asc else 'desc')), 'x': width - 9 - 12, 'y': sort_y, 'w': 12, 'h': 12}]})
+    widgets.append({'type': 'button', 'x': width - 9 - 12, 'y': sort_y, 'w': 12, 'h': 12, 'id': 8561, 'tooltip': 'Ascending or descending'})
+    menu = {'slots': 1, 'data_slots': 6, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[74, 117]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+    return qio_frequency_tab(menu, 1, width)
+
 def qio_drive_array_menu(m):
     """GuiQIODriveArray (176 by 206): the frequency data screen at 15, 19 (144 by 46: the frequency's name, and two bars, the items and the types, with
     what they hold), the 12 drive slots in two rows of six at 34, 70 and the player's inventory. Its numbers and strings are
-    `qio.rs::drive_array_screen`. The frequency tab (choosing the frequency) needs the text field and the list of FORK-20 and is not here yet."""
+    `qio.rs::drive_array_screen`; the frequency tab at -26, 6 opens the selector (`qio_frequency_tab`, strings from 3, numbers 4 and 5)."""
     width, height = 176, 206
     panel, slot, inv_y = inventory_panel(width, height)
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 144, 46, 3), (15, 19))
@@ -1965,9 +2026,10 @@ def qio_drive_array_menu(m):
         {'type': 'text', 'x': 94, 'y': 58, 'text': '', 'text_data': 2, 'color': '#00CD00', 'scale': 60}]
     slots = [[34 + 18 * x, 70 + 18 * y] for y in range(2) for x in range(6)]
     drives = [f'{NS}:qio_drive_{k}' for k in ('base', 'hyper_dense', 'time_dilating', 'supermassive')]
-    return {'slots': 12, 'data_slots': 4, 'results': [], 'accepts': [{'slot': i, 'items': drives} for i in range(12)],
+    menu = {'slots': 12, 'data_slots': 4, 'results': [], 'accepts': [{'slot': i, 'items': drives} for i in range(12)],
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+    return qio_frequency_tab(menu, 3, width)
 
 def modification_station_menu(m):
     """GuiModificationStation (176 by 230): the list of the modules the gear holds (28, 20; here six rows, each a button: a click takes one out, Shift takes all
@@ -2634,7 +2696,7 @@ def entangloporter_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[153, 7]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y,
                        'widgets': widgets}}
 
-def frequency_selector(prefix_base, sec_var, panel, origin_x, origin_y, public_count, private_count, first_public, first_private):
+def frequency_selector(prefix_base, sec_var, panel, origin_x, origin_y, public_count, private_count, first_public, first_private, text_at=0):
     """`GuiFrequencySelector` (132 by 121 at `origin_x`, `origin_y`): the public, trusted and private buttons (38 by 20, 4 apart; the trusted one is drawn off, the port has no
     trusted security), the list of 42 high with the name of each frequency (a click on a row sets the block to it, which the original does with its Set button), the frequency,
     owner and security lines under it (the screen's strings 0 to 2), the name box at 23, 99 (98 by 11, Enter makes or joins the frequency of that name in the chosen security),
@@ -2663,7 +2725,7 @@ def frequency_selector(prefix_base, sec_var, panel, origin_x, origin_y, public_c
          'on_click': prefix_base + 16, 'color': '#3CFE9A'},
         {'type': 'textfield', 'x': x + 24, 'y': y + 100, 'w': 96, 'h': 9, 'id': prefix_base + 34, 'validator': 'any', 'max_length': 16}]})
     for k, line in enumerate(range(3)):
-        w.append({'type': 'text', 'x': x, 'y': y + 67 + 10 * k, 'text': '', 'text_data': k, 'color': '#404040', 'scale': 85})
+        w.append({'type': 'text', 'x': x, 'y': y + 67 + 10 * k, 'text': '', 'text_data': text_at + k, 'color': '#404040', 'scale': 85})
     w.append({'type': 'text', 'x': x + 64 + (56 - text_width('Delete')) // 2, 'y': y + 118, 'text': 'Delete', 'color': '#AA0000'})
     w.append({'type': 'button', 'x': x + 62, 'y': y + 113, 'w': 60, 'h': 18, 'id': prefix_base + 32, 'tooltip': 'Delete the frequency (only its owner can)'})
     return w
@@ -3056,6 +3118,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/oredictionificator.json', oredictionificator_
 put(f'{OUT}/data/{NS}/horizon/menu/seismic_vibrator.json', seismic_vibrator_menu('seismic_vibrator'))
 put(f'{OUT}/data/{NS}/horizon/menu/modification_station.json', modification_station_menu('modification_station'))
 put(f'{OUT}/data/{NS}/horizon/menu/qio_drive_array.json', qio_drive_array_menu('qio_drive_array'))
+put(f'{OUT}/data/{NS}/horizon/menu/qio_dashboard.json', qio_dashboard_menu('qio_dashboard'))
 for _p in ('personal_chest', 'personal_barrel'):
     put(f'{OUT}/data/{NS}/horizon/menu/{_p}.json', personal_storage_menu(_p))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
