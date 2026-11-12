@@ -1595,6 +1595,17 @@ def factory_menu(m):
         'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                    'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets, 'windows': [window]}}, m, len(slots), 16, warn=False)
     menu['data_slots'] = 32 + lines + (2 if form >= 3 else 0)
+    # GuiSortingTab at -26, 62 (35 by 18): the auto sort, On or Off under its icon; its state is the screen's number after the others (`factory.rs`)
+    sort_at = menu['data_slots']
+    menu['data_slots'] = sort_at + 1
+    sort_tab = tinted(nine_slice(gui_sprite('holder_left'), 35, 18, 4), 0x9B59B6)
+    sort_tab.alpha_composite(gui_sprite('button/sorting'), (4, 0))
+    sort_tex = save_gui(sort_tab, 'tab_sorting')
+    menu['screen']['widgets'] += [{'type': 'sprite', 'texture': sort_tex, 'x': -35, 'y': 62, 'w': 35, 'h': 18},
+        {'type': 'button', 'x': -35, 'y': 62, 'w': 35, 'h': 18, 'id': 4100, 'tooltip': 'Auto-sort'}]
+    for on, label in ((0, 'Off'), (1, 'On')):
+        menu['screen']['widgets'].append({'type': 'show', 'when': {'data': {'value': {'data': sort_at}, 'eq': on}}, 'widgets': [
+            {'type': 'text', 'x': -35 + (35 - text_width(label)) // 2, 'y': 82, 'text': label, 'color': '#FFFFFF'}]})
     # the upgrade tab and window go with the wider screen, and the charge slot takes what turns into energy
     menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), width - 176)
     menu['screen']['windows'][-1]['x'] += ox

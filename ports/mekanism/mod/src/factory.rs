@@ -8,6 +8,9 @@ use crate::machine::{Book, Io, Stack, Status, step};
 /// Where a factory keeps the progress of its lines after the first (the first is in the first two bytes, as every machine's):
 /// after its side configuration, its control and its upgrades.
 pub const TAIL: usize = 46;
+/// The sorting tab's button.
+pub const SORT: i32 = 4100;
+const SORTING_KEY: &str = "mekanism:factory_sorting";
 
 /// One line of a factory: its input, what it makes (one slot, two for sawing) and its progress.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -19,6 +22,50 @@ pub struct Line {
 }
 
 /// The recipes a factory works from.
+/// `TileEntityFactory.sortInventory`, simplified: the input stacks of one item are balanced among the lines that hold it, and among empty lines whose output is empty when the machine has a recipe for the item and
+/// there is enough for the extra line (each line needs the recipe's input). Returns whether any slot changed. Not here: the original's per-recipe needs of tags and the secondary outputs' compatibility.
+pub fn sort_lines(lines: &mut [Line], book: Option<&Book>) -> bool {
+    let mut changed = false;
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for i in 0..lines.len() {
+        let Some(first) = lines[i].input.clone() else { continue };
+        let id = (first.item.clone(), first.components.clone());
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id.clone());
+        let holders: Vec<usize> = (0..lines.len()).filter(|j| lines[*j].input.as_ref().is_some_and(|s| (s.item.clone(), s.components.clone()) == id)).collect();
+        let total: u32 = holders.iter().map(|j| lines[*j].input.as_ref().map_or(0, |s| s.count)).sum();
+        let need = book.and_then(|b| b.get(&first.item)).map_or(1, |r| r.count.max(1));
+        let mut targets = holders.clone();
+        if book.is_some_and(|b| b.get(&first.item).is_some()) {
+            let possible = (total / need) as usize;
+            for j in 0..lines.len() {
+                if targets.len() >= possible {
+                    break;
+                }
+                if lines[j].input.is_none() && lines[j].output.is_none() {
+                    targets.push(j);
+                }
+            }
+        }
+        if targets.len() < 2 {
+            continue;
+        }
+        targets.sort_unstable();
+        let (each, extra) = (total / targets.len() as u32, (total % targets.len() as u32) as usize);
+        for (k, j) in targets.iter().enumerate() {
+            let count = (each + u32::from(k < extra)).min(64);
+            let now = lines[*j].input.as_ref().map_or(0, |s| s.count);
+            if count != now {
+                changed = true;
+                lines[*j].input = (count > 0).then(|| Stack { item: first.item.clone(), count, components: first.components.clone() });
+            }
+        }
+    }
+    changed
+}
+
 pub struct Books<'a> {
     pub items: &'a Book,
     pub combine: &'a combiner::Book,
@@ -133,6 +180,25 @@ pub fn charge(energy: u64, capacity: u64, slot: Option<Stack>) -> (u64, Option<S
 }
 
 impl Mekanism {
+    pub(crate) fn factory_sorting(&mut self) -> &mut HashSet<(String, i32, i32, i32)> {
+        self.factory_sorting.get_or_insert_with(|| {
+            let text = horizon_mod_sdk::server::world_data::get(SORTING_KEY).map(|d| String::from_utf8_lossy(&d).into_owned()).unwrap_or_default();
+            text.lines()
+                .filter_map(|l| {
+                    let mut f = l.splitn(4, '|');
+                    let (d, x, y, z) = (f.next()?, f.next()?.parse().ok()?, f.next()?.parse().ok()?, f.next()?.parse().ok()?);
+                    Some((d.to_owned(), x, y, z))
+                })
+                .collect()
+        })
+    }
+
+    pub(crate) fn factory_sorting_save(&mut self) {
+        let mut lines: Vec<String> = self.factory_sorting().iter().map(|(d, x, y, z)| format!("{d}|{x}|{y}|{z}")).collect();
+        lines.sort();
+        let _ = horizon_mod_sdk::server::world_data::set(SORTING_KEY, lines.join("\n").as_bytes());
+    }
+
     /// A tick of a factory.
     pub(crate) fn run_factory(&mut self, def: &Def, e: &BlockEntity, tick: u64) -> Option<BlockEntityUpdate> {
         let n = def.lines;
@@ -189,7 +255,7 @@ impl Mekanism {
         let ticks = upgrades::ticks(base_def.and_then(|d| d.proc).map_or(machine::TICKS, |p| p.ticks), speed);
         let capacity = upgrades::max_energy(base_capacity(def), energy_up);
         let slot = |i: usize| stack(e.items.get(i).unwrap_or(&None));
-        let lines: Vec<Line> = (0..n)
+        let mut lines: Vec<Line> = (0..n)
             .map(|i| Line {
                 input: slot(per * i),
                 output: slot(per * i + 1),
@@ -197,6 +263,9 @@ impl Mekanism {
                 progress: progress_of(i),
             })
             .collect();
+        // The sorting tab (`isSorting`): the lines' inputs are balanced.
+        let sorting = self.factory_sorting().contains(&key);
+        let sorted = sorting && sort_lines(&mut lines, self.books.get(def.base));
         let extra_at = n * per;
         let charge_at = config::factory_slot_count(n, form) - 1;
         let extra = if config::factory_has_extra(form) { slot(extra_at) } else { None };
@@ -267,11 +336,13 @@ impl Mekanism {
             // The tank's amount and chemical, after the lines' progress.
             data.extend(chem::screen(&tank_next));
         }
+        // The sorting tab's state, the screen's last number but the security one.
+        data.push(i32::from(sorting));
         saved.resize(TAIL, 0);
         for l in next.iter().skip(1) {
             saved.extend((l.progress as u16).to_le_bytes());
         }
-        let changed = next != lines || charged != slot(charge_at) || extra_next != extra || left != e.energy || tank_next != tank_now;
+        let changed = sorted || next != lines || charged != slot(charge_at) || extra_next != extra || left != e.energy || tank_next != tank_now;
         if !changed && !dirty && data == e.menu_data && saved == e.data && !self.force {
             return None;
         }
@@ -296,6 +367,21 @@ static EMPTY_BOOK: std::sync::LazyLock<Book> = std::sync::LazyLock::new(Book::de
 mod tests {
     use super::*;
     use crate::machine::Recipe;
+
+    #[test]
+    fn sorting_balances_the_stacks_of_one_item_and_fills_empty_lines_it_has_a_recipe_for() {
+        let st = |n: u32| Some(Stack { item: "minecraft:iron_ore".into(), count: n, components: String::new() });
+        let line = |input: Option<Stack>| Line { input, output: None, secondary: None, progress: 0 };
+        let mut lines = vec![line(st(60)), line(st(4)), line(None)];
+        assert!(sort_lines(&mut lines, None));
+        assert_eq!(lines.iter().map(|l| l.input.as_ref().map_or(0, |s| s.count)).collect::<Vec<_>>(), [32, 32, 0], "no recipe known: only the holders");
+        let mut book = Book::default();
+        book.add(["minecraft:iron_ore".to_owned()], Recipe { count: 1, output: "mekanism:dirty_iron_dust".into(), out_count: 2 });
+        let mut lines = vec![line(st(60)), line(st(3)), line(None)];
+        assert!(sort_lines(&mut lines, Some(&book)));
+        assert_eq!(lines.iter().map(|l| l.input.as_ref().map_or(0, |s| s.count)).collect::<Vec<_>>(), [21, 21, 21]);
+        assert!(!sort_lines(&mut lines, Some(&book)), "already balanced");
+    }
 
     fn stack(item: &str, count: u32) -> Option<Stack> {
         Some(Stack { item: item.into(), count, components: String::new() })

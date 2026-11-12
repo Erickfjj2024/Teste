@@ -506,6 +506,8 @@ struct Mekanism {
     desk_texts: Vec<(String, BlockPos, i32, String, String)>,
     desk_selected: HashMap<(String, i32, i32, i32), usize>,
     desk_viewer: HashMap<(String, i32, i32, i32), String>,
+    /// The factories whose sorting tab is on (kept in the world's data), loaded on first use.
+    factory_sorting: Option<HashSet<(String, i32, i32, i32)>>,
     /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
     portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
@@ -2360,6 +2362,7 @@ impl ServerMod for Mekanism {
             desk_texts: Vec::new(),
             desk_selected: HashMap::new(),
             desk_viewer: HashMap::new(),
+            factory_sorting: None,
             portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
@@ -2993,6 +2996,15 @@ impl ServerMod for Mekanism {
         let layout = def.layout;
         let facing = sides::property(&e.state, "facing").unwrap_or("north").to_owned();
         let mut cfg = Config::decode(e.data.get(2..).unwrap_or(&[]), layout).unwrap_or_else(|| config::default_config(layout));
+        if id == factory::SORT && def.kind == Kind::Factory {
+            let key = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
+            if !self.factory_sorting().remove(&key) {
+                self.factory_sorting().insert(key);
+            }
+            self.factory_sorting_save();
+            self.force = true;
+            return None;
+        }
         if id == chem::DUMP && def.kind == Kind::Factory && def.form >= 3 {
             // GuiDumpButton: the factory's tank is emptied; its next tick draws the screen again.
             return Some(BlockEntityUpdate {
