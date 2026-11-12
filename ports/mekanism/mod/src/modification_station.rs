@@ -504,15 +504,7 @@ pub const LIST_ROWS: usize = 6;
 
 /// The name a module shows (`module_energy_unit` -> `Energy Unit`, the module's own name in the original's language file).
 pub fn module_title(t: ModuleType) -> String {
-    let id = t.item_id();
-    let path = id.split(':').nth(1).unwrap_or(id).trim_start_matches("module_");
-    path.split('_')
-        .map(|w| {
-            let mut c = w.chars();
-            c.next().map_or_else(String::new, |f| f.to_uppercase().collect::<String>() + c.as_str())
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::module_tweaker::title(t)
 }
 
 /// The modules installed on a gear item, in the order the list shows them (by item id).
@@ -931,7 +923,7 @@ mod tests {
         let stack = ItemStack { item: "mekanism:meka_tool".into(), count: 1, components: c.encode_to_components("{}") };
         let texts = list_texts(Some(&stack));
         assert_eq!(texts.len(), LIST_ROWS);
-        assert_eq!(texts[0], "Fortune Unit x2");
+        assert_eq!(texts[0], "Ore Refinement Unit x2");
         assert_eq!(texts[1], "Teleportation Unit x1");
         assert!(texts[2].is_empty());
         assert_eq!(module_title(ModuleType::ElectrolyticBreathingUnit), "Electrolytic Breathing Unit");

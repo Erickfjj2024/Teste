@@ -2738,6 +2738,41 @@ def seismic_reader_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[95, 146 - 16 * i] for i in range(9)], 'width': width, 'height': height,
                        'hide_inventory': True, 'widgets': widgets}}
 
+def module_tweaker_menu(m):
+    """GuiModuleTweaker (266 by 186): the four armor slots at 8, 8 (18 apart), the off hand at 8, 88 and the hotbar from 58, 161, the list of the item's modules in the holder at 30, 20 (116
+    by 116) and the settings of the picked module in the screen at 150, 20 (108 by 134). The slots are the menu's virtual slots (they cannot be taken); a transparent button over each picks
+    the item (the picked one is outlined, the ones that hold no modules are dimmed). Numbers and strings: `module_tweaker.rs`. The Options button of the MekaSuit helmet and the colour
+    window are not here."""
+    from PIL import Image, ImageDraw
+    width, height = 266, 186
+    slots = [[8, 8 + 18 * i] for i in range(4)] + [[58 + 18 * i, 161] for i in range(9)] + [[8, 88]]
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    for x, y in slots:
+        panel.alpha_composite(gui_sprite('slot/normal'), (x - 1, y - 1))
+    inner = gui_sprite('inner_screen').resize((16, 16), 0)
+    panel.alpha_composite(nine_slice(inner, 116, 116, 3), (30, 20))
+    panel.alpha_composite(nine_slice(inner, 108, 134, 3), (150, 20))
+    panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 120, 18, 2), (30, 136))
+    texture = save_gui(panel, m)
+    frame = Image.new('RGBA', (18, 18), (0, 0, 0, 0))
+    ImageDraw.Draw(frame).rectangle((0, 0, 17, 17), outline=(255, 255, 255, 255))
+    select = save_gui(frame, 'module_tweaker_select')
+    dim = save_gui(Image.new('RGBA', (16, 16), (0x33, 0x33, 0x33, 0xCC)), 'module_tweaker_dim')
+    title = 'Module Tweaker'
+    widgets = [{'type': 'text', 'x': 24 + (width - 24 - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
+               {'type': 'list', 'x': 32, 'y': 22, 'w': 112, 'h': 112, 'row_height': 11, 'first': 0, 'count': {'data': 2}, 'on_click': 9520, 'color': '#3CFE9A'}]
+    for i, (x, y) in enumerate(slots):
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 3 + i}, 'eq': 0}}, 'widgets': [{'type': 'sprite', 'texture': dim, 'x': x, 'y': y, 'w': 16, 'h': 16}]})
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': i}}, 'widgets': [{'type': 'sprite', 'texture': select, 'x': x - 1, 'y': y - 1, 'w': 18, 'h': 18}]})
+        widgets.append({'type': 'button', 'x': x - 1, 'y': y - 1, 'w': 18, 'h': 18, 'id': 9500 + i})
+    for i in range(8):
+        y = 22 + 18 * i
+        widgets.append({'type': 'text', 'x': 154, 'y': y, 'text': '', 'text_data': 16 + 2 * i, 'color': '#FFFFFF'})
+        widgets.append({'type': 'text', 'x': 154, 'y': y + 8, 'text': '', 'text_data': 17 + 2 * i, 'color': '#3CFE9A'})
+        widgets.append({'type': 'button', 'x': 152, 'y': y - 1, 'w': 104, 'h': 17, 'id': 9540 + i})
+    return {'slots': 14, 'data_slots': 17, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height, 'hide_inventory': True, 'widgets': widgets}}
+
 def security_desk_menu(m):
     """GuiSecurityDesk (176 by 230): the three element holders at 141 (13, 54 and 92) with the lock slot's and the unlock slot's frames at 146, 18 and 146, 97 (here plain slots: the items'
     ownership is not in the port) and the public and private icons, the trusted list at 13, 13 (122 by 42; a click selects a row), the Remove button at 13, 81, the name box at 35, 68 (Enter
@@ -3036,6 +3071,8 @@ put(f'{OUT}/data/{NS}/horizon/menu/quantum_entangloporter.json', entangloporter_
 put(f'{OUT}/data/{NS}/horizon/menu/teleporter.json', teleporter_menu('teleporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/portable_teleporter.json', portable_teleporter_menu('portable_teleporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/seismic_reader.json', seismic_reader_menu('seismic_reader'))
+put(f'{OUT}/data/{NS}/horizon/menu/module_tweaker.json', module_tweaker_menu('module_tweaker'))
+put(f'{OUT}/data/{NS}/horizon/key/module_tweaker.json', {'label': 'Module Tweaker', 'category': 'Mekanism', 'key': 'key.keyboard.backslash'})
 put(f'{OUT}/data/{NS}/horizon/menu/security_desk.json', security_desk_menu('security_desk'))
 for _b in BINS:
     put(f'{OUT}/data/{NS}/horizon/menu/{_b}.json', bin_menu(_b))

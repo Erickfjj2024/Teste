@@ -36,6 +36,7 @@ mod modification_station;
 mod modules;
 mod oredictionificator;
 mod personal_storage;
+mod module_tweaker;
 mod qio_dashboard;
 mod qio_transfer;
 mod radioactive_waste_barrel;
@@ -495,6 +496,7 @@ struct Mekanism {
     teleporter_table: Vec<(String, String, [i32; 3], Option<usize>)>,
     /// What each open Seismic Reader screen reads.
     readers: seismic_reader::Readers,
+    tweakers: module_tweaker::Views,
     /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
     block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
     /// The blocks whose mode changed and whose screen has to be sent again.
@@ -2357,6 +2359,7 @@ impl ServerMod for Mekanism {
             item_menu_sent: HashMap::new(),
             teleporter_table: Vec::new(),
             readers: seismic_reader::Readers::default(),
+            tweakers: module_tweaker::Views::new(),
             block_owners: None,
             security_dirty: HashSet::new(),
             owner_data: None,
@@ -2596,13 +2599,25 @@ impl ServerMod for Mekanism {
             self.portable_teleporter_button(player, &menu, id)
         } else if menu.menu == seismic_reader::MENU {
             self.seismic_reader_button(player, id)
+        } else if menu.menu == module_tweaker::MENU {
+            self.module_tweaker_button(player, id)
         } else {
             None
         }
     }
 
     fn item_menu_taken(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu, _slot: u32, _stack: ItemStack) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
-        if menu.menu == seismic_reader::MENU { self.seismic_reader_taken(player) } else { None }
+        if menu.menu == seismic_reader::MENU {
+            self.seismic_reader_taken(player)
+        } else if menu.menu == module_tweaker::MENU {
+            self.module_tweaker_taken(player)
+        } else {
+            None
+        }
+    }
+
+    fn key_pressed(&mut self, player: &Player, key: &str) -> bool {
+        key == module_tweaker::KEY && self.module_tweaker_key(player)
     }
 
     fn item_menu_tick(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {

@@ -31,6 +31,9 @@ impl Mekanism {
         if menu.menu == crate::seismic_reader::MENU {
             return self.seismic_reader_tick(player, menu);
         }
+        if menu.menu == crate::module_tweaker::MENU {
+            return self.module_tweaker_tick(player, menu);
+        }
         if menu.menu != DICTIONARY_MENU {
             return None;
         }

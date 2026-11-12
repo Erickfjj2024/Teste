@@ -772,6 +772,20 @@ impl MagneticRange {
 }
 
 // Meka-Tool Specific Enums (shared for e6)
+macro_rules! ordinal_enum {
+    ($t:ident: $($v:ident),+) => {
+        impl $t {
+            pub const ALL: &'static [$t] = &[$($t::$v),+];
+            /// The place in the original's order.
+            pub const fn ordinal(&self) -> u8 {
+                *self as u8
+            }
+            pub fn from_ordinal(index: u8) -> Self {
+                Self::ALL[(index as usize).min(Self::ALL.len() - 1)]
+            }
+        }
+    };
+}
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum AttackDamage {
     Off,     // 0
@@ -818,6 +832,12 @@ pub enum FarmingRadius {
     High,  // 3 (7x7)
     Ultra, // 4 (9x9)
 }
+
+ordinal_enum!(AttackDamage: Off, Low, Med, High, Extreme, Max);
+ordinal_enum!(ExcavationMode: Off, Slow, Normal, Fast, SuperFast, Extreme);
+ordinal_enum!(BlastRadius: Off, Low, Med, High, Extreme);
+ordinal_enum!(ExcavationRange: Off, Low, Med, High, Ultra);
+ordinal_enum!(FarmingRadius: Off, Low, Med, High, Ultra);
 
 // -----------------------------------------------------------------------------
 // Installed Module State
@@ -944,6 +964,40 @@ impl InstalledModule {
                 self.hover_thrust_multiplier = ThrustMultiplier::from_ordinal(max);
             }
         }
+    }
+
+    /// One saved setting (`to_json`'s keys) put back; unknown keys and values are ignored.
+    pub fn apply_config(&mut self, key: &str, val: &str) {
+        let flag = val == "true" || val == "1";
+        let num = val.parse::<u8>().unwrap_or(0);
+        match key {
+            "color" => self.color_argb = val.parse().unwrap_or(0xFFFF_FFFF),
+            "jetpack_mode" => self.jetpack_mode = JetpackMode::from_str(val).unwrap_or(self.jetpack_mode),
+            "thrust_mult" => self.thrust_multiplier = ThrustMultiplier::from_str(val).unwrap_or(self.thrust_multiplier),
+            "hover_thrust_mult" => self.hover_thrust_multiplier = ThrustMultiplier::from_str(val).unwrap_or(self.hover_thrust_multiplier),
+            "sprint_boost" | "speed_boost" => self.sprint_boost = SprintBoost::from_str(val).unwrap_or(self.sprint_boost),
+            "jump_boost" => self.jump_boost = JumpBoost::from_str(val).unwrap_or(self.jump_boost),
+            "step_assist" => self.step_assist = StepAssist::from_str(val).unwrap_or(self.step_assist),
+            "range" => self.magnetic_range = MagneticRange::from_str(val).unwrap_or(self.magnetic_range),
+            "fill_held" => self.fill_held = flag,
+            "charge_suit" => self.charge_suit = flag,
+            "charge_inventory" => self.charge_inventory = flag,
+            "swim_boost" => self.swim_boost = flag,
+            "beneficial" => self.beneficial_effects = flag,
+            "neutral" => self.neutral_effects = flag,
+            "harmful" => self.harmful_effects = flag,
+            "require_target" => self.require_target = flag,
+            "extended_mode" => self.extended_mode = flag,
+            "handle_mode_change" => self.handle_mode_change = flag,
+            "render_hud" => self.render_hud = flag,
+            "attack_damage" => self.attack_damage = AttackDamage::from_ordinal(num),
+            "excavation_mode" => self.excavation_mode = ExcavationMode::from_ordinal(num),
+            "blast_radius" => self.blast_radius = BlastRadius::from_ordinal(num),
+            "excavation_range" => self.excavation_range = ExcavationRange::from_ordinal(num),
+            "farming_radius" => self.farming_radius = FarmingRadius::from_ordinal(num),
+            _ => {}
+        }
+        self.clamp_thrust_to_installed();
     }
 
     pub fn new(module_type: ModuleType, count: u8) -> Self {
@@ -1215,6 +1269,7 @@ impl ModuleContainer {
                         let mut m_type: Option<ModuleType> = None;
                         let mut m_amount: u8 = 1;
                         let mut m_enabled: Option<bool> = None;
+                        let mut others: Vec<(String, String)> = Vec::new();
 
                         for field in item.split(',') {
                             let field = field.trim().trim_end_matches('}');
@@ -1225,7 +1280,7 @@ impl ModuleContainer {
                                     "type" => m_type = ModuleType::from_id(val),
                                     "amount" => m_amount = val.parse().unwrap_or(1),
                                     "enabled" => m_enabled = Some(val == "true" || val == "1"),
-                                    _ => {}
+                                    _ => others.push((key.to_owned(), val.to_owned())),
                                 }
                             }
                         }
@@ -1234,6 +1289,9 @@ impl ModuleContainer {
                             let mut installed = InstalledModule::new(t, m_amount);
                             if let Some(en) = m_enabled {
                                 installed.enabled = en;
+                            }
+                            for (k, v) in &others {
+                                installed.apply_config(k, v);
                             }
                             container.modules.insert(t, installed);
                         }
@@ -1329,7 +1387,35 @@ impl ModuleContainer {
                         configs.push(format!("\"neutral\":{}", m.neutral_effects));
                         configs.push(format!("\"harmful\":{}", m.harmful_effects));
                     }
+                    ModuleType::GravitationalModulatingUnit => {
+                        configs.push(format!("\"speed_boost\":\"{}\"", m.sprint_boost.as_str()));
+                    }
+                    ModuleType::TeleportationUnit => {
+                        configs.push(format!("\"require_target\":{}", m.require_target));
+                    }
+                    ModuleType::AttackAmplificationUnit => {
+                        configs.push(format!("\"attack_damage\":{}", m.attack_damage as u8));
+                    }
+                    ModuleType::ExcavationEscalationUnit => {
+                        configs.push(format!("\"excavation_mode\":{}", m.excavation_mode as u8));
+                    }
+                    ModuleType::BlastingUnit => {
+                        configs.push(format!("\"blast_radius\":{}", m.blast_radius as u8));
+                    }
+                    ModuleType::VeinMiningUnit => {
+                        configs.push(format!("\"extended_mode\":{}", m.extended_mode));
+                        configs.push(format!("\"excavation_range\":{}", m.excavation_range as u8));
+                    }
+                    ModuleType::FarmingUnit => {
+                        configs.push(format!("\"farming_radius\":{}", m.farming_radius as u8));
+                    }
                     _ => {}
+                }
+                if t.handles_mode_change() {
+                    configs.push(format!("\"handle_mode_change\":{}", m.handle_mode_change));
+                }
+                if t.renders_hud() {
+                    configs.push(format!("\"render_hud\":{}", m.render_hud));
                 }
                 let config_str = configs.join(",");
                 parts.push(format!("{{\"type\":\"{}\",\"amount\":{},{config_str}}}", t.id(), m.installed));
