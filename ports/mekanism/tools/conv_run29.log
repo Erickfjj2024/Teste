@@ -1,0 +1,7 @@
+/tmp/claude-0/work/teste/ports/mekanism/tools/convert.py:398: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  best = max((p for p in corner.getdata() if p[3] > 200), key=lambda p: max(p[:3]) - min(p[:3]) + max(p[:3]) / 4)
+additions machine recipes 504
+additions recolour crafting recipes 240
+sounds 46
+items 278, blocks 469, textures 605, models 577, recipes 2160
+warnings: 0

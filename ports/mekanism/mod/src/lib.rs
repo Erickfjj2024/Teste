@@ -26,6 +26,8 @@ mod filters;
 mod item_menus;
 mod portable_teleporter;
 mod seismic_reader;
+mod block_security;
+mod security_table;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -492,6 +494,10 @@ struct Mekanism {
     teleporter_table: Vec<(String, String, [i32; 3], Option<usize>)>,
     /// What each open Seismic Reader screen reads.
     readers: seismic_reader::Readers,
+    /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
+    block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
+    /// The blocks whose mode changed and whose screen has to be sent again.
+    security_dirty: HashSet<(String, i32, i32, i32)>,
     /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
     portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
@@ -2336,6 +2342,8 @@ impl ServerMod for Mekanism {
             item_menu_sent: HashMap::new(),
             teleporter_table: Vec::new(),
             readers: seismic_reader::Readers::default(),
+            block_owners: None,
+            security_dirty: HashSet::new(),
             portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
@@ -2455,6 +2463,7 @@ impl ServerMod for Mekanism {
 
     fn block_broken(&mut self, player: &Player, pos: BlockPos, state: &str) {
         let name = state.split('[').next().unwrap_or("");
+        self.security_broken(player, pos, name);
         if name == dimensional_stabilizer::BLOCK {
             self.release_stabilizer_tickets(&player.dimension, pos);
         }
@@ -2488,6 +2497,7 @@ impl ServerMod for Mekanism {
 
     fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {
         let name = state.split('[').next().unwrap_or("");
+        self.security_placed(player, pos, name);
         if bounding::is_bounded(name) {
             // Java AttributeHasBounding.placeBoundingBlocks (AttributeHasBounding.java:50-65):
             // Immediately place all bounding blocks on machine placement instead of waiting up to 20 ticks.
@@ -2534,6 +2544,9 @@ impl ServerMod for Mekanism {
     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
         let Some(b) = world::get_block(&player.dimension, pos.x, pos.y, pos.z) else { return BlockUse::Default };
         let name = b.split('[').next().unwrap_or("");
+        if !self.security_allows(player, pos, name) {
+            return BlockUse::Consume;
+        }
         if !is_multiblock_block(name) || stack.is_some_and(|s| s.item == CONFIGURATOR) {
             return BlockUse::Default;
         }
@@ -2866,6 +2879,9 @@ impl ServerMod for Mekanism {
     }
 
     fn menu_button(&mut self, player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
+        if self.security_button(player, &e, id) {
+            return None;
+        }
         let block = e.state.split('[').next()?;
         if block == miner::MINER {
             self.miner_buttons.push((e.dimension.clone(), e.pos, id));
@@ -3128,6 +3144,8 @@ impl ServerMod for Mekanism {
 
     fn block_entities_tick(&mut self, tick: u64, mut entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
         self.now = tick;
+        self.security_strip(&mut entities);
+        let snapshot: Vec<BlockEntity> = entities.iter().filter(|e| block_security::data_index(e.state.split('[').next().unwrap_or("")).is_some()).cloned().collect();
         let mut out = Vec::new();
         // The configurator clicks that act on the block itself go first, before the machines' own ticks.
         out.extend(self.tool_clicks(&mut entities));
@@ -3364,6 +3382,7 @@ impl ServerMod for Mekanism {
             c.tick += 1;
         }
         self.pending.retain(|c| c.tick < 5);
+        self.security_stamp(&snapshot, &mut out);
         out
     }
 }

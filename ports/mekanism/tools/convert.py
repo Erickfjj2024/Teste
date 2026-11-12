@@ -4036,6 +4036,37 @@ print(f'sounds {nsounds}')
 
 print(f'items {len(kept_items)}, blocks {len(kept_blocks)}, textures {len(copied_textures)}, '
       f'models {len(copied_models)}, recipes {nrec}')
+
+# ---- the security tab (GuiSecurityTab at the screen's right, 26 by 18, y 34 or 6 for the energy cubes): the lock of the block's mode, a click for the next mode and a right click for the
+# previous one (`block_security.rs`). The mode is the screen's last number, which the mod puts after the screen's own (`security_table.rs`).
+SECURITY_SKIP = {'basic_bin', 'advanced_bin', 'elite_bin', 'ultimate_bin', 'creative_bin'}
+def security_tabs():
+    secured = []
+    names = [n for n in kept_blocks if os.path.exists(f'{OUT}/data/{NS}/horizon/menu/{n}.json') and n not in SECURITY_SKIP]
+    for n in names:
+        path = f'{OUT}/data/{NS}/horizon/menu/{n}.json'
+        menu = read_json(path)
+        screen = menu['screen']
+        at = menu['data_slots']
+        menu['data_slots'] = at + 1
+        x, y = screen.get('width', 176), (6 if n.endswith('_energy_cube') else 34)
+        for k, (icon, label) in enumerate((('public', 'Public'), ('private', 'Private'), ('protected', 'Trusted'))):
+            holder = tinted(nine_slice(gui_sprite('holder_right'), 26, 18, 4), 0x2D9CDB)
+            holder.alpha_composite(gui_sprite(f'security/{icon}'), (4, 0))
+            tex = save_gui(holder, f'security_{icon}')
+            screen['widgets'].append({'type': 'show', 'when': {'data': {'value': {'data': at}, 'eq': k}}, 'widgets': [
+                {'type': 'sprite', 'texture': tex, 'x': x, 'y': y, 'w': 26, 'h': 18},
+                {'type': 'button', 'x': x, 'y': y, 'w': 26, 'h': 18, 'id': 9100, 'alt_id': 9101, 'tooltip': f'Security: {label}'}]})
+        put(path, menu)
+        secured.append((f'{NS}:{n}', at))
+    with open(f'{OUT}/src/security_table.rs', 'w') as f:
+        f.write("//! Written by the converter (`tools/convert.py`): the blocks whose screens have the security tab, and the place of the mode in each one's data.\n")
+        f.write('pub const SECURED: &[(&str, usize)] = &[\n')
+        for b, at in secured:
+            f.write(f'    ("{b}", {at}),\n')
+        f.write('];\n')
+security_tabs()
+
 print('warnings:', len(warnings))
 for w in warnings[:40]:
     print('  ', w)
