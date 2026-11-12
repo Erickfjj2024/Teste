@@ -2578,8 +2578,8 @@ impl ServerMod for Mekanism {
         if entity.kind == robit_world::KIND { self.robit_button(player, &entity, id) } else { None }
     }
 
-    fn entity_menu_taken(&mut self, _player: &Player, entity: ModEntity, slot: u32, _stack: ItemStack) -> Option<ModEntityUpdate> {
-        if entity.kind == robit_world::KIND { self.robit_taken(&entity, slot) } else { None }
+    fn entity_menu_taken(&mut self, player: &Player, entity: ModEntity, slot: u32, _stack: ItemStack) -> Option<ModEntityUpdate> {
+        if entity.kind == robit_world::KIND { self.robit_taken(player, &entity, slot) } else { None }
     }
 
     fn mod_entity_damaged(&mut self, entity: ModEntity, _source: DamageSource, amount: f32) -> f32 {
@@ -2853,6 +2853,9 @@ impl ServerMod for Mekanism {
             }
             if input.pos.x == i32::MIN {
                 // a text box of an entity's menu: the position is `(i32::MIN, 0, entity id)`; the Robit's rename box is 10
+                if input.id == robit_world::REPAIR_NAME_BOX {
+                    robit_world::set_repair_name(input.pos.z as u32, input.text.chars().take(50).collect());
+                }
                 if input.id == 10 && !input.text.trim().is_empty() {
                     self.robit_renames.insert(input.pos.z as u32, input.text.trim().chars().take(32).collect());
                 }

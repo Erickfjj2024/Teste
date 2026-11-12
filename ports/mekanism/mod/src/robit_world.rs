@@ -274,6 +274,42 @@ fn grid_of(items: &[Option<ItemStack>]) -> Option<Vec<Option<ItemStack>>> {
 
 /// The slot of the crafting result in the menu.
 pub const CRAFT_RESULT: usize = robit::TOTAL_SLOTS + 9;
+/// The repair tab's slots (`GuiRobitRepair`): the item, the material or book, and the result (the host's anvil, API 52).
+pub const REPAIR_LEFT: usize = CRAFT_RESULT + 1;
+pub const REPAIR_RIGHT: usize = CRAFT_RESULT + 2;
+pub const REPAIR_OUT: usize = CRAFT_RESULT + 3;
+/// The id of the repair tab's name box (the rename window's is 10).
+pub const REPAIR_NAME_BOX: i32 = 11;
+
+thread_local! {
+    /// What each Robit's repair name box holds (`AnvilMenu.itemName`).
+    static REPAIR_NAMES: std::cell::RefCell<HashMap<u32, String>> = std::cell::RefCell::new(HashMap::new());
+}
+
+pub fn set_repair_name(entity: u32, name: String) {
+    REPAIR_NAMES.with(|m| m.borrow_mut().insert(entity, name));
+}
+
+/// Total experience points of a level (`Player.getXpNeededForNextLevel` summed).
+pub fn xp_total(level: i32) -> i64 {
+    let l = i64::from(level.max(0));
+    if l <= 16 {
+        l * l + 6 * l
+    } else if l <= 31 {
+        (5 * l * l - 81 * l + 720) / 2
+    } else {
+        (9 * l * l - 325 * l + 4440) / 2
+    }
+}
+
+/// The anvil's answer for the repair slots and what it costs: the result stack, the level cost and the right stack's remaining material. `None` when nothing can be made, the item is
+/// too expensive (40 or more levels) or the owner has too few levels.
+pub fn repair_answer(items: &[Option<ItemStack>], name: Option<&str>, owner_level: i32) -> Option<(ItemStack, i32, u32)> {
+    let left = items.get(REPAIR_LEFT)?.as_ref()?;
+    let right = items.get(REPAIR_RIGHT).and_then(|s| s.as_ref());
+    let answer = recipe_types::anvil_result(left, right, name)?;
+    (answer.cost < 40 && answer.cost <= owner_level).then_some((answer.output, answer.cost, answer.material_cost))
+}
 
 // ---- the world ----------------------------------------------------------------------------------------------------
 
@@ -399,12 +435,19 @@ pub fn tick_all(damage: &mut HashMap<u32, f64>, renames: &mut HashMap<u32, Strin
         let following = rr.follow_active && owner.is_some();
         let goal = owner.map(|(x, y, z, _)| (x, y, z));
         let (menu_data, menu_text) = menu_of(&rr);
+        let rr_owner = rr.owner_uuid.clone();
         let mut items = item_slots(&slots_now);
         // While the menu is open the virtual slots are there too: the crafting grid makes its result.
         if e.items.len() > robit::TOTAL_SLOTS {
             items.extend(e.items[robit::TOTAL_SLOTS..].iter().cloned());
             if let Some(grid) = grid_of(&items) {
                 items[CRAFT_RESULT] = recipe_types::crafting_find(&grid).map(|m| m.output);
+            }
+            // The repair tab: the anvil's result for the owner's levels.
+            if items.len() > REPAIR_OUT {
+                let level = player_control::get_motion(&rr_owner).map_or(0, |m| m.xp_level);
+                let name = REPAIR_NAMES.with(|m| m.borrow().get(&e.id).cloned());
+                items[REPAIR_OUT] = repair_answer(&items, name.as_deref(), level).map(|a| a.0);
             }
         }
         let mut u = update(&e, |u| {
@@ -552,7 +595,28 @@ impl Mekanism {
 
     /// The crafting result taken (`entity-menu-taken`): each cell of the grid gives up one item, and what the recipe leaves behind (a bucket, a bottle) takes the place of a cell that
     /// was emptied.
-    pub(crate) fn robit_taken(&mut self, e: &ModEntity, slot: u32) -> Option<ModEntityUpdate> {
+    pub(crate) fn robit_taken(&mut self, player: &Player, e: &ModEntity, slot: u32) -> Option<ModEntityUpdate> {
+        if slot as usize == REPAIR_OUT {
+            // The anvil's result was taken: the inputs go (the item, and what the repair used of the material) and the owner pays the levels.
+            let level = player_control::get_motion(&player.id).map_or(0, |m| m.xp_level);
+            let name = REPAIR_NAMES.with(|m| m.borrow().get(&e.id).cloned());
+            let (_, cost, material) = repair_answer(&e.items, name.as_deref(), level)?;
+            let mut items = e.items.clone();
+            items[REPAIR_LEFT] = None;
+            items[REPAIR_RIGHT] = items[REPAIR_RIGHT].take().and_then(|s| {
+                let left = s.count.saturating_sub(material.max(1));
+                (left > 0).then_some(ItemStack { count: left, ..s })
+            });
+            items[REPAIR_OUT] = None;
+            let points = (xp_total(level) - xp_total(level - cost)).max(0) as u32;
+            if points > 0 {
+                let _ = player_control::take_xp(&player.id, points);
+            }
+            return Some(update(e, |u| {
+                u.items = Some(items);
+                u.health = None;
+            }));
+        }
         if slot as usize != CRAFT_RESULT {
             return None;
         }
