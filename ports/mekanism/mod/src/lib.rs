@@ -2620,6 +2620,10 @@ impl ServerMod for Mekanism {
     }
 
     fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, state: &str) -> bool {
+        // A block the player may not use cannot be broken by them either (`BlockTile.getDestroyProgress`): taking the start keeps the game from breaking it.
+        if !self.security_allows(player, pos, state.split('[').next().unwrap_or("")) {
+            return true;
+        }
         self.meka_break(player, &stack, pos, state)
     }
 

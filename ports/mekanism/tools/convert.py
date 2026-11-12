@@ -1216,7 +1216,18 @@ def power_slot(layout):
     return next((x, y) for sprite, x, y in layout['frames'] if sprite == 'slot/power')
 
 
-def with_upgrades(menu, machine, base, c, charge=None):
+def warning_tab_widgets(status_at=5):
+    """GuiWarningTab at -26, 109 (26 by 26), shown while the machine has an issue: no recipe for its input (status 2), not enough energy (3) or no room in the output (4); the tooltip names it."""
+    tab = copy_gui('tab/warning_info_left', 'tab_warning_left')
+    out = []
+    for st, text in ((2, 'No matching recipe.'), (3, 'Not enough energy.'), (4, 'Not enough space in output.')):
+        out.append({'type': 'show', 'when': {'data': {'value': {'data': status_at}, 'eq': st}}, 'widgets': [
+            {'type': 'sprite', 'texture': tab, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
+            {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Issues:\n' + text}]})
+    return out
+
+
+def with_upgrades(menu, machine, base, c, charge=None, warn=True):
     """Adds the upgrade window, its tab, its two slots (the filter and the take-only one) and its screen numbers to a menu. `charge` is where the
     machine's charge slot is drawn (mod `upgrades.rs::charge_slot`: the slot after the upgrade ones); the pressurized chamber and the rotary have it among their own."""
     menu['slots'] = base + 2 + (charge is not None)
@@ -1227,7 +1238,7 @@ def with_upgrades(menu, machine, base, c, charge=None):
     menu['data_slots'] = c + 16
     screen = menu['screen']
     screen['slots'] = list(screen['slots']) + [None, None] + ([list(charge)] if charge is not None else [])
-    screen['widgets'] = list(screen['widgets']) + upgrade_tab_widgets()
+    screen['widgets'] = list(screen['widgets']) + (warning_tab_widgets() if warn else []) + upgrade_tab_widgets()
     screen['windows'] = list(screen.get('windows', [])) + [upgrade_window(machine, base, c)]
     return menu
 
@@ -1582,7 +1593,7 @@ def factory_menu(m):
     menu = with_upgrades({
         'slots': len(slots), 'data_slots': 32 + lines + (2 if form >= 3 else 0), 'results': results,
         'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
-                   'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets, 'windows': [window]}}, m, len(slots), 16)
+                   'inventory_x': inv_x, 'inventory_y': inv_y, 'widgets': widgets, 'windows': [window]}}, m, len(slots), 16, warn=False)
     menu['data_slots'] = 32 + lines + (2 if form >= 3 else 0)
     # the upgrade tab and window go with the wider screen, and the charge slot takes what turns into energy
     menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), width - 176)
@@ -3316,7 +3327,7 @@ def gen_menu(n):
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
-            'screen': {'texture': gen_panel(n, L), 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': []}}, n, len(slots), 15)
+            'screen': {'texture': gen_panel(n, L), 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': []}}, n, len(slots), 15, warn=False)
 
 for g in GENERATORS:
     bs = read_json(f'{GDIR}/blockstates/{g}.json')
