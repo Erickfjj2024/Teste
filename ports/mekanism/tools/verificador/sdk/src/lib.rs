@@ -39,6 +39,10 @@ pub mod server {
     pub fn crafting_matches<A0>(_a0: A0, _a1: &Vec<Option<ItemStack>>) -> bool { false }
     pub fn item_tags<A0>(_a0: A0) -> Vec<String> { Vec::new() }
     pub fn item_tag_members<A0>(_a0: A0) -> Vec<String> { Vec::new() }
+    #[derive(Clone, Debug, Default, PartialEq)] pub struct EnergyInfo { pub stored: u64, pub capacity: u64, pub max_insert: u64, pub max_extract: u64 }
+    pub fn item_energy(stack: &ItemStack) -> Option<EnergyInfo> { let _ = stack; None }
+    pub fn item_energy_insert(stack: &ItemStack, amount: u64, simulate: bool) -> (ItemStack, u64) { let _ = (amount, simulate); (stack.clone(), 0) }
+    pub fn item_energy_extract(stack: &ItemStack, amount: u64, simulate: bool) -> (ItemStack, u64) { let _ = (amount, simulate); (stack.clone(), 0) }
     pub fn item_max_stack_size<A0>(_a0: A0) -> Option<u32> { None }
     pub fn burn_time<A0>(_a0: A0) -> Option<u32> { None }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct CustomRecipe { pub id: String, pub json: String }
