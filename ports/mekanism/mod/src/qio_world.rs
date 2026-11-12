@@ -45,11 +45,11 @@ pub struct ArrayCache {
 
 pub type BlockKey = (String, i32, i32, i32);
 
-fn to_hex(bytes: &[u8]) -> String {
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn from_hex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn from_hex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
     }
@@ -151,7 +151,7 @@ impl Mekanism {
     }
 
     /// The frequency a block holds by its key, when the registry still has it.
-    fn qio_find(&mut self, key: &str) -> Option<Freq> {
+    pub(crate) fn qio_find(&mut self, key: &str) -> Option<Freq> {
         if key.is_empty() {
             return None;
         }
@@ -164,7 +164,7 @@ impl Mekanism {
     }
 
     /// A press or a confirmed box of a frequency selector: the key of the frequency the block is set to after it.
-    fn qio_apply(&mut self, player: (&str, &str), current: &str, press: Option<i32>, text: Option<(i32, &str)>) -> String {
+    pub(crate) fn qio_apply(&mut self, player: (&str, &str), current: &str, press: Option<i32>, text: Option<(i32, &str)>) -> String {
         let known = self.qio_registry().clone();
         let listing = frequency::listing(&known, player.0);
         let cur = self.qio_find(current);
@@ -196,7 +196,7 @@ impl Mekanism {
     }
 
     /// The strings of a frequency selector and how many public and private frequencies it lists.
-    fn qio_selector(&mut self, viewer: &str, current: &str) -> (Vec<String>, usize, usize) {
+    pub(crate) fn qio_selector(&mut self, viewer: &str, current: &str) -> (Vec<String>, usize, usize) {
         let known = self.qio_registry().clone();
         let listing = frequency::listing(&known, viewer);
         let cur = self.qio_find(current);
@@ -425,64 +425,81 @@ impl Mekanism {
         let pos = target.pos.as_ref()?;
         let key: BlockKey = (target.dimension.clone(), pos.x, pos.y, pos.z);
         let board_key = self.qio_board_freq.get(&key).cloned()?;
-        let net = self.qio.frequencies.get_mut(&board_key)?;
-        if index == u32::MAX {
-            // A cell with no entry (past the last one, or an empty grid): a stack on the cursor is stored, all of it with the left button, one with the others.
-            let c = carried?;
-            let to_add = if button == 0 { u64::from(c.count) } else { 1 };
-            let rejected = net.add_item(&hashed(&c.item, &c.components), to_add, true);
-            let placed = to_add - rejected;
-            if placed == 0 {
+        let cell = if index == u32::MAX { None } else { Some(self.qio_views.get(&key)?.cells.get(index as usize).cloned()?) };
+        grid_action(self.qio.frequencies.get_mut(&board_key)?, cell, button, shift, carried)
+    }
+
+    /// The same press on the Portable QIO Dashboard's grid (an item menu: the player's own frequency and cells).
+    pub(crate) fn qio_portable_click(&mut self, player: &str, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<GridAnswer> {
+        let freq = self.qio_portable_freq.get(player).cloned()?;
+        let cell = if index == u32::MAX { None } else { Some(self.qio_portable_views.get(player)?.cells.get(index as usize).cloned()?) };
+        grid_action(self.qio.frequencies.get_mut(&freq)?, cell, button, shift, carried)
+    }
+
+    /// The grid's rows for a frequency: filtered by the search, sorted, at most what the host takes.
+    pub(crate) fn qio_rows(&mut self, freq: &str, search: &str, sort: u8, ascending: bool) -> Vec<(String, String, u64)> {
+        let Some(net) = self.qio.frequencies.get(freq) else { return Vec::new() };
+        let tags = |item: &str| recipe_types::item_tags(item);
+        let mut rows: Vec<(String, String, u64)> = net.item_data_map.values().map(|d| { let (i, c) = cell_of(&d.item); (i, c, d.count) }).filter(|r| matches_search(search, &r.0, &tags)).collect();
+        sort_rows(&mut rows, sort, ascending);
+        rows.truncate(GRID_MAX);
+        rows
+    }
+}
+
+/// What a press does to the network: `cell` is the entry pressed (none for a cell with no entry).
+fn grid_action(net: &mut QIOFrequency, cell: Option<(String, String)>, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<GridAnswer> {
+    let Some((item, components)) = cell else {
+        // A cell with no entry: a stack on the cursor is stored, all of it with the left button, one with the others.
+        let c = carried?;
+        return store(net, c, if button == 0 { None } else { Some(1) });
+    };
+    let h = hashed(&item, &components);
+    let max = bin::stack_size(&item).max(1);
+    if shift {
+        let have = net.get_stored(&h);
+        let taken = net.remove_item(&h, have.min(max), true);
+        let stack = ItemStack { item, count: taken as u32, components };
+        return (taken > 0).then(|| GridAnswer { carried, to_inventory: vec![stack] });
+    }
+    match carried {
+        None => {
+            let top = net.get_stored(&h).min(max);
+            let want = match button {
+                0 => top,
+                2 => 1,
+                _ => (top / 2).max(1),
+            };
+            let taken = net.remove_item(&h, want, true);
+            (taken > 0).then(|| GridAnswer { carried: Some(ItemStack { item, count: taken as u32, components }), to_inventory: Vec::new() })
+        }
+        Some(c) => {
+            if button == 2 && c.item == item && c.components == components {
+                // A middle click with a matching stack in hand: one more from the network.
+                let taken = net.remove_item(&h, 1, true);
+                if taken > 0 && u64::from(c.count) < max {
+                    return Some(GridAnswer { carried: Some(ItemStack { count: c.count + 1, ..c }), to_inventory: Vec::new() });
+                }
+                if taken > 0 {
+                    net.add_item(&h, taken, true);
+                }
                 return None;
             }
-            let left = u64::from(c.count) - placed;
-            return Some(GridAnswer { carried: (left > 0).then(|| ItemStack { count: left as u32, ..c }), to_inventory: Vec::new() });
-        }
-        let (item, components) = self.qio_views.get(&key)?.cells.get(index as usize).cloned()?;
-        let h = hashed(&item, &components);
-        let max = bin::stack_size(&item).max(1);
-        if shift {
-            let have = net.get_stored(&h);
-            let taken = net.remove_item(&h, have.min(max), true);
-            let stack = ItemStack { item, count: taken as u32, components };
-            return (taken > 0).then(|| GridAnswer { carried, to_inventory: vec![stack] });
-        }
-        match carried {
-            None => {
-                let have = net.get_stored(&h);
-                let top = have.min(max);
-                let want = match button {
-                    0 => top,
-                    2 => 1,
-                    _ => (top / 2).max(1),
-                };
-                let taken = net.remove_item(&h, want, true);
-                (taken > 0).then(|| GridAnswer { carried: Some(ItemStack { item, count: taken as u32, components }), to_inventory: Vec::new() })
-            }
-            Some(c) => {
-                if button == 2 && c.item == item && c.components == components {
-                    // `button == MIDDLE` with a matching stack in hand: one more from the network.
-                    let taken = net.remove_item(&h, 1, true);
-                    let room = max.saturating_sub(u64::from(c.count));
-                    if taken > 0 && room > 0 {
-                        return Some(GridAnswer { carried: Some(ItemStack { count: c.count + 1, ..c }), to_inventory: Vec::new() });
-                    }
-                    if taken > 0 {
-                        net.add_item(&h, taken, true);
-                    }
-                    return None;
-                }
-                let to_add = if button == 0 { u64::from(c.count) } else { 1 };
-                let rejected = net.add_item(&hashed(&c.item, &c.components), to_add, true);
-                let placed = to_add - rejected;
-                if placed == 0 {
-                    return None;
-                }
-                let left = u64::from(c.count) - placed;
-                Some(GridAnswer { carried: (left > 0).then(|| ItemStack { count: left as u32, ..c }), to_inventory: Vec::new() })
-            }
+            store(net, c, if button == 0 { None } else { Some(1) })
         }
     }
+}
+
+/// Stores `limit` (or all) of the cursor's stack: the cursor after.
+fn store(net: &mut QIOFrequency, c: ItemStack, limit: Option<u64>) -> Option<GridAnswer> {
+    let to_add = limit.unwrap_or(u64::from(c.count)).min(u64::from(c.count));
+    let rejected = net.add_item(&hashed(&c.item, &c.components), to_add, true);
+    let placed = to_add - rejected;
+    if placed == 0 {
+        return None;
+    }
+    let left = u64::from(c.count) - placed;
+    Some(GridAnswer { carried: (left > 0).then(|| ItemStack { count: left as u32, ..c }), to_inventory: Vec::new() })
 }
 
 fn sorted(c: &DriveContents) -> Vec<(HashedItem, u64)> {

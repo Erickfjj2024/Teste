@@ -40,6 +40,7 @@ mod oredictionificator;
 mod personal_storage;
 mod module_tweaker;
 mod qio_dashboard;
+mod portable_qio;
 mod qio_world;
 mod qio_transfer;
 mod radioactive_waste_barrel;
@@ -507,6 +508,8 @@ struct Mekanism {
     qio_arrays: HashMap<qio_world::BlockKey, qio_world::ArrayCache>,
     qio_views: HashMap<qio_world::BlockKey, qio_world::DashView>,
     qio_board_freq: HashMap<qio_world::BlockKey, String>,
+    qio_portable_freq: HashMap<String, String>,
+    qio_portable_views: HashMap<String, qio_world::DashView>,
     /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
     block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
     transporter_cfg: Option<transporter_config::Registry>,
@@ -2382,6 +2385,8 @@ impl ServerMod for Mekanism {
             qio_arrays: HashMap::new(),
             qio_views: HashMap::new(),
             qio_board_freq: HashMap::new(),
+            qio_portable_freq: HashMap::new(),
+            qio_portable_views: HashMap::new(),
             block_owners: None,
             transporter_cfg: None,
             transporter_dirty: HashSet::new(),
@@ -2626,6 +2631,8 @@ impl ServerMod for Mekanism {
             self.seismic_reader_button(player, id)
         } else if menu.menu == module_tweaker::MENU {
             self.module_tweaker_button(player, id)
+        } else if menu.menu == portable_qio::MENU {
+            self.portable_qio_button(player, &menu, id)
         } else {
             None
         }
@@ -2641,8 +2648,14 @@ impl ServerMod for Mekanism {
         }
     }
 
-    fn menu_grid_click(&mut self, _player: &Player, target: horizon_mod_sdk::server::GridTarget, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<horizon_mod_sdk::server::GridAnswer> {
-        if target.menu.ends_with("qio_dashboard") { self.qio_grid_click(&target, index, button, shift, carried) } else { None }
+    fn menu_grid_click(&mut self, player: &Player, target: horizon_mod_sdk::server::GridTarget, index: u32, button: u8, shift: bool, carried: Option<ItemStack>) -> Option<horizon_mod_sdk::server::GridAnswer> {
+        if target.menu.ends_with("portable_qio_dashboard") {
+            self.qio_portable_click(&player.id, index, button, shift, carried)
+        } else if target.menu.ends_with("qio_dashboard") {
+            self.qio_grid_click(&target, index, button, shift, carried)
+        } else {
+            None
+        }
     }
 
     fn key_pressed(&mut self, player: &Player, key: &str) -> bool {
@@ -2682,6 +2695,9 @@ impl ServerMod for Mekanism {
             return true;
         }
         if stack.item == seismic_reader::ITEM && self.seismic_reader_used(player, &stack) {
+            return true;
+        }
+        if stack.item == portable_qio::ITEM && self.portable_qio_used(player, &stack) {
             return true;
         }
         if stack.item == portable_teleporter::ITEM && self.portable_teleporter_used(player, &stack) {

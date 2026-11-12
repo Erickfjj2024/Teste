@@ -1958,7 +1958,7 @@ def qio_frequency_tab(menu, text_at, width):
                                                               'texture': save_gui(win, 'qio_frequency_window'), 'widgets': widgets}]
     return menu
 
-def qio_dashboard_menu(m):
+def qio_dashboard_menu(m, portable=False):
     """GuiQIODashboard (178 by 211: `16 + 8 * 18 + 18` wide, `43 + 4 * 18 + 96` tall, the defaults of `qioItemViewerSlotsX` and `Y`): the frequency's inner screen at 7, 15 (162 by 12), the search box
     at 50, 28 (the text arrives on `qio_world.rs::SEARCH_BOX`), the item grid at 7, 43 (8 by 4 cells of 18), the sort button at 115, 116 (41 by 12; a click for the next of name, size, mod and
     registry name) and the direction button at 157, 116 (12 by 12). Strings (`qio_world.rs`): 0 the frequency, 1 to 35 the selector's. Numbers: 0 has a frequency, 3 the sort,
@@ -1976,7 +1976,7 @@ def qio_dashboard_menu(m):
     panel.alpha_composite(nine_slice(gui_sprite('button'), 41, 12, 2), (sort_x, sort_y))
     panel.alpha_composite(nine_slice(gui_sprite('button'), 12, 12, 2), (width - 9 - 12, sort_y))
     texture = save_gui(panel, m)
-    title = 'QIO Dashboard'
+    title = 'Portable QIO Dashboard' if portable else 'QIO Dashboard'
     widgets = [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
@@ -3118,6 +3118,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/seismic_vibrator.json', seismic_vibrator_menu
 put(f'{OUT}/data/{NS}/horizon/menu/modification_station.json', modification_station_menu('modification_station'))
 put(f'{OUT}/data/{NS}/horizon/menu/qio_drive_array.json', qio_drive_array_menu('qio_drive_array'))
 put(f'{OUT}/data/{NS}/horizon/menu/qio_dashboard.json', qio_dashboard_menu('qio_dashboard'))
+put(f'{OUT}/data/{NS}/horizon/menu/portable_qio_dashboard.json', qio_dashboard_menu('portable_qio_dashboard', True))
 for _p in ('personal_chest', 'personal_barrel'):
     put(f'{OUT}/data/{NS}/horizon/menu/{_p}.json', personal_storage_menu(_p))
 put(f'{OUT}/data/{NS}/horizon/menu/thermal_evaporation_controller.json', evaporation_menu('thermal_evaporation_controller'))
