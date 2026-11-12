@@ -77,13 +77,26 @@ pub fn decode_owners(data: &[u8]) -> HashMap<String, OwnerData> {
     out
 }
 
+/// `SecurityUtils.moreRestrictive`: a public override never is, a private one is unless the block is private already, a trusted one only over a public block.
+pub fn more_restrictive(base: SecurityMode, overridden: SecurityMode) -> bool {
+    match overridden {
+        SecurityMode::Public => false,
+        SecurityMode::Private => base != SecurityMode::Private,
+        SecurityMode::Trusted => base == SecurityMode::Public,
+    }
+}
+
 /// `SecurityUtils.canAccess`: whether `player` may use a block with this entry. The owner always; anyone for a public one; for a trusted one the names the owner's desk lists; with the desk's
 /// override on, the desk's mode stands in for the block's.
 pub fn can_access(entry: &Entry, player: &str, player_name: &str, owner: Option<&OwnerData>) -> bool {
     if entry.owner == player {
         return true;
     }
-    let mode = owner.filter(|o| o.overridden).map_or(entry.mode, |o| o.mode);
+    // `getFinalData`: the desk's override stands only when it is more restrictive than the block's own mode (`moreRestrictive`).
+    let mode = match owner.filter(|o| o.overridden) {
+        Some(o) if more_restrictive(entry.mode, o.mode) => o.mode,
+        _ => entry.mode,
+    };
     match mode {
         SecurityMode::Public => true,
         SecurityMode::Private => false,
@@ -230,7 +243,11 @@ mod tests {
         assert!(!can_access(&e, "c", "Carl", Some(&desk)));
         e.mode = SecurityMode::Public;
         let forced = OwnerData { overridden: true, ..desk };
-        assert!(!can_access(&e, "c", "Carl", Some(&forced)), "the override makes the desk's mode the block's");
+        let forced = OwnerData { mode: SecurityMode::Private, ..forced };
+        assert!(!can_access(&e, "c", "Carl", Some(&forced)), "a more restrictive override closes a public block");
+        e.mode = SecurityMode::Private;
+        let open = OwnerData { mode: SecurityMode::Public, overridden: true, trusted: Vec::new(), name: String::new() };
+        assert!(!can_access(&e, "c", "Carl", Some(&open)), "a public override never opens a private block");
     }
 
     #[test]

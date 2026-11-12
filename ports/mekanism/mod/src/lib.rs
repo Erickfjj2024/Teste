@@ -508,6 +508,8 @@ struct Mekanism {
     desk_viewer: HashMap<(String, i32, i32, i32), String>,
     /// The factories whose sorting tab is on (kept in the world's data), loaded on first use.
     factory_sorting: Option<HashSet<(String, i32, i32, i32)>>,
+    /// The chunks where a Seismic Vibrator worked, with the tick of the last time (`Mekanism.activeVibrators`).
+    vibrations: HashMap<(String, i32, i32), u64>,
     /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
     portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
@@ -2363,6 +2365,7 @@ impl ServerMod for Mekanism {
             desk_selected: HashMap::new(),
             desk_viewer: HashMap::new(),
             factory_sorting: None,
+            vibrations: HashMap::new(),
             portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),

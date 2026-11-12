@@ -14,6 +14,9 @@ pub const BUTTON_UP: i32 = 8401;
 pub const BUTTON_DOWN: i32 = 8402;
 /// The icons the screen shows at once, and the menu's slots.
 pub const ICONS: usize = 9;
+/// `gear.seismicReaderEnergyUsage` (250 J) as Forge Energy, and how many ticks a chunk counts as vibrated after a vibration (a vibrator sends one every 40).
+pub const USAGE: u64 = 100;
+pub const VIBRATED_FOR: u64 = 100;
 
 /// What is read for an open screen: the column's blocks from the bottom up, and the layer the arrow is at (counted from the top, as the scroll bar is).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -81,6 +84,21 @@ impl Mekanism {
             return false;
         }
         let Some((slot, _)) = Self::find_hotbar_slot(&player.id, stack) else { return false };
+        // `WorldUtils.isChunkVibrated`: a vibrator has to have worked in this chunk lately.
+        let chunk = ((player.x.floor() as i32) >> 4, (player.z.floor() as i32) >> 4);
+        let vibrated = self.vibrations.get(&(player.dimension.clone(), chunk.0, chunk.1)).is_some_and(|t| self.now.saturating_sub(*t) <= VIBRATED_FOR);
+        if !vibrated {
+            let _ = players::tell(&player.id, "No vibrations detected in this chunk.");
+            return true;
+        }
+        // 250 J (100 FE) a reading, not for a creative player.
+        if player.game_mode != GameMode::Creative {
+            let (after, took) = recipe_types::item_energy_extract(stack, USAGE, false);
+            if took < USAGE || player_items::compare_and_set_slot(&player.id, slot, Some(stack), Some(&after)).is_err() {
+                let _ = players::tell(&player.id, "Needs energy to operate.");
+                return true;
+            }
+        }
         let (x, z) = (player.x.floor() as i32, player.z.floor() as i32);
         let top = player.y.floor() as i32;
         let bottom = min_height(&player.dimension);

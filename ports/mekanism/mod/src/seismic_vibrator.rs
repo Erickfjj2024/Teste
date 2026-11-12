@@ -176,6 +176,7 @@ impl Mekanism {
             if can_function && energy >= USAGE {
                 energy -= USAGE;
                 state.active = true;
+                self.vibrations.insert((e.dimension.clone(), e.pos.x >> 4, e.pos.z >> 4), tick);
                 state.client_piston = state.client_piston.wrapping_add(1);
 
                 // Every two seconds a new vibration is sent (java:78); the game event itself is FORK-31.

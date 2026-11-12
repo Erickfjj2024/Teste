@@ -542,6 +542,11 @@ impl Mekanism {
             return true;
         }
         if sneaking {
+            // Only with a configurator in hand (`ItemConfigurator`): any other sneak click passes.
+            let has_configurator = player_items::get_inventory(&player.id).is_some_and(|inv| inv.iter().take(9).flatten().any(|s| s.item == crate::CONFIGURATOR));
+            if !has_configurator {
+                return false;
+            }
             let item = Stack { item: robit::ITEM_ID.to_owned(), count: 1, components: item_components(&robit::pack_robit_to_item(r)) };
             if entities::remove_entity(&e.dimension, e.id).is_ok() {
                 drop_stack(&e.dimension, player.x, player.y + 0.5, player.z, &item);

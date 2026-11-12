@@ -53,9 +53,17 @@ pub fn sort_lines(lines: &mut [Line], book: Option<&Book>) -> bool {
             continue;
         }
         targets.sort_unstable();
-        let (each, extra) = (total / targets.len() as u32, (total % targets.len() as u32) as usize);
+        // In blocks of what the recipe takes (`distributeItems`): each line gets a whole number of recipes' worth, the leftover going to the first lines.
+        let units = total / need;
+        let (each, extra) = (units / targets.len() as u32, (units % targets.len() as u32) as usize);
+        let mut rest = total - units * need;
         for (k, j) in targets.iter().enumerate() {
-            let count = (each + u32::from(k < extra)).min(64);
+            let mut count = (each + u32::from(k < extra)) * need;
+            if rest > 0 && k + 1 == targets.len() {
+                count += rest;
+                rest = 0;
+            }
+            let count = count.min(64);
             let now = lines[*j].input.as_ref().map_or(0, |s| s.count);
             if count != now {
                 changed = true;

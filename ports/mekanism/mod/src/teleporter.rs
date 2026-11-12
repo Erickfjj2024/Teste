@@ -133,6 +133,22 @@ pub fn opening(pos: [i32; 3], face: usize) -> ([i32; 3], [i32; 3]) {
     ([a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])], [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])])
 }
 
+/// How many entities ride `root`, directly or through others (`fillIndirectPassengers`).
+pub fn passengers_of(all: &[horizon_mod_sdk::server::EntityInBox], root: u32) -> usize {
+    let mut found = vec![root];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        for x in all.iter().filter(|x| x.vehicle == Some(parent)) {
+            if !found.contains(&x.id) {
+                found.push(x.id);
+            }
+        }
+        i += 1;
+    }
+    found.len() - 1
+}
+
 pub fn inside(point: [f64; 3], bounds: ([i32; 3], [i32; 3])) -> bool {
     (0..3).all(|i| point[i] >= f64::from(bounds.0[i]) && point[i] < f64::from(bounds.1[i]) + 1.0)
 }
@@ -254,8 +270,10 @@ impl Mekanism {
                 // What is in the opening besides players (mobs, dropped items, boats...): the ones that ride something go with it (API 49).
                 let min = (f64::from(bounds.0[0]), f64::from(bounds.0[1]), f64::from(bounds.0[2]));
                 let max = (f64::from(bounds.1[0]) + 1.0, f64::from(bounds.1[1]) + 1.0, f64::from(bounds.1[2]) + 1.0);
-                let extras: Vec<entities::EntityInBox> =
-                    entities::entities_in_box(&e.dimension, min, max).into_iter().filter(|x| x.player.is_none() && x.vehicle.is_none()).collect();
+                let everyone = entities::entities_in_box(&e.dimension, min, max);
+                let extras: Vec<entities::EntityInBox> = everyone.iter().filter(|x| x.player.is_none() && x.vehicle.is_none()).cloned().collect();
+                // `calculateEnergyCost`: the trip costs once more for each passenger, direct or not.
+                let riders = |root: u32| passengers_of(&everyone, root);
                 // Who left the opening may be sent again.
                 if let Some(set) = self.frames.arrived.get_mut(&key) {
                     set.retain(|id| here.iter().any(|p| &p.id == id) || extras.iter().any(|x| *id == format!("e{}", x.id)));
@@ -269,9 +287,9 @@ impl Mekanism {
                 // `canTeleport`: the trip of everyone in the opening is paid together; without the energy for all of them nobody goes (not enough energy).
                 let need: u64 = candidates
                     .iter()
-                    .map(|p| [p.x, p.y, p.z])
-                    .chain(thing_candidates.iter().map(|x| [x.x, x.y, x.z]))
-                    .map(|at| trip_cost(&e.dimension, at, dest_dim, *dest_pos))
+                    .map(|p| ([p.x, p.y, p.z], everyone.iter().find(|x| x.player.as_deref() == Some(p.id.as_str())).map_or(u32::MAX, |x| x.id)))
+                    .chain(thing_candidates.iter().map(|x| ([x.x, x.y, x.z], x.id)))
+                    .map(|(at, root)| trip_cost(&e.dimension, at, dest_dim, *dest_pos).saturating_mul(1 + riders(root) as u64))
                     .fold(0u64, |a, c| a.saturating_add(c));
                 let anyone = !candidates.is_empty() || !thing_candidates.is_empty();
                 if anyone && energy < need {
@@ -287,7 +305,7 @@ impl Mekanism {
                         .collect();
                     let yaw = arrival_yaw(*dest_face, &open);
                     for x in thing_candidates {
-                        let cost = trip_cost(&e.dimension, [x.x, x.y, x.z], dest_dim, *dest_pos);
+                        let cost = trip_cost(&e.dimension, [x.x, x.y, x.z], dest_dim, *dest_pos).saturating_mul(1 + riders(x.id) as u64);
                         if entities::teleport_entity(&e.dimension, x.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, yaw).is_ok() {
                             energy = energy.saturating_sub(cost);
                             let dkey = (dest_dim.clone(), dest_pos[0], dest_pos[1], dest_pos[2]);
@@ -296,7 +314,8 @@ impl Mekanism {
                         }
                     }
                     for p in candidates {
-                        let cost = trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos);
+                        let root = everyone.iter().find(|x| x.player.as_deref() == Some(p.id.as_str())).map_or(u32::MAX, |x| x.id);
+                        let cost = trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos).saturating_mul(1 + riders(root) as u64);
                         if player_control::teleport(&p.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, yaw, None).is_ok() {
                             energy = energy.saturating_sub(cost);
                             let dkey = (dest_dim.clone(), dest_pos[0], dest_pos[1], dest_pos[2]);
@@ -351,6 +370,14 @@ impl Mekanism {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passengers_count_through_the_ones_they_ride() {
+        let e = |id: u32, vehicle: Option<u32>| horizon_mod_sdk::server::EntityInBox { id, vehicle, ..Default::default() };
+        let all = [e(1, None), e(2, Some(1)), e(3, Some(2)), e(4, None)];
+        assert_eq!(passengers_of(&all, 1), 2);
+        assert_eq!(passengers_of(&all, 4), 0);
+    }
 
     #[test]
     fn the_frame_is_nine_blocks_around_a_two_high_opening() {

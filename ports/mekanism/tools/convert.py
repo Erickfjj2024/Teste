@@ -276,6 +276,10 @@ for n, model in items.items():
         # ItemEnergized: 1,000,000 J (400,000 FE), charged and drained at 5,000 J (2,000 FE) a call
         item['max_stack_size'] = 1
         item['energy'] = {'capacity': 400000, 'max_insert': 2000, 'max_extract': 2000}
+    if n == 'seismic_reader':
+        # ItemEnergized: 12,000 J (4,800 FE) charged at 60 J (24 FE) a call; a reading takes 250 J (100 FE)
+        item['max_stack_size'] = 1
+        item['energy'] = {'capacity': 4800, 'max_insert': 24, 'max_extract': 4800}
     if n == 'portable_teleporter':
         # ItemPortableTeleporter: 1,000,000 J of energy (400,000 FE) charged at 5,000 J (2,000 FE) a call; a trip's cost is taken whole
         item['max_stack_size'] = 1
@@ -1208,7 +1212,7 @@ def upgrade_tab_widgets():
 
 # what a charge slot takes (`EnergyInventorySlot.fillOrConvert`): what turns into energy and the items that hold it
 ENERGY_ITEMS = ['minecraft:redstone', 'minecraft:redstone_block', f'{NS}:energy_tablet', f'{NS}:meka_tool', f'{NS}:mekasuit_helmet',
-                f'{NS}:mekasuit_bodyarmor', f'{NS}:mekasuit_pants', f'{NS}:mekasuit_boots', f'{NS}:portable_teleporter']
+                f'{NS}:mekasuit_bodyarmor', f'{NS}:mekasuit_pants', f'{NS}:mekasuit_boots', f'{NS}:portable_teleporter', f'{NS}:seismic_reader']
 
 
 def power_slot(layout):
