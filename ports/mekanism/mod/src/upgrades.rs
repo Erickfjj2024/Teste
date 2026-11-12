@@ -58,6 +58,8 @@ pub fn base_slots(def: &Def) -> usize {
     match (def.kind, def.layout) {
         (Kind::Electric, _) => 2,
         (Kind::Sawmill | Kind::Combiner, _) => 3,
+        // The liquifier's input, the item left by the food, the empty container and the filled one.
+        (Kind::Process, Layout::Oxidizer) if def.block == "mekanism:nutritional_liquifier" => 4,
         (Kind::Process, Layout::Oxidizer | Layout::Crystallizer) => 2,
         (Kind::Process, _) => 3,
         (Kind::Continuous, Layout::Rotary) => 5,

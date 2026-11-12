@@ -1354,7 +1354,17 @@ impl Mekanism {
                 if let Some(at) = conv_at {
                     slots[at] = item(&next.conv);
                 }
-                (slots, next.energy, next.progress, status, next != io)
+                // The liquifier's container slots (`containerFillSlot.drainTank(containerOutputSlot)`): an empty bucket is filled from the paste tank.
+                let mut drained = false;
+                if def.block == "mekanism:nutritional_liquifier" {
+                    let (mut empty, mut full) = (stack(&slots[2]), stack(&slots[3]));
+                    if tank::buckets(&mut empty, &mut full, &mut tank_next[1], spec.cap_out, tank::EditMode::Empty) {
+                        slots[2] = item(&empty);
+                        slots[3] = item(&full);
+                        drained = true;
+                    }
+                }
+                (slots, next.energy, next.progress, status, drained || next != io)
             }
             Kind::Continuous | Kind::Tank | Kind::Generator | Kind::Reaction | Kind::Factory | Kind::Pump => unreachable!("they have their own ticks"),
             Kind::Combiner => {
@@ -1768,6 +1778,7 @@ impl ServerMod for Mekanism {
                 // The slots of a machine of `process`; hoppers put into the input and the filling slot, and take from the output.
                 Kind::Process => {
                     let (slots, inputs, outputs) = match def.layout {
+                        Layout::Oxidizer if def.block == "mekanism:nutritional_liquifier" => (4, vec![0, 2], vec![1, 3]),
                         Layout::Oxidizer => (2, vec![0], vec![]),
                         Layout::Crystallizer => (2, vec![0], vec![1]),
                         _ => (3, vec![0, 2], vec![1]),

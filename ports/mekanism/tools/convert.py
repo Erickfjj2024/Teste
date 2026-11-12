@@ -831,7 +831,7 @@ PROGRESS_TYPES = {'large_left': (48, 8, 'left'), 'bar': (25, 9, 'right'), 'right
 # what each screen has, as the machine's Gui class puts it: slots (the mod's order), the frames and overlays drawn under
 # them, the energy bar, the progress arrows, the tank gauges (kind, x, y, w, h, tank, capacity: a standard gauge is 16 by 58,
 # a small one 16 by 28, a bar its own size) and the extras
-GAUGE_SIZES = {'standard': (16, 58), 'small': (16, 28)}
+GAUGE_SIZES = {'standard': (16, 58), 'small': (16, 28), 'small_med': (16, 46)}
 PROCESS_LAYOUTS = {
     # GuiMetallurgicInfuser
     'metallurgic_infuser': {
@@ -876,14 +876,14 @@ PROCESS_LAYOUTS = {
         'power': ('horizontal', 115, 75), 'progress': [('small_right', 47, 39), ('small_left', 101, 39)],
         'gauges': [('standard', 25, 13, 16, 58, 't0', 10000), ('standard', 133, 13, 16, 58, 't1', 10000),
                    ('standard', 79, 4, 16, 58, 't2', 10000)]},
-    # GuiChemicalWasher: the fluid slots in a holder at the left
+    # GuiChemicalWasher: the fluid slots in a holder at the right (`GuiSideHolder.create(this, imageWidth, 66, 57, false, ...)`)
     'chemical_washer': {
-        'continuous': True, 'slots': [[-21, 71], [152, 56], [-21, 102]], 'results': [1, 2],
-        'inventory': None, 'debug': (66, 66),
-        'frames': [('slot/input', -21, 71), ('slot/extra', 152, 56), ('slot/output', -21, 102), ('slot/power', 152, 14)],
-        'overlays': [('slot/overlay/minus', 152, 56)], 'holder': (-26, 66, 57),
+        'continuous': True, 'slots': [[180, 71], [152, 56], [180, 102]], 'results': [1, 2],
+        'inventory': None, 'title_y': 4,
+        'frames': [('slot/input', 180, 71), ('slot/extra', 152, 56), ('slot/output', 180, 102), ('slot/power', 152, 14)],
+        'overlays': [('slot/overlay/minus', 152, 56)], 'holder': (176, 66, 57),
         'power': ('horizontal', 115, 75), 'progress': [('large_right', 64, 39)],
-        'extra_sprites': [('arrow/down', -17, 90)],
+        'extra_sprites': [('arrow/down', 184, 91)],
         'gauges': [('standard', 7, 13, 16, 58, 't0', 10000), ('standard', 28, 13, 16, 58, 't1', 10000),
                    ('standard', 131, 13, 16, 58, 't2', 10000)]},
     # GuiElectrolyticSeparator: a fluid gauge, two small gas gauges and the dump buttons of both
@@ -914,8 +914,22 @@ PROCESS_LAYOUTS['pressurized_reaction_chamber'] = {
     'gauges': [('standard', 5, 15, 16, 58, 't0', 10000), ('standard', 28, 15, 16, 58, 't1', 10000),
                ('small', 140, 45, 16, 28, 't2', 10000)]}
 # the pigment machines: the extractor is the oxidizer's screen with a 20 bucket tank, the painting machine and the mixer have their own
-PROCESS_LAYOUTS['antiprotonic_nucleosynthesizer'] = {**PROCESS_LAYOUTS['purification_chamber'], 'ticks': 400}
-PROCESS_LAYOUTS['nutritional_liquifier'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100}
+# GuiAntiprotonicNucleosynthesizer (196 by 193, the inventory 10 right and 27 down): the item at 26, 40, the antimatter's item slot at 6, 69, the item made at 152, 40,
+# the charge slot at 173, 69, the antimatter gauge at 5, 18 and the energy gauge at 172, 18 (both 18 by 48), the inner screen at 45, 18 and the rate bar at 5, 88.
+# Not drawn: the lightning between the item slots (`BoltRenderer`).
+PROCESS_LAYOUTS['antiprotonic_nucleosynthesizer'] = {
+    'ticks': 400, 'width': 196, 'height': 193, 'inv_x': 18, 'inv_shift': 27, 'label_y': 100, 'process_rate': True,
+    'slots': [[26, 40], [152, 40], [6, 69]], 'results': [1],
+    'frames': [('slot/input', 26, 40), ('slot/output', 152, 40), ('slot/extra', 6, 69), ('slot/power', 173, 69)],
+    'overlays': [('slot/overlay/minus', 6, 69)], 'power': ('gauge', 172, 18), 'progress': [], 'screen': (45, 18, 104, 68),
+    'rate_bar': (5, 88, 183, 8), 'gauges': [('small_med', 5, 18, 16, 46, 'in', 10000)]}
+# GuiNutritionalLiquifier: the food at 26, 36, the item it leaves at 110, 36, the container filled from the paste at 155, 25 (PLUS) and 155, 56 with an arrow
+# between them, the charge slot at 155, 5, the arrow at 54, 40 and the tank at 133, 13
+PROCESS_LAYOUTS['nutritional_liquifier'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100,
+    'slots': [[26, 36], [110, 36], [155, 25], [155, 56]], 'results': [1, 3],
+    'frames': [('slot/input', 26, 36), ('slot/output', 110, 36), ('slot/extra', 155, 25), ('slot/output', 155, 56), ('slot/power', 155, 5)],
+    'overlays': [('slot/overlay/plus', 155, 25)], 'extra_sprites': [('arrow/down', 159, 44)],
+    'progress': [('large_right', 54, 40)], 'gauges': [('standard', 133, 13, 16, 58, 'out', 10000)]}
 PROCESS_LAYOUTS['pigment_extractor'] = {**PROCESS_LAYOUTS['chemical_oxidizer'], 'ticks': 100,
                                        'tint_arrow': 'out', 'gauges': [('standard', 131, 13, 16, 58, 'out', 20000)]}
 PROCESS_LAYOUTS['painting_machine'] = {
@@ -943,13 +957,14 @@ def process_panel(name, L):
     overlays, its tank frames, the energy bar's frame and the empty progress arrows."""
     from PIL import Image
     shift = L.get('inv_shift', 0)
-    panel = nine_slice(gui_sprite('base'), 176, L.get('height', 166), 4)
+    ix = L.get('inv_x', 8) - 1
+    panel = nine_slice(gui_sprite('base'), L.get('width', 176), L.get('height', 166), 4)
     slot = gui_sprite('slot/normal')
     for row in range(3):
         for col in range(9):
-            panel.paste(slot, (7 + 18 * col, 83 + shift + 18 * row))
+            panel.paste(slot, (ix + 18 * col, 83 + shift + 18 * row))
     for col in range(9):
-        panel.paste(slot, (7 + 18 * col, 141 + shift))
+        panel.paste(slot, (ix + 18 * col, 141 + shift))
     if 'screen' in L:
         x, y, w, h = L['screen']
         # GuiInnerScreen: a dark well with Mekanism's own edge
@@ -959,7 +974,14 @@ def process_panel(name, L):
     for sprite, x, y in L['overlays']:
         panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
     kind, px, py = L['power']
-    panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6 if kind == 'vertical' else 54, 54 if kind == 'vertical' else 6, 1), (px, py))
+    if kind == 'gauge':
+        # GuiEnergyGauge, SMALL_MED: 18 by 48 around 16 by 46
+        panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 48, 2), (px, py))
+    else:
+        panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6 if kind == 'vertical' else 54, 54 if kind == 'vertical' else 6, 1), (px, py))
+    if 'rate_bar' in L:
+        rx, ry, rw, rh = L['rate_bar']
+        panel.alpha_composite(nine_slice(gui_sprite('bar/base'), rw, rh, 1), (rx, ry))
     for ptype, qx, qy in L['progress']:
         panel.alpha_composite(gui_sprite(f'progress/{ptype}/empty'), (qx, qy))
     for sprite, x, y in L.get('extra_sprites', []):
@@ -1215,7 +1237,10 @@ def process_menu(m):
     L = PROCESS_LAYOUTS[m]
     title = MACHINE_NAMES[m]
     kind, px, py = L['power']
-    if kind == 'vertical':
+    if kind == 'gauge':
+        power = {'type': 'sprite', 'texture': energy_gauge_fill(), 'x': px + 1, 'y': py + 1, 'w': 16, 'h': 46, 'direction': 'up',
+                 'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'tooltip': 'Energy: {value} / {max}'}
+    elif kind == 'vertical':
         power = {'type': 'sprite', 'texture': power_fill, 'x': px + 1, 'y': py + 1, 'w': 4, 'h': 52, 'direction': 'up',
                  'value': {'pair': [1, 2]}, 'max': {'pair': [3, 4]}, 'tooltip': 'Energy: {value} / {max}'}
     else:
@@ -1225,10 +1250,36 @@ def process_menu(m):
     # the washer's side holder goes behind the slots
     if 'holder' in L:
         hx, hy, hh = L['holder']
-        widgets.append({'type': 'sprite', 'texture': save_gui(side_holder(True, hh), f'holder_left_{hh}'), 'x': hx, 'y': hy, 'w': 26, 'h': hh})
+        left = hx < 0
+        holder = side_holder(left, hh)
+        # the slot frames and the arrows outside the panel are drawn on the holder
+        for sprite, x, y in L['frames']:
+            if not 0 <= x < 176:
+                holder.alpha_composite(gui_sprite(sprite), (x - 1 - hx, y - 1 - hy))
+        for sprite, x, y in L.get('extra_sprites', []):
+            if not 0 <= x < 176:
+                holder.alpha_composite(gui_sprite(sprite), (x - hx, y - hy))
+        widgets.append({'type': 'sprite', 'texture': save_gui(holder, f'holder_{"left" if left else "right"}_{hh}'), 'x': hx, 'y': hy, 'w': 26, 'h': hh})
     widgets.append(power)
+    if kind == 'gauge':
+        widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/small_med', 'gauge_overlay_small_med'), 'x': px + 1, 'y': py + 1, 'w': 16, 'h': 46})
     continuous = L.get('continuous', False)
     ctl0 = 24 if continuous else 20
+    width = L.get('width', 176)
+    if 'rate_bar' in L:
+        # GuiDynamicHorizontalRateBar: the progress as a bar, filled with a colour that goes from (60, 45, 74) to (100, 30, 170)
+        from PIL import Image
+        rx, ry, rw, rh = L['rate_bar']
+        fill = save_gui(Image.new('RGBA', (rw - 2, rh - 2), (100, 30, 170, 255)), 'rate_bar_fill')
+        widgets.append({'type': 'sprite', 'texture': fill, 'x': rx + 1, 'y': ry + 1, 'w': rw - 2, 'h': rh - 2, 'value': {'data': 0},
+                        'max': {'data': ctl0 + 3}, 'direction': 'right', 'tooltip': 'Progress: {percent}%'})
+    if 'screen' in L and L.get('process_rate'):
+        # the inner screen's "Process Rate" (energy used over the energy a tick: 100% while it works)
+        sx, sy, sw, sh = L['screen']
+        for status in range(6):
+            text = 'Process Rate: ' + ('100%' if status == 1 else '0%')
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': status}}, 'widgets': [
+                {'type': 'text', 'x': sx + (sw - text_width(text)) // 2, 'y': sy + sh - 11, 'text': text, 'color': '#3CFE9A'}]})
     for ptype, qx, qy in L['progress']:
         pw, ph, direction = PROGRESS_TYPES[ptype]
         # a machine that works every tick shows its arrows full while it works (data slot 0 is 1 or 0)
@@ -1292,21 +1343,24 @@ def process_menu(m):
     widgets.append({'type': 'text', 'x': title_x, 'y': L.get('title_y', 6), 'text': title, 'color': '#404040'})
     if L.get('inventory', 176) is not None:
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
-    # a development line: the machine's status number and the mod's version
-    dx, dy = L.get('debug', (92, 66))
-    widgets.append({'type': 'text', 'x': dx, 'y': dy, 'text': 'Status {5} v0.1.86', 'color': '#808080'})
     ctl = 24 if continuous else 20
-    widgets += redstone_widgets(ctl) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
+    dx = width - 176
+    widgets += shift_x(redstone_widgets(ctl), dx) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
     widgets += [
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
-    return with_upgrades({'slots': len(L['slots']), 'data_slots': (24 if continuous else 20) + 3, 'results': L['results'],
+    menu = with_upgrades({'slots': len(L['slots']), 'data_slots': (24 if continuous else 20) + 3, 'results': L['results'],
             'screen': {'texture': process_panel(m, L), 'own_labels': True, 'slots': L['slots'], 'widgets': widgets,
-                       'height': L.get('height', 166), 'inventory_y': 84 + L.get('inv_shift', 0),
-                       'windows': [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
+                       'width': width, 'height': L.get('height', 166), 'inventory_x': L.get('inv_x', 8), 'inventory_y': 84 + L.get('inv_shift', 0),
+                       'windows': [{'id': 'side_config', 'x': WIN_X + dx // 2, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                     'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, ctl + 15)}]}}, m, len(L['slots']), ctl0,
                          charge=None if L.get('rotary') or L.get('timed') else power_slot(L))
+    if dx:
+        # the upgrade tab goes with the wider screen's right edge, its window with its middle
+        menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), dx)
+        menu['screen']['windows'][-1]['x'] += dx // 2
+    return menu
 
 # ---- the storage tanks (GuiFluidTank, GuiChemicalTank): the player's armor in a holder at the left, as the original
 ARMOR_LEFT = {'x': -20, 'y': 67, 'offhand': 0}
@@ -1392,9 +1446,7 @@ def tank_menu(m):
         windows = [{'id': 'side_config', 'x': WIN_X, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H, 'texture': window_tex,
                     'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m)}]
     widgets += [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-                {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-                # a development line with the mod's version (clear of the dump mode's text)
-                {'type': 'text', 'x': 128 if fluid else 50, 'y': 72 if fluid else 66, 'text': 'v0.1.86', 'color': '#808080'}]
+                {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'}]
     return {'slots': 2, 'data_slots': data_slots, 'results': results, 'armor': ARMOR_LEFT,
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'widgets': widgets, 'windows': windows}}
 
@@ -1496,7 +1548,6 @@ def factory_menu(m):
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': label_y, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 70, 'y': label_y, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
     widgets += shift_x(redstone_widgets(16), width - 176) + energy_tab_widgets(16, MACHINE_USAGE[m])
@@ -1560,8 +1611,7 @@ def assemblicator_menu(m):
         {'type': 'show', 'when': {'data': {'value': {'data': 9}, 'eq': 0}}, 'widgets': [
             {'type': 'sprite', 'texture': copy_gui('slot/overlay/x', 'overlay_x'), 'x': 88, 'y': 22, 'w': 18, 'h': 18}]},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'}]
     def button(icon, name, x, y, size, bid, tip, enabled, tips=None):
         """An image button: the icon always, the button itself only while its `enabled` condition holds (the original greys it out), with a tooltip
         that follows a switch when `tips` is `(data, on, off)`."""
@@ -1624,7 +1674,6 @@ def stabilizer_menu(m):
          'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 49 - text_width('N') // 2, 'y': 41, 'text': 'N', 'color': '#404040'}]
     for x in range(5):
         for z in range(5):
@@ -1694,7 +1743,6 @@ def resistive_heater_menu(m):
          'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 52, 'y': 28, 'text': 'Temperature: {8} K', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 52, 'y': 38, 'text': 'Usage: {4+5} FE/t', 'color': '#00CD00', 'scale': 85}]
     widgets.append({'type': 'textfield', 'x': 50, 'y': 51, 'w': 76, 'h': 12, 'id': 7600, 'validator': 'digit', 'max_length': 7})
@@ -1720,7 +1768,6 @@ def fuelwood_heater_menu(m):
     widgets = [
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 52, 'y': 28, 'text': 'Temperature: {0} K', 'color': '#00CD00', 'scale': 85},
         {'type': 'text', 'x': 52, 'y': 38, 'text': 'Fuel: {1}', 'color': '#00CD00', 'scale': 85},
         {'type': 'sprite', 'texture': copy_gui('progress/flame/full', 'progress_flame_full'), 'x': 144, 'y': 31, 'w': 13, 'h': 13,
@@ -1759,7 +1806,6 @@ def oredictionificator_menu(m):
     widgets = [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': width - 68, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 94, 'y': 119, 'w': 48, 'h': 8,
          'value': {'data': 0}, 'max': {'const': 1}, 'direction': 'right', 'tooltip': 'Converting'},
         {'type': 'text', 'x': 14, 'y': 76, 'text': 'New filter: type a tag (c:ores/iron) and confirm', 'color': '#808080', 'scale': 70},
@@ -1795,7 +1841,6 @@ def seismic_vibrator_menu(m):
          'direction': 'up', 'tooltip': 'Energy: {value} / {max}'},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 1}}, 'widgets': [
             {'type': 'text', 'x': 20, 'y': 27, 'text': 'Vibrating', 'color': '#00CD00', 'scale': 85}]},
         {'type': 'show', 'when': {'data': {'value': {'data': 0}, 'eq': 0}}, 'widgets': [
@@ -1834,8 +1879,7 @@ def personal_storage_menu(m):
     texture = save_gui(panel, m)
     title = MACHINE_NAMES.get(m, m.replace('_', ' ').title())
     widgets = [{'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
-               {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'}]
     slots = [[8 + x * 18, 18 + y * 18] for y in range(6) for x in range(9)]
     return {'slots': 54, 'data_slots': 0, 'results': [],
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
@@ -1858,7 +1902,6 @@ def qio_drive_array_menu(m):
     widgets = [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 17, 'y': 24, 'text': '', 'text_data': 0, 'color': '#00CD00', 'scale': 80},
         {'type': 'bar', 'x': 27, 'y': 40, 'w': 50, 'h': 6, 'value': {'data': 1}, 'max': {'const': 1000}, 'color': '#00CD00', 'direction': 'right',
          'tooltip': 'Items: {percent}%'},
@@ -1896,8 +1939,7 @@ def modification_station_menu(m):
         {'type': 'sprite', 'texture': copy_gui('progress/large_right/full', 'progress_large_right_full'), 'x': 65, 'y': 123, 'w': 48, 'h': 8,
          'value': {'data': 0}, 'max': {'data': 1}, 'direction': 'right', 'tooltip': 'Installing: {percent}%'},
         {'type': 'text', 'x': (width - text_width(title)) // 2 + 12, 'y': 6, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'}]
     for i in range(6):
         widgets.append({'type': 'text', 'x': 31, 'y': 22 + 12 * i, 'text': '', 'text_data': i, 'color': '#404040', 'scale': 90})
         for count in range(i + 1, 7):
@@ -1938,8 +1980,7 @@ def dynamic_valve_menu(m):
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 8, 'y': 17, 'w': 32, 'h': 54},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'}]
     for k in range(4):
         widgets.append({'type': 'text', 'x': 52, 'y': 24 + 10 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A'})
     # GuiContainerEditModeTab
@@ -1996,8 +2037,7 @@ def evaporation_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 173, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': 24 + (172 - 24 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 138, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'}]
     for k in range(4):
         widgets.append({'type': 'text', 'x': 51, 'y': 22 + 9 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 80})
     widgets += [
@@ -2047,8 +2087,7 @@ def boiler_valve_menu(m):
         widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': x + 1, 'y': 14, 'w': 16, 'h': 58})
     widgets += [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 168, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'}]
     for k in range(3):
         widgets.append({'type': 'text', 'x': 57, 'y': 26 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 85})
     if fill:
@@ -2095,8 +2134,7 @@ def turbine_valve_menu(m):
          'types': GAUGE_TYPES, 'tooltip': '{label}: {value} mB', 'empty': 'Empty'},
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 7, 'y': 14, 'w': 32, 'h': 58},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 144, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'}]
     for k in range(4):
         widgets.append({'type': 'text', 'x': 53, 'y': 21 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 85})
     if fill:
@@ -2350,7 +2388,6 @@ def fusion_controller_menu(m):
     widgets = [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': inv_x, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 148, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 13, 'y': 16, 'text': 'Formed', 'color': '#404040', 'scale': 90}] + side + tabs_for(None)
     return {'slots': 1, 'data_slots': 37, 'accepts': [{'slot': 0, 'items': ['mekanism:hohlraum']}],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[85, 39]], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
@@ -2397,7 +2434,6 @@ def laser_amplifier_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 11, 'w': 16, 'h': 58},
         {'type': 'text', 'x': 24 + (176 - 24 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 73, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 24, 'y': 30, 'text': '', 'text_data': 0, 'color': '#404040', 'scale': 85},
         {'type': 'text', 'x': 24, 'y': 45, 'text': '', 'text_data': 1, 'color': '#404040', 'scale': 85},
         {'type': 'text', 'x': 24, 'y': 60, 'text': '', 'text_data': 2, 'color': '#404040', 'scale': 85},
@@ -2424,8 +2460,7 @@ def laser_tractor_beam_menu(m):
     texture = save_gui(panel, m)
     title = 'Laser Tractor Beam'
     widgets = [{'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
-               {'type': 'text', 'x': 128, 'y': height - 94, 'text': 'v0.1.86', 'color': '#808080'}]
+               {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'}]
     slots = [[8 + x * 18, 16 + y * 18] for y in range(3) for x in range(9)]
     return {'slots': 27, 'data_slots': 0, 'results': [],
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
@@ -2461,7 +2496,6 @@ def sps_port_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 152, 'y': 18, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'text', 'x': 30, 'y': 20, 'text': '', 'text_data': 0, 'color': '#3CFE9A', 'scale': 85},
         {'type': 'text', 'x': 30, 'y': 31, 'text': '', 'text_data': 1, 'color': '#3CFE9A', 'scale': 85},
         {'type': 'text', 'x': 30, 'y': 42, 'text': '', 'text_data': 2, 'color': '#3CFE9A', 'scale': 85},
@@ -2541,7 +2575,6 @@ def entangloporter_menu(m):
     widgets = [
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 93, 'text': 'v0.1.86', 'color': '#808080'},
         {'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26, 'tooltip': 'Storing: {1+2} kFE\nUnit: Forge Energy'}] + selector
     return {'slots': 1, 'data_slots': 13,
@@ -2598,8 +2631,7 @@ def teleporter_menu(m):
         {'type': 'sprite', 'texture': power_fill, 'x': 158, 'y': 26, 'w': 4, 'h': 52, 'value': {'pair': [2, 3]}, 'max': {'pair': [4, 5]}, 'direction': 'up',
          'tooltip': 'Energy: {value} / {max} FE'},
         {'type': 'text', 'x': 22 + (130 - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 93, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 8, 'y': height - 93, 'text': 'Inventory', 'color': '#404040'}]
     for st, text, color in ((0, 'No frequency', '#CD0000'), (1, 'No frame', '#CD0000'), (2, 'No link', '#CD0000'), (3, 'No energy', '#CD0000'), (4, 'Ready', '#00AA00')):
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': st}}, 'widgets': [{'type': 'text', 'x': 7, 'y': 7, 'text': text, 'color': color, 'scale': 80}]})
     widgets += selector
@@ -2629,8 +2661,7 @@ def bin_menu(m):
         {'type': 'text', 'x': 38, 'y': 22, 'text': 'In', 'color': '#404040', 'scale': 80},
         {'type': 'text', 'x': 112, 'y': 22, 'text': 'Out', 'color': '#404040', 'scale': 80},
         {'type': 'text', 'x': 62, 'y': 38, 'text': '{0+1}', 'color': '#00CD00'},
-        {'type': 'text', 'x': 62, 'y': 48, 'text': 'of {2+3}', 'color': '#00CD00', 'scale': 80},
-        {'type': 'text', 'x': 128, 'y': 73, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 62, 'y': 48, 'text': 'of {2+3}', 'color': '#00CD00', 'scale': 80}]
     for bid, x, label, data in ((7700, 8, 'Eject down', 4), (7701, 98, 'Lock item', 5)):
         widgets.append({'type': 'text', 'x': x + 4, 'y': 59, 'text': label, 'color': '#404040'})
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': data}, 'eq': 1}}, 'widgets': [
@@ -2798,8 +2829,7 @@ def induction_port_menu(m):
          'tooltip': 'Energy: {0+1} / {2+3} MFE'},
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/medium', 'gauge_overlay_medium'), 'x': 8, 'y': 17, 'w': 32, 'h': 54},
         {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': height - 92, 'text': 'v0.1.86', 'color': '#808080'}]
+        {'type': 'text', 'x': 8, 'y': height - 92, 'text': 'Inventory', 'color': '#404040'}]
     for k in range(4):
         widgets.append({'type': 'text', 'x': 52, 'y': 24 + 11 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 80})
     widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
@@ -2835,7 +2865,6 @@ def pump_menu(m):
         {'type': 'sprite', 'texture': copy_gui('gauge/overlay/standard', 'gauge_overlay_standard'), 'x': 7, 'y': 14, 'w': 16, 'h': 58},
         {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 8, 'y': 74, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 128, 'y': 74, 'text': 'v0.1.86', 'color': '#808080'},
         ]
     # GuiInnerScreen: the energy, for the plenisher whether it is finished, and the fluid (`pump.rs::screen_texts`); the pumps have no side configuration
     for k in range(3 if m == 'fluidic_plenisher' else 2):
@@ -2901,8 +2930,6 @@ for m in MACHINES:
             # the title, centred at the top, and the inventory's, at 8, 72 (vanilla's own places)
             {'type': 'text', 'x': (176 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 92, 'y': 54, 'text': 'Status {5}', 'color': '#808080'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.86', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6: opens the side configuration window
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'}]
@@ -2993,7 +3020,6 @@ for cube_name, (cube_title, rate) in CUBES.items():
             {'type': 'sprite', 'texture': gauge_overlay, 'x': 56, 'y': 19, 'w': 64, 'h': 48},
             {'type': 'text', 'x': (176 - text_width(cube_title)) // 2, 'y': 6, 'text': cube_title, 'color': '#404040'},
             {'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'},
-            {'type': 'text', 'x': 128, 'y': 72, 'text': 'v0.1.28', 'color': '#808080'},
             # GuiSideConfigurationTab at -26, 6
             {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
             {'type': 'button', 'x': -26, 'y': 6, 'w': 26, 'h': 26, 'local': {'open': 'side_config'}, 'tooltip': 'Configuration'},
@@ -3172,7 +3198,6 @@ def gen_menu(n):
     widgets.append({'type': 'text', 'x': 8, 'y': 72, 'text': 'Inventory', 'color': '#404040'})
     if L.get('burn'):
         widgets.append({'type': 'text', 'x': 176 - 6 - text_width('Burn Rate: 00 mB/t'), 'y': 72, 'text': 'Burn Rate: {6} mB/t', 'color': '#404040'})
-    widgets.append({'type': 'text', 'x': 62, 'y': 72 if not L.get('burn') else 60, 'text': 'v0.1.86', 'color': '#808080'})
     slots = ([[17, 35]] if L['fuel'] else []) + [[143, 35]]
     widgets += redstone_widgets(15)
     return with_upgrades({'slots': len(slots), 'data_slots': 18, 'results': [], 'armor': GEN_ARMOR,
