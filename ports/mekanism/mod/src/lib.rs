@@ -2069,9 +2069,8 @@ impl ServerMod for Mekanism {
         let mut array = kind(qio::BLOCK_DRIVE_ARRAY, true);
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(array);
-        // The Dashboard's one slot is a port addition: where items are put in until the host sends a click on an empty cell of the grid.
-        let mut dashboard = kind(qio_dashboard::BLOCK, true);
-        dashboard.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+                let mut dashboard = kind(qio_dashboard::BLOCK, true);
+        dashboard.container = Some(ContainerSpec { slots: 0, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(dashboard);
         let mut adapter = kind(qio::BLOCK_REDSTONE_ADAPTER, true);
         adapter.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });

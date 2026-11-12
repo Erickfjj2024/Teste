@@ -1962,7 +1962,7 @@ def qio_dashboard_menu(m):
     """GuiQIODashboard (178 by 211: `16 + 8 * 18 + 18` wide, `43 + 4 * 18 + 96` tall, the defaults of `qioItemViewerSlotsX` and `Y`): the frequency's inner screen at 7, 15 (162 by 12), the search box
     at 50, 28 (the text arrives on `qio_world.rs::SEARCH_BOX`), the item grid at 7, 43 (8 by 4 cells of 18), the sort button at 115, 116 (41 by 12; a click for the next of name, size, mod and
     registry name) and the direction button at 157, 116 (12 by 12). Strings (`qio_world.rs`): 0 the frequency, 1 to 35 the selector's. Numbers: 0 has a frequency, 3 the sort,
-    4 whether it is ascending, 5 `insertIntoFrequency`, 6 and 7 the selector's lists' sizes. The port's one slot (where items are put in) is at 74, 117. Not here: the three crafting windows, the resize controls, the
+    4 whether it is ascending, 5 `insertIntoFrequency`, 6 and 7 the selector's lists' sizes. A click on any cell, empty ones too, stores the cursor's stack. Not here: the three crafting windows, the resize controls, the
     auto-focus and rejects tabs (client settings) and the target direction tab."""
     width, height, cols, rows = 178, 211, 8, 4
     panel, slot, inv_y = inventory_panel(width, height)
@@ -1972,7 +1972,6 @@ def qio_dashboard_menu(m):
     for r in range(rows):
         for c in range(cols):
             panel.alpha_composite(slot, (6 + 18 * c, 42 + 18 * r))
-    panel.alpha_composite(slot, (73, 116))
     sort_x, sort_y = width - 9 - 54, 43 + rows * 18 + 1
     panel.alpha_composite(nine_slice(gui_sprite('button'), 41, 12, 2), (sort_x, sort_y))
     panel.alpha_composite(nine_slice(gui_sprite('button'), 12, 12, 2), (width - 9 - 12, sort_y))
@@ -1994,8 +1993,8 @@ def qio_dashboard_menu(m):
         widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 4}, 'eq': asc}}, 'widgets': [
             {'type': 'sprite', 'texture': copy_gui(icon, 'qio_sort_' + ('asc' if asc else 'desc')), 'x': width - 9 - 12, 'y': sort_y, 'w': 12, 'h': 12}]})
     widgets.append({'type': 'button', 'x': width - 9 - 12, 'y': sort_y, 'w': 12, 'h': 12, 'id': 8561, 'tooltip': 'Ascending or descending'})
-    menu = {'slots': 1, 'data_slots': 6, 'results': [],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[74, 117]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+    menu = {'slots': 0, 'data_slots': 6, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
     return qio_frequency_tab(menu, 1, width)
 
 def qio_drive_array_menu(m):

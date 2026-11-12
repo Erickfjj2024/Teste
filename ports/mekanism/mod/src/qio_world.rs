@@ -6,10 +6,9 @@
 //! drive item's components (`mekanism:qio_drive`, the `DriveContents` bytes in hexadecimal), so they travel with the item and survive a restart.
 //!
 //! The Dashboard: the grid lists the frequency's items (sorted by name, count, mod or registry name, ascending or not, and filtered by the search box: a name, `@mod`, `#tag`). A left click takes a stack,
-//! a right click half of one, a middle click one, shift puts it in the inventory, and a click with a stack on the cursor stores it (all of it with the left button, one with the others).
+//! a right click half of one, a middle click one, shift puts it in the inventory, and a click with a stack on the cursor stores it (all of it with the left button, one with the others), on an entry or on an empty cell (`index` 4294967295).
 //! Not here: the three crafting windows, the shift-click that sends inventory items into the frequency (the host has no hook for it), the sort and search kept for each player (they are the
 //! block's), the `$tooltip` search, the other QIO blocks' tab (importer, exporter, redstone adapter), and the Portable QIO Dashboard.
-//! Port addition: the Dashboard has a slot where items are put in until the host sends a click on an empty cell of the grid.
 use super::*;
 use crate::frequency::{self, Freq};
 use crate::qio::*;
@@ -374,20 +373,10 @@ impl Mekanism {
             Some(f) => self.qio_board_freq.insert(key.clone(), f.key()),
             None => self.qio_board_freq.remove(&key),
         };
-        let mut items: Vec<Option<ItemStack>> = vec![e.items.first().cloned().flatten()];
-        let mut items_changed = false;
         let mut rows: Vec<(String, String, u64)> = Vec::new();
         if let Some(f) = &freq {
             self.qio_network(f);
             let net = self.qio.frequencies.get_mut(&f.key())?;
-            // The slot: what is put in goes to the network, and what does not fit stays.
-            if let Some(stack) = items[0].clone() {
-                let rejected = net.add_item(&hashed(&stack.item, &stack.components), u64::from(stack.count), true);
-                if rejected != u64::from(stack.count) {
-                    items[0] = (rejected > 0).then(|| ItemStack { count: rejected as u32, ..stack });
-                    items_changed = true;
-                }
-            }
             let tags = |item: &str| recipe_types::item_tags(item);
             rows = net.item_data_map.values().map(|d| { let (i, c) = cell_of(&d.item); (i, c, d.count) }).filter(|r| matches_search(&view.search, &r.0, &tags)).collect();
             sort_rows(&mut rows, view.sort, view.ascending);
@@ -414,12 +403,12 @@ impl Mekanism {
             let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &strings);
             self.qio.menu_texts.insert(key, strings);
         }
-        if state != before || items_changed || e.menu_data.get(..numbers.len()) != Some(&numbers[..]) {
+        if state != before || e.menu_data.get(..numbers.len()) != Some(&numbers[..]) {
             return Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
                 data: encode_dashboard(&state),
-                items: items_changed.then_some(items),
+                items: None,
                 energy: None,
                 energy_faces: None,
                 tanks: None,
@@ -436,8 +425,20 @@ impl Mekanism {
         let pos = target.pos.as_ref()?;
         let key: BlockKey = (target.dimension.clone(), pos.x, pos.y, pos.z);
         let board_key = self.qio_board_freq.get(&key).cloned()?;
-        let (item, components) = self.qio_views.get(&key)?.cells.get(index as usize).cloned()?;
         let net = self.qio.frequencies.get_mut(&board_key)?;
+        if index == u32::MAX {
+            // A cell with no entry (past the last one, or an empty grid): a stack on the cursor is stored, all of it with the left button, one with the others.
+            let c = carried?;
+            let to_add = if button == 0 { u64::from(c.count) } else { 1 };
+            let rejected = net.add_item(&hashed(&c.item, &c.components), to_add, true);
+            let placed = to_add - rejected;
+            if placed == 0 {
+                return None;
+            }
+            let left = u64::from(c.count) - placed;
+            return Some(GridAnswer { carried: (left > 0).then(|| ItemStack { count: left as u32, ..c }), to_inventory: Vec::new() });
+        }
+        let (item, components) = self.qio_views.get(&key)?.cells.get(index as usize).cloned()?;
         let h = hashed(&item, &components);
         let max = bin::stack_size(&item).max(1);
         if shift {
