@@ -408,6 +408,8 @@ impl Mekanism {
                 // `getRedstoneLevel`: the energy it holds in the contents mode (entity detection needs the laser's damage pass, which the host has not).
                 let level = if a.output == 2 { crate::redstone::level_from_contents(energy, cap) } else { 0 };
                 crate::redstone::set_comparator(&e.dimension, e.pos, level);
+                // `AttributeRedstoneEmitter`: the same level goes out as a signal (the entity detection mode is the laser's, which the host has not).
+                let _ = world::set_redstone_output(&e.dimension, e.pos.x, e.pos.y, e.pos.z, level, false);
                 self.send_amplifier_texts(e, &a);
             }
             out.push(BlockEntityUpdate {

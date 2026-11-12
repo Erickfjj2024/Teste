@@ -59,13 +59,22 @@ pub fn fill_step(slot: &Option<ItemStack>, room: u64) -> Option<(u64, Option<Ite
         }
         return Some((gain, with_item_energy(stack, energy - gain)));
     }
+    // An item of another mod that holds energy (`IEnergyStorage` of an item, API 51): as much as it gives and the room allow.
+    if horizon_mod_sdk::server::recipe_types::item_energy(stack).is_some() {
+        let (left, got) = horizon_mod_sdk::server::recipe_types::item_energy_extract(stack, room, false);
+        return (got > 0).then_some((got, Some(left)));
+    }
     cube::fill_from_slot(slot, 0, room).map(|(gain, left)| (gain, left))
 }
 
 /// `EnergyInventorySlot.drain` (the top slot, 146, 21): the matrix charges the item in the slot, as much as it has, the item's room and its rate allow. Returns the energy given and the slot after.
 pub fn drain_step(slot: &Option<ItemStack>, available: u64) -> Option<(u64, Option<ItemStack>)> {
     let stack = slot.as_ref()?;
-    let (energy, max, rate) = item_energy(stack)?;
+    let Some((energy, max, rate)) = item_energy(stack) else {
+        horizon_mod_sdk::server::recipe_types::item_energy(stack)?;
+        let (now, took) = horizon_mod_sdk::server::recipe_types::item_energy_insert(stack, available, false);
+        return (took > 0).then_some((took, Some(now)));
+    };
     let give = max.saturating_sub(energy).min(available).min(rate);
     if give == 0 {
         return None;

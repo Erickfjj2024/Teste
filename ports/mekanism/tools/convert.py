@@ -300,6 +300,9 @@ for n, (template, props, kind) in sorted(BLOCKS.items()):
         block['state_properties'] = {'lit': {'type': 'boolean'}}
         if n not in FLUID_TANKS:
             block['state_properties']['facing'] = {'type': 'enum', 'values': ['north', 'east', 'south', 'west'] + (['up', 'down'] if n in LASERS else [])}
+    # AttributeRedstoneEmitter (API 50): wires connect to it and it gives the level the mod sets (`world::set_redstone_output`)
+    if n in ('laser_amplifier', 'qio_redstone_adapter'):
+        block['redstone_emitter'] = True
     put(f'{OUT}/data/{NS}/horizon/block/{n}.json', block)
     put(f'{OUT}/assets/{NS}/blockstates/{n}.json', bs)
     ip = find(f'items/{n}.json', ASSET_DIRS)

@@ -1268,8 +1268,8 @@ pub fn host_open_qio_screen(player_id: u64, screen_type: &str, data: &[u8]) {
 }
 
 // FORK-21: Emitting redstone signal strength per face to adjacent blocks
-pub fn host_set_redstone_output(dimension: &str, pos: [i32; 3], side: usize, level: u8) {
-    let _ = crate::fork_qio_calor::set_redstone_output(dimension, pos, side, level);
+pub fn host_set_redstone_output(dimension: &str, pos: [i32; 3], _side: usize, level: u8) {
+    let _ = horizon_mod_sdk::server::world::set_redstone_output(dimension, pos[0], pos[1], pos[2], level, false);
 }
 
 // FORK-23: Reading and writing item data components (DriveMetadata, DriveContents)
@@ -1386,10 +1386,9 @@ impl QIOManager {
                 self.prev_adapter_emissions.insert(at, should_emit);
 
                 let facing_face = laser::face_of(&state.facing);
-                for side in 0..6 {
-                    let level = redstone_adapter_level(side, facing_face, state.active, state.is_emitting);
-                    host_set_redstone_output(&entity.dimension, [entity.pos.x, entity.pos.y, entity.pos.z], side, level);
-                }
+                // One level for every side (the host's output is the block's, not a face's): the rear side, which the original leaves out, gets it too.
+                let level = (0..6).map(|side| redstone_adapter_level(side, facing_face, state.active, state.is_emitting)).max().unwrap_or(0);
+                host_set_redstone_output(&entity.dimension, [entity.pos.x, entity.pos.y, entity.pos.z], 0, level);
 
                 updates.push(BlockEntityUpdate {
                     dimension: entity.dimension.clone(),

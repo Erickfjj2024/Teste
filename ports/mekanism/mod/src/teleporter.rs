@@ -2,8 +2,8 @@
 //! nine frames). Teleporters on the same frequency send what stands in their opening to the nearest other one, for energy: 1,000 J plus 10 J for each
 //! block of distance (and 10,000 J more to change dimension; the port counts Forge Energy, 2/5 of them), paid for everyone in the opening together.
 //!
-//! Frequencies are named ones (`frequency.rs`), chosen on the screen's list or made with its boxes, as the quantum entangloporter's. Only players are teleported
-//! (mobs, items and vehicles are not), nothing is shown in the opening and there is no sound.
+//! Frequencies are named ones (`frequency.rs`), chosen on the screen's list or made with its boxes, as the quantum entangloporter's. Players, mobs, dropped items and
+//! vehicles are teleported (the host's entity teleport, API 49; what rides goes with it); nothing is shown in the opening and there is no sound.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -249,20 +249,32 @@ impl Mekanism {
             if let (Some(face), Some((dest_dim, dest_pos, dest_face))) = (frame, dest.as_ref()) {
                 let bounds = opening(pos, face);
                 let here: Vec<&Player> = players.iter().filter(|p| p.dimension == e.dimension && inside([p.x, p.y, p.z], bounds)).collect();
+                // What is in the opening besides players (mobs, dropped items, boats...): the ones that ride something go with it (API 49).
+                let min = (f64::from(bounds.0[0]), f64::from(bounds.0[1]), f64::from(bounds.0[2]));
+                let max = (f64::from(bounds.1[0]) + 1.0, f64::from(bounds.1[1]) + 1.0, f64::from(bounds.1[2]) + 1.0);
+                let extras: Vec<entities::EntityInBox> =
+                    entities::entities_in_box(&e.dimension, min, max).into_iter().filter(|x| x.player.is_none() && x.vehicle.is_none()).collect();
                 // Who left the opening may be sent again.
                 if let Some(set) = self.frames.arrived.get_mut(&key) {
-                    set.retain(|id| here.iter().any(|p| &p.id == id));
+                    set.retain(|id| here.iter().any(|p| &p.id == id) || extras.iter().any(|x| *id == format!("e{}", x.id)));
                 }
                 let delay = self.frames.delay.entry(key.clone()).or_insert(0);
                 let waiting = *delay > 0;
                 *delay = delay.saturating_sub(1);
                 let arrived = self.frames.arrived.get(&key).cloned().unwrap_or_default();
                 let candidates: Vec<&&Player> = here.iter().filter(|p| !arrived.contains(&p.id)).collect();
+                let thing_candidates: Vec<&entities::EntityInBox> = extras.iter().filter(|x| !arrived.contains(&format!("e{}", x.id))).collect();
                 // `canTeleport`: the trip of everyone in the opening is paid together; without the energy for all of them nobody goes (not enough energy).
-                let need: u64 = candidates.iter().map(|p| trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos)).fold(0u64, |a, c| a.saturating_add(c));
-                if !candidates.is_empty() && energy < need {
+                let need: u64 = candidates
+                    .iter()
+                    .map(|p| [p.x, p.y, p.z])
+                    .chain(thing_candidates.iter().map(|x| [x.x, x.y, x.z]))
+                    .map(|at| trip_cost(&e.dimension, at, dest_dim, *dest_pos))
+                    .fold(0u64, |a, c| a.saturating_add(c));
+                let anyone = !candidates.is_empty() || !thing_candidates.is_empty();
+                if anyone && energy < need {
                     status = 3;
-                } else if !waiting && !candidates.is_empty() {
+                } else if !waiting && anyone {
                     let t = target(*dest_pos, *dest_face);
                     let open: Vec<usize> = [laser::NORTH, laser::SOUTH, laser::WEST, laser::EAST]
                         .into_iter()
@@ -272,6 +284,15 @@ impl Mekanism {
                         })
                         .collect();
                     let yaw = arrival_yaw(*dest_face, &open);
+                    for x in thing_candidates {
+                        let cost = trip_cost(&e.dimension, [x.x, x.y, x.z], dest_dim, *dest_pos);
+                        if entities::teleport_entity(&e.dimension, x.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, yaw).is_ok() {
+                            energy = energy.saturating_sub(cost);
+                            let dkey = (dest_dim.clone(), dest_pos[0], dest_pos[1], dest_pos[2]);
+                            self.frames.arrived.entry(dkey.clone()).or_default().insert(format!("e{}", x.id));
+                            self.frames.delay.insert(dkey, DELAY);
+                        }
+                    }
                     for p in candidates {
                         let cost = trip_cost(&e.dimension, [p.x, p.y, p.z], dest_dim, *dest_pos);
                         if player_control::teleport(&p.id, dest_dim, f64::from(t[0]) + 0.5, f64::from(t[1]), f64::from(t[2]) + 0.5, yaw, None).is_ok() {
