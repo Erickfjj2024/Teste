@@ -1125,7 +1125,8 @@ pub fn menu_numbers(state: &AssemblicatorState, items: &[Option<ItemStack>], ene
         state.control as i32,
         half(needed, 0),
         half(needed, 16),
-        i32::from(can_encode),
+        // The Encode button's `active`: `!autoMode && hasRecipe && canEncode`.
+        i32::from(can_encode && !state.auto_mode && has_recipe),
         used as i32,
     ]
 }

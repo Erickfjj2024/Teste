@@ -468,7 +468,7 @@ impl Mekanism {
                 half(output.amount, 16),
                 chem::index(&input.chemical),
                 chem::index(&output.chemical),
-                (temperature * 10.0) as i32,
+                temperature as i32,
                 solars as i32,
                 (rate * 10.0) as i32,
                 i32::from(found.height),

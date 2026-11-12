@@ -1668,7 +1668,7 @@ def assemblicator_menu(m):
     # the energy tab (GuiEnergyTab at -26, 137) and the redstone tab (GuiRedstoneControlTab at the screen's width, 137)
     widgets += [{'type': 'sprite', 'texture': tab_energy_info, 'x': -26, 'y': 137, 'w': 26, 'h': 26},
                 {'type': 'button', 'x': -26, 'y': 137, 'w': 26, 'h': 26,
-                 'tooltip': 'Using: {14} FE/t\nNeeded: {11}+{12} FE\nUnit: Forge Energy'}]
+                 'tooltip': 'Using: {14} FE/t\nNeeded: {11+12} FE\nUnit: Forge Energy'}]
     widgets += redstone_widgets(10)
     return {'slots': len(slots), 'data_slots': 15, 'results': results,
             'accepts': [{'slot': 0, 'items': [f'{NS}:crafting_formula']}, {'slot': 34, 'items': ['minecraft:redstone', 'minecraft:redstone_block']}],
@@ -2023,7 +2023,7 @@ def evaporation_menu(m):
     152, 51 with a down arrow beside each pair (32, 39 and 156, 39), the inner screen at 48, 19 (100 by 40: Formed, Height, Temperature and Production, the
     screen's strings 0 to 3 from `evaporation.rs::screen_texts`), the temperature bar at 58, 62 (`GuiHorizontalRateBar`: the temperature over 3,000 K), the
     title centred between the gauges, the player's inventory 10 to the right (the screen is 20 wider) and the heat tab (Dissipated). Numbers
-    (`evaporation.rs`): 0-1 input, 2-3 its capacity, 4-5 output, 6 and 7 what each holds, 8 temperature times ten, 9 sun, 10 rate times ten, 11 height,
+    (`evaporation.rs`): 0-1 input, 2-3 its capacity, 4-5 output, 6 and 7 what each holds, 8 temperature (whole kelvin), 9 sun, 10 rate times ten, 11 height,
     12 to 14 the heat lost to the air (whole, tenths, hundredths). **Not in the port:** the warning tab (what is stopping the plant)."""
     from PIL import Image
     width, height = 196, 166
@@ -2067,7 +2067,7 @@ def evaporation_menu(m):
     for k in range(4):
         widgets.append({'type': 'text', 'x': 51, 'y': 22 + 9 * k, 'text': '', 'text_data': k, 'color': '#3CFE9A', 'scale': 80})
     widgets += [
-        {'type': 'sprite', 'texture': rate_tex, 'x': 59, 'y': 63, 'w': 78, 'h': 8, 'value': {'data': 8}, 'max': {'const': 30000}, 'direction': 'right',
+        {'type': 'sprite', 'texture': rate_tex, 'x': 59, 'y': 63, 'w': 78, 'h': 8, 'value': {'data': 8}, 'max': {'const': 3000}, 'direction': 'right',
          'tooltip': 'Temperature: {8} K'},
         {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {12}.{13}{14} K/t'}]
@@ -2474,7 +2474,7 @@ def laser_amplifier_menu(m):
             {'type': 'button', 'x': 176, 'y': 109, 'w': 26, 'h': 18, 'id': 7310, 'alt_id': 7311, 'tooltip': tips[k]}]})
     widgets += redstone_widgets(11)
     return {'slots': 1, 'data_slots': 12,
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'widgets': widgets}}
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': 176, 'height': 166, 'widgets': widgets}}
 
 def laser_tractor_beam_menu(m):
     """GuiLaserTractorBeam (176 by 166): 27 output slots in three rows of nine at 8, 16 and the player's inventory under them."""
@@ -2487,7 +2487,8 @@ def laser_tractor_beam_menu(m):
     title = 'Laser Tractor Beam'
     widgets = [{'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
                {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'}]
-    slots = [[8 + x * 18, 16 + y * 18] for y in range(3) for x in range(9)]
+    # the original adds the slots column by column (`for slotX ... for slotY`)
+    slots = [[8 + x * 18, 16 + y * 18] for x in range(9) for y in range(3)]
     return {'slots': 27, 'data_slots': 0, 'results': [],
             'screen': {'texture': texture, 'own_labels': True, 'slots': slots, 'width': width, 'height': height,
                        'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
