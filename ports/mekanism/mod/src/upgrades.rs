@@ -53,6 +53,11 @@ pub fn supported(def: &Def) -> Vec<usize> {
     }
 }
 
+/// The isotopic centrifuge and the solar neutron activator: two slots (a gas in, a gas out), not the infuser's three.
+pub fn two_gas_slots(def: &Def) -> bool {
+    matches!(def.block, "mekanism:isotopic_centrifuge" | "mekanism:solar_neutron_activator")
+}
+
 /// How many slots a machine has of its own (the upgrade slot comes next, then the one upgrades come out in).
 pub fn base_slots(def: &Def) -> usize {
     match (def.kind, def.layout) {
@@ -63,6 +68,8 @@ pub fn base_slots(def: &Def) -> usize {
         (Kind::Process, Layout::Oxidizer | Layout::Crystallizer) => 2,
         (Kind::Process, _) => 3,
         (Kind::Continuous, Layout::Rotary) => 5,
+        // The gas in and the gas out.
+        (Kind::Continuous, _) if two_gas_slots(def) => 2,
         (Kind::Continuous, _) => 3,
         (Kind::Reaction, _) => 3,
         (Kind::Pump, _) => 3,
@@ -81,6 +88,8 @@ pub fn charge_slot(def: &Def) -> Option<usize> {
     match (def.kind, def.layout) {
         (Kind::Reaction, _) => Some(2),
         (Kind::Continuous, Layout::Rotary) => Some(4),
+        // It needs no energy, so it has no charge slot.
+        (Kind::Continuous, _) if def.block == "mekanism:solar_neutron_activator" => None,
         (Kind::Pump | Kind::Factory | Kind::Generator | Kind::Tank, _) => None,
         _ => Some(base_slots(def) + 2),
     }

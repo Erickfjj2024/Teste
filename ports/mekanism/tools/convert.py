@@ -903,7 +903,7 @@ PROCESS_LAYOUTS['rotary_condensentrator'] = {
     'frames': [('slot/input', 5, 25), ('slot/output', 5, 56), ('slot/input', 155, 25), ('slot/output', 155, 56),
                ('slot/power', 155, 5)],
     'overlays': [], 'power': ('horizontal', 115, 75), 'progress': [],
-    'extra_sprites': [('arrow/down', 9, 44), ('arrow/down', 159, 44)],
+    'extra_sprites': [('arrow/down', 159, 44)],
     'gauges': [('standard', 133, 13, 16, 58, 't0', 10000), ('standard', 25, 13, 16, 58, 't1', 10000)]}
     # GuiPRC: the fluid and the gas it takes in at the left, the small gas it makes at the right; 5 pixels taller than the others
 PROCESS_LAYOUTS['pressurized_reaction_chamber'] = {
@@ -937,13 +937,18 @@ PROCESS_LAYOUTS['painting_machine'] = {
     'frames': [('slot/input', 45, 35), ('slot/output', 116, 35), ('slot/extra', 6, 56), ('slot/power', 144, 35)],
     'overlays': [('slot/overlay/minus', 6, 56)], 'power': ('vertical', 164, 15), 'progress': [('large_right', 64, 39)],
     'tint_arrow': 'in', 'gauges': [('standard', 25, 13, 16, 58, 'in', 15000)]}
-PROCESS_LAYOUTS['pigment_mixer'] = {**PROCESS_LAYOUTS['chemical_infuser'], 'title_y': 5, 'label_y': 74, 'tint_arrow': 't2',
+PROCESS_LAYOUTS['pigment_mixer'] = {**PROCESS_LAYOUTS['chemical_infuser'], 'title_y': 5, 'label_y': 74, 'tint_arrow': ['t0', 't1'],
                                     'gauges': [('standard', 25, 13, 16, 58, 't0', 1000), ('standard', 133, 13, 16, 58, 't1', 1000),
                                                ('standard', 79, 4, 16, 58, 't2', 2000)]}
-# the nuclear chain: the infuser's screen with one gas in at the left and one out at the right
-for _m in ('isotopic_centrifuge', 'solar_neutron_activator'):
-    PROCESS_LAYOUTS[_m] = {**PROCESS_LAYOUTS['chemical_infuser'], 'progress': [('large_right', 64, 40)],
-                           'gauges': [('standard', 25, 13, 16, 58, 't0', 10000), ('standard', 133, 13, 16, 58, 't1', 10000)]}
+# the nuclear chain (GuiIsotopicCentrifuge, GuiSolarNeutronActivator): a gas slot in at 5, 56 (MINUS) and one out at 155, 56 (PLUS), a gas gauge at each side,
+# the arrow at 64, 39, the title and the inventory label two pixels higher; the activator has no energy at all (no bar, no tab, no charge slot)
+_nuclear = {**PROCESS_LAYOUTS['chemical_infuser'], 'progress': [('large_right', 64, 39)], 'title': (0, 176, 'center'), 'title_y': 4, 'label_y': 74,
+            'inventory': 176, 'slots': [[5, 56], [155, 56]], 'results': [1],
+            'frames': [('slot/input', 5, 56), ('slot/output', 155, 56), ('slot/power', 155, 14)],
+            'overlays': [('slot/overlay/minus', 5, 56), ('slot/overlay/plus', 155, 56)],
+            'gauges': [('standard', 25, 13, 16, 58, 't0', 10000), ('standard', 133, 13, 16, 58, 't1', 10000)]}
+PROCESS_LAYOUTS['isotopic_centrifuge'] = _nuclear
+PROCESS_LAYOUTS['solar_neutron_activator'] = {**_nuclear, 'no_energy': True, 'frames': _nuclear['frames'][:2]}
 for _m in ('chemical_injection_chamber', 'osmium_compressor'):
     PROCESS_LAYOUTS[_m] = PROCESS_LAYOUTS['purification_chamber']
 # the compressor's bar is the same, but its tank holds 210 too; the three are one layout
@@ -974,7 +979,9 @@ def process_panel(name, L):
     for sprite, x, y in L['overlays']:
         panel.alpha_composite(gui_sprite(sprite), (x - 1, y - 1))
     kind, px, py = L['power']
-    if kind == 'gauge':
+    if L.get('no_energy'):
+        pass
+    elif kind == 'gauge':
         # GuiEnergyGauge, SMALL_MED: 18 by 48 around 16 by 46
         panel.alpha_composite(nine_slice(gui_sprite('gauge/normal'), 18, 48, 2), (px, py))
     else:
@@ -1260,8 +1267,9 @@ def process_menu(m):
             if not 0 <= x < 176:
                 holder.alpha_composite(gui_sprite(sprite), (x - hx, y - hy))
         widgets.append({'type': 'sprite', 'texture': save_gui(holder, f'holder_{"left" if left else "right"}_{hh}'), 'x': hx, 'y': hy, 'w': 26, 'h': hh})
-    widgets.append(power)
-    if kind == 'gauge':
+    if not L.get('no_energy'):
+        widgets.append(power)
+    if kind == 'gauge' and not L.get('no_energy'):
         widgets.append({'type': 'sprite', 'texture': copy_gui('gauge/overlay/small_med', 'gauge_overlay_small_med'), 'x': px + 1, 'y': py + 1, 'w': 16, 'h': 46})
     continuous = L.get('continuous', False)
     ctl0 = 24 if continuous else 20
@@ -1280,13 +1288,15 @@ def process_menu(m):
             text = 'Process Rate: ' + ('100%' if status == 1 else '0%')
             widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 5}, 'eq': status}}, 'widgets': [
                 {'type': 'text', 'x': sx + (sw - text_width(text)) // 2, 'y': sy + sh - 11, 'text': text, 'color': '#3CFE9A'}]})
-    for ptype, qx, qy in L['progress']:
+    for k, (ptype, qx, qy) in enumerate(L['progress']):
         pw, ph, direction = PROGRESS_TYPES[ptype]
+        # the mixer's arrows are tinted by the pigment each one comes from
+        tint_tank = L['tint_arrow'][k] if isinstance(L.get('tint_arrow'), list) else L.get('tint_arrow')
         # a machine that works every tick shows its arrows full while it works (data slot 0 is 1 or 0)
         widgets.append({'type': 'sprite', 'texture': copy_gui(f'progress/{ptype}/full', f'progress_{ptype}_full'), 'x': qx, 'y': qy,
                         'w': pw, 'h': ph, 'value': {'data': 0}, 'max': {'const': 1} if (continuous and not L.get('timed')) else {'data': ctl0 + 3},
                         'direction': direction, 'tooltip': 'Working' if (continuous and not L.get('timed')) else 'Progress: {percent}%',
-                        **({'tints': [t['tint'] for t in GAUGE_TYPES], 'tint_by': {'data': TANK_DATA[L['tint_arrow']][1]}} if 'tint_arrow' in L else {})})
+                        **({'tints': [t['tint'] for t in GAUGE_TYPES], 'tint_by': {'data': TANK_DATA[tint_tank][1]}} if tint_tank else {})})
     for gk, gx, gy, gw, gh, tank, cap in L['gauges']:
         amount, which = TANK_DATA[tank]
         widgets.append({'type': 'gauge', 'x': gx + 1, 'y': gy + 1, 'w': gw, 'h': gh, 'value': {'data': amount},
@@ -1345,7 +1355,7 @@ def process_menu(m):
         widgets.append({'type': 'text', 'x': 8, 'y': L.get('label_y', 72), 'text': 'Inventory', 'color': '#404040'})
     ctl = 24 if continuous else 20
     dx = width - 176
-    widgets += shift_x(redstone_widgets(ctl), dx) + energy_tab_widgets(ctl, MACHINE_USAGE[m])
+    widgets += shift_x(redstone_widgets(ctl), dx) + ([] if L.get('no_energy') else energy_tab_widgets(ctl, MACHINE_USAGE[m]))
     widgets += [
         # GuiSideConfigurationTab at -26, 6: opens the side configuration window
         {'type': 'sprite', 'texture': tab_config, 'x': -26, 'y': 6, 'w': 26, 'h': 26},
@@ -1355,7 +1365,7 @@ def process_menu(m):
                        'width': width, 'height': L.get('height', 166), 'inventory_x': L.get('inv_x', 8), 'inventory_y': 84 + L.get('inv_shift', 0),
                        'windows': [{'id': 'side_config', 'x': WIN_X + dx // 2, 'y': WIN_Y, 'width': WIN_W, 'height': WIN_H,
                                     'texture': window_tex, 'widgets': side_config_widgets(MACHINE_TRANSMISSIONS[m], m, ctl + 15)}]}}, m, len(L['slots']), ctl0,
-                         charge=None if L.get('rotary') or L.get('timed') else power_slot(L))
+                         charge=None if L.get('rotary') or L.get('timed') or L.get('no_energy') else power_slot(L))
     if dx:
         # the upgrade tab goes with the wider screen's right edge, its window with its middle
         menu['screen']['widgets'] = menu['screen']['widgets'][:-len(upgrade_tab_widgets())] + shift_x(upgrade_tab_widgets(), dx)

@@ -991,7 +991,11 @@ impl Mekanism {
     /// Gives the game what a machine's configuration says: the slots each face reaches, whether it ejects, and (as the
     /// return) where energy comes in.
     fn apply_config(&mut self, e: &BlockEntity, layout: Layout, facing: &str, cfg: &Config) -> Vec<FlowSide> {
-        let faces = config::item_faces(layout, facing, cfg.items());
+        let mut faces = config::item_faces(layout, facing, cfg.items());
+        // The centrifuge and the activator have two slots, not the infuser's three: the next slot is an upgrade one, which no face reaches.
+        if matches!(e.state.split('[').next(), Some("mekanism:isotopic_centrifuge" | "mekanism:solar_neutron_activator")) {
+            faces.iter_mut().for_each(|f| f.retain(|s| *s < 2));
+        }
         let _ = world::set_item_faces(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &faces);
         let _ = world::set_item_eject(&e.dimension, e.pos.x, e.pos.y, e.pos.z, cfg.ejects(Transmission::Items));
         self.applied.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z));
@@ -1794,13 +1798,18 @@ impl ServerMod for Mekanism {
                 // The chemical infuser, the washer and the separator: three slots, on the default configuration's faces.
                 Kind::Continuous => {
                     let (inputs, outputs) = match def.layout {
+                        _ if upgrades::two_gas_slots(def) => (vec![0], vec![1]),
                         Layout::ChemInfuser | Layout::Mixer => (vec![0, 1], vec![2]),
                         Layout::Rotary => (vec![0, 2], vec![1, 3]),
                         _ => (vec![0], vec![1, 2]),
                     };
+                    let mut faces = config::item_faces(def.layout, "north", config::default_config(def.layout).items());
+                    if upgrades::two_gas_slots(def) {
+                        faces.iter_mut().for_each(|f| f.retain(|s| *s < 2));
+                    }
                     ContainerSpec {
-                        slots: if def.layout == Layout::Rotary { 5 } else { 3 },
-                        faces: config::item_faces(def.layout, "north", config::default_config(def.layout).items()),
+                        slots: if def.layout == Layout::Rotary { 5 } else { upgrades::base_slots(def) as u32 },
+                        faces,
                         inputs,
                         outputs,
                         menu: true,
