@@ -106,6 +106,9 @@ pub mod server {
   pub mod world { use super::*;
     pub fn set_comparator_output<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
     pub fn set_redstone_output<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: u8, _a5: bool) -> Result<(), String> { Err(String::new()) }
+    pub fn set_item_eject_color(dimension: &str, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> { let _ = (dimension, x, y, z, color); Ok(()) }
+    pub fn set_item_strict_input(dimension: &str, x: i32, y: i32, z: i32, strict: bool) -> Result<(), String> { let _ = (dimension, x, y, z, strict); Ok(()) }
+    pub fn set_transmitter_color(dimension: &str, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> { let _ = (dimension, x, y, z, color); Ok(()) }
     pub fn break_blocks<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<u32, String> { Err(String::new()) }
     pub fn block_hardness<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Option<f32> { None }
     pub fn set_menu_text<A0, A1, A2, A3, A4>(_a0: A0, _a1: A1, _a2: A2, _a3: A3, _a4: A4) -> Result<(), String> { Err(String::new()) }
