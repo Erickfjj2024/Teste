@@ -28,6 +28,9 @@ impl Mekanism {
         if menu.menu == crate::portable_teleporter::MENU {
             return self.portable_teleporter_tick(player, menu);
         }
+        if menu.menu == crate::seismic_reader::MENU {
+            return self.seismic_reader_tick(player, menu);
+        }
         if menu.menu != DICTIONARY_MENU {
             return None;
         }

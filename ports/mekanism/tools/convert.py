@@ -2689,6 +2689,28 @@ def portable_teleporter_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[-40, -40]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': height + 4,
                        'widgets': widgets}}
 
+def seismic_reader_menu(m):
+    """GuiSeismicReader (150 by 182): the inner screen at 5, 11 (69 by 50: the block's name and its abundancy in the column), the column's screen at 77, 11 (51 by 160) with nine
+    icons going up from 95, 146 (16 apart; here the menu's virtual slots, which cannot be taken), the arrow at 79, 81 with the layer's height beside it, and the up and down buttons at 129, 11 and
+    129, 157. The strings (`seismic_reader.rs::texts`): 0 the name, 1 the abundancy, 2 the height. The scroll bar is not drawn; the original shows no player inventory (see the Portable Teleporter)."""
+    width, height = 150, 182
+    panel = nine_slice(gui_sprite('base'), width, height, 4)
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 69, 50, 3), (5, 11))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 51, 160, 3), (77, 11))
+    panel.alpha_composite(gui_sprite('arrow_selection'), (79, 81))
+    texture = save_gui(panel, m)
+    title = 'Seismic Reader'
+    widgets = [{'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 3, 'text': title, 'color': '#404040'},
+               {'type': 'text', 'x': 8, 'y': 14, 'text': '', 'text_data': 0, 'color': '#3CFE9A'},
+               {'type': 'text', 'x': 8, 'y': 23, 'text': '', 'text_data': 1, 'color': '#3CFE9A'},
+               {'type': 'text', 'x': 112, 'y': 87, 'text': '', 'text_data': 2, 'color': '#3CFE9A'}]
+    for bid, y, name in ((8401, 11, 'up'), (8402, 157, 'down')):
+        widgets.append({'type': 'sprite', 'texture': copy_gui(f'button/{name}', f'seismic_{name}'), 'x': 129, 'y': y, 'w': 14, 'h': 14})
+        widgets.append({'type': 'button', 'x': 129, 'y': y, 'w': 14, 'h': 14, 'id': bid, 'tooltip': 'Up' if name == 'up' else 'Down'})
+    return {'slots': 9, 'data_slots': 2, 'results': list(range(9)),
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[95, 146 - 16 * i] for i in range(9)], 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': height + 4, 'widgets': widgets}}
+
 def bin_menu(m):
     """The bin's screen (it has none in the original: items are put in by using them and taken by punching): an input slot, the output
     stack, what it holds, and the switches for ejecting down and locking the item."""
@@ -2947,6 +2969,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/logistical_sorter.json', sorter_menu('logisti
 put(f'{OUT}/data/{NS}/horizon/menu/quantum_entangloporter.json', entangloporter_menu('quantum_entangloporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/teleporter.json', teleporter_menu('teleporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/portable_teleporter.json', portable_teleporter_menu('portable_teleporter'))
+put(f'{OUT}/data/{NS}/horizon/menu/seismic_reader.json', seismic_reader_menu('seismic_reader'))
 for _b in BINS:
     put(f'{OUT}/data/{NS}/horizon/menu/{_b}.json', bin_menu(_b))
 put(f'{OUT}/data/{NS}/horizon/menu/digital_miner.json', miner_menu('digital_miner'))

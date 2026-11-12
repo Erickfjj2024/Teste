@@ -25,6 +25,7 @@ mod frequency;
 mod filters;
 mod item_menus;
 mod portable_teleporter;
+mod seismic_reader;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -489,6 +490,8 @@ struct Mekanism {
     item_menu_sent: HashMap<(String, String), Vec<String>>,
     /// The teleporters of every frequency last tick (key, dimension, position, face of the frame), for the Portable Teleporter's destinations.
     teleporter_table: Vec<(String, String, [i32; 3], Option<usize>)>,
+    /// What each open Seismic Reader screen reads.
+    readers: seismic_reader::Readers,
     /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
     portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
@@ -2332,6 +2335,7 @@ impl ServerMod for Mekanism {
             freq_registry: None,
             item_menu_sent: HashMap::new(),
             teleporter_table: Vec::new(),
+            readers: seismic_reader::Readers::default(),
             portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
@@ -2553,7 +2557,17 @@ impl ServerMod for Mekanism {
     }
 
     fn item_menu_button(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu, id: i32) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
-        if menu.menu == portable_teleporter::MENU { self.portable_teleporter_button(player, &menu, id) } else { None }
+        if menu.menu == portable_teleporter::MENU {
+            self.portable_teleporter_button(player, &menu, id)
+        } else if menu.menu == seismic_reader::MENU {
+            self.seismic_reader_button(player, id)
+        } else {
+            None
+        }
+    }
+
+    fn item_menu_taken(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu, _slot: u32, _stack: ItemStack) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
+        if menu.menu == seismic_reader::MENU { self.seismic_reader_taken(player) } else { None }
     }
 
     fn item_menu_tick(&mut self, player: &Player, menu: horizon_mod_sdk::server::ItemMenu) -> Option<horizon_mod_sdk::server::ItemMenuUpdate> {
@@ -2582,6 +2596,9 @@ impl ServerMod for Mekanism {
 
     fn item_used(&mut self, player: &Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
         if stack.item == robit::ITEM_ID && self.robit_placed(player, &stack, pos) {
+            return true;
+        }
+        if stack.item == seismic_reader::ITEM && self.seismic_reader_used(player, &stack) {
             return true;
         }
         if stack.item == portable_teleporter::ITEM && self.portable_teleporter_used(player, &stack) {
