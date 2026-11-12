@@ -29,6 +29,8 @@ mod seismic_reader;
 mod block_security;
 mod security_desk;
 mod security_table;
+mod transporter_config;
+mod transporter_table;
 mod robit_world;
 mod meka_tool;
 mod mekasuit;
@@ -499,6 +501,8 @@ struct Mekanism {
     tweakers: module_tweaker::Views,
     /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
     block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
+    transporter_cfg: Option<transporter_config::Registry>,
+    transporter_dirty: HashSet<(String, i32, i32, i32)>,
     /// The blocks whose mode changed and whose screen has to be sent again.
     security_dirty: HashSet<(String, i32, i32, i32)>,
     /// What each owner keeps at the Security Desk, loaded from the world's data on first use.
@@ -2361,6 +2365,8 @@ impl ServerMod for Mekanism {
             readers: seismic_reader::Readers::default(),
             tweakers: module_tweaker::Views::new(),
             block_owners: None,
+            transporter_cfg: None,
+            transporter_dirty: HashSet::new(),
             security_dirty: HashSet::new(),
             owner_data: None,
             desk_presses: Vec::new(),
@@ -2489,6 +2495,7 @@ impl ServerMod for Mekanism {
     fn block_broken(&mut self, player: &Player, pos: BlockPos, state: &str) {
         let name = state.split('[').next().unwrap_or("");
         self.security_broken(player, pos, name);
+        self.transporter_broken(&player.dimension, pos);
         if name == dimensional_stabilizer::BLOCK {
             self.release_stabilizer_tickets(&player.dimension, pos);
         }
@@ -2920,7 +2927,7 @@ impl ServerMod for Mekanism {
     }
 
     fn menu_button(&mut self, player: &Player, _pos: BlockPos, id: i32, e: BlockEntity) -> Option<BlockEntityUpdate> {
-        if self.security_button(player, &e, id) {
+        if self.security_button(player, &e, id) || self.transporter_button(&e, id) {
             return None;
         }
         let block = e.state.split('[').next()?;
@@ -3444,6 +3451,7 @@ impl ServerMod for Mekanism {
             c.tick += 1;
         }
         self.pending.retain(|c| c.tick < 5);
+        self.transporter_stamp(&snapshot, &mut out);
         self.security_stamp(&snapshot, &mut out);
         out
     }

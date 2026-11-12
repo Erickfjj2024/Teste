@@ -4140,6 +4140,61 @@ print(f'sounds {nsounds}')
 print(f'items {len(kept_items)}, blocks {len(kept_blocks)}, textures {len(copied_textures)}, '
       f'models {len(copied_models)}, recipes {nrec}')
 
+# ---- the Transporter Config tab (GuiTransporterConfigTab at -26, 34, 26 by 18, untinted; its window GuiTransporterConfig, 156 by 119, at ((screen width - 156) / 2, 15)): every machine that has the
+# side configuration tab has it. The window has the strict input switch (the exclamation button at 136, 6 and the inner screen at 38, 15) and the colour of what the machine ejects (the slot at 111, 48
+# and its colour button, a click for the next colour, a right click for the previous). The two numbers after the screen's own are the colour (0 none, 1-18) and strictness (`transporter_config.rs`).
+# The six input colour buttons are not here (the host has no input colour for each side).
+TRANSPORTER_COLORS = [('Black', 0x404040), ('Blue', 0x366BD0), ('Green', 0x59C15F), ('Cyan', 0x00F3D0), ('Dark Red', 0xC9071F), ('Purple', 0xA460D9), ('Orange', 0xFFA160), ('Light Gray', 0xCFCFCF),
+                      ('Gray', 0x7A7A7A), ('Light Blue', 0x559EFF), ('Lime', 0x75FF89), ('Aqua', 0x30FFF9), ('Red', 0xFF383C), ('Magenta', 0xD55ECB), ('Yellow', 0xFFDD4F), ('White', 0xFFFFFF),
+                      ('Brown', 0xA17649), ('Pink', 0xFFBCC4)]
+def transporter_tabs():
+    from PIL import Image
+    tab = tab_sprite('tab_transporter', 'button/transporter_config', None, 18)
+    win = nine_slice(gui_sprite('base'), 156, 119, 4)
+    win.alpha_composite(gui_sprite('button/close'), (6, 6))
+    win.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 80, 12, 3), (38, 15))
+    win.alpha_composite(gui_sprite('slot/normal'), (111, 48))
+    button = nine_slice(gui_sprite('button'), 14, 16, 2)
+    button.alpha_composite(gui_sprite('button/exclamation'), (0, 0))
+    win.alpha_composite(button, (136, 6))
+    window_texture = save_gui(win, 'transporter_config_window')
+    title = 'Transporter Config'
+    out = []
+    for n in kept_blocks:
+        path = f'{OUT}/data/{NS}/horizon/menu/{n}.json'
+        if not os.path.exists(path):
+            continue
+        menu = read_json(path)
+        screen = menu['screen']
+        if not any(w.get('id') == 'side_config' for w in screen.get('windows', [])):
+            continue
+        at = menu['data_slots']
+        menu['data_slots'] = at + 2
+        widgets = [{'type': 'text', 'x': 20 + (116 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
+                   {'type': 'button', 'x': 6, 'y': 6, 'w': 8, 'h': 12, 'local': 'close', 'tooltip': 'Close'},
+                   {'type': 'button', 'x': 136, 'y': 6, 'w': 14, 'h': 16, 'id': 9302, 'tooltip': 'Strict Input'},
+                   {'type': 'swatch', 'x': 112, 'y': 49, 'w': 16, 'h': 16, 'value': {'data': at}, 'colors': ['#00000000'] + ['#%06X' % c for _, c in TRANSPORTER_COLORS],
+                    'labels': ['None'] + [name for name, _ in TRANSPORTER_COLORS], 'tooltip': '{label}'},
+                   {'type': 'button', 'x': 112, 'y': 49, 'w': 16, 'h': 16, 'id': 9300, 'alt_id': 9301},
+                   {'type': 'text', 'x': 86 + (70 - text_width('Output')) // 2, 'y': 68, 'text': 'Output', 'color': '#787878'}]
+        for on, text in ((0, 'Strict Input: Off'), (1, 'Strict Input: On')):
+            widgets.append({'type': 'show', 'when': {'data': {'value': {'data': at + 1}, 'eq': on}}, 'widgets': [
+                {'type': 'text', 'x': 41, 'y': 18, 'text': text, 'color': '#3CFE9A'}]})
+        screen['windows'] = list(screen['windows']) + [{'id': 'transporter_config', 'x': (screen.get('width', 176) - 156) // 2, 'y': 15, 'width': 156, 'height': 119,
+                                                          'texture': window_texture, 'widgets': widgets}]
+        screen['widgets'] = list(screen['widgets']) + [
+            {'type': 'sprite', 'texture': tab, 'x': -26, 'y': 34, 'w': 26, 'h': 18},
+            {'type': 'button', 'x': -26, 'y': 34, 'w': 26, 'h': 18, 'local': {'open': 'transporter_config'}, 'tooltip': 'Transporter Config'}]
+        put(path, menu)
+        out.append((f'{NS}:{n}', at))
+    with open(f'{OUT}/src/transporter_table.rs', 'w') as f:
+        f.write("//! Written by the converter (`tools/convert.py`): the blocks whose screens have the Transporter Config tab, and the place of its two numbers in each one's data.\n")
+        f.write('pub const TRANSPORTED: &[(&str, usize)] = &[\n')
+        for b, at in out:
+            f.write(f'    ("{b}", {at}),\n')
+        f.write('];\n')
+transporter_tabs()
+
 # ---- the security tab (GuiSecurityTab at the screen's right, 26 by 18, y 34 or 6 for the energy cubes): the lock of the block's mode, a click for the next mode and a right click for the
 # previous one (`block_security.rs`). The mode is the screen's last number, which the mod puts after the screen's own (`security_table.rs`).
 SECURITY_SKIP = {'basic_bin', 'advanced_bin', 'elite_bin', 'ultimate_bin', 'creative_bin'}

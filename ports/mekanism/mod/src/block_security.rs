@@ -182,7 +182,9 @@ impl Mekanism {
     /// Before the machines' ticks: the screens' data as the machines made it, without the mode at its end.
     pub(crate) fn security_strip(&mut self, entities: &mut [BlockEntity]) {
         for e in entities.iter_mut() {
-            if let Some(at) = data_index(e.state.split('[').next().unwrap_or("")) {
+            let block = e.state.split('[').next().unwrap_or("");
+            // The transporter window's numbers come before the mode (`transporter_table.rs`), so the screen's own data ends where the first of them starts.
+            if let Some(at) = data_index(block).map(|at| crate::transporter_config::data_index(block).map_or(at, |t| t.min(at))) {
                 e.menu_data.truncate(at);
             }
         }

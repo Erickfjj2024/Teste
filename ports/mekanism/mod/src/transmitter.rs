@@ -134,6 +134,8 @@ impl Mekanism {
                 if logistical && state.connections[click.face] == Connection::None {
                     // A sneak click on a disconnected side colours the transporter, as the original's onConfigure does.
                     state.color = (state.color + 1) % 19;
+                    // The host routes by the colour (API 54): 0 to 17, none for plain.
+                    let _ = world::set_transmitter_color(&e.dimension, e.pos.x, e.pos.y, e.pos.z, state.color.checked_sub(1));
                     let _ = players::tell(&click.player, &format!("Color bumped to: {}", COLORS[state.color as usize]));
                 } else {
                     state.connections[click.face] = state.connections[click.face].next();
