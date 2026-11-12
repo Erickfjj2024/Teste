@@ -232,6 +232,8 @@ pub mod server {
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntity { pub id: u32, pub dimension: String, pub kind: String, pub x: f64, pub y: f64, pub z: f64, pub yaw: f32, pub health: f32, pub data: Vec<u8>, pub items: Vec<Option<ItemStack>>, pub energy: u64, pub skin: String, pub name: Option<String>, pub menu_data: Vec<i32> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenu { pub menu: String, pub slot: u32, pub stack: Option<ItemStack>, pub items: Vec<Option<ItemStack>>, pub menu_data: Vec<i32> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool, pub menu_grid: Option<Vec<GridEntry>> }
+  /// The `index` of a `menu_grid_click` on a cell with no entry (the grid itself).
+  pub const GRID_EMPTY: u32 = u32::MAX;
   #[derive(Clone, Debug, Default, PartialEq, Eq)] pub struct GridEntry { pub item: String, pub components: String, pub count: u64 }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct GridTarget { pub menu: String, pub dimension: String, pub pos: Option<BlockPos>, pub slot: Option<u32> }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct GridAnswer { pub carried: Option<ItemStack>, pub to_inventory: Vec<ItemStack> }
