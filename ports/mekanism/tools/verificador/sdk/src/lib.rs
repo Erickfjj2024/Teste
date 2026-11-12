@@ -4,6 +4,7 @@ pub mod server {
   pub mod players { use super::*;
     pub fn tell_overlay<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
     pub fn open_item_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
+    pub fn open_player_menu<A0, A1>(_a0: A0, _a1: A1) -> bool { false }
     pub fn open_entity_menu<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> bool { false }
     #[derive(Clone, Debug, Default, PartialEq)] pub struct RadialEntry { pub id: String, pub label: String, pub icon: String }
     pub fn open_radial_menu<A0>(_a0: A0, _a1: &[RadialEntry], _a2: u32) -> bool { false }
@@ -87,6 +88,7 @@ pub mod server {
   }
   pub mod player_items { use super::*;
     pub fn get_inventory<A0>(_a0: A0) -> Option<Vec<Option<ItemStack>>> { None }
+    pub fn selected_slot<A0>(_a0: A0) -> Option<u32> { None }
     pub fn set_slot<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
     pub fn compare_and_set_slot<A0, A1, A2, A3>(_a0: A0, _a1: A1, _a2: A2, _a3: A3) -> Result<(), String> { Err(String::new()) }
     pub fn hurt<A0, A1, A2>(_a0: A0, _a1: A1, _a2: A2) -> Result<(), String> { Err(String::new()) }
@@ -228,6 +230,7 @@ pub mod server {
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ItemMenuUpdate { pub items: Option<Vec<Option<ItemStack>>>, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>>, pub close: bool }
   #[derive(Clone, Debug, Default, PartialEq)] pub struct ModEntityUpdate { pub dimension: String, pub id: u32, pub data: Option<Vec<u8>>, pub items: Option<Vec<Option<ItemStack>>>, pub energy: Option<u64>, pub skin: Option<String>, pub name: Option<Option<String>>, pub teleport: Option<(f64, f64, f64)>, pub path_to: Option<(f64, f64, f64, f32)>, pub stop: bool, pub health: Option<f32>, pub remove: bool, pub menu_data: Option<Vec<i32>>, pub menu_text: Option<Vec<String>> }
   pub trait ServerMod: Sized {
+    fn key_pressed(&mut self, player: &Player, key: &str) -> bool { false }
     fn item_menu_tick(&mut self, player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> { None }
     fn item_menu_button(&mut self, player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> { None }
     fn item_menu_taken(&mut self, player: &Player, menu: ItemMenu, slot: u32, stack: ItemStack) -> Option<ItemMenuUpdate> { None }
