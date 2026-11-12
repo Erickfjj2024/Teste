@@ -77,6 +77,7 @@ pub const SECURED: &[(&str, usize)] = &[
     ("mekanism:quantum_entangloporter", 13),
     ("mekanism:resistive_heater", 14),
     ("mekanism:rotary_condensentrator", 40),
+    ("mekanism:security_desk", 5),
     ("mekanism:seismic_vibrator", 9),
     ("mekanism:solar_neutron_activator", 40),
     ("mekanism:sps_port", 15),

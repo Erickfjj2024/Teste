@@ -47,9 +47,48 @@ pub fn decode(data: &[u8]) -> HashMap<(String, i32, i32, i32), Entry> {
     out
 }
 
-/// `SecurityUtils.canAccess`: whether `player` may use a block with this entry. The owner always; anyone for a public one; the trusted lists are not here.
-pub fn can_access(entry: &Entry, player: &str) -> bool {
-    entry.mode == SecurityMode::Public || entry.owner == player
+/// What a player keeps at the Security Desk (`SecurityFrequency`): the mode and the trusted names the desk gives to what the player owns, and whether it overrides the blocks' own modes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OwnerData {
+    pub name: String,
+    pub mode: SecurityMode,
+    pub overridden: bool,
+    pub trusted: Vec<String>,
+}
+
+pub const OWNERS_KEY: &str = "mekanism:security_owners";
+
+pub fn encode_owners(list: &HashMap<String, OwnerData>) -> Vec<u8> {
+    let mut lines: Vec<String> =
+        list.iter().map(|(id, o)| format!("{id}|{}|{}|{}|{}", o.name, o.mode as u8, u8::from(o.overridden), o.trusted.join(","))).collect();
+    lines.sort();
+    lines.join("\n").into_bytes()
+}
+
+pub fn decode_owners(data: &[u8]) -> HashMap<String, OwnerData> {
+    let mut out = HashMap::new();
+    for line in String::from_utf8_lossy(data).lines() {
+        let mut f = line.splitn(5, '|');
+        let (Some(id), Some(name), Some(m), Some(o), Some(t)) = (f.next(), f.next(), f.next(), f.next(), f.next()) else { continue };
+        let Ok(m) = m.parse::<u8>() else { continue };
+        let trusted = t.split(',').filter(|n| !n.is_empty()).map(str::to_owned).collect();
+        out.insert(id.to_owned(), OwnerData { name: name.to_owned(), mode: SecurityMode::from_u8(m), overridden: o == "1", trusted });
+    }
+    out
+}
+
+/// `SecurityUtils.canAccess`: whether `player` may use a block with this entry. The owner always; anyone for a public one; for a trusted one the names the owner's desk lists; with the desk's
+/// override on, the desk's mode stands in for the block's.
+pub fn can_access(entry: &Entry, player: &str, player_name: &str, owner: Option<&OwnerData>) -> bool {
+    if entry.owner == player {
+        return true;
+    }
+    let mode = owner.filter(|o| o.overridden).map_or(entry.mode, |o| o.mode);
+    match mode {
+        SecurityMode::Public => true,
+        SecurityMode::Private => false,
+        SecurityMode::Trusted => owner.is_some_and(|o| o.trusted.iter().any(|t| t.eq_ignore_ascii_case(player_name))),
+    }
 }
 
 /// The data of a screen with the mode in it: the original numbers cut or padded to the security number's place, then the mode.
@@ -62,6 +101,19 @@ pub fn with_mode(mut data: Vec<i32>, at: usize, mode: SecurityMode) -> Vec<i32> 
 impl Mekanism {
     fn security_registry(&mut self) -> &mut HashMap<(String, i32, i32, i32), Entry> {
         self.block_owners.get_or_insert_with(|| horizon_mod_sdk::server::world_data::get(KEY).map(|d| decode(&d)).unwrap_or_default())
+    }
+
+    pub(crate) fn security_owners(&mut self) -> &mut HashMap<String, OwnerData> {
+        self.owner_data.get_or_insert_with(|| horizon_mod_sdk::server::world_data::get(OWNERS_KEY).map(|d| decode_owners(&d)).unwrap_or_default())
+    }
+
+    pub(crate) fn security_owners_save(&mut self) {
+        let bytes = encode_owners(self.security_owners());
+        let _ = horizon_mod_sdk::server::world_data::set(OWNERS_KEY, &bytes);
+    }
+
+    pub(crate) fn block_owners_get(&mut self, key: &(String, i32, i32, i32)) -> Option<Entry> {
+        self.security_registry().get(key).cloned()
     }
 
     fn security_save(&mut self) {
@@ -92,7 +144,8 @@ impl Mekanism {
             return true;
         }
         let Some(entry) = self.security_registry().get(&(player.dimension.clone(), pos.x, pos.y, pos.z)).cloned() else { return true };
-        if can_access(&entry, &player.id) {
+        let owner = self.security_owners().get(&entry.owner).cloned();
+        if can_access(&entry, &player.id, &player.name, owner.as_ref()) {
             return true;
         }
         let _ = players::tell(&player.id, &format!("Access denied: this block belongs to {}", entry.owner_name));
@@ -167,16 +220,35 @@ mod tests {
     #[test]
     fn a_private_block_is_the_owners_alone() {
         let mut e = Entry { owner: "a".into(), owner_name: "A".into(), mode: SecurityMode::Public };
-        assert!(can_access(&e, "b"));
+        assert!(can_access(&e, "b", "B", None));
         e.mode = SecurityMode::Private;
-        assert!(can_access(&e, "a") && !can_access(&e, "b"));
+        assert!(can_access(&e, "a", "A", None) && !can_access(&e, "b", "B", None));
         e.mode = SecurityMode::Trusted;
-        assert!(!can_access(&e, "b"));
+        assert!(!can_access(&e, "b", "B", None));
+        let desk = OwnerData { name: "A".into(), mode: SecurityMode::Private, overridden: false, trusted: vec!["bob".into()] };
+        assert!(can_access(&e, "b", "Bob", Some(&desk)), "a trusted name goes in");
+        assert!(!can_access(&e, "c", "Carl", Some(&desk)));
+        e.mode = SecurityMode::Public;
+        let forced = OwnerData { overridden: true, ..desk };
+        assert!(!can_access(&e, "c", "Carl", Some(&forced)), "the override makes the desk's mode the block's");
     }
 
     #[test]
     fn the_mode_goes_at_the_place_after_the_screens_numbers() {
         assert_eq!(with_mode(vec![1, 2], 4, SecurityMode::Private), vec![1, 2, 0, 0, 1]);
         assert_eq!(with_mode(vec![1, 2, 3, 4, 5], 4, SecurityMode::Trusted), vec![1, 2, 3, 4, 2]);
+    }
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+
+    #[test]
+    fn the_desk_data_survives_its_text() {
+        let mut m = HashMap::new();
+        m.insert("id-1".to_owned(), OwnerData { name: "Steve".into(), mode: SecurityMode::Trusted, overridden: true, trusted: vec!["Alex".into(), "Bob".into()] });
+        m.insert("id-2".to_owned(), OwnerData { name: "Kim".into(), ..Default::default() });
+        assert_eq!(decode_owners(&encode_owners(&m)), m);
     }
 }

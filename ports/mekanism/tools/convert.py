@@ -191,7 +191,7 @@ for m in HEAT_CONDUCTORS + HEAT_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 OPEN_MACHINES |= set(HEAT_CONDUCTORS + HEAT_MACHINES)
 # Utilities: machines with a screen or a charge slot, the personal storages, the cardboard box (hardness/resistance of the original blocks).
-UTILITY_MACHINES = ['qio_drive_array', 'qio_redstone_adapter', 'radioactive_waste_barrel', 'modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel']
+UTILITY_MACHINES = ['qio_drive_array', 'qio_redstone_adapter', 'radioactive_waste_barrel', 'modification_station', 'formulaic_assemblicator', 'chargepad', 'dimensional_stabilizer', 'seismic_vibrator', 'oredictionificator', 'personal_chest', 'personal_barrel', 'security_desk']
 for m in UTILITY_MACHINES:
     BLOCKS[m] = ('minecraft:beacon', {'hardness': 3.5, 'explosion_resistance': 16.0, 'requires_tool': True}, 'machine')
 BLOCKS['cardboard_box'] = ('minecraft:beacon', {'hardness': 0.5, 'explosion_resistance': 0.6, 'requires_tool': False}, 'machine')
@@ -2712,6 +2712,45 @@ def seismic_reader_menu(m):
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[95, 146 - 16 * i] for i in range(9)], 'width': width, 'height': height,
                        'hide_inventory': True, 'widgets': widgets}}
 
+def security_desk_menu(m):
+    """GuiSecurityDesk (176 by 230): the three element holders at 141 (13, 54 and 92) with the lock slot's and the unlock slot's frames at 146, 18 and 146, 97 (here plain slots: the items'
+    ownership is not in the port) and the public and private icons, the trusted list at 13, 13 (122 by 42; a click selects a row), the Remove button at 13, 81, the name box at 35, 68 (Enter
+    adds the name), the public, private and trusted buttons at 13, 113, 54, 113 and 95, 113, and the override toggle at 146, 59. Numbers and strings: `security_desk.rs`."""
+    width, height = 176, 230
+    panel, slot, inv_y = inventory_panel(width, height)
+    for y, h in ((13, 37), (54, 34), (92, 37)):
+        panel.alpha_composite(nine_slice(gui_sprite('element_holder'), 26, h, 2), (141, y))
+    for y in (18, 97):
+        panel.alpha_composite(gui_sprite('slot/normal'), (145, y - 1))
+    panel.alpha_composite(gui_sprite('security/public'), (145, 32))
+    panel.alpha_composite(gui_sprite('security/private'), (145, 111))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 42, 3), (13, 13))
+    panel.alpha_composite(nine_slice(gui_sprite('button'), 122, 20, 2), (13, 81))
+    panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 99, 11, 2), (35, 68))
+    for x, name in ((13, 'public'), (54, 'private'), (95, 'trusted')):
+        panel.alpha_composite(gui_sprite(f'security/button_{name}'), (x, 113))
+    texture = save_gui(panel, m)
+    title = 'Security Desk'
+    widgets = [
+        {'type': 'text', 'x': (width - text_width(title)) // 2, 'y': 4, 'text': title, 'color': '#404040'},
+        {'type': 'text', 'x': 8, 'y': height - 94, 'text': 'Inventory', 'color': '#404040'},
+        {'type': 'list', 'x': 14, 'y': 14, 'w': 120, 'h': 40, 'row_height': 10, 'first': 0, 'count': {'data': 3}, 'on_click': 9200, 'color': '#3CFE9A'},
+        {'type': 'text', 'x': 13 + (122 - text_width('Remove')) // 2, 'y': 87, 'text': 'Remove', 'color': '#FFFFFF'},
+        {'type': 'button', 'x': 13, 'y': 81, 'w': 122, 'h': 20, 'id': 9270, 'tooltip': 'Remove the selected player'},
+        {'type': 'textfield', 'x': 36, 'y': 69, 'w': 97, 'h': 9, 'id': 9275, 'validator': 'any', 'max_length': 16},
+        {'type': 'button', 'x': 13, 'y': 113, 'w': 40, 'h': 16, 'id': 9272, 'tooltip': 'Public'},
+        {'type': 'button', 'x': 54, 'y': 113, 'w': 40, 'h': 16, 'id': 9273, 'tooltip': 'Private'},
+        {'type': 'button', 'x': 95, 'y': 113, 'w': 40, 'h': 16, 'id': 9274, 'tooltip': 'Trusted'}]
+    ex = copy_gui('button/exclamation', 'button_exclamation')
+    for on in (0, 1):
+        group = [{'type': 'button', 'x': 146, 'y': 59, 'w': 16, 'h': 16, 'id': 9271, 'tooltip': 'Security override: ' + ('On' if on else 'Off')}]
+        if on:
+            group.insert(0, {'type': 'sprite', 'texture': ex, 'x': 146, 'y': 59, 'w': 16, 'h': 16})
+        widgets.append({'type': 'show', 'when': {'data': {'value': {'data': 1}, 'eq': on}}, 'widgets': group})
+    return {'slots': 2, 'data_slots': 5, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [[146, 18], [146, 97]], 'width': width, 'height': height,
+                       'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+
 def bin_menu(m):
     """The bin's screen (it has none in the original: items are put in by using them and taken by punching): an input slot, the output
     stack, what it holds, and the switches for ejecting down and locking the item."""
@@ -2971,6 +3010,7 @@ put(f'{OUT}/data/{NS}/horizon/menu/quantum_entangloporter.json', entangloporter_
 put(f'{OUT}/data/{NS}/horizon/menu/teleporter.json', teleporter_menu('teleporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/portable_teleporter.json', portable_teleporter_menu('portable_teleporter'))
 put(f'{OUT}/data/{NS}/horizon/menu/seismic_reader.json', seismic_reader_menu('seismic_reader'))
+put(f'{OUT}/data/{NS}/horizon/menu/security_desk.json', security_desk_menu('security_desk'))
 for _b in BINS:
     put(f'{OUT}/data/{NS}/horizon/menu/{_b}.json', bin_menu(_b))
 put(f'{OUT}/data/{NS}/horizon/menu/digital_miner.json', miner_menu('digital_miner'))

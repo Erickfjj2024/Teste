@@ -27,6 +27,7 @@ mod item_menus;
 mod portable_teleporter;
 mod seismic_reader;
 mod block_security;
+mod security_desk;
 mod security_table;
 mod robit_world;
 mod meka_tool;
@@ -498,6 +499,13 @@ struct Mekanism {
     block_owners: Option<HashMap<(String, i32, i32, i32), block_security::Entry>>,
     /// The blocks whose mode changed and whose screen has to be sent again.
     security_dirty: HashSet<(String, i32, i32, i32)>,
+    /// What each owner keeps at the Security Desk, loaded from the world's data on first use.
+    owner_data: Option<HashMap<String, block_security::OwnerData>>,
+    /// The desks' buttons (dimension, place, id, player) and name boxes (dimension, place, id, text, player), the row each desk has chosen and who used it last.
+    desk_presses: Vec<(String, BlockPos, i32, String)>,
+    desk_texts: Vec<(String, BlockPos, i32, String, String)>,
+    desk_selected: HashMap<(String, i32, i32, i32), usize>,
+    desk_viewer: HashMap<(String, i32, i32, i32), String>,
     /// What a text box of the Portable Teleporter's screen confirmed (player, box, text).
     portable_texts: Vec<(String, i32, String)>,
     frames: teleporter::Frames,
@@ -2005,6 +2013,9 @@ impl ServerMod for Mekanism {
         let mut pad = kind(chargepad::BLOCK, true);
         pad.energy = Some(EnergySpec { capacity: chargepad::CAPACITY, max_receive: chargepad::CAPACITY, max_extract: 0, faces: chargepad::energy_input_faces("north") });
         r = r.block_entity_kind(pad);
+        let mut desk = kind(security_desk::BLOCK, true);
+        desk.container = Some(ContainerSpec { slots: 2, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        r = r.block_entity_kind(desk);
         let mut stabilizer = kind(dimensional_stabilizer::BLOCK, true);
         stabilizer.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: vec![0], outputs: Vec::new(), menu: true });
         stabilizer.energy = Some(energy(dimensional_stabilizer::BASE_CAPACITY, dimensional_stabilizer::BASE_CAPACITY, FlowSide::Input));
@@ -2344,6 +2355,11 @@ impl ServerMod for Mekanism {
             readers: seismic_reader::Readers::default(),
             block_owners: None,
             security_dirty: HashSet::new(),
+            owner_data: None,
+            desk_presses: Vec::new(),
+            desk_texts: Vec::new(),
+            desk_selected: HashMap::new(),
+            desk_viewer: HashMap::new(),
             portable_texts: Vec::new(),
             frames: teleporter::Frames::default(),
             sorter_set: HashSet::new(),
@@ -2883,6 +2899,11 @@ impl ServerMod for Mekanism {
             return None;
         }
         let block = e.state.split('[').next()?;
+        if block == security_desk::BLOCK {
+            self.desk_viewer.insert((e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z), player.id.clone());
+            self.desk_presses.push((e.dimension.clone(), e.pos, id, player.id.clone()));
+            return None;
+        }
         if block == miner::MINER {
             self.miner_buttons.push((e.dimension.clone(), e.pos, id));
             return None;
@@ -3312,6 +3333,10 @@ impl ServerMod for Mekanism {
         if !plant.is_empty() {
             out.extend(self.run_evaporation(&plant, tick));
         }
+        let desks: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(security_desk::BLOCK)).collect();
+        if !desks.is_empty() || !self.desk_presses.is_empty() {
+            out.extend(self.run_security_desks(&desks));
+        }
         let ports: Vec<&BlockEntity> = entities.iter().filter(|e| e.state.split('[').next() == Some(induction::PORT)).collect();
         if !ports.is_empty() {
             out.extend(self.run_matrix(&ports));
@@ -3357,7 +3382,10 @@ impl ServerMod for Mekanism {
         for (dimension, pos, id, text, who, who_name) in std::mem::take(&mut self.text_inputs) {
             let Some(e) = entities.iter().find(|e| e.dimension == dimension && e.pos == pos) else { continue };
             let block = e.state.split('[').next().unwrap_or("");
-            if block == oredictionificator::BLOCK {
+            if block == security_desk::BLOCK {
+                self.desk_viewer.insert((dimension.clone(), pos.x, pos.y, pos.z), who.clone());
+                self.desk_texts.push((dimension, pos, id, text, who));
+            } else if block == oredictionificator::BLOCK {
                 out.extend(self.oredictionificator_text(e, id, &text));
             } else if block == resistive_heater::BLOCK {
                 out.extend(self.resistive_text(e, id, &text));
