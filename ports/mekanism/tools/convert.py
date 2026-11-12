@@ -2669,7 +2669,7 @@ def teleporter_menu(m):
 def portable_teleporter_menu(m):
     """GuiPortableTeleporter (176 by 172): the status at 7, 7 (the original draws an icon), the vertical power bar at 158, 26, the frequency selector at 27, 14
     (`frequency_selector`) and the Teleport button at 42, 147 (92 by 20). Numbers and strings as the teleporter block's (`portable_teleporter.rs::portable_view`). The original shows no
-    player inventory; the host has no menu without one yet, so it is drawn under the panel (FORK request: a menu without the inventory and with no slots)."""
+    player inventory; the menu hides it (`hide_inventory`, patch 0065) and has no slots."""
     width, height = 176, 172
     panel = nine_slice(gui_sprite('base'), width, height, 4)
     panel.alpha_composite(nine_slice(gui_sprite('bar/base'), 6, 54, 1), (157, 25))
@@ -2686,14 +2686,14 @@ def portable_teleporter_menu(m):
     widgets += selector
     widgets.append({'type': 'text', 'x': 42 + (92 - text_width('Teleport')) // 2, 'y': 153, 'text': 'Teleport', 'color': '#FFFFFF'})
     widgets.append({'type': 'button', 'x': 42, 'y': 147, 'w': 92, 'h': 20, 'id': 8390, 'tooltip': 'Teleport'})
-    return {'slots': 1, 'data_slots': 9, 'results': [],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [[-40, -40]], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': height + 4,
+    return {'slots': 0, 'data_slots': 9, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [], 'width': width, 'height': height, 'hide_inventory': True,
                        'widgets': widgets}}
 
 def seismic_reader_menu(m):
     """GuiSeismicReader (150 by 182): the inner screen at 5, 11 (69 by 50: the block's name and its abundancy in the column), the column's screen at 77, 11 (51 by 160) with nine
     icons going up from 95, 146 (16 apart; here the menu's virtual slots, which cannot be taken), the arrow at 79, 81 with the layer's height beside it, and the up and down buttons at 129, 11 and
-    129, 157. The strings (`seismic_reader.rs::texts`): 0 the name, 1 the abundancy, 2 the height. The scroll bar is not drawn; the original shows no player inventory (see the Portable Teleporter)."""
+    129, 157. The strings (`seismic_reader.rs::texts`): 0 the name, 1 the abundancy, 2 the height. The scroll bar is not drawn; the player inventory is hidden (`hide_inventory`)."""
     width, height = 150, 182
     panel = nine_slice(gui_sprite('base'), width, height, 4)
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 69, 50, 3), (5, 11))
@@ -2710,7 +2710,7 @@ def seismic_reader_menu(m):
         widgets.append({'type': 'button', 'x': 129, 'y': y, 'w': 14, 'h': 14, 'id': bid, 'tooltip': 'Up' if name == 'up' else 'Down'})
     return {'slots': 9, 'data_slots': 2, 'results': list(range(9)),
             'screen': {'texture': texture, 'own_labels': True, 'slots': [[95, 146 - 16 * i] for i in range(9)], 'width': width, 'height': height,
-                       'inventory_x': 8, 'inventory_y': height + 4, 'widgets': widgets}}
+                       'hide_inventory': True, 'widgets': widgets}}
 
 def bin_menu(m):
     """The bin's screen (it has none in the original: items are put in by using them and taken by punching): an input slot, the output
