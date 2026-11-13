@@ -272,6 +272,9 @@ for n, model in items.items():
         # Equippable(slot): a player wears it in its armor slot, one at a time (the worn model is still to do)
         item['max_stack_size'] = 1
         item['components'] = {'minecraft:equippable': {'slot': WORN[n]}}
+    if n.startswith('qio_drive_'):
+        # ItemQIODrive: `stacksTo(1)`
+        item['max_stack_size'] = 1
     if n == 'energy_tablet':
         # ItemEnergized: 1,000,000 J (400,000 FE), charged and drained at 5,000 J (2,000 FE) a call
         item['max_stack_size'] = 1
@@ -4187,6 +4190,9 @@ for _g in ('geothermal_generator_unit', 'solar_recharging_unit'):
     out[f'item.{NS}.module_{_g}'] = glang[f'module.{GSRC}.{_g}']
 for k, u in enumerate(UPGRADES):
     out[f'item.{NS}.upgrade_{u}'] = f'{UPGRADE_NAMES[k]} Upgrade'
+# the titles of the item menus (`menu.<mod>.<menu>`: the host's key for a menu that has no block)
+for _m, _t in (('dictionary', 'Dictionary'), ('module_tweaker', 'Module Tweaker'), ('portable_teleporter', 'Portable Teleporter'), ('seismic_reader', 'Seismic Reader'), ('portable_qio_dashboard', 'Portable QIO Dashboard')):
+    out[f'menu.{NS}.{_m}'] = _t
 # Item and block names the lang file keeps under other keys: block items use block.*
 put(f'{OUT}/assets/{NS}/lang/en_us.json', out)
 
