@@ -161,7 +161,7 @@ ticks = 2
 [[step]]
 set-items = [{ x = 110, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "mekanism:upgrade_speed*8", ""] }]
 ticks = 330
-expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", ""] }]
+expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", "", ""] }]
 
 
 # A 3x3x3 hollow box of dynamic tank blocks with a valve in the middle of its top is a tank for one block of inside (16 000 buckets).
@@ -200,7 +200,8 @@ ticks = 5
 set-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
 ticks = 5
 expect.block-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
-expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5, 0, 64, 9450, 0, 27, 0] }]
+# The screen shows millibuckets (GuiDynamicTank): 5000 mB of water, capacity 9,450,000 mB as low and high 16-bit halves.
+expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5000, 0, 64, 12816, 144, 0, 0] }]
 
 # An induction matrix (4x4x4: a cell and a provider inside, a port on its south face) is found with 8 GFE of cells and 256 kFE a tick of providers (the harness does not model the ports' capacity limit, so the creative cube fills it).
 [[step]]
@@ -269,7 +270,8 @@ ticks = 60
 # MatrixEnergyContainer.insert (MatrixEnergyContainer.java:162-194) takes at most `transferCap - queuedInput` a tick: the providers' rates summed, 256 000 J
 # = 102 400 FE with one basic provider (data 4 = 102 thousand FE). The structure forms in the first two ticks, so the cell has 58 ticks of that, 5.94 MFE,
 # shown as 5 (checked at 100 ticks -> 10 and 200 ticks -> 20: 102 400 FE x (ticks - 2)). The cell holds 3 200 MFE.
-expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [5, 0, 3200, 0, 102, 0, 1, 1] }]
+# Then, as GuiInductionMatrix shows them: the fill in thousandths (1), the last input 102 kFE/t and the last output 0 (low and high halves each).
+expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [5, 0, 3200, 0, 102, 0, 1, 1, 1, 102, 0, 0, 0, 0] }]
 
 [[step]]
 # A sneak click with the configurator on the matrix's port toggles it to output (Alex's tool is fresh in this run,

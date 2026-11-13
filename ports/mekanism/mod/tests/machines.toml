@@ -89,14 +89,14 @@ set-items = [
 ]
 ticks = 1
 # One tick in: the cube fills itself and feeds the crusher in front of it.
-expect.block-items = [{ x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
+expect.block-items = [{ x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", "", ""] }]
 
 [[step]]
 ticks = 220
 # 200 ticks later, the first ingot is a dust; the smelter, with no cable to the cube, never started.
 expect.block-items = [
-    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", ""] },
-    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", ""] },
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", "", ""] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", "", ""] },
 ]
 expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=true]" }]
 
@@ -107,30 +107,41 @@ blocks = [
     { x = 2, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
 ]
 ticks = 205
-expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", ""] }]
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", "", ""] }]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
 
 [[step]]
-# As the original's configurator does: sneaking in the air goes to the next mode (items, fluids, chemicals, energy, heat,
-# empty, rotate, wrench), items to start with; a plain click on a side only tells what it is; sneaking, the click bumps
-# the side to the next type.
+# As the original's configurator does: its mode key opens a radial menu of the modes (items, fluids, chemicals, energy,
+# heat, empty, rotate, wrench), items to start with; here sneaking in the air opens it, since the Android client has no
+# mode key. The choice comes back on mekanism:radial and sets the held configurator's mode. A plain click on a side only
+# tells what it is; sneaking, the click bumps the side to the next type. The harness records the mod's set-slot but does
+# not apply it, so the next steps give the inventory as the client would hold it once the mode was written.
 as = "Alex"
+inventory = ["mekanism:configurator*1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
 motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
-ticks = 1
+ticks = 3
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 0"]
+
+[[step]]
+as = "Alex"
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 49] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Fluids)"]
 
 [[step]]
 as = "Alex"
-use-item = { stack = "mekanism:configurator*1" }
-ticks = 1
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 50] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
 
 [[step]]
 as = "Alex"
-use-item = { stack = "mekanism:configurator*1" }
-ticks = 1
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 51] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Energy)"]
 
 [[step]]
@@ -138,6 +149,7 @@ expect.told = ["Alex: Configure State: Configurate (Energy)"]
 # an input, becomes an output, and the cables feed the smelter.
 as = "Alex"
 player = { x = 1.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
 use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
 ticks = 1
 expect.claimed = true
@@ -146,7 +158,7 @@ expect.claimed = true
 ticks = 205
 expect.told = ["Alex: Energy behavior bumped to: Output (Blue)"]
 expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
-expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1", "", ""] }]
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1", "", "", ""] }]
 
 [[step]]
 # Not sneaking, a click only tells the side's behaviour and changes nothing.
@@ -165,7 +177,8 @@ expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
 # at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
 blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
 ticks = 2
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0] }]
+# Then the Transporter Config tab (40bd32a): eject colour 0 (none) and strict input 0 at slots 32 and 33.
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
 
 [[step]]
 # A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
@@ -173,13 +186,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 1050 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 2000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
 
 [[step]]
 # The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
@@ -187,13 +200,13 @@ expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0,
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3010 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
 
 [[step]]
 as = "Alex"
 press = { x = 30, y = 64, z = 0, id = 3000 }
 ticks = 1
-expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0] }]
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
 
 [[step]]
 # The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
@@ -216,7 +229,20 @@ expect.told = ["Alex: Energy behavior bumped to: Input/Output (Purple)"]
 as = "Alex"
 ticks = 10
 use-item = { stack = "mekanism:configurator*1" }
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 3"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 52] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # The energy cube's screen: a basic cube far from the rest, a redstone dust in its discharge slot turns into 10000 energy
@@ -241,7 +267,7 @@ blocks = [
 ]
 set-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "minecraft:redstone*3"] }]
 ticks = 25
-expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "", "", ""] }]
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "", "", "", ""] }]
 expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"] }]
 
 [[step]]
@@ -249,7 +275,7 @@ expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"]
 # metallurgic_infusing), and the tank keeps what is left.
 set-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*2", "", ""] }]
 ticks = 205
-expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", "", "", ""] }]
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", "", "", "", ""] }]
 expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*20"] }]
 
 [[step]]
@@ -271,7 +297,7 @@ set-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*2", ""] }]
 
 [[step]]
 ticks = 110
-expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*1", "", "", ""] }]
+expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*1", "", "", "", ""] }]
 expect.block-tanks = [{ x = 100, y = 64, z = -1, tanks = ["mekanism:carbon*10"] }]
 
 [[step]]
@@ -289,7 +315,7 @@ ticks = 25
 
 [[step]]
 ticks = 190
-expect.block-items = [{ x = 120, y = 64, z = -1, slots = ["", "mekanism:ingot_refined_obsidian*1", "", "", ""] }]
+expect.block-items = [{ x = 120, y = 64, z = -1, slots = ["", "mekanism:ingot_refined_obsidian*1", "", "", "", ""] }]
 expect.block-tanks = [{ x = 120, y = 64, z = -1, tanks = ["mekanism:osmium*10"] }]
 
 [[step]]
@@ -306,7 +332,7 @@ ticks = 230
 
 [[step]]
 ticks = 5
-expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1", "", ""] }]
+expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1", "", "", ""] }]
 expect.block-tanks = [{ x = 140, y = 64, z = -1, tanks = ["mekanism:clean_gold*250"] }]
 
 [[step]]
@@ -442,12 +468,12 @@ ticks = 1
 [[step]]
 set-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
 ticks = 230
-expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "", ""] }]
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "", "", ""] }]
 
 [[step]]
 power = [{ x = 340, y = 64, z = 0, level = 15 }]
 ticks = 230
-expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", ""] }]
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", "", ""] }]
 
 [[step]]
 # Upgrades: two speed upgrades put in a crusher's upgrade slot (the third) install after a second and cut a 200 tick recipe to
@@ -461,12 +487,12 @@ ticks = 25
 [[step]]
 set-items = [{ x = 350, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "mekanism:upgrade_speed*2", ""] }]
 ticks = 130
-expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", ""] }]
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", "", ""] }]
 
 [[step]]
 set-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", ""] }]
 ticks = 40
-expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", ""] }]
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", "", ""] }]
 
 [[step]]
 # The window's remove button for speed (6100): one upgrade comes out into the output slot.
@@ -476,7 +502,7 @@ ticks = 2
 
 [[step]]
 ticks = 2
-expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", "mekanism:upgrade_speed*1"] }]
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", "mekanism:upgrade_speed*1", ""] }]
 
 [[step]]
 # The pressurized reaction chamber: a coal, a hundred of water and a hundred of oxygen make sulfur and a hundred of hydrogen in 100 ticks.
@@ -525,8 +551,8 @@ expect.block-tanks = [
     { x = 380, y = 64, z = 0, tanks = [""] },
 ]
 expect.block-items = [
-    { x = 370, y = 64, z = 0, slots = ["", "", "", ""] },
-    { x = 380, y = 64, z = 0, slots = ["", "minecraft:red_wool*1", "", "", ""] },
+    { x = 370, y = 64, z = 0, slots = ["", "", "", "", ""] },
+    { x = 380, y = 64, z = 0, slots = ["", "minecraft:red_wool*1", "", "", "", ""] },
 ]
 
 [[step]]
@@ -1093,7 +1119,7 @@ expect.blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" 
 blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" }]
 set-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
 ticks = 1
-expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", "", ""] }]
 
 [[step]]
 as = "Alex"
@@ -1110,7 +1136,20 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 4"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 53] }
+ticks = 3
 expect.told = ["Alex: Configure State: Empty"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":5}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # Empty drops every non-empty item slot into the world and leaves the rest alone: each stack is summoned as a
@@ -1137,7 +1176,7 @@ ticks = 1
 [[step]]
 # Now the slots empty; a drop the game had refused would have stayed in the machine instead.
 ticks = 1
-expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["", "", "", ""] }]
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["", "", "", "", ""] }]
 
 [[step]]
 # Empty goes to rotate.
@@ -1146,7 +1185,20 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 5"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":5}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 54] }
+ticks = 3
 expect.told = ["Alex: Configure State: Rotate"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":6}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # Rotate turns the crusher to the face clicked (east, from beside it).
@@ -1181,7 +1233,20 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 6"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":6}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 55] }
+ticks = 3
 expect.told = ["Alex: Configure State: Wrench"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":7}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # The wrench without sneak turns the crusher one step clockwise (west to north).
@@ -1216,7 +1281,20 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 7"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":7}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 48] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Items)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":0}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # A generator has no side configuration: the click is not claimed, so a plain click opens its screen instead of
@@ -1252,15 +1330,20 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 0"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":0}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 49] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Fluids)"]
 
 [[step]]
+# The client holds the configurator with the mode written.
 as = "Alex"
-motion = { sneaking = true }
-use-item = { stack = "mekanism:configurator*1" }
-ticks = 1
-expect.claimed = true
-expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 as = "Alex"
@@ -1268,7 +1351,41 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 1"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 50] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 2"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 51] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Energy)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 # A sneak click on a cable cycles the connection of the face clicked (normal to push).
@@ -1323,7 +1440,20 @@ as = "Alex"
 motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 3"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 52] }
+ticks = 3
 expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
 
 [[step]]
 blocks = [{ x = 540, y = 64, z = 0, state = "mekanism:electric_pump" }]
@@ -1357,5 +1487,13 @@ motion = { sneaking = true }
 use-item = { stack = "mekanism:configurator*1" }
 ticks = 1
 expect.claimed = true
-expect.told = ["Alex: Configure State: Empty"]
+expect.player-items = []
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 4"]
+
+[[step]]
+# The choice of Empty finds no configurator in the hotbar: nothing is written and nothing is told.
+as = "Alex"
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 53] }
+ticks = 3
+expect.told = []
 expect.player-items = []
