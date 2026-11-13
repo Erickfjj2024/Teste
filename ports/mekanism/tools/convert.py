@@ -4334,7 +4334,9 @@ security_tabs()
 
 # ---- screens drawn by code (API 56, `mod/screens/`): the GUI textures the screens blit, and the menus that use the code screen. A menu in CODE_SCREENS keeps its JSON (size, slots, widgets as the
 # fallback) and gets `"code": true`; `tools/PORTAR_TELAS_CODIGO.md` says how a screen is ported. A name here must have a module and a line in `mod/screens/src/registry.rs`.
-CODE_SCREENS = ['teleporter']
+# The names come from the environment (`MEK_CODE_SCREENS=teleporter,qio_dashboard`) until the chrome (tabs and windows) is in the code screens: a code screen without the security and transporter tabs would
+# lose them. Empty by default: every menu stays JSON.
+CODE_SCREENS = [n for n in os.environ.get('MEK_CODE_SCREENS', '').split(',') if n]
 def code_screens():
     import shutil
     for d in ASSET_DIRS:

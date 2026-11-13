@@ -90,3 +90,15 @@ pub fn vertical_power_bar(c: &mut Canvas, x: f32, y: f32, fraction: f32) {
 pub fn slot_frame(c: &mut Canvas, x: f32, y: f32) {
     c.blit_sprite("mekanism:slot/normal", x, y, 18.0, 18.0);
 }
+
+/// A window or panel that opens over the screen (`GuiWindow` subclasses: the upgrade window, the side configuration window, the transporter configuration window...): it draws itself above the
+/// screen and takes the input while it is open. `chrome.rs` keeps the windows of a machine's tabs and calls these.
+pub trait Overlay {
+    /// Draws the window when it is open (nothing otherwise). `mouse` is the cursor from the panel's top left.
+    fn render(&mut self, c: &mut Canvas, mouse: (f32, f32));
+    /// The player's input: true when the window took it (a click inside it, or outside while it is open).
+    fn input(&mut self, event: &horizon_mod_sdk::screen::InputEvent) -> bool;
+    fn is_open(&self) -> bool;
+    fn open(&mut self);
+    fn close(&mut self);
+}

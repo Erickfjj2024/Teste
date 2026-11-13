@@ -8,6 +8,9 @@ use horizon_mod_sdk::screen::{Canvas, Frame, InputEvent, OpenInfo, ScreenMod, Se
 
 pub mod elements;
 pub mod frequency;
+/// Copies of the mod's `security_table.rs` and `transporter_table.rs` (the converter writes them; keep them equal): where the screen's data has the security mode and the transporter window's numbers.
+pub mod security_table;
+pub mod transporter_table;
 mod registry;
 mod teleporter;
 
