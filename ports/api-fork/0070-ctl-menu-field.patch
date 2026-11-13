@@ -1,0 +1,436 @@
+From 796a6e1ee2347ce28edae280f7bf62c88e68932f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 01:15:04 +0000
+Subject: [PATCH] horizon-ctl: type --menu-field ID TEXT [--enter] for mod menu
+ text fields; ui lists mod menu buttons and fields
+
+type --menu-field ID types into the textfield ID of the open mod menu as a player does: the field takes the
+focus as a press gives it, keeps what its validator allows, and --enter presses Enter, which sends the same
+<mod>:menu_text message. ui lists the declared screen's buttons (menu-button-ID, tooltip as label) and text
+fields (menu-field-ID) with their bounds, only what a press reaches (an open window's, not those under it).
+horizon_mods::screen::controls gives them; docs/horizon-ctl-commands.md regenerated, agent-control.md updated.
+Also: the shader_packs test builds Installed with has_settings again (it no longer compiled).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../src/bin/horizon-ctl/commands.rs           | 16 ++--
+ crates/horizon-client/src/game/control.rs     | 84 +++++++++++++++++++
+ .../horizon-client/src/game/menu_screens.rs   | 55 ++++++++++++
+ .../horizon-client/src/game/native_hooks.rs   |  7 ++
+ .../horizon-client/src/game/shader_packs.rs   |  1 +
+ crates/horizon-client/src/game/ui_control.rs  | 21 +++++
+ crates/horizon-mods/src/screen.rs             | 73 ++++++++++++++++
+ docs/agent-control.md                         |  9 +-
+ docs/horizon-ctl-commands.md                  |  4 +-
+ 9 files changed, 261 insertions(+), 9 deletions(-)
+
+diff --git a/crates/horizon-client/src/bin/horizon-ctl/commands.rs b/crates/horizon-client/src/bin/horizon-ctl/commands.rs
+index f07917848..371069b35 100644
+--- a/crates/horizon-client/src/bin/horizon-ctl/commands.rs
++++ b/crates/horizon-client/src/bin/horizon-ctl/commands.rs
+@@ -346,8 +346,8 @@ pub const COMMANDS: &[Cmd] = &[
+         ["horizon-ctl click-slot 36", "horizon-ctl click-slot 100 right", "horizon-ctl click-slot 200 shift"],
+         &[p("slot", Ty::Int, "slot id"), opt("right", Ty::Bool, "right-click"), opt("shift", Ty::Bool, "shift-click")], mcp: true, local: false),
+     cmd!("close", Screens, "close", "close the open menu and return to the game", "", ["horizon-ctl close"], &[], mcp: true, local: false),
+-    cmd!("ui", Screens, "ui", "every widget of the open screen: id, kind, label, bounds, value",
+-        "Kinds: button, slider (value 0..1), field, row (worlds, servers, packs, languages), tab (selected), slot (slot-ID, with its stack). Ids come from labels (\"FOV: 70\" is fov, a repeat gets -2) or kind-N without one, and stay put when a value changes. Reflects the last drawn frame (frame counts them).",
++    cmd!("ui", Screens, "ui", "every widget of the open screen: id, kind, label, bounds, value (a mod menu's buttons and text fields too)",
++        "Kinds: button, slider (value 0..1), field, row (worlds, servers, packs, languages), tab (selected), slot (slot-ID, with its stack). An open mod menu adds its buttons as menu-button-ID and its text fields as menu-field-ID (the widget ids of its screen, .2 for a repeat; a button's tooltip is its label). Ids come from labels (\"FOV: 70\" is fov, a repeat gets -2) or kind-N without one, and stay put when a value changes. Reflects the last drawn frame (frame counts them).",
+         ["horizon-ctl ui"], &[], mcp: true, local: false),
+     cmd!("click", Screens, "click ID [right|middle] [shift]", "click a widget of ui by its id, as the mouse would",
+         "A field takes focus (then type); slot-ID clicks a slot like click-slot. middle presses the middle button (pick block: a creative player clones the stack).",
+@@ -374,9 +374,9 @@ pub const COMMANDS: &[Cmd] = &[
+         ["horizon-ctl drag-at 130 100 148 100 166 100", "horizon-ctl drag-at right 130 100 148 100"], &[p("points", Ty::Rest, "right, then GUI x y pairs")], mcp: true, local: false),
+     cmd!("scroll-at", Screens, "scroll-at X Y STEPS", "turn the mouse wheel at GUI pixel X Y (positive scrolls up)", "",
+         ["horizon-ctl scroll-at 130 100 -1"], &[p("x", Ty::Num, "GUI x"), p("y", Ty::Num, "GUI y"), p("steps", Ty::Num, "wheel steps")], mcp: true, local: false),
+-    cmd!("type", Screens, "type [--field name|seed] [--replace] TEXT", "type into the focused text field (chat box, world name, anvil, sign...)",
+-        "On the title's create-world screen, --field name|seed picks the field and --replace clears it first; type \\b deletes one character.",
+-        ["horizon-ctl type hello everyone", "horizon-ctl type --field name --replace Agent World", "horizon-ctl type --field seed 12345"], &[flag("field", Ty::Enum(&["name", "seed"]), "create-world field to type into"), flag("replace", Ty::Bool, "clear the field first"), p("text", Ty::Rest, "text to type")], mcp: true, local: false),
++    cmd!("type", Screens, "type [--field name|seed] [--menu-field ID] [--replace] TEXT [--enter]", "type into the focused text field (chat box, world name, anvil, sign, mod menu...)",
++        "On the title's create-world screen, --field name|seed picks the field and --replace clears it first; type \\b deletes one character. --menu-field ID types into the text field ID of the open mod menu (menu-field-ID in ui): it takes the focus as a click gives it, keeps what the field allows, and --enter presses Enter, which sends the text to the mod (<mod>:menu_text). The reply has the field's text.",
++        ["horizon-ctl type hello everyone", "horizon-ctl type --field name --replace Agent World", "horizon-ctl type --field seed 12345", "horizon-ctl type --menu-field 7800 forge:ores/iron --enter"], &[flag("field", Ty::Enum(&["name", "seed"]), "create-world field to type into"), flag("menu-field", Ty::Int, "id of the open mod menu's text field"), flag("replace", Ty::Bool, "clear the field first"), flag("enter", Ty::Bool, "press Enter after typing (mod menu field: sends it)"), p("text", Ty::Rest, "text to type")], mcp: true, local: false),
+     cmd!("chat", Screens, "chat TEXT", "send a chat line (or a /command) as if typed", "", ["horizon-ctl chat hello"],
+         &[p("text", Ty::Rest, "message")], mcp: true, local: false),
+     cmd!("command", Screens, "command TEXT", "run a command (the leading / is optional)", "",
+@@ -795,6 +795,12 @@ mod tests {
+             line_for(slot, &json!({ "slot": 200, "shift": true })).unwrap(),
+             ["click-slot", "200", "shift"]
+         );
++        let typed = find("type").unwrap();
++        assert_eq!(
++            line_for(typed, &json!({ "menu-field": 7800, "enter": true, "text": "forge:ores/iron" })).unwrap(),
++            ["type", "--menu-field", "7800", "--enter", "forge:ores/iron"]
++        );
++        assert!(line_for(typed, &json!({ "menu-field": "iron", "text": "x" })).is_err());
+         let open = find("open").unwrap();
+         assert!(
+             line_for(open, &json!({ "world": "A", "mode": "creative" }))
+diff --git a/crates/horizon-client/src/game/control.rs b/crates/horizon-client/src/game/control.rs
+index e2cd6aa8a..80c7cd78b 100644
+--- a/crates/horizon-client/src/game/control.rs
++++ b/crates/horizon-client/src/game/control.rs
+@@ -810,6 +810,14 @@ impl Game<'_> {
+                     .unwrap_or("")
+                     .strip_prefix(' ')
+                     .unwrap_or("");
++                // A text box of an open mod menu (`textfield`), as a player types into it.
++                if let Some((id, typed, replace, enter)) = menu_field_args(text)? {
++                    self.require_world()?;
++                    let value = self.mod_field_type(id, typed, replace, enter)?;
++                    return Ok(Some(
++                        json!({ "ok": true, "field": id, "text": value, "sent": enter }),
++                    ));
++                }
+                 // A server's dialog, in configuration too.
+                 if self.dialog_type(text) {
+                     return ok();
+@@ -1443,3 +1451,79 @@ mod tests {
+         }
+     }
+ }
++
++/// `type`'s words for a mod menu's text box: `--menu-field ID` with `--replace` and `--enter` before the text, or
++/// `--enter` as its last word. `(id, text, replace, enter)`; None when the line has no `--menu-field`.
++fn menu_field_args(line: &str) -> Result<Option<(i32, &str, bool, bool)>> {
++    let (mut id, mut replace, mut enter) = (None, false, false);
++    let mut text = line.trim_start();
++    loop {
++        if let Some(rest) = text.strip_prefix("--menu-field") {
++            let rest = rest.trim_start();
++            let (word, rest) = rest.split_once(' ').unwrap_or((rest, ""));
++            id = Some(word.parse::<i32>().map_err(|_| {
++                format!("--menu-field takes the field's id, a number, not {word:?}")
++            })?);
++            text = rest;
++        } else if let Some(rest) = text
++            .strip_prefix("--replace")
++            .filter(|r| r.is_empty() || r.starts_with(' '))
++        {
++            replace = true;
++            text = rest.trim_start();
++        } else if let Some(rest) = text
++            .strip_prefix("--enter")
++            .filter(|r| r.is_empty() || r.starts_with(' '))
++        {
++            enter = true;
++            text = rest.trim_start();
++        } else {
++            break;
++        }
++    }
++    let Some(id) = id else {
++        return Ok(None);
++    };
++    if let Some(rest) = text
++        .strip_suffix("--enter")
++        .filter(|r| r.is_empty() || r.ends_with(' '))
++    {
++        enter = true;
++        text = rest.strip_suffix(' ').unwrap_or(rest);
++    }
++    Ok(Some((id, text, replace, enter)))
++}
++
++#[cfg(test)]
++mod menu_field_args_tests {
++    use super::menu_field_args;
++
++    #[test]
++    fn menu_field_words_in_either_place_and_plain_type_is_left_alone() {
++        assert_eq!(
++            menu_field_args("--menu-field 7800 forge:ores/iron --enter").unwrap(),
++            Some((7800, "forge:ores/iron", false, true))
++        );
++        // horizon-ctl's MCP form puts the flags before the text.
++        assert_eq!(
++            menu_field_args("--menu-field 7800 --replace --enter iron ore").unwrap(),
++            Some((7800, "iron ore", true, true))
++        );
++        assert_eq!(
++            menu_field_args("--menu-field 3 12").unwrap(),
++            Some((3, "12", false, false))
++        );
++        // Enter alone confirms what the box holds.
++        assert_eq!(
++            menu_field_args("--menu-field 3 --enter").unwrap(),
++            Some((3, "", false, true))
++        );
++        // A word that only starts with --enter is text.
++        assert_eq!(
++            menu_field_args("--menu-field 3 a--enter").unwrap(),
++            Some((3, "a--enter", false, false))
++        );
++        assert_eq!(menu_field_args("hello everyone").unwrap(), None);
++        assert!(menu_field_args("--menu-field name x").is_err());
++    }
++}
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 12dc13b24..4e820cde9 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -752,6 +752,61 @@ impl Game<'_> {
+         FIELD.lock().ok().and_then(|mut f| f.as_mut().map(|f| f.edit.key(key, ctrl, shift))).unwrap_or(false)
+     }
+ 
++    /// The buttons and text boxes of the open mod screen, in GUI pixels: what the control socket's `ui` lists.
++    pub(super) fn declared_controls(&self) -> Vec<horizon_mods::screen::Control> {
++        let Some((block, data, [ox, oy])) = self.native_screen_origin() else {
++            return Vec::new();
++        };
++        let Some(screen) = screen_of(&block) else {
++            return Vec::new();
++        };
++        let mut controls = horizon_mods::screen::controls(screen, &data, &locals());
++        for c in &mut controls {
++            c.rect[0] += ox;
++            c.rect[1] += oy;
++        }
++        controls
++    }
++
++    /// The control socket's `type --menu-field ID [--replace] [--enter] TEXT`: text box `id` of the open mod screen takes
++    /// the focus as a press on it gives it, then the text as typed (what its validator allows; `\b` is a backspace),
++    /// and with `enter` the Enter a player presses, which sends `<mod id>:menu_text`. The box's text afterwards, or why
++    /// nothing was typed.
++    pub(super) fn mod_field_type(&mut self, id: i32, text: &str, replace: bool, enter: bool) -> Result<String, String> {
++        let block = self.native_open_block().ok_or("--menu-field needs a mod menu open")?;
++        let screen = screen_of(&block).ok_or_else(|| format!("the open menu {block} has no declared screen"))?;
++        let fields: Vec<i32> = self.declared_controls().into_iter().filter(|c| c.field).map(|c| c.id).collect();
++        if !fields.contains(&id) {
++            return Err(format!("no text field {id} showing on the {block} menu; its fields: {fields:?}"));
++        }
++        let focused = FIELD.lock().ok().is_some_and(|f| f.as_ref().is_some_and(|f| f.id == id));
++        if !focused {
++            let Some(Widget::TextField { max_length, validator, text_data, .. }) = find_field(screen, id) else {
++                return Err(format!("no text field {id} on the {block} menu"));
++            };
++            let mut edit = horizon_client::ui::EditBox::new(0.0, 0.0, 100.0, 20.0);
++            edit.max_length = usize::from(*max_length);
++            edit.set_value(&text_data.and_then(|n| menu_string(usize::from(n))).unwrap_or_default());
++            edit.move_cursor_to_end(false);
++            if let Ok(mut f) = FIELD.lock() {
++                *f = Some(ModField { id, validator: *validator, edit });
++            }
++        }
++        if replace && let Ok(mut f) = FIELD.lock() && let Some(f) = f.as_mut() {
++            f.edit.set_value("");
++        }
++        if text == "\\b" {
++            self.mod_field_text(None, true);
++        } else if !text.is_empty() {
++            self.mod_field_text(Some(text), false);
++        }
++        let value = self.mod_field_value();
++        if enter {
++            self.mod_field_confirm();
++        }
++        Ok(value)
++    }
++
+     /// Enter: the text goes to the server, as a mod message on `<mod id>:menu_text`, and the box lets go of the focus.
+     pub(super) fn mod_field_confirm(&mut self) {
+         let Some((id, text)) = FIELD.lock().ok().and_then(|mut f| f.take()).map(|f| (f.id, f.edit.value)) else {
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 78577b03c..fb0c14e54 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4502,6 +4502,13 @@ impl Game<'_> {
+         let at = [self.cursor.0 - ox, self.cursor.1 - oy];
+         Some((s.block.clone(), s.data.clone(), at))
+     }
++    /// The open mod screen's block, data and top left in GUI pixels.
++    pub(super) fn native_screen_origin(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
++        let s = self.shown_native_screen()?;
++        let r = self.renderer.as_ref()?;
++        let (ox, oy) = self.inventory_origin(&HudBatch::new([r.config.width, r.config.height]));
++        Some((s.block.clone(), s.data.clone(), [ox, oy]))
++    }
+     /// A press on the open mod screen's own button (`native_screen_click`)
+     /// goes to the server as a menu button click (true).
+     pub(super) fn native_screen_press(&mut self, right: bool) -> bool {
+diff --git a/crates/horizon-client/src/game/shader_packs.rs b/crates/horizon-client/src/game/shader_packs.rs
+index e027473e8..50a1031e6 100644
+--- a/crates/horizon-client/src/game/shader_packs.rs
++++ b/crates/horizon-client/src/game/shader_packs.rs
+@@ -575,6 +575,7 @@ mod native_pack_tests {
+             problem: None,
+             dev: false,
+             native: Some(NativePage::default()),
++            has_settings: false,
+         });
+         let owned = "native-horizon_better_visuals";
+         assert_eq!(active_pack(owned, &mods), owned);
+diff --git a/crates/horizon-client/src/game/ui_control.rs b/crates/horizon-client/src/game/ui_control.rs
+index 8f3657c29..9872721b7 100644
+--- a/crates/horizon-client/src/game/ui_control.rs
++++ b/crates/horizon-client/src/game/ui_control.rs
+@@ -72,6 +72,27 @@ impl Game<'_> {
+                 }
+             }));
+         }
++        // A mod menu's own buttons and text boxes (declared screens): `menu-button-ID` and `menu-field-ID` by the widget's
++        // id, with `.2`, `.3`... when the screen repeats one (buttons that act on this client alone share id 0).
++        if self.screen == Screen::Inventory && self.title.is_none() {
++            let mut seen: Vec<String> = Vec::new();
++            for c in self.declared_controls() {
++                let base = format!("menu-{}-{}", if c.field { "field" } else { "button" }, c.id);
++                let n = seen.iter().filter(|s| **s == base).count();
++                seen.push(base.clone());
++                nodes.push(Node {
++                    id: if n == 0 {
++                        base
++                    } else {
++                        format!("{base}.{}", n + 1)
++                    },
++                    kind: if c.field { Kind::Field } else { Kind::Button },
++                    label: c.tooltip,
++                    rect: c.rect,
++                    enabled: true,
++                });
++            }
++        }
+         nodes
+     }
+ 
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index da0fa9a61..284a9eddf 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -348,6 +348,46 @@ pub fn press_with(
+     press_in(&screen.widgets, data, locals, at, alt, shift)
+ }
+ 
++/// A button or text box of a declared screen as the control socket lists it (`horizon-ctl ui`): `field` for a text
++/// box, its widget `id` and its rectangle from the screen's top left.
++#[derive(Clone, Debug, PartialEq)]
++pub struct Control {
++    pub field: bool,
++    pub id: i32,
++    pub rect: [f32; 4],
++    pub tooltip: Option<String>,
++}
++
++/// The buttons and text boxes showing now on `screen`, as `press_with` reaches them: the open window's (at its place),
++/// then the screen's that the window does not cover (a press at a covered one's centre lands on the window).
++pub fn controls(screen: &MenuScreen, data: &[i32], locals: &Locals) -> Vec<Control> {
++    fn collect(widgets: &[Widget], data: &[i32], locals: &Locals, origin: [f32; 2], out: &mut Vec<Control>) {
++        for w in showing(widgets, data, locals) {
++            let (field, id, x, y, w, h, tooltip) = match w {
++                Widget::Button { x, y, w, h, id, tooltip, .. } => (false, *id, *x, *y, *w, *h, tooltip.clone()),
++                Widget::TextField { x, y, w, h, id, .. } => (true, *id, *x, *y, *w, *h, None),
++                _ => continue,
++            };
++            out.push(Control { field, id, rect: [origin[0] + x as f32, origin[1] + y as f32, w as f32, h as f32], tooltip });
++        }
++    }
++    let mut out = Vec::new();
++    let window = open_window(screen, locals);
++    if let Some(window) = window {
++        collect(&window.widgets, data, locals, window_origin(window, locals), &mut out);
++    }
++    let mut panel = Vec::new();
++    collect(&screen.widgets, data, locals, [0.0, 0.0], &mut panel);
++    out.extend(panel.into_iter().filter(|c| {
++        window.is_none_or(|w| {
++            let o = window_origin(w, locals);
++            let centre = [c.rect[0] + c.rect[2] / 2.0, c.rect[1] + c.rect[3] / 2.0];
++            !inside(centre, o[0] as i32, o[1] as i32, w.width, w.height)
++        })
++    }));
++    out
++}
++
+ /// The wheel over a list: `notches` (positive up) scroll the first list showing under `at` (the open window's, else the screen's)
+ /// by that many rows. True when a list took it.
+ pub fn scroll_lists(screen: &MenuScreen, data: &[i32], locals: &mut Locals, at: [f32; 2], notches: i64) -> bool {
+@@ -944,6 +984,39 @@ mod menu_text_tests {
+         assert_eq!(decode_menu_input(&encode_menu_input([0; 3], 1, "")), Some(([0; 3], 1, String::new())));
+     }
+ 
++    #[test]
++    fn controls_list_what_a_press_reaches_and_hide_what_the_window_covers() {
++        use crate::content::MenuScreen;
++        let screen: MenuScreen = serde_json::from_str(
++            r#"{"slots": [], "widgets": [
++                {"type": "textfield", "x": 10, "y": 20, "w": 60, "h": 12, "id": 7800},
++                {"type": "button", "x": 10, "y": 40, "w": 20, "h": 10, "id": 3, "tooltip": "Sort"},
++                {"type": "button", "x": 100, "y": 100, "w": 20, "h": 10, "id": 4},
++                {"type": "button", "x": 0, "y": 0, "w": 8, "h": 8, "local": {"open": "w"}}],
++              "windows": [{"id": "w", "x": 90, "y": 90, "width": 50, "height": 40, "widgets": [
++                {"type": "button", "x": 5, "y": 5, "w": 10, "h": 10, "id": 9}]}]}"#,
++        )
++        .unwrap();
++        let mut locals = Locals::default();
++        let ids = |c: &[Control]| c.iter().map(|c| (c.field, c.id)).collect::<Vec<_>>();
++        let shut = controls(&screen, &[], &locals);
++        assert_eq!(ids(&shut), [(true, 7800), (false, 3), (false, 4), (false, 0)]);
++        assert_eq!(shut[0].rect, [10.0, 20.0, 60.0, 12.0]);
++        assert_eq!(shut[1].tooltip.as_deref(), Some("Sort"));
++        // Every listed control is what a press at its centre reaches.
++        for c in &shut[..3] {
++            let centre = [c.rect[0] + c.rect[2] / 2.0, c.rect[1] + c.rect[3] / 2.0];
++            let want = if c.field { Press::Field(c.id) } else { Press::Send(c.id) };
++            assert_eq!(press(&screen, &[], &mut locals.clone(), centre, false), Some(want));
++        }
++        // The window open: its button at its place; button 4 sits under it and leaves the list.
++        assert_eq!(press(&screen, &[], &mut locals, [4.0, 4.0], false), Some(Press::Local));
++        let open = controls(&screen, &[], &locals);
++        assert_eq!(ids(&open), [(false, 9), (true, 7800), (false, 3), (false, 0)]);
++        assert_eq!(open[0].rect, [95.0, 95.0, 10.0, 10.0]);
++        assert_eq!(press(&screen, &[], &mut locals, [100.0, 100.0], false), Some(Press::Send(9)));
++    }
++
+     #[test]
+     fn a_press_on_a_text_field_focuses_it_and_one_beside_it_is_not_a_field_press() {
+         use crate::content::{MenuScreen, Widget};
+diff --git a/docs/agent-control.md b/docs/agent-control.md
+index fc6d40a7c..e955f26ca 100644
+--- a/docs/agent-control.md
++++ b/docs/agent-control.md
+@@ -252,13 +252,18 @@ turn the switch off.
+ - **Ids are stable and readable.** An id is the label up to its `:`, as a slug (`FOV: 70` is
+   `fov`, `AI Agent...` is `ai-agent`). A repeated slug gets `-2`, `-3`; unlabelled elements are
+   `<kind>-<n>`. A slider's id doesn't change with its value. Slots are `slot-<ID>` with their
+-  stack.
++  stack. An open mod menu (a declared screen) adds its buttons as `menu-button-<ID>` and its text
++  fields as `menu-field-<ID>`, by the widget ids in the mod's screen file (`.2` for a repeat; a
++  button's tooltip is its label); only what a press reaches is listed (a window's widgets, not
++  the ones under it).
+ - **Kinds:** `button`, `slider` (`value` 0..1), `field`, `row` (a world, server, pack or
+   language), `tab` (`selected`), `slot`.
+ - **Actions:**
+   - `click ID [right|middle] [shift]` clicks where the mouse would.
+   - `set ID VALUE` moves a slider.
+-  - `type` types into the focused field.
++  - `type` types into the focused field. `type --menu-field ID TEXT [--enter]` types into text
++    field ID of the open mod menu as a player would (focus, the field's validator), and
++    `--enter` presses Enter, which sends the same `<mod>:menu_text` message the field sends.
+ 
+   After a click, the next `ui`, `click` or `set` waits for a redrawn frame.
+ - **No new code paths in screens.** The tree is built from what the draw functions already
+diff --git a/docs/horizon-ctl-commands.md b/docs/horizon-ctl-commands.md
+index 993c37031..2f4ef8f6f 100644
+--- a/docs/horizon-ctl-commands.md
++++ b/docs/horizon-ctl-commands.md
+@@ -80,7 +80,7 @@ Every command `horizon-ctl` takes, its MCP tool in `horizon-ctl mcp` (the launch
+ | `open-inventory` | `open_inventory` | Open the inventory screen (crafting grid 100-103, result 200) | none |
+ | `click-slot SLOT [right] [shift]` | `click_slot` | Click a slot of the open inventory or menu | `slot` (integer, required): slot id<br>`right` (boolean): right-click<br>`shift` (boolean): shift-click |
+ | `close` | `close` | Close the open menu and return to the game | none |
+-| `ui` | `ui` | Every widget of the open screen: id, kind, label, bounds, value | none |
++| `ui` | `ui` | Every widget of the open screen: id, kind, label, bounds, value (a mod menu's buttons and text fields too) | none |
+ | `click ID [right\|middle] [shift]` | `click` | Click a widget of ui by its id, as the mouse would | `id` (string, required): widget id from ui<br>`right` (boolean): right-click<br>`middle` (boolean): middle-click<br>`shift` (boolean): shift-click (slots) |
+ | `set ID VALUE` | `set` | Move a slider of ui to VALUE (0..1), as a click on its track | `id` (string, required): slider id from ui<br>`value` (number, required): 0..1 along the track |
+ | `options-get [KEY...]` | `options_get` | The game's options (options.txt) by key, with their type and range or choices | `keys` (text): option keys (default: all) |
+@@ -89,7 +89,7 @@ Every command `horizon-ctl` takes, its MCP tool in `horizon-ctl mcp` (the launch
+ | `click-at X Y [right]` | `click_at` | Click at GUI pixel X Y of the window (screen gives button rectangles) | `x` (number, required): GUI x<br>`y` (number, required): GUI y<br>`right` (boolean): right-click |
+ | `drag-at [right] X Y X Y...` | `drag_at` | Press at the first GUI point, move through the others, release at the last | `points` (text, required): right, then GUI x y pairs |
+ | `scroll-at X Y STEPS` | `scroll_at` | Turn the mouse wheel at GUI pixel X Y (positive scrolls up) | `x` (number, required): GUI x<br>`y` (number, required): GUI y<br>`steps` (number, required): wheel steps |
+-| `type [--field name\|seed] [--replace] TEXT` | `type` | Type into the focused text field (chat box, world name, anvil, sign...) | `--field` (name, seed): create-world field to type into<br>`--replace` (boolean): clear the field first<br>`text` (text, required): text to type |
++| `type [--field name\|seed] [--menu-field ID] [--replace] TEXT [--enter]` | `type` | Type into the focused text field (chat box, world name, anvil, sign, mod menu...) | `--field` (name, seed): create-world field to type into<br>`--menu-field` (integer): id of the open mod menu's text field<br>`--replace` (boolean): clear the field first<br>`--enter` (boolean): press Enter after typing (mod menu field: sends it)<br>`text` (text, required): text to type |
+ | `chat TEXT` | `chat` (network) | Send a chat line (or a /command) as if typed | `text` (text, required): message |
+ | `command TEXT` | `command` (network) | Run a command (the leading / is optional) | `command` (text, required): command line |
+ | `respawn` | `respawn` | Respawn from the death screen | none |
+-- 
+2.43.0
+
