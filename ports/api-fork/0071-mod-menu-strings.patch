@@ -1,0 +1,583 @@
+From c3a573e92bacd13f431010782500c4283ae09970 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 13 Nov 2026 02:54:08 +0000
+Subject: [PATCH] Mod menus: the game's own mod messages reach the client
+ again; item menus tick with their player
+
+Two bugs left the strings of mod menus blank (text widgets with text_data):
+
+1. The game's own messages on the mod payload (horizon:menu_text, horizon:menu_grid, horizon:hud_line,
+   horizon:radial to the client; horizon:key and horizon:grid_click to the server) went through the mods'
+   send path, whose channel check refuses the horizon namespace: every one was dropped in silence. They now
+   go through native_net_send_game / native_net_send_game_to_server (mod_net::game_channel_ok); mods still
+   cannot use horizon:, and a client's horizon: channels other than key and grid_click never reach the mods.
+2. During the mods' tick self.mods.players was taken out (mem::take) while tick_item_menus and the entity
+   menu takes looked the player up there, so no item menu ever ticked. It is now replaced by this tick's
+   players instead.
+
+Also: an item menu's title is menu.<ns>.<name> only when the language has it, else the item's name; ui
+reports an open mod menu's text widgets as drawn (menu_texts); horizon-ctl key takes backslash.
+Test: agent_control_e2e.py --scenario mod-menu opens item-menu-demo's menu by its key and checks the strings
+from its server reach the client and follow the hand.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../src/bin/horizon-ctl/commands.rs           |  2 +-
+ crates/horizon-client/src/game/control.rs     |  2 +
+ .../horizon-client/src/game/menu_screens.rs   | 31 +++++++++++
+ crates/horizon-client/src/game/mod_input.rs   |  2 +-
+ .../horizon-client/src/game/native_hooks.rs   |  2 +-
+ crates/horizon-client/src/game/native_net.rs  | 52 +++++++++++++++++-
+ crates/horizon-client/src/game/server_mods.rs | 44 ++++++++++-----
+ crates/horizon-client/src/game/ui_control.rs  | 16 +++++-
+ crates/horizon-protocol/src/mod_net.rs        | 46 +++++++++++++++-
+ docs/agent-control.md                         |  4 +-
+ tools/agent_control_e2e.py                    | 55 +++++++++++++++++--
+ 11 files changed, 229 insertions(+), 27 deletions(-)
+
+diff --git a/crates/horizon-client/src/bin/horizon-ctl/commands.rs b/crates/horizon-client/src/bin/horizon-ctl/commands.rs
+index 371069b35..a8e384be3 100644
+--- a/crates/horizon-client/src/bin/horizon-ctl/commands.rs
++++ b/crates/horizon-client/src/bin/horizon-ctl/commands.rs
+@@ -347,7 +347,7 @@ pub const COMMANDS: &[Cmd] = &[
+         &[p("slot", Ty::Int, "slot id"), opt("right", Ty::Bool, "right-click"), opt("shift", Ty::Bool, "shift-click")], mcp: true, local: false),
+     cmd!("close", Screens, "close", "close the open menu and return to the game", "", ["horizon-ctl close"], &[], mcp: true, local: false),
+     cmd!("ui", Screens, "ui", "every widget of the open screen: id, kind, label, bounds, value (a mod menu's buttons and text fields too)",
+-        "Kinds: button, slider (value 0..1), field, row (worlds, servers, packs, languages), tab (selected), slot (slot-ID, with its stack). An open mod menu adds its buttons as menu-button-ID and its text fields as menu-field-ID (the widget ids of its screen, .2 for a repeat; a button's tooltip is its label). Ids come from labels (\"FOV: 70\" is fov, a repeat gets -2) or kind-N without one, and stay put when a value changes. Reflects the last drawn frame (frame counts them).",
++        "Kinds: button, slider (value 0..1), field, row (worlds, servers, packs, languages), tab (selected), slot (slot-ID, with its stack). An open mod menu adds its buttons as menu-button-ID and its text fields as menu-field-ID (the widget ids of its screen, .2 for a repeat; a button's tooltip is its label), and menu_texts lists its text widgets as drawn (text, text_data, at): the strings its server sent show there. Ids come from labels (\"FOV: 70\" is fov, a repeat gets -2) or kind-N without one, and stay put when a value changes. Reflects the last drawn frame (frame counts them).",
+         ["horizon-ctl ui"], &[], mcp: true, local: false),
+     cmd!("click", Screens, "click ID [right|middle] [shift]", "click a widget of ui by its id, as the mouse would",
+         "A field takes focus (then type); slot-ID clicks a slot like click-slot. middle presses the middle button (pick block: a creative player clones the stack).",
+diff --git a/crates/horizon-client/src/game/control.rs b/crates/horizon-client/src/game/control.rs
+index 80c7cd78b..4e2531111 100644
+--- a/crates/horizon-client/src/game/control.rs
++++ b/crates/horizon-client/src/game/control.rs
+@@ -1420,6 +1420,8 @@ fn key_code(name: &str) -> Option<KeyCode> {
+         "f6" => KeyCode::F6,
+         "f11" => KeyCode::F11,
+         "slash" | "/" => KeyCode::Slash,
++        // A mod key mapping's default (mod key mappings, API 53).
++        "backslash" | "\\" => KeyCode::Backslash,
+         "backspace" => KeyCode::Backspace,
+         "pageup" => KeyCode::PageUp,
+         "pagedown" => KeyCode::PageDown,
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 4e820cde9..09d030ef0 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -768,6 +768,37 @@ impl Game<'_> {
+         controls
+     }
+ 
++    /// The `text` widgets of the open mod screen as they are drawn now (the open window's, then the screen's), each with its
++    /// `text_data` (None for a fixed or data-filled text) and its place in GUI pixels: what the control socket's `ui` reports
++    /// as `menu_texts`, so a test sees whether the strings the server sent reached this client.
++    pub(super) fn declared_texts(&self) -> Vec<(Option<u16>, String, [f32; 2])> {
++        let Some((block, data, [ox, oy])) = self.native_screen_origin() else {
++            return Vec::new();
++        };
++        let Some(screen) = screen_of(&block) else {
++            return Vec::new();
++        };
++        let l = locals();
++        let mut groups = Vec::new();
++        if let Some(w) = open_window(screen, &l) {
++            groups.push((&w.widgets, window_origin(w, &l)));
++        }
++        groups.push((&screen.widgets, [0.0, 0.0]));
++        let mut out = Vec::new();
++        for (widgets, [wx, wy]) in groups {
++            for w in showing(widgets, &data, &l) {
++                if let Widget::Text { x, y, text, text_data, .. } = w {
++                    let shown = match text_data {
++                        Some(n) => menu_string(usize::from(*n)).unwrap_or_default(),
++                        None => fill_text(text, &data),
++                    };
++                    out.push((*text_data, shown, [ox + wx + *x as f32, oy + wy + *y as f32]));
++                }
++            }
++        }
++        out
++    }
++
+     /// The control socket's `type --menu-field ID [--replace] [--enter] TEXT`: text box `id` of the open mod screen takes
+     /// the focus as a press on it gives it, then the text as typed (what its validator allows; `\b` is a backspace),
+     /// and with `enter` the Enter a player presses, which sends `<mod id>:menu_text`. The box's text afterwards, or why
+diff --git a/crates/horizon-client/src/game/mod_input.rs b/crates/horizon-client/src/game/mod_input.rs
+index 5f93f07bc..918eaee5d 100644
+--- a/crates/horizon-client/src/game/mod_input.rs
++++ b/crates/horizon-client/src/game/mod_input.rs
+@@ -165,7 +165,7 @@ impl Game<'_> {
+         let ids: Vec<&'static str> = self.settings.keys.mod_mappings_for(name).collect();
+         for id in ids {
+             if self.remote.is_some() {
+-                let _ = self.native_net_send_to_server(horizon_mods::screen::KEY_CHANNEL, id.as_bytes());
++                let _ = self.native_net_send_game_to_server(horizon_mods::screen::KEY_CHANNEL, id.as_bytes());
+             } else {
+                 // A game that is its own server (never the default now): the press is its own player's.
+                 let player = self.player_uuid();
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index fb0c14e54..b07be3bb3 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4525,7 +4525,7 @@ impl Game<'_> {
+         };
+         // A press on an item grid cell (API 55): its entry goes to the server's mod.
+         if let Some((index, button, shift)) = super::menu_screens::take_grid_press() {
+-            let _ = self.native_net_send_to_server(
++            let _ = self.native_net_send_game_to_server(
+                 horizon_mods::screen::GRID_CLICK_CHANNEL,
+                 &horizon_mods::screen::encode_grid_click(index, button, shift),
+             );
+diff --git a/crates/horizon-client/src/game/native_net.rs b/crates/horizon-client/src/game/native_net.rs
+index d5273ab1a..c2b9ec981 100644
+--- a/crates/horizon-client/src/game/native_net.rs
++++ b/crates/horizon-client/src/game/native_net.rs
+@@ -52,6 +52,7 @@ impl Game<'_> {
+             return;
+         }
+         *count += 1;
++        // `mod_net_event` takes the game's own channels a client sends (a mod key, a grid click) and keeps the others from the mods.
+         if let Ok(message) = mod_net::decode(data) {
+             self.native_net.from_players.push((player, message));
+         }
+@@ -102,7 +103,8 @@ impl Game<'_> {
+             Ok(m) if m.channel == horizon_mods::screen::HUD_CHANNEL => super::mod_hud::remember_hud_line(&m.data),
+             Ok(m) if m.channel == horizon_mods::screen::MENU_GRID_CHANNEL => super::menu_screens::remember_menu_grid(&m.data),
+             Ok(m) if m.channel == horizon_mods::screen::RADIAL_CHANNEL => self.open_mod_radial(&m.data),
+-            Ok(m) => self.native_net_from_server(&m.channel, &m.data),
++            Ok(m) if mod_net::channel_ok(&m.channel) => self.native_net_from_server(&m.channel, &m.data),
++            Ok(m) => log::debug!("Horizon: a game message on {} this client does not know", m.channel),
+             Err(e) => log::debug!("Horizon: a bad mod message: {e}"),
+         }
+     }
+@@ -121,10 +123,22 @@ impl Game<'_> {
+         channel: &str,
+         data: &[u8],
+     ) -> Result<(), String> {
++        if !mod_net::channel_ok(channel) {
++            return Err(format!("the channel {channel:?} is not mod_id:name"));
++        }
++        self.queue_to_player(player, channel, data)
++    }
++
++    /// A message to `player` within this tick's allowance, sent at the tick's end.
++    fn queue_to_player(&mut self, player: u128, channel: &str, data: &[u8]) -> Result<(), String> {
+         if self.remote.is_some() {
+             return Err("a client has no players to send to".into());
+         }
+-        let payload = payload(channel, data)?;
++        let payload = mod_net::encode(&Message {
++            channel: channel.to_owned(),
++            data: data.to_vec(),
++        })
++        .map_err(|e| e.to_string())?;
+         let count = self.native_net.to_counts.entry(player).or_default();
+         if *count >= PER_TICK {
+             return Err(format!("past {PER_TICK} messages to this player this tick"));
+@@ -134,6 +148,16 @@ impl Game<'_> {
+         Ok(())
+     }
+ 
++    /// The game's own message on `channel` (`horizon:name`: a mod menu's strings, its item grid, a HUD line, a radial
++    /// menu) to `player`'s client, with the same caps as a mod's. Mods' `native_net_send_to_player` refuses these
++    /// channels, so the game's messages go here.
++    pub(super) fn native_net_send_game(&mut self, player: u128, channel: &str, data: &[u8]) -> Result<(), String> {
++        if !mod_net::game_channel_ok(channel) {
++            return Err(format!("the channel {channel:?} is not the game's"));
++        }
++        self.queue_to_player(player, channel, data)
++    }
++
+     /// The client half: sends `data` on `channel` to the server (the same
+     /// caps, 32 a tick). An error when the server doesn't carry mod messages
+     /// (a vanilla server), and until the player has joined: a server says it
+@@ -156,6 +180,30 @@ impl Game<'_> {
+             return Err("the server carries no mod messages".into());
+         }
+         let payload = payload(channel, data)?;
++        self.queue_to_server(payload)
++    }
++
++    /// The game's own message on `channel` (`horizon:name`: a mod key's press, a grid cell's click) to the server, with the
++    /// caps of `native_net_send_to_server`, which refuses these channels to mods.
++    pub(super) fn native_net_send_game_to_server(&mut self, channel: &str, data: &[u8]) -> Result<(), String> {
++        if !mod_net::game_channel_ok(channel) {
++            return Err(format!("the channel {channel:?} is not the game's"));
++        }
++        let Some(remote) = self.remote.as_ref() else {
++            return Err("the server carries no mod messages".into());
++        };
++        if !remote.joined || remote.reconfiguring.is_some() {
++            return Err("the player has not joined yet".into());
++        }
++        if !remote.mod_net {
++            return Err("the server carries no mod messages".into());
++        }
++        let payload = mod_net::encode(&Message { channel: channel.to_owned(), data: data.to_vec() }).map_err(|e| e.to_string())?;
++        self.queue_to_server(payload)
++    }
++
++    /// A payload to the server within this tick's allowance.
++    fn queue_to_server(&mut self, payload: Vec<u8>) -> Result<(), String> {
+         if self.native_net.to_server >= PER_TICK {
+             return Err(format!("past {PER_TICK} messages this tick"));
+         }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 137c54d3c..5c472b125 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -594,7 +594,8 @@ mod run {
+             for (id, ticket, entity) in std::mem::take(&mut self.mods.spawn_answers) {
+                 self.mods.mods.entity_spawned(&id, ticket, entity);
+             }
+-            let before = std::mem::take(&mut self.mods.players);
++            // This tick's players stay readable while the mods tick: item and entity menus find their player there.
++            let before = std::mem::replace(&mut self.mods.players, players.clone());
+             for p in before
+                 .iter()
+                 .filter(|p| !players.iter().any(|q| q.id == p.id))
+@@ -1303,7 +1304,7 @@ mod run {
+                 })
+                 .unwrap_or_default();
+             for uuid in near {
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+             }
+         }
+ 
+@@ -1318,7 +1319,7 @@ mod run {
+             };
+             let ints = self.acting_player_uuid();
+             let uuid = ints.iter().fold(0u128, |acc, i| (acc << 32) | u128::from(*i as u32));
+-            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++            let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+         }
+ 
+         /// A mod's `world.set-capabilities-enabled` (FORK-34): which of the entity's capabilities the outside can use, kept in it.
+@@ -1441,7 +1442,7 @@ mod run {
+                 .unwrap_or_default();
+             let bytes = horizon_mods::screen::encode_menu_grid(pos, &entries);
+             for uuid in viewers {
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
+             }
+             self.mods.menu_grids.insert(pos, entries);
+         }
+@@ -1455,7 +1456,7 @@ mod run {
+             let bytes = horizon_mods::screen::encode_menu_grid(pos, entries);
+             let ints = self.acting_player_uuid();
+             let uuid = ints.iter().fold(0u128, |acc, i| (acc << 32) | u128::from(*i as u32));
+-            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++            let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
+         }
+ 
+         /// The grid presses the mods answered (`menu-grid-click`): each player's cursor becomes the answer's, and its stacks for
+@@ -2630,7 +2631,7 @@ mod run {
+                 host.hub.open_container(conn, &menu, title, key, horizon_client::lan::menu::Slots::Block(key), items);
+                 self.lan = Some(host);
+                 let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, &e.menu_text);
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+                 return true;
+             }
+             let items: Vec<Option<horizon_client::items::ItemStack>> =
+@@ -2813,7 +2814,7 @@ mod run {
+                 .unwrap_or_default();
+             let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, &texts);
+             for uuid in viewers {
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+             }
+         }
+ 
+@@ -2854,7 +2855,7 @@ mod run {
+                 data: Vec::new(),
+             };
+             self.world.block_entities.insert(key, BlockEntity::Mod(Box::new(placeholder)));
+-            let title = horizon_protocol::text::translatable(&format!("menu.{}", menu.replace(':', ".")), &[]);
++            let title = horizon_protocol::text::translatable(&self.item_menu_title_key(menu, &item), &[]);
+             host.hub.open_container(conn, menu, title, key, horizon_client::lan::menu::Slots::Block(key), items);
+             self.lan = Some(host);
+             self.mods.item_menus.retain(|m| m.conn != conn);
+@@ -2869,10 +2870,23 @@ mod run {
+                 closing: false,
+             });
+             let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, &[]);
+-            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++            let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+             true
+         }
+ 
++        /// The translation key of an item menu's title: `menu.<ns>.<name>` when the language has it, else the name of the item
++        /// it opened over (`Item.getDescriptionId`: a block item's is the block's), as the original's item screens are titled;
++        /// a player menu (no item) keeps the menu's key.
++        fn item_menu_title_key(&self, menu: &str, item: &str) -> String {
++            let menu_key = format!("menu.{}", menu.replace(':', "."));
++            if item.is_empty() || self.pack.names.get(&menu_key).is_some() {
++                return menu_key;
++            }
++            let (namespace, path) = item.split_once(':').unwrap_or(("minecraft", item));
++            let key = format!("item.{namespace}.{path}");
++            if self.pack.names.get(&key).is_some() { key } else { format!("block.{namespace}.{path}") }
++        }
++
+         /// Item menu `i` as its mod sees it: the player's slot now and the placeholder's slots.
+         fn item_menu_view(&self, i: usize) -> Option<horizon_mods::ItemMenu> {
+             use horizon_client_render::containers::BlockEntity;
+@@ -2917,13 +2931,13 @@ mod run {
+             }
+             if let Some(t) = &u.menu_text {
+                 let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, t);
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
+             }
+             if let Some(g) = &u.menu_grid {
+                 let entries: Vec<horizon_mods::screen::GridEntry> =
+                     g.iter().map(|e| horizon_mods::screen::GridEntry { item: e.item.clone(), components: e.components.clone(), count: e.count }).collect();
+                 let bytes = horizon_mods::screen::encode_menu_grid(ENTITY_MENU_TEXT_AT, &entries);
+-                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
++                let _ = self.native_net_send_game(uuid, horizon_mods::screen::MENU_GRID_CHANNEL, &bytes);
+             }
+             if u.close {
+                 self.mods.item_menus[i].closing = true;
+@@ -3265,6 +3279,10 @@ mod run {
+                 }
+                 return;
+             }
++            // No other channel of the game's comes from a client, and none reaches the mods.
++            if !horizon_protocol::mod_net::channel_ok(channel) {
++                return;
++            }
+             // A text box of a mod entity's menu (FORK-10 5b): the client knows no position for it, the mod gets the entity's id.
+             let mut data = data.to_vec();
+             if channel.ends_with(":menu_text")
+@@ -3487,14 +3505,14 @@ mod run {
+                 Output::Radial { name, mod_id, player, entries, current } => {
+                     let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
+                     let data = horizon_mods::screen::encode_radial(&mod_id, &entries, current);
+-                    if let Err(e) = self.native_net_send_to_player(uuid, horizon_mods::screen::RADIAL_CHANNEL, &data) {
++                    if let Err(e) = self.native_net_send_game(uuid, horizon_mods::screen::RADIAL_CHANNEL, &data) {
+                         log::debug!("Horizon: mod {name}'s radial menu for {player}: {e}");
+                     }
+                 }
+                 Output::HudLine { name, player, id, icon, text, fraction } => {
+                     let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
+                     let data = horizon_mods::screen::encode_hud_line(&id, &icon, &text, fraction);
+-                    if let Err(e) = self.native_net_send_to_player(uuid, horizon_mods::screen::HUD_CHANNEL, &data) {
++                    if let Err(e) = self.native_net_send_game(uuid, horizon_mods::screen::HUD_CHANNEL, &data) {
+                         log::debug!("Horizon: mod {name}'s HUD line for {player}: {e}");
+                     }
+                 }
+diff --git a/crates/horizon-client/src/game/ui_control.rs b/crates/horizon-client/src/game/ui_control.rs
+index 9872721b7..5d2f16558 100644
+--- a/crates/horizon-client/src/game/ui_control.rs
++++ b/crates/horizon-client/src/game/ui_control.rs
+@@ -167,12 +167,24 @@ impl Game<'_> {
+                 let size = self
+                     .gui_scale()
+                     .map(|b| [b.width.round(), b.height.round()]);
+-                Ok(Handled::Reply(json!({
++                let mut reply = json!({
+                     "screen": self.screen_label(),
+                     "gui_size": size,
+                     "frame": widgets::generation(),
+                     "widgets": widgets,
+-                })))
++                });
++                // An open mod menu's texts as drawn: the strings its server sent show here (`text_data`).
++                if self.screen == Screen::Inventory && self.title.is_none() {
++                    let texts: Vec<Value> = self
++                        .declared_texts()
++                        .into_iter()
++                        .map(|(n, text, at)| json!({ "text_data": n, "text": text, "at": at }))
++                        .collect();
++                    if !texts.is_empty() {
++                        reply["menu_texts"] = json!(texts);
++                    }
++                }
++                Ok(Handled::Reply(reply))
+             }
+             "click" => {
+                 let node = self.find_node(id()?)?;
+diff --git a/crates/horizon-protocol/src/mod_net.rs b/crates/horizon-protocol/src/mod_net.rs
+index 75ba8b153..5fd941892 100644
+--- a/crates/horizon-protocol/src/mod_net.rs
++++ b/crates/horizon-protocol/src/mod_net.rs
+@@ -44,9 +44,24 @@ pub fn channel_ok(channel: &str) -> bool {
+         })
+ }
+ 
++/// A channel of the game's own messages to a Horizon client on this payload (a mod menu's strings, its item grid, a HUD
++/// line, a radial menu): `horizon:name`, with a name as a mod's. Only the game sends them: `channel_ok` refuses them to
++/// mods, and a server takes none from a client.
++pub fn game_channel_ok(channel: &str) -> bool {
++    channel != CHANNEL
++        && channel.strip_prefix("horizon:").is_some_and(|name| {
++            (1..=MAX_PART).contains(&name.len())
++                && name.bytes().all(|b| {
++                    b.is_ascii_lowercase()
++                        || b.is_ascii_digit()
++                        || matches!(b, b'_' | b'.' | b'/' | b'-')
++                })
++        })
++}
++
+ /// A message's payload; an error for a channel or size outside the caps.
+ pub fn encode(message: &Message) -> Result<Vec<u8>> {
+-    if !channel_ok(&message.channel) {
++    if !channel_ok(&message.channel) && !game_channel_ok(&message.channel) {
+         return Err(Error::new("mod net: bad channel"));
+     }
+     if message.data.len() > MAX_DATA {
+@@ -66,7 +81,7 @@ pub fn decode(data: &[u8]) -> Result<Message> {
+     if r.remaining() > 0 {
+         return Err(Error::new("mod net: trailing bytes"));
+     }
+-    if !channel_ok(&channel) {
++    if !channel_ok(&channel) && !game_channel_ok(&channel) {
+         return Err(Error::new("mod net: bad channel"));
+     }
+     Ok(Message { channel, data })
+@@ -118,6 +133,33 @@ mod tests {
+         assert!(!channel_ok(&format!("x:{}", "n".repeat(MAX_PART + 1))));
+     }
+ 
++    #[test]
++    fn the_games_own_channels_travel_but_are_no_mods() {
++        for game in [
++            "horizon:menu_text",
++            "horizon:menu_grid",
++            "horizon:hud",
++            "horizon:radial",
++        ] {
++            assert!(game_channel_ok(game), "{game}");
++            assert!(!channel_ok(game), "{game}");
++            let m = Message {
++                channel: game.into(),
++                data: vec![1, 2, 3],
++            };
++            assert_eq!(decode(&encode(&m).unwrap()).unwrap(), m);
++        }
++        for bad in [
++            CHANNEL,
++            "horizon:",
++            "horizon:Menu",
++            "minecraft:brand",
++            "cells:state",
++        ] {
++            assert!(!game_channel_ok(bad), "{bad}");
++        }
++    }
++
+     #[test]
+     fn caps_are_enforced_both_ways() {
+         assert!(encode(&message(vec![0; MAX_DATA + 1])).is_err());
+diff --git a/docs/agent-control.md b/docs/agent-control.md
+index e955f26ca..49b9db425 100644
+--- a/docs/agent-control.md
++++ b/docs/agent-control.md
+@@ -255,7 +255,9 @@ turn the switch off.
+   stack. An open mod menu (a declared screen) adds its buttons as `menu-button-<ID>` and its text
+   fields as `menu-field-<ID>`, by the widget ids in the mod's screen file (`.2` for a repeat; a
+   button's tooltip is its label); only what a press reaches is listed (a window's widgets, not
+-  the ones under it).
++  the ones under it). The reply's `menu_texts` lists the menu's text widgets as drawn (`text`,
++  `text_data`, `at`): a string the server sent (`world.set-menu-text`, an item menu's
++  `menu-text`) shows there once it reached the client.
+ - **Kinds:** `button`, `slider` (`value` 0..1), `field`, `row` (a world, server, pack or
+   language), `tab` (`selected`), `slot`.
+ - **Actions:**
+diff --git a/tools/agent_control_e2e.py b/tools/agent_control_e2e.py
+index 4d50f7af2..08e4c724a 100644
+--- a/tools/agent_control_e2e.py
++++ b/tools/agent_control_e2e.py
+@@ -14,7 +14,8 @@ scenario opens the inventory and the chat over an item in use and checks the use
+ eaten behind the GUI; the pick scenario
+ middle-clicks slots (AbstractContainerScreen's cloning): a full stack in creative, from the hotbar
+ and from an item tab, and nothing in survival;
+-the suggestions scenario checks slash-command Tab completion on single player's connected client
++the mod-menu scenario (CLI only) opens the example item-menu-demo's menu with its key and checks that the strings its
++server sends reach the client's text widgets (`ui`'s menu_texts); the suggestions scenario checks slash-command Tab completion on single player's connected client
+ after a fresh launch; the no-ai scenario turns No AI on in a scratch game home and checks that
+ horizon-ctl, its MCP server and the game's control socket all refuse.
+ 
+@@ -791,9 +792,53 @@ def pause_save_scenario(d, out):
+     return {'saved_on_pause': saved}
+ 
+ 
++ITEM_MENU_DEMO = ROOT / 'crates/horizon-mod-sdk/examples/item-menu-demo'
++
++
++def item_menu_demo_hmod():
++    """The example mod item-menu-demo as a .hmod (built here with cargo horizon-mod), for mod_menu_scenario."""
++    meta = json.loads(subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps'], cwd=ROOT,
++                                     capture_output=True, text=True, check=True).stdout)
++    target = Path(meta['target_directory'])
++    subprocess.run(['cargo', 'run', '--quiet', '--profile', 'fast', '-p', 'cargo-horizon-mod', '--manifest-path',
++                    str(ROOT / 'Cargo.toml'), '--', 'horizon-mod', 'build'], cwd=ITEM_MENU_DEMO, check=True)
++    return target / 'horizon-mod/imenu.hmod'
++
++
++def mod_menu_scenario(d, out):
++    """A mod's menu with strings from its server: item-menu-demo's key (backslash) opens its tweaker over no item, whose
++    two `text` widgets show `text_data` 0 and 1, which the mod sends each tick (`item-menu-update.menu-text`). The strings
++    must reach the client: they are what `ui` reports as drawn, and they follow the hand when it changes."""
++    d('key', key='backslash', action='tap')
++    def texts():
++        reply = d('ui')
++        return {t['text_data']: t['text'] for t in reply.get('menu_texts', []) if t.get('text_data') is not None}
++    shown = {}
++    for _ in range(20):
++        d('wait', ticks=5)
++        shown = texts()
++        if shown.get(0, '').startswith('main '):
++            break
++    assert shown.get(0) == 'main 0 -' and shown.get(1) == 'head - off -', f'the menu strings did not reach the client: {shown}'
++    d('give', item='minecraft:stone', count=1)
++    for _ in range(20):
++        d('wait', ticks=5)
++        shown = texts()
++        if shown.get(0) == 'main 0 minecraft:stone':
++            break
++    assert shown.get(0) == 'main 0 minecraft:stone', f'the strings did not follow the hand: {shown}'
++    d('close')
++    return {'menu_texts': shown}
++
++
+ SCENARIOS = {'survival': scenario, 'ui': ui_scenario, 'options': options_scenario, 'events': events_scenario,
+              'consume': consume_scenario, 'use-screen': use_screen_scenario, 'pick': pick_scenario,
+-             'suggestions': suggestions_scenario, 'manage': manage_scenario, 'pause-save': pause_save_scenario}
++             'suggestions': suggestions_scenario, 'manage': manage_scenario, 'pause-save': pause_save_scenario,
++             'mod-menu': mod_menu_scenario}
++# Scenarios that start in a world of their own with a mod: what `launch` takes besides the defaults (the CLI passes other
++# arguments to the game, so these run through the CLI only).
++LAUNCHES = {'mod-menu': lambda: {'world': 'modmenu', 'creative': True, 'wait': True, 'dev-mod': item_menu_demo_hmod()}}
++CLI_ONLY = set(LAUNCHES)
+ 
+ 
+ REFUSAL = "AI features are off: turn off No AI in the launcher's settings"
+@@ -933,7 +978,8 @@ def run(mode, ctl, out, resources, which='survival'):
+     driver = (Cli if mode == 'cli' else Mcp)(ctl, socket, work, env)
+     started = time.time()
+     try:
+-        driver('launch', wait=False, offscreen=sys.platform == 'darwin')
++        extra = LAUNCHES[which]() if which in LAUNCHES else {'wait': False}
++        driver('launch', offscreen=sys.platform == 'darwin', **extra)
+         summary = SCENARIOS[which](driver, out)
+         print(f'[{mode}] PASS in {time.time() - started:.0f} s: {summary}')
+         return True
+@@ -975,7 +1021,8 @@ def main():
+     out.mkdir(parents=True, exist_ok=True)
+     modes = ['cli', 'mcp'] if args.mode == 'both' else [args.mode]
+     scenarios = [*SCENARIOS, 'no-ai', 'setting'] if args.scenario == 'all' else [args.scenario]
+-    results = {f'{m}/{s}': run(m, bins / 'horizon-ctl', out, resources, s) for m in modes for s in scenarios}
++    results = {f'{m}/{s}': run(m, bins / 'horizon-ctl', out, resources, s) for m in modes for s in scenarios
++               if m == 'cli' or s not in CLI_ONLY}
+     print(json.dumps(results))
+     sys.exit(0 if all(results.values()) else 1)
+ 
+-- 
+2.43.0
+
