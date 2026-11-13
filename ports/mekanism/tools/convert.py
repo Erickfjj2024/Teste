@@ -2705,16 +2705,20 @@ def frequency_selector(prefix_base, sec_var, panel, origin_x, origin_y, public_c
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 122, 42, 3), (x, y + 22))
     panel.alpha_composite(nine_slice(gui_sprite('inner_screen').resize((16, 16), 0), 98, 11, 2), (x + 23, y + 99))
     panel.alpha_composite(nine_slice(gui_sprite('button'), 60, 18, 2), (x + 62, y + 113))
-    pub = Image.open(find('gui/button/public.png', ASSET_DIRS)).convert('RGBA')
-    pri = Image.open(find('gui/button/private.png', ASSET_DIRS)).convert('RGBA')
-    pub_tex, pri_tex = save_gui(pub, 'frequency_public'), save_gui(pri, 'frequency_private')
+    # MekanismImageButton: a 38 by 20 button with the icon (40 by 16) centred on it; the button of the security chosen is the inactive one (`active = false`). Public at 0, trusted at 42, private at 84.
+    def face(sprite, icon):
+        img = nine_slice(gui_sprite(sprite), 38, 20, 2)
+        ic = Image.open(find(f'gui/button/{icon}.png', ASSET_DIRS)).convert('RGBA')
+        img.alpha_composite(ic, (-1, 2))
+        return img
     w = []
-    for k, (tex, bx) in enumerate(((pub_tex, 0), (pri_tex, 84))):
-        w.append({'type': 'sprite', 'texture': tex, 'x': x + bx, 'y': y, 'w': 38, 'h': 20})
+    for k, (icon, bx, label) in enumerate((('public', 0, 'Public'), ('private', 84, 'Private'))):
+        panel.alpha_composite(face('button', icon), (x + bx, y))
         w.append({'type': 'show', 'when': {'local': {'var': sec_var, 'eq': k}}, 'widgets': [
-            {'type': 'text', 'x': x + bx + 3, 'y': y + 6, 'text': ('Public', 'Private')[k], 'color': '#FFFFFF', 'scale': 70}]})
-        w.append({'type': 'button', 'x': x + bx, 'y': y, 'w': 38, 'h': 20, 'local': {'set': {'var': sec_var, 'value': k}}, 'tooltip': ('Public', 'Private')[k]})
-    w.append({'type': 'text', 'x': x + 44, 'y': y + 6, 'text': 'Trusted', 'color': '#808080', 'scale': 70})
+            {'type': 'sprite', 'texture': save_gui(face('button_inactive', icon), f'frequency_{icon}_inactive'), 'x': x + bx, 'y': y, 'w': 38, 'h': 20}]})
+        w.append({'type': 'button', 'x': x + bx, 'y': y, 'w': 38, 'h': 20, 'local': {'set': {'var': sec_var, 'value': k}}, 'tooltip': label})
+    # trusted security is not in the port: its button is drawn inactive
+    panel.alpha_composite(face('button_inactive', 'trusted'), (x + 42, y))
     w.append({'type': 'show', 'when': {'local': {'var': sec_var, 'eq': 0}}, 'widgets': [
         {'type': 'list', 'x': x + 1, 'y': y + 23, 'w': 120, 'h': 40, 'row_height': 10, 'first': first_public, 'count': {'data': public_count},
          'on_click': prefix_base, 'color': '#3CFE9A'},
@@ -3032,7 +3036,7 @@ def dictionary_menu(m):
         {'type': 'text', 'x': 28 + (width - 28 - text_width(title)) // 2, 'y': 5, 'text': title, 'color': '#404040'},
         {'type': 'text', 'x': 28, 'y': 17, 'text': '', 'text_data': 0, 'color': '#404040', 'scale': 75},
         {'type': 'text', 'x': 8, 'y': height - 96, 'text': 'Inventory', 'color': '#404040'},
-        {'type': 'text', 'x': 8, 'y': 76, 'text': 'Tag Type', 'color': '#404040', 'scale': 90},
+        {'type': 'text', 'x': 113 - 5 - text_width('Tag Type'), 'y': height - 96, 'text': 'Tag Type', 'color': '#404040'},
         {'type': 'text', 'x': 117, 'y': 77, 'text': 'Item', 'color': '#404040'},
         {'type': 'list', 'x': 9, 'y': 31, 'w': 158, 'h': 40, 'row_height': 10, 'first': 1, 'count': {'data': 0}, 'on_click': 7000, 'color': '#3CFE9A'}]
     return {'slots': 1, 'data_slots': 1, 'results': [],
