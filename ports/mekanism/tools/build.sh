@@ -15,6 +15,8 @@ trap 'rm -rf "$WORK"' EXIT
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HERE/.target}"
 cp -r "$HERE/mod/." "$WORK/"
 sed -i "s#@SDK@#$FORK/crates/horizon-mod-sdk#" "$WORK/Cargo.toml"
+# the screens crate (screens drawn by code, API 56) has its own manifest
+[ -f "$WORK/screens/Cargo.toml" ] && sed -i "s#@SDK@#$FORK/crates/horizon-mod-sdk#" "$WORK/screens/Cargo.toml"
 cp "$FORK/rust-toolchain.toml" "$WORK/"
 (cd "$WORK" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" "$TOOL" horizon-mod build && \
  CARGO_TARGET_DIR="$CARGO_TARGET_DIR" "$TOOL" horizon-mod test)

@@ -4332,6 +4332,29 @@ def security_tabs():
         f.write('];\n')
 security_tabs()
 
+# ---- screens drawn by code (API 56, `mod/screens/`): the GUI textures the screens blit, and the menus that use the code screen. A menu in CODE_SCREENS keeps its JSON (size, slots, widgets as the
+# fallback) and gets `"code": true`; `tools/PORTAR_TELAS_CODIGO.md` says how a screen is ported. A name here must have a module and a line in `mod/screens/src/registry.rs`.
+CODE_SCREENS = ['teleporter']
+def code_screens():
+    import shutil
+    for d in ASSET_DIRS:
+        for src, dst in ((f'{d}/gui', f'{OUT}/assets/{NS}/textures/gui'), (f'{d}/textures/gui/sprites', f'{OUT}/assets/{NS}/textures/gui/sprites')):
+            if not os.path.isdir(src):
+                continue
+            for root, _dirs, files in os.walk(src):
+                for f in files:
+                    if f.endswith('.png') or f.endswith('.mcmeta'):
+                        target = os.path.join(dst, os.path.relpath(os.path.join(root, f), src))
+                        if not os.path.exists(target):
+                            os.makedirs(os.path.dirname(target), exist_ok=True)
+                            shutil.copyfile(os.path.join(root, f), target)
+    for name in CODE_SCREENS:
+        path = f'{OUT}/data/{NS}/horizon/menu/{name}.json'
+        menu = read_json(path)
+        menu['screen']['code'] = True
+        put(path, menu)
+code_screens()
+
 print('warnings:', len(warnings))
 for w in warnings[:40]:
     print('  ', w)
