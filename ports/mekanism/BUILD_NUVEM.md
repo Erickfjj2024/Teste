@@ -37,16 +37,34 @@ cd ports/mekanism
 git clone --depth 1 --branch v1.21.1-10.7.19.85 https://github.com/mekanism/Mekanism.git ../../../mekanism-1211
 git clone --depth 1 https://github.com/mekanism/Mekanism.git ../../../mekanism          # 26.3, só tint / tint only
 
-# 2) fork do Horizon: aplicar ports/api-fork/*.patch em ordem, construir cargo-horizon-mod
-#    PREENCHER/FILL IN: o comando exato de build do fork ainda não está documentado neste repositório.
-#    The fork's exact build command is not documented in this repository yet.
+# 2) fork do Horizon (Erickfjj2024/horizon, branch mekanism-api, já com ports/api-fork/*.patch aplicados)
+#    e cargo-horizon-mod a partir dele / the fork (patches already in) and cargo-horizon-mod from it
+#    (corrigido em 2026-11-13: era "PREENCHER" / corrected 2026-11-13: was "FILL IN")
+git clone --branch mekanism-api https://github.com/Erickfjj2024/horizon.git ../../../horizon-android
+(cd ../../../horizon-android && cargo build --release -p cargo-horizon-mod)
+cp ../../../horizon-android/target/release/cargo-horizon-mod ../../../cargo-horizon-mod   # fora do target / outside the target
 
 # 3) normalizar a base 1.21.1 / normalise the 1.21.1 base (BASE.md)
 python3 -I tools/base_1211.py ../../../mekanism-1211 /tmp/base ../../../mekanism
 
 # 4) converter + compilar + testar / convert + build + test
-tools/build.sh /tmp/base /caminho/do/fork /caminho/do/cargo-horizon-mod
-#    resultado / result: <target>/horizon-mod/mekanism.hmod
+#    argumentos: <base> <fork> <cargo-horizon-mod>; o build.sh roda convert.py (escreve em mod/), copia mod/ para um
+#    diretório temporário e roda `horizon-mod build` e `horizon-mod test` (mod/tests/*.toml). Depois confira com
+#    `git status` que mod/src/security_table.rs e transporter_table.rs não mudaram (se mudaram, commitar).
+#    args: <base> <fork> <tool>; convert, copy to a temp dir, build and test. Check the two tables did not change.
+CARGO_TARGET_DIR=/tmp/mektgt tools/build.sh /tmp/base ../../../horizon-android ../../../cargo-horizon-mod
+#    resultado / result: $CARGO_TARGET_DIR/horizon-mod/mekanism.hmod
+
+# 5) APK do Horizon (o .hmod não vai dentro do APK: é entregue ao lado) / the Horizon APK (the .hmod ships alongside)
+#    precisa de: Android SDK (build-tools 35.0.0, NDK 28.2.13676358), JDK em .local/android/jdk/, Gradle 8.14.x e o
+#    keystore .local/android/debug.keystore do fork (NUNCA regenerar nem commitar; SHA-256 do certificado
+#    A6:85:F1:0C:...:4A:C7:65). versionCode sempre maior que o último entregue (v53 em 2026-11-13).
+cd ../../../horizon-android
+ANDROID_HOME=$HOME/android-sdk python3 tools/android_build.py --abi arm64-v8a --sdk $HOME/android-sdk \
+  --java-home .local/android/jdk/java-runtime-epsilon --public --dev-build mekanism --dev-version-code 53 \
+  --debuggable --gradle /opt/gradle-8.14.3/bin/gradle
+#    resultado / result: .local/android/apk/arm64-v8a/horizon-android-public.apk (dev.horizon.android.dev)
+#    conferir / check: apksigner verify --print-certs <apk>; aapt2 dump badging <apk> | head -1
 ```
 
 ## 4. Critério de sucesso / Success criteria
