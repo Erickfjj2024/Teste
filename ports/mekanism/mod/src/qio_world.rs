@@ -7,7 +7,9 @@
 //!
 //! The Dashboard: the grid lists the frequency's items (sorted by name, count, mod or registry name, ascending or not, and filtered by the search box: a name, `@mod`, `#tag`). A left click takes a stack,
 //! a right click half of one, a middle click one, shift puts it in the inventory, and a click with a stack on the cursor stores it (all of it with the left button, one with the others), on an entry or on an empty cell (`index` 4294967295).
-//! Not here: the three crafting windows, the shift-click that sends inventory items into the frequency (the host has no hook for it), the sort and search kept for each player (they are the
+//! The three crafting windows (`QIOCraftingWindow`): each a 3 by 3 grid and a result slot that shows what the grid makes; taking the result uses one of each ingredient (or leaves what the recipe
+//! leaves, a bucket), and a cell that runs out is filled again from the frequency; the clear button sends the grid's stacks to the frequency.
+//! Not here: the shift-click that crafts a whole stack from the frequency, the recipe viewer's transfer, the shift-click that sends inventory items into the frequency (the host has no hook for it), the sort and search kept for each player (they are the
 //! block's), the `$tooltip` search, the other QIO blocks' tab (importer, exporter, redstone adapter), and the Portable QIO Dashboard.
 use super::*;
 use crate::frequency::{self, Freq};
@@ -83,6 +85,39 @@ pub fn with_drive_contents(components: &str, contents: &DriveContents) -> String
         out.insert_str(at, &if entries.is_empty() { format!("\"{DRIVE_KEY}\":{value}") } else { format!(",\"{DRIVE_KEY}\":{value}") });
     }
     out
+}
+
+/// The Dashboard's crafting windows: three, each nine ingredient slots then the result (`IQIOCraftingWindowHolder.MAX_CRAFTING_WINDOWS`), 30 slots in all.
+pub const WINDOWS: usize = 3;
+pub const PER_WINDOW: usize = 10;
+pub const WINDOW_SLOTS: usize = WINDOWS * PER_WINDOW;
+
+fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {
+    a.item == b.item && a.components == b.components
+}
+
+/// A craft's effect on the grid: each cell loses one (it keeps what the recipe leaves there, a bucket, when it ran out). Returns the cells that ran out with the stack they held (to be filled
+/// again) and the leftovers that had no cell to go to.
+pub fn consume(grid: &mut [Option<ItemStack>; 9], remaining: &[Option<ItemStack>]) -> (Vec<(usize, ItemStack)>, Vec<ItemStack>) {
+    let mut ran_out = Vec::new();
+    let mut leftovers = Vec::new();
+    for i in 0..9 {
+        let Some(cell) = grid[i].clone() else { continue };
+        let kept = remaining.get(i).cloned().flatten();
+        if cell.count > 1 {
+            grid[i] = Some(ItemStack { count: cell.count - 1, ..cell });
+            if let Some(k) = kept {
+                leftovers.push(k);
+            }
+        } else {
+            grid[i] = None;
+            match kept {
+                Some(k) => grid[i] = Some(k),
+                None => ran_out.push((i, cell)),
+            }
+        }
+    }
+    (ran_out, leftovers)
 }
 
 fn hashed(item: &str, components: &str) -> HashedItem {
@@ -340,6 +375,62 @@ impl Mekanism {
         None
     }
 
+    /// The crafting windows of a Dashboard for a tick: the results that were taken use up their ingredients (and the cells that ran out are filled from the frequency), the clear buttons
+    /// send a grid to the frequency, and each result slot shows what its grid makes. True when a slot changed.
+    fn qio_craft(&mut self, key: &BlockKey, items: &mut [Option<ItemStack>], freq: Option<String>, clears: &[usize]) -> bool {
+        let mut changed = false;
+        for w in 0..WINDOWS {
+            let base = w * PER_WINDOW;
+            let grid_of = |items: &[Option<ItemStack>]| -> [Option<ItemStack>; 9] { std::array::from_fn(|i| items[base + i].clone()) };
+            let mut grid = grid_of(items);
+            let slot_key = (key.clone(), w);
+            let had = self.qio_outputs.get(&slot_key).cloned().flatten();
+            // The player took the result: its ingredients are used up.
+            if had.is_some() && items[base + 9].is_none() {
+                if let Some(m) = recipe_types::crafting_find(&grid.to_vec()) {
+                    let (ran_out, leftovers) = consume(&mut grid, &m.remaining);
+                    if let Some(net) = freq.as_ref().and_then(|f| self.qio.frequencies.get_mut(f)) {
+                        for (i, template) in ran_out {
+                            let h = hashed(&template.item, &template.components);
+                            if net.remove_item(&h, 1, true) == 1 {
+                                grid[i] = Some(ItemStack { count: 1, ..template });
+                            }
+                        }
+                        for l in leftovers {
+                            net.add_item(&hashed(&l.item, &l.components), u64::from(l.count), true);
+                        }
+                    }
+                    for i in 0..9 {
+                        items[base + i] = grid[i].clone();
+                    }
+                    changed = true;
+                }
+            }
+            // The clear button: the grid goes to the frequency, what does not fit stays.
+            if clears.contains(&w) {
+                if let Some(net) = freq.as_ref().and_then(|f| self.qio.frequencies.get_mut(f)) {
+                    for i in 0..9 {
+                        if let Some(cell) = items[base + i].clone() {
+                            let rejected = net.add_item(&hashed(&cell.item, &cell.components), u64::from(cell.count), true);
+                            if rejected != u64::from(cell.count) {
+                                items[base + i] = (rejected > 0).then(|| ItemStack { count: rejected as u32, ..cell });
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            let grid = grid_of(items);
+            let shown = recipe_types::crafting_find(&grid.to_vec()).map(|m| m.output);
+            if items[base + 9] != shown && !(items[base + 9].is_some() && shown.as_ref().zip(items[base + 9].as_ref()).is_some_and(|(a, b)| same_stack(a, b) && a.count == b.count)) {
+                items[base + 9] = shown;
+                changed = true;
+            }
+            self.qio_outputs.insert(slot_key, items[base + 9].clone());
+        }
+        changed
+    }
+
     fn qio_board(&mut self, e: &BlockEntity, presses: &[(String, BlockPos, i32, String, String)], texts: &[(String, BlockPos, i32, String, String, String)]) -> Option<BlockEntityUpdate> {
         let key: BlockKey = (e.dimension.clone(), e.pos.x, e.pos.y, e.pos.z);
         let mut state = decode_dashboard(&e.data).unwrap_or_default();
@@ -373,6 +464,16 @@ impl Mekanism {
             Some(f) => self.qio_board_freq.insert(key.clone(), f.key()),
             None => self.qio_board_freq.remove(&key),
         };
+        let mut items: Vec<Option<ItemStack>> = (0..WINDOW_SLOTS).map(|i| e.items.get(i).cloned().flatten()).collect();
+        let clears: Vec<usize> = presses
+            .iter()
+            .filter(|(d, p, id, _, _)| *d == e.dimension && *p == e.pos && (crate::qio_dashboard::CLEAR_CRAFTING_WINDOW_BASE..crate::qio_dashboard::CLEAR_CRAFTING_WINDOW_BASE + WINDOWS as i32).contains(id))
+            .map(|(_, _, id, _, _)| (*id - crate::qio_dashboard::CLEAR_CRAFTING_WINDOW_BASE) as usize)
+            .collect();
+        if let Some(f) = &freq {
+            self.qio_network(f);
+        }
+        let items_changed = self.qio_craft(&key, &mut items, freq.as_ref().map(Freq::key), &clears);
         let mut rows: Vec<(String, String, u64)> = Vec::new();
         if let Some(f) = &freq {
             self.qio_network(f);
@@ -403,12 +504,12 @@ impl Mekanism {
             let _ = world::set_menu_text(&e.dimension, e.pos.x, e.pos.y, e.pos.z, &strings);
             self.qio.menu_texts.insert(key, strings);
         }
-        if state != before || e.menu_data.get(..numbers.len()) != Some(&numbers[..]) {
+        if state != before || items_changed || e.menu_data.get(..numbers.len()) != Some(&numbers[..]) {
             return Some(BlockEntityUpdate {
                 dimension: e.dimension.clone(),
                 pos: e.pos,
                 data: encode_dashboard(&state),
-                items: None,
+                items: items_changed.then_some(items),
                 energy: None,
                 energy_faces: None,
                 tanks: None,
@@ -527,6 +628,38 @@ mod tests {
         let emptied = with_drive_contents(&written, &DriveContents::new());
         assert!(drive_contents(&emptied).is_empty());
         assert_eq!(with_drive_contents("", &DriveContents::new()), "", "nothing to keep, nothing written");
+    }
+
+    fn st(item: &str, count: u32) -> ItemStack {
+        ItemStack { item: item.to_owned(), count, components: String::new() }
+    }
+
+    #[test]
+    fn a_craft_uses_one_of_each_cell_and_reports_the_cells_that_ran_out() {
+        let mut grid: [Option<ItemStack>; 9] = Default::default();
+        grid[0] = Some(st("minecraft:cobblestone", 5));
+        grid[1] = Some(st("minecraft:cobblestone", 1));
+        let (ran_out, left) = consume(&mut grid, &[]);
+        assert_eq!(grid[0].as_ref().map(|s| s.count), Some(4));
+        assert!(grid[1].is_none());
+        assert_eq!(ran_out.len(), 1);
+        assert_eq!(ran_out[0].0, 1);
+        assert!(left.is_empty());
+    }
+
+    #[test]
+    fn what_a_recipe_leaves_takes_the_cell_of_an_ingredient_that_ran_out() {
+        let mut grid: [Option<ItemStack>; 9] = Default::default();
+        grid[4] = Some(st("minecraft:milk_bucket", 1));
+        grid[5] = Some(st("minecraft:milk_bucket", 3));
+        let mut rem: Vec<Option<ItemStack>> = vec![None; 9];
+        rem[4] = Some(st("minecraft:bucket", 1));
+        rem[5] = Some(st("minecraft:bucket", 1));
+        let (ran_out, left) = consume(&mut grid, &rem);
+        assert_eq!(grid[4].as_ref().map(|s| s.item.as_str()), Some("minecraft:bucket"));
+        assert!(ran_out.is_empty(), "the bucket stays in the cell, nothing to refill");
+        assert_eq!(grid[5].as_ref().map(|s| s.count), Some(2));
+        assert_eq!(left.len(), 1, "the cell that kept its milk has nowhere for the bucket");
     }
 
     #[test]

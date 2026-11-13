@@ -1998,7 +1998,41 @@ def qio_dashboard_menu(m, portable=False):
     widgets.append({'type': 'button', 'x': width - 9 - 12, 'y': sort_y, 'w': 12, 'h': 12, 'id': 8561, 'tooltip': 'Ascending or descending'})
     menu = {'slots': 0, 'data_slots': 6, 'results': [],
             'screen': {'texture': texture, 'own_labels': True, 'slots': [], 'width': width, 'height': height, 'inventory_x': 8, 'inventory_y': inv_y, 'widgets': widgets}}
+    if not portable:
+        qio_crafting_windows(menu, width)
     return qio_frequency_tab(menu, 1, width)
+
+def qio_crafting_windows(menu, width):
+    """The Dashboard's three crafting windows (`GuiCraftingWindow`, 124 by 80; `GuiCraftingWindowTab` at -26, 34: here one tab for each window, 28 apart): a 3 by 3 grid at 8, 18, the arrow at 70, 38,
+    the result slot at 100, 36 and the clear button at 104, 60 (14 by 14). The menu's 30 slots are the windows' (ten each: nine ingredients, then the result, which can only be taken); the result is
+    made by the mod (`qio_world.rs::qio_craft`). The clear button is `7611 + window`."""
+    from PIL import Image
+    win = nine_slice(gui_sprite('base'), 124, 80, 4)
+    win.alpha_composite(gui_sprite('button/close'), (6, 6))
+    for r in range(3):
+        for c in range(3):
+            win.alpha_composite(gui_sprite('slot/normal'), (8 + 18 * c, 18 + 18 * r))
+    win.alpha_composite(gui_sprite('arrow/right'), (70, 38))
+    win.alpha_composite(gui_sprite('slot/normal'), (100, 36))
+    win.alpha_composite(image_button('button/clear_sides'), (104, 60))
+    texture = save_gui(win, 'qio_crafting_window')
+    tab = tab_sprite('tab_crafting', 'button/crafting', None, 18)
+    screen = menu['screen']
+    menu['slots'] = 30
+    menu['results'] = [9, 19, 29]
+    screen['slots'] = [None] * 30
+    for w in range(3):
+        title = f'Crafting Window {w + 1}'
+        slots = [{'slot': 10 * w + 3 * r + c, 'x': 9 + 18 * c, 'y': 19 + 18 * r} for r in range(3) for c in range(3)] + [{'slot': 10 * w + 9, 'x': 101, 'y': 37}]
+        widgets = [{'type': 'text', 'x': 20 + (100 - text_width(title)) // 2, 'y': 6, 'text': title, 'color': '#404040'},
+                   {'type': 'button', 'x': 6, 'y': 6, 'w': 8, 'h': 12, 'local': 'close', 'tooltip': 'Close'},
+                   {'type': 'button', 'x': 104, 'y': 60, 'w': 14, 'h': 14, 'id': 7611 + w, 'tooltip': 'Clear the crafting window'}]
+        screen['windows'] = list(screen.get('windows', [])) + [{'id': f'crafting_{w}', 'x': (width - 124) // 2 + 10 * w, 'y': 30 + 10 * w, 'width': 124, 'height': 80,
+                                                                  'texture': texture, 'widgets': widgets, 'slots': slots}]
+        screen['widgets'] = list(screen['widgets']) + [
+            {'type': 'sprite', 'texture': tab, 'x': -26, 'y': 34 + 28 * w, 'w': 26, 'h': 18},
+            {'type': 'button', 'x': -26, 'y': 34 + 28 * w, 'w': 26, 'h': 18, 'local': {'open': f'crafting_{w}'}, 'tooltip': title}]
+    return menu
 
 def qio_drive_array_menu(m):
     """GuiQIODriveArray (176 by 206): the frequency data screen at 15, 19 (144 by 46: the frequency's name, and two bars, the items and the types, with

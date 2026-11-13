@@ -508,6 +508,7 @@ struct Mekanism {
     qio_arrays: HashMap<qio_world::BlockKey, qio_world::ArrayCache>,
     qio_views: HashMap<qio_world::BlockKey, qio_world::DashView>,
     qio_board_freq: HashMap<qio_world::BlockKey, String>,
+    qio_outputs: HashMap<(qio_world::BlockKey, usize), Option<ItemStack>>,
     qio_portable_freq: HashMap<String, String>,
     qio_portable_views: HashMap<String, qio_world::DashView>,
     /// The owner and mode of each secured block (`block_security.rs`), loaded from the world's data on first use.
@@ -2073,7 +2074,7 @@ impl ServerMod for Mekanism {
         array.container = Some(ContainerSpec { slots: qio::DRIVE_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(array);
                 let mut dashboard = kind(qio_dashboard::BLOCK, true);
-        dashboard.container = Some(ContainerSpec { slots: 0, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
+        dashboard.container = Some(ContainerSpec { slots: qio_world::WINDOW_SLOTS as u32, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
         r = r.block_entity_kind(dashboard);
         let mut adapter = kind(qio::BLOCK_REDSTONE_ADAPTER, true);
         adapter.container = Some(ContainerSpec { slots: 1, faces: vec![Vec::new(); 6], inputs: Vec::new(), outputs: Vec::new(), menu: true });
@@ -2385,6 +2386,7 @@ impl ServerMod for Mekanism {
             qio_arrays: HashMap::new(),
             qio_views: HashMap::new(),
             qio_board_freq: HashMap::new(),
+            qio_outputs: HashMap::new(),
             qio_portable_freq: HashMap::new(),
             qio_portable_views: HashMap::new(),
             block_owners: None,
