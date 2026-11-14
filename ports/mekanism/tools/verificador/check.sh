@@ -32,7 +32,9 @@ TOML
 # declara no lib.rs os modulos que existem em src/ e ainda nao estao declarados / declare modules present in src/ but not in lib.rs
 for f in "$WORK"/mod/src/*.rs; do
   m="$(basename "$f" .rs)"; [ "$m" = lib ] && continue
-  grep -q "^mod $m;" "$WORK/mod/src/lib.rs" || sed -i "0,/^mod combiner;/s//mod combiner;\nmod $m;/" "$WORK/mod/src/lib.rs"
+  # a pasta das telas (mod/screens/src) declara os modulos a mao / the screens folder declares its modules by hand
+  grep -q "^mod registry;" "$WORK/mod/src/lib.rs" && continue
+  grep -qE "^(pub )?mod $m;" "$WORK/mod/src/lib.rs" || sed -i "0,/^mod combiner;/s//mod combiner;\nmod $m;/" "$WORK/mod/src/lib.rs"
 done
 cd "$WORK/mod"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$WORK/target}"

@@ -1,0 +1,145 @@
+//! `GuiBioGenerator` (176 by 166): armor slots holder on the left, bio fuel slot at (17, 35),
+//! charge slot at (143, 35), biofuel fluid bar at (7, 15), inner screen at (48, 23, 80 by 40)
+//! displaying energy, stored bio fuel, and output rate, vertical power bar at (164, 15),
+//! and energy, redstone, and security tabs.
+//!
+//! Java source of truth:
+//! - `mekanism.generators.client.gui.GuiBioGenerator` (`GuiBioGenerator.java:23-53`)
+//! - `mekanism.generators.common.tile.TileEntityBioGenerator`
+//!
+//! Numbers (`generators.rs`): 0 active, 1-2 energy (pair), 3-4 capacity (pair), 5 producing rate (FE/t),
+//! 10-11 biofuel tank amount (pair), 13-14 biofuel tank capacity (pair), 15 redstone control mode, 31 security mode.
+
+use crate::chrome::{Chrome, ChromeSpec, EnergyTabSpec};
+use crate::elements::{base_panel, data, inner_screen, inside, inventory_label, pair, slot_frame, title, vertical_power_bar, GREEN, WHITE};
+use crate::{MekScreen, Opened};
+use horizon_mod_sdk::screen::{Canvas, Frame, InputEvent, OpenInfo, Setup, host};
+
+pub struct BioGenerator {
+    chrome: Chrome,
+}
+
+pub fn open(info: &OpenInfo) -> Opened {
+    let chrome_spec = ChromeSpec {
+        menu: "mekanism:bio_generator",
+        redstone: Some(15),
+        energy: Some(EnergyTabSpec::with_stored_and_capacity(5, (1, 2), (3, 4), None)),
+        upgrades: None,
+        warning: None,
+        side_config: None,
+        transporter: None,
+    };
+    let screen = BioGenerator {
+        chrome: Chrome::new(chrome_spec, 176.0),
+    };
+    Ok((Box::new(screen), Setup { width: 176, height: 166, hide_inventory: false, own_labels: true }))
+}
+
+impl MekScreen for BioGenerator {
+    fn tick(&mut self) {
+        self.chrome.tick();
+    }
+
+    fn render(&mut self, frame: &Frame, c: &mut Canvas) {
+        let mouse = (frame.mouse_x, frame.mouse_y);
+        base_panel(c, 176.0, 166.0);
+
+        // Armor holder on left
+        c.blit_sprite("mekanism:holder_left", -26.0, 6.0, 26.0, 98.0);
+
+        // Fuel slot at (17, 35) -> frame at (16, 34)
+        slot_frame(c, 16.0, 34.0);
+        // Charge slot at (143, 35) -> frame at (142, 34)
+        slot_frame(c, 142.0, 34.0);
+
+        // Power bar at (164, 15)
+        let (energy, capacity) = (pair(1, 2), pair(3, 4));
+        let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
+        vertical_power_bar(c, 164.0, 15.0, fraction);
+
+        // Biofuel fluid bar at (7, 15)
+        let (biofuel, bio_cap) = (pair(10, 11), pair(13, 14));
+        c.blit_sprite("mekanism:bar/base", 6.0, 14.0, 6.0, 54.0);
+        let bio_frac = if bio_cap == 0 { 0.0 } else { (biofuel as f32 / bio_cap as f32).clamp(0.0, 1.0) };
+        let bio_filled = (52.0 * bio_frac).floor();
+        if bio_filled > 0.0 {
+            c.fill(7.0, 15.0 + 52.0 - bio_filled, 4.0, bio_filled, 0xFF3C_FE9A);
+        }
+        if inside(mouse, [6.0, 14.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("BioFuel: {} / {} mB", biofuel, bio_cap), WHITE)]);
+        }
+
+        // Inner screen at (48, 23, 80, 40)
+        inner_screen(c, [48.0, 23.0, 80.0, 40.0]);
+        let energy_str = format!("Energy: {} FE", energy);
+        let bio_str = format!("BioFuel: {} mB", biofuel);
+        let producing_str = format!("Producing: {} FE/t", data(5));
+        c.text(&energy_str, 52.0, 27.0, GREEN, 0, 0.85);
+        c.text(&bio_str, 52.0, 37.0, GREEN, 0, 0.85);
+        c.text(&producing_str, 52.0, 47.0, GREEN, 0, 0.85);
+
+        // Title and inventory label
+        title(c, &host::translate("block.mekanismgenerators.bio_generator", &[]), 0.0, 176.0, 6.0);
+        inventory_label(c, 8.0, 72.0);
+
+        // Chrome (tabs and modals)
+        self.chrome.render(c, mouse);
+    }
+
+    fn input(&mut self, event: &InputEvent) -> bool {
+        self.chrome.input(event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use horizon_mod_sdk::screen::format::Command;
+    use horizon_mod_sdk::screen::{Modifiers, MouseButton, Pointer};
+
+    #[test]
+    fn bio_generator_renders_and_handles_redstone_click() {
+        host::set_menu(host::Menu {
+            data: vec![
+                1,       // 0: active
+                2000, 0, // 1, 2: energy
+                160000, 0,// 3, 4: capacity
+                350,     // 5: producing
+                0, 0, 0, 0,// 6..9
+                5000, 0, 0,// 10..12: tank
+                24000, 0,// 13, 14: tank capacity
+                0,       // 15: redstone
+            ],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:bio_generator".into(),
+            gui_width: 176.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, setup) = open(&info).expect("open bio generator");
+        assert_eq!(setup.width, 176);
+        assert_eq!(setup.height, 166);
+
+        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("BioFuel: 5000 mB"))));
+
+        // Click redstone tab
+        let click_event = InputEvent::MousePressed(Pointer {
+            x: 180.0,
+            y: 140.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_event));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 6000".to_string(), "click".to_string()]);
+    }
+}
