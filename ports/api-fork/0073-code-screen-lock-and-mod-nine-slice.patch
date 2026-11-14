@@ -1,0 +1,177 @@
+From e55c11a37b0216bea6f16f916f63e8641f257939 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 14 Nov 2026 01:44:56 +0000
+Subject: [PATCH 1/2] Code screens: no deadlock when a menu has its own slots;
+ mod GUI sprites keep their nine-slice
+
+- code_screens: code_screen_draw released the open screen's lock only at its end, but drawing the slots' frames
+  asks where each slot is (code_screen_slot), which locks it again: a code screen of a menu with slots of its own
+  (Mekanism's Teleporter) froze the game. The lock is now released before the frames.
+- ui::load_metadata read gui.scaling only from minecraft's sprites: a content mod's sprite (<ns>:gui/sprites/...,
+  as SPRITE draws them) was stretched whole instead of nine-sliced. It now reads every namespace's, keyed as the
+  atlas names them; test a_content_mods_gui_sprites_keep_their_nine_slice_metadata.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client-render/src/ui.rs        | 38 +++++++++++++++++--
+ .../horizon-client/src/game/code_screens.rs   |  8 +++-
+ 2 files changed, 41 insertions(+), 5 deletions(-)
+
+diff --git a/crates/horizon-client-render/src/ui.rs b/crates/horizon-client-render/src/ui.rs
+index c1959c5a5..f955227e4 100644
+--- a/crates/horizon-client-render/src/ui.rs
++++ b/crates/horizon-client-render/src/ui.rs
+@@ -48,10 +48,24 @@ fn parse_nine_slice(v: &serde_json::Value) -> Option<NineSlice> {
+         stretch_inner: s["stretch_inner"].as_bool().unwrap_or(false),
+     })
+ }
+-/// Read `gui.scaling` metadata for every GUI sprite under `root`.
++/// Read `gui.scaling` metadata for every GUI sprite under `root`: vanilla's (`gui/sprites/...`) and the content mods'
++/// (`<namespace>:gui/sprites/...`, as the atlas names them).
+ pub fn load_metadata(root: &Path) {
+     let mut map = HashMap::new();
+-    let base = root.join("assets/minecraft/textures");
++    load_namespace(root, "minecraft", &mut map);
++    if let Ok(namespaces) = std::fs::read_dir(root.join("assets")) {
++        for ns in namespaces.flatten() {
++            let name = ns.file_name().to_string_lossy().into_owned();
++            if name != "minecraft" {
++                load_namespace(root, &name, &mut map);
++            }
++        }
++    }
++    *NINE_SLICE.write().unwrap_or_else(|e| e.into_inner()) = Some(map);
++}
++/// The nine-slice metadata of namespace `namespace`'s GUI sprites, keyed as the atlas names them.
++fn load_namespace(root: &Path, namespace: &str, map: &mut HashMap<String, NineSlice>) {
++    let base = root.join("assets").join(namespace).join("textures");
+     let mut stack = vec![base.join("gui/sprites")];
+     while let Some(dir) = stack.pop() {
+         let Ok(entries) = std::fs::read_dir(&dir) else {
+@@ -81,10 +95,10 @@ pub fn load_metadata(root: &Path) {
+                 .strip_prefix(&base)
+                 .map(|r| r.to_string_lossy().replace('\\', "/"))
+                 .unwrap_or_default();
++            let key = if namespace == "minecraft" { key } else { format!("{namespace}:{key}") };
+             map.insert(key, nine_slice);
+         }
+     }
+-    *NINE_SLICE.write().unwrap_or_else(|e| e.into_inner()) = Some(map);
+ }
+ /// The sprite's nine-slice metadata, when its `.png.mcmeta` has any.
+ fn nine_slice_metadata(sprite: &str) -> Option<NineSlice> {
+@@ -1390,6 +1404,24 @@ impl EditBox {
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn a_content_mods_gui_sprites_keep_their_nine_slice_metadata() {
++        let root = std::env::temp_dir().join(format!("horizon-mod-nine-slice-{}", std::process::id()));
++        let meta = r#"{"gui": {"scaling": {"type": "nine_slice", "width": 16, "height": 16, "border": 4}}}"#;
++        for (ns, rel) in [("mymod", "base"), ("mymod", "bar/base"), ("minecraft", "widget/button")] {
++            let path = root.join(format!("assets/{ns}/textures/gui/sprites/{rel}.png.mcmeta"));
++            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
++            std::fs::write(path, meta).unwrap();
++        }
++        load_metadata(&root);
++        let _ = std::fs::remove_dir_all(&root);
++        // A mod's sprites by the atlas's names (`<ns>:gui/sprites/...`), vanilla's without a namespace.
++        for key in ["mymod:gui/sprites/base", "mymod:gui/sprites/bar/base", "gui/sprites/widget/button"] {
++            let n = nine_slice_metadata(key).unwrap_or_else(|| panic!("no nine-slice for {key}"));
++            assert_eq!((n.width, n.height, n.border), (16, 16, [4; 4]));
++        }
++        assert!(nine_slice_metadata("gui/sprites/base").is_none());
++    }
+     use super::*;
+ 
+     /// The quads' destination rectangles and their UVs.
+diff --git a/crates/horizon-client/src/game/code_screens.rs b/crates/horizon-client/src/game/code_screens.rs
+index 0445390dd..0f595a462 100644
+--- a/crates/horizon-client/src/game/code_screens.rs
++++ b/crates/horizon-client/src/game/code_screens.rs
+@@ -688,12 +688,16 @@ mod imp {
+             for p in &o.before {
+                 self.code_draw(batch, origin, o, p);
+             }
++            let frames = o.slots.is_empty();
++            let error = o.error.clone();
++            // Unlocked first: the frames ask where the slots are (`code_screen_slot`), which locks the screen too.
++            drop(guard);
+             // The slots' frames, where the items will be: the game's own unless the screen places its slots
+             // (`SLOT`) and draws their frames itself, as Mekanism's `GuiSlot`s do.
+-            if o.slots.is_empty() {
++            if frames {
+                 self.draw_native_slot_frames(batch, origin[0], origin[1]);
+             }
+-            if let Some(e) = &o.error {
++            if let Some(e) = &error {
+                 let text = horizon_client::text::Text::literal(format!("Screen error: {e}"));
+                 batch.text_styled(
+                     &self.gui.atlas,
+-- 
+2.43.0
+
+
+From 6dbe0868aab554a5e84658761afac111a86ff41f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 14 Nov 2026 01:45:22 +0000
+Subject: [PATCH 2/2] ui.rs: rustfmt of the nine-slice metadata loader (patch
+ 0073)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client-render/src/ui.rs | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/crates/horizon-client-render/src/ui.rs b/crates/horizon-client-render/src/ui.rs
+index f955227e4..cf624fd2b 100644
+--- a/crates/horizon-client-render/src/ui.rs
++++ b/crates/horizon-client-render/src/ui.rs
+@@ -95,7 +95,11 @@ fn load_namespace(root: &Path, namespace: &str, map: &mut HashMap<String, NineSl
+                 .strip_prefix(&base)
+                 .map(|r| r.to_string_lossy().replace('\\', "/"))
+                 .unwrap_or_default();
+-            let key = if namespace == "minecraft" { key } else { format!("{namespace}:{key}") };
++            let key = if namespace == "minecraft" {
++                key
++            } else {
++                format!("{namespace}:{key}")
++            };
+             map.insert(key, nine_slice);
+         }
+     }
+@@ -1406,9 +1410,14 @@ impl EditBox {
+ mod tests {
+     #[test]
+     fn a_content_mods_gui_sprites_keep_their_nine_slice_metadata() {
+-        let root = std::env::temp_dir().join(format!("horizon-mod-nine-slice-{}", std::process::id()));
++        let root =
++            std::env::temp_dir().join(format!("horizon-mod-nine-slice-{}", std::process::id()));
+         let meta = r#"{"gui": {"scaling": {"type": "nine_slice", "width": 16, "height": 16, "border": 4}}}"#;
+-        for (ns, rel) in [("mymod", "base"), ("mymod", "bar/base"), ("minecraft", "widget/button")] {
++        for (ns, rel) in [
++            ("mymod", "base"),
++            ("mymod", "bar/base"),
++            ("minecraft", "widget/button"),
++        ] {
+             let path = root.join(format!("assets/{ns}/textures/gui/sprites/{rel}.png.mcmeta"));
+             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+             std::fs::write(path, meta).unwrap();
+@@ -1416,7 +1425,11 @@ mod tests {
+         load_metadata(&root);
+         let _ = std::fs::remove_dir_all(&root);
+         // A mod's sprites by the atlas's names (`<ns>:gui/sprites/...`), vanilla's without a namespace.
+-        for key in ["mymod:gui/sprites/base", "mymod:gui/sprites/bar/base", "gui/sprites/widget/button"] {
++        for key in [
++            "mymod:gui/sprites/base",
++            "mymod:gui/sprites/bar/base",
++            "gui/sprites/widget/button",
++        ] {
+             let n = nine_slice_metadata(key).unwrap_or_else(|| panic!("no nine-slice for {key}"));
+             assert_eq!((n.width, n.height, n.border), (16, 16, [4; 4]));
+         }
+-- 
+2.43.0
+
