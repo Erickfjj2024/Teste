@@ -1,5 +1,5 @@
 //! The menu types with a code screen: `mekanism:<menu>` to the module that draws it. One arm a screen (keep them sorted).
-use crate::{Opened, advanced_electric_machine, bin, bio_generator, chemical_crystallizer, chemical_dissolution_chamber, chemical_infuser, chemical_oxidizer, chemical_tank, chemical_washer, combiner, dictionary, digital_miner, dimensional_stabilizer, dynamic_tank, electric_machine, electric_pump, electrolytic_separator, energy_cube, factory, fission_reactor, fluid_tank, fluidic_plenisher, formulaic_assemblicator, fuelwood_heater, fusion_reactor_controller, gas_generator, heat_generator, induction_matrix, industrial_turbine, isotopic_centrifuge, laser_amplifier, laser_tractor_beam, logistical_sorter, metallurgic_infuser, modification_station, module_tweaker, nutritional_liquifier, oredictionificator, painting_machine, personal_storage, pigment_extractor, portable_qio_dashboard, portable_teleporter, prc, precision_sawmill, qio_dashboard, qio_drive_array, qio_frequency_select, resistive_heater, robit, rotary_condensentrator, security_desk, seismic_reader, seismic_vibrator, solar_generator, solar_neutron_activator, sps, teleporter, thermal_evaporation_controller, thermoelectric_boiler, wind_generator};
+use crate::{Opened, advanced_electric_machine, antiprotonic_nucleosynthesizer, bin, bio_generator, chemical_crystallizer, chemical_dissolution_chamber, chemical_infuser, chemical_oxidizer, chemical_tank, chemical_washer, combiner, dictionary, digital_miner, dimensional_stabilizer, dynamic_tank, electric_machine, electric_pump, electrolytic_separator, energy_cube, factory, fission_reactor, fluid_tank, fluidic_plenisher, formulaic_assemblicator, fuelwood_heater, fusion_reactor_controller, gas_generator, heat_generator, induction_matrix, industrial_turbine, isotopic_centrifuge, laser_amplifier, laser_tractor_beam, logistical_sorter, metallurgic_infuser, modification_station, module_tweaker, nutritional_liquifier, oredictionificator, painting_machine, personal_storage, pigment_extractor, pigment_mixer, portable_qio_dashboard, portable_teleporter, prc, precision_sawmill, qio_dashboard, qio_drive_array, qio_frequency_select, quantum_entangloporter, resistive_heater, robit, rotary_condensentrator, security_desk, seismic_reader, seismic_vibrator, solar_generator, solar_neutron_activator, sps, teleporter, thermal_evaporation_controller, thermoelectric_boiler, wind_generator};
 use horizon_mod_sdk::screen::OpenInfo;
 
 pub fn open(info: &OpenInfo) -> Opened {
@@ -18,6 +18,7 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:advanced_sawing_factory" => factory::open(info),
         "mekanism:advanced_smelting_factory" => factory::open(info),
         "mekanism:advanced_solar_generator" => solar_generator::open(info),
+        "mekanism:antiprotonic_nucleosynthesizer" => antiprotonic_nucleosynthesizer::open(info),
         "mekanism:basic_bin" => bin::open(info),
         "mekanism:basic_chemical_tank" => chemical_tank::open(info),
         "mekanism:basic_combining_factory" => factory::open(info),
@@ -88,6 +89,7 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:personal_barrel" => personal_storage::open(info),
         "mekanism:personal_chest" => personal_storage::open(info),
         "mekanism:pigment_extractor" => pigment_extractor::open(info),
+        "mekanism:pigment_mixer" => pigment_mixer::open(info),
         "mekanism:portable_qio_dashboard" => portable_qio_dashboard::open(info),
         "mekanism:portable_teleporter" => portable_teleporter::open(info),
         "mekanism:precision_sawmill" => precision_sawmill::open(info),
@@ -96,6 +98,7 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:qio_dashboard" => qio_dashboard::open(info),
         "mekanism:qio_drive_array" => qio_drive_array::open(info),
         "mekanism:qio_frequency_select" => qio_frequency_select::open(info),
+        "mekanism:quantum_entangloporter" => quantum_entangloporter::open(info),
         "mekanism:resistive_heater" => resistive_heater::open(info),
         "mekanism:robit" => robit::open(info),
         "mekanism:rotary_condensentrator" => rotary_condensentrator::open(info),

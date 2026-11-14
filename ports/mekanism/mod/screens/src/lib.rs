@@ -75,6 +75,9 @@ mod isotopic_centrifuge;
 mod painting_machine;
 mod pigment_extractor;
 mod solar_neutron_activator;
+mod antiprotonic_nucleosynthesizer;
+mod quantum_entangloporter;
+mod pigment_mixer;
 mod registry;
 mod teleporter;
 
