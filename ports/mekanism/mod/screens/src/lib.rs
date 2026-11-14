@@ -11,6 +11,15 @@ pub mod frequency;
 /// Copies of the mod's `security_table.rs` and `transporter_table.rs` (the converter writes them; keep them equal): where the screen's data has the security mode and the transporter window's numbers.
 pub mod security_table;
 pub mod transporter_table;
+pub mod chrome;
+pub mod side_config;
+pub mod transporter_window;
+mod dictionary;
+mod module_tweaker;
+mod portable_teleporter;
+mod robit;
+mod security_desk;
+mod seismic_reader;
 mod registry;
 mod teleporter;
 
