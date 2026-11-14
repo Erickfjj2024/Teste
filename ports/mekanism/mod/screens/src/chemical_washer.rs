@@ -85,7 +85,7 @@ impl MekScreen for ChemicalWasher {
         let power_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         horizontal_power_bar(c, 115.0, 75.0, power_frac);
 
-        let power_rect = [114.0, 74.0, 54.0, 6.0];
+        let power_rect = [115.0, 75.0, 54.0, 6.0];
         c.area(-1, power_rect, AreaKind::Other, true, "Energy");
         let mut hovered_tip: Option<Vec<(String, u32)>> = None;
         if inside(mouse, power_rect) {
@@ -220,6 +220,8 @@ mod tests {
         assert!(!frame.commands.is_empty());
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:arrow/down")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:progress/large_right/full")));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && *rect == [115.0, 75.0, 54.0, 6.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Area { label, rect, .. } if label == "Energy" && *rect == [115.0, 75.0, 54.0, 6.0])));
     }
 
     #[test]

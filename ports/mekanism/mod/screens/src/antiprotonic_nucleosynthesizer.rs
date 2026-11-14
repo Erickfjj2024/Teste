@@ -112,16 +112,16 @@ impl MekScreen for AntiprotonicNucleosynthesizer {
             hovered_tip = Some(vec![(format!("Energy: {} / {}", energy, capacity), WHITE)]);
         }
 
-        // Dynamic horizontal rate bar at (5, 88), 183 by 8
-        c.blit_sprite("mekanism:bar/base", 5.0, 88.0, 183.0, 8.0);
+        // Dynamic horizontal rate bar at (5, 88), 185 by 10 (base frame), fill 183 by 8
+        c.blit_sprite("mekanism:bar/base", 5.0, 88.0, 185.0, 10.0);
         let progress = data(0).max(0) as f32;
         let ticks_needed = data(23).max(1) as f32;
         let prog_frac = (progress / ticks_needed).clamp(0.0, 1.0);
-        let fill_w = (181.0 * prog_frac).floor();
+        let fill_w = (183.0 * prog_frac).floor();
         if fill_w > 0.0 {
-            c.blit_sprite_tinted("mekanism:bar/dynamic_rate", [6.0, 89.0, fill_w, 6.0], 0xFF64_1EAA);
+            c.blit_sprite_tinted("mekanism:bar/dynamic_rate", [6.0, 89.0, fill_w, 8.0], 0xFF64_1EAA);
         }
-        let rate_rect = [5.0, 88.0, 183.0, 8.0];
+        let rate_rect = [5.0, 88.0, 185.0, 10.0];
         let pct = (prog_frac * 100.0).round() as u32;
         c.area(-1, rate_rect, AreaKind::Other, true, "Progress");
         if hovered_tip.is_none() && inside(mouse, rate_rect) {
@@ -134,9 +134,9 @@ impl MekScreen for AntiprotonicNucleosynthesizer {
         let rate_text = host::translate("gui.mekanism.process_rate", &[rate_str.into()]);
         c.text(&rate_text, 97.0, 75.0, GREEN, TEXT_CENTER, 1.0);
 
-        // Title centered at y = 4 across width 196
+        // Title centered at y = 6 across width 196
         let title_text = host::translate("block.mekanism.antiprotonic_nucleosynthesizer", &[]);
-        title(c, &title_text, 0.0, 196.0, 4.0);
+        title(c, &title_text, 0.0, 196.0, 6.0);
 
         // Inventory label at (8, 100)
         inventory_label(c, 8.0, 100.0);
@@ -200,6 +200,9 @@ mod tests {
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:inner_screen")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:gauge/overlay/small_med")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:bar/dynamic_rate")));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && *rect == [5.0, 88.0, 185.0, 10.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Area { label, rect, .. } if label == "Progress" && *rect == [5.0, 88.0, 185.0, 10.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Text { y, .. } if *y == 6.0)));
     }
 
     #[test]

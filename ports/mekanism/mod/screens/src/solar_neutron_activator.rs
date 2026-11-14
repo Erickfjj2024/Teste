@@ -100,8 +100,8 @@ impl MekScreen for SolarNeutronActivator {
         let title_text = host::translate("block.mekanism.solar_neutron_activator", &[]);
         title(c, &title_text, 0.0, 176.0, 4.0);
 
-        // Inventory label at (8, 76)
-        inventory_label(c, 8.0, 76.0);
+        // Inventory label at (8, 74)
+        inventory_label(c, 8.0, 74.0);
 
         // Tooltip if hovered
         if let Some(lines) = hovered_tip {
@@ -121,6 +121,7 @@ impl MekScreen for SolarNeutronActivator {
 mod tests {
     use super::*;
     use horizon_mod_sdk::screen::format as screen_format;
+    use horizon_mod_sdk::screen_format::Command;
     use horizon_mod_sdk::screen::{Modifiers, MouseButton, Pointer};
 
     #[test]
@@ -155,6 +156,7 @@ mod tests {
         let bytes = c.finish();
         let frame = screen_format::decode(&bytes).expect("decode frame");
         assert!(!frame.commands.is_empty());
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Text { y, .. } if *y == 74.0)));
     }
 
     #[test]

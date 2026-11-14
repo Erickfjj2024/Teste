@@ -79,7 +79,7 @@ impl MekScreen for ChemicalInfuser {
         let power_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         horizontal_power_bar(c, 115.0, 75.0, power_frac);
 
-        let power_rect = [114.0, 74.0, 54.0, 6.0];
+        let power_rect = [115.0, 75.0, 54.0, 6.0];
         c.area(-1, power_rect, AreaKind::Other, true, "Energy");
         let mut hovered_tip: Option<Vec<(String, u32)>> = None;
         if inside(mouse, power_rect) {
@@ -152,9 +152,9 @@ impl MekScreen for ChemicalInfuser {
             c.blit_sprite("mekanism:progress/small_left/full", 101.0, 39.0, 28.0, 8.0);
         }
 
-        // Title left-aligned at (4, 5)
+        // Title left-aligned at (1, 5)
         let title_text = host::translate("block.mekanism.chemical_infuser", &[]);
-        c.draw_string(&title_text, 4.0, 5.0, TITLE, false);
+        c.draw_string(&title_text, 1.0, 5.0, TITLE, false);
 
         // Inventory label at (8, 74)
         c.draw_string(&host::translate("container.inventory", &[]), 8.0, 74.0, TITLE, false);
@@ -219,6 +219,9 @@ mod tests {
         assert!(!frame.commands.is_empty());
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:progress/small_right/full")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:progress/small_left/full")));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && *rect == [115.0, 75.0, 54.0, 6.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Area { label, rect, .. } if label == "Energy" && *rect == [115.0, 75.0, 54.0, 6.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Text { x, y, .. } if *x == 1.0 && *y == 5.0)));
     }
 
     #[test]

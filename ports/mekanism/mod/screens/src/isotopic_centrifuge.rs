@@ -77,7 +77,7 @@ impl MekScreen for IsotopicCentrifuge {
         let power_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         horizontal_power_bar(c, 115.0, 75.0, power_frac);
 
-        let power_rect = [114.0, 74.0, 54.0, 6.0];
+        let power_rect = [115.0, 75.0, 54.0, 6.0];
         c.area(-1, power_rect, AreaKind::Other, true, "Energy");
         let mut hovered_tip: Option<Vec<(String, u32)>> = None;
         if inside(mouse, power_rect) {
@@ -111,8 +111,8 @@ impl MekScreen for IsotopicCentrifuge {
         let title_text = host::translate("block.mekanism.isotopic_centrifuge", &[]);
         title(c, &title_text, 0.0, 176.0, 4.0);
 
-        // Inventory label at (8, 76)
-        inventory_label(c, 8.0, 76.0);
+        // Inventory label at (8, 74)
+        inventory_label(c, 8.0, 74.0);
 
         // Tooltip if hovered
         if let Some(lines) = hovered_tip {
@@ -132,6 +132,7 @@ impl MekScreen for IsotopicCentrifuge {
 mod tests {
     use super::*;
     use horizon_mod_sdk::screen::format as screen_format;
+    use horizon_mod_sdk::screen_format::Command;
     use horizon_mod_sdk::screen::{Modifiers, MouseButton, Pointer};
 
     #[test]
@@ -166,6 +167,9 @@ mod tests {
         let bytes = c.finish();
         let frame = screen_format::decode(&bytes).expect("decode frame");
         assert!(!frame.commands.is_empty());
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && *rect == [115.0, 75.0, 54.0, 6.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Area { label, rect, .. } if label == "Energy" && *rect == [115.0, 75.0, 54.0, 6.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Text { y, .. } if *y == 74.0)));
     }
 
     #[test]

@@ -92,8 +92,8 @@ impl MekScreen for AdvancedElectricMachine {
             hovered_tip = Some(vec![(format!("Energy: {} / {}", energy, capacity), WHITE)]);
         }
 
-        // Chemical bar at (68, 36), frame 8 by 14 at 67, 35, fill 6 by 12 at 68, 36
-        c.blit_sprite("mekanism:bar/base", 67.0, 35.0, 8.0, 14.0);
+        // Chemical bar at (68, 36), frame 8 by 14 at 68, 36, fill 6 by 12 at 69, 37
+        c.blit_sprite("mekanism:bar/base", 68.0, 36.0, 8.0, 14.0);
         let chem_amount = data(16).max(0) as u64;
         let chem_kind = data(17).max(0) as usize;
         let chem_frac = (chem_amount as f32 / 210.0).clamp(0.0, 1.0);
@@ -101,11 +101,11 @@ impl MekScreen for AdvancedElectricMachine {
             if chem_amount > 0 {
                 let filled_h = (12.0 * chem_frac).floor();
                 if filled_h > 0.0 {
-                    c.fill(68.0, 36.0 + 12.0 - filled_h, 6.0, filled_h, m.tint);
+                    c.fill(69.0, 37.0 + 12.0 - filled_h, 6.0, filled_h, m.tint);
                 }
             }
         }
-        let chem_rect = [67.0, 35.0, 8.0, 14.0];
+        let chem_rect = [68.0, 36.0, 8.0, 14.0];
         c.area(-1, chem_rect, AreaKind::Other, true, "Chemical");
         if inside(mouse, chem_rect) && hovered_tip.is_none() {
             if let Some(m) = chemical_meta(chem_kind) {
@@ -157,7 +157,7 @@ impl MekScreen for AdvancedElectricMachine {
 mod tests {
     use super::*;
     use horizon_mod_sdk::screen::{Modifiers, MouseButton, Pointer};
-    use horizon_mod_sdk::screen_format;
+    use horizon_mod_sdk::screen_format::{self, Command};
 
     #[test]
     fn test_advanced_electric_machine_render_and_commands() {
@@ -193,6 +193,8 @@ mod tests {
         let bytes = c.finish();
         let frame = screen_format::decode(&bytes).expect("decode frame");
         assert!(!frame.commands.is_empty());
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && *rect == [68.0, 36.0, 8.0, 14.0])));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Area { label, rect, .. } if label == "Chemical" && *rect == [68.0, 36.0, 8.0, 14.0])));
     }
 
     #[test]
