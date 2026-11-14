@@ -1,5 +1,5 @@
 //! The menu types with a code screen: `mekanism:<menu>` to the module that draws it. One arm a screen (keep them sorted).
-use crate::{Opened, advanced_electric_machine, bin, bio_generator, chemical_oxidizer, chemical_tank, combiner, dictionary, digital_miner, dimensional_stabilizer, dynamic_tank, electric_machine, electric_pump, energy_cube, factory, fission_reactor, fluid_tank, fluidic_plenisher, formulaic_assemblicator, fuelwood_heater, fusion_reactor_controller, gas_generator, heat_generator, induction_matrix, industrial_turbine, laser_amplifier, laser_tractor_beam, logistical_sorter, metallurgic_infuser, modification_station, module_tweaker, nutritional_liquifier, oredictionificator, personal_storage, portable_qio_dashboard, portable_teleporter, prc, precision_sawmill, qio_dashboard, qio_drive_array, qio_frequency_select, resistive_heater, robit, security_desk, seismic_reader, seismic_vibrator, solar_generator, sps, teleporter, thermal_evaporation_controller, thermoelectric_boiler, wind_generator};
+use crate::{Opened, advanced_electric_machine, bin, bio_generator, chemical_crystallizer, chemical_dissolution_chamber, chemical_infuser, chemical_oxidizer, chemical_tank, chemical_washer, combiner, dictionary, digital_miner, dimensional_stabilizer, dynamic_tank, electric_machine, electric_pump, electrolytic_separator, energy_cube, factory, fission_reactor, fluid_tank, fluidic_plenisher, formulaic_assemblicator, fuelwood_heater, fusion_reactor_controller, gas_generator, heat_generator, induction_matrix, industrial_turbine, isotopic_centrifuge, laser_amplifier, laser_tractor_beam, logistical_sorter, metallurgic_infuser, modification_station, module_tweaker, nutritional_liquifier, oredictionificator, painting_machine, personal_storage, pigment_extractor, portable_qio_dashboard, portable_teleporter, prc, precision_sawmill, qio_dashboard, qio_drive_array, qio_frequency_select, resistive_heater, robit, rotary_condensentrator, security_desk, seismic_reader, seismic_vibrator, solar_generator, solar_neutron_activator, sps, teleporter, thermal_evaporation_controller, thermoelectric_boiler, wind_generator};
 use horizon_mod_sdk::screen::OpenInfo;
 
 pub fn open(info: &OpenInfo) -> Opened {
@@ -33,8 +33,12 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:basic_smelting_factory" => factory::open(info),
         "mekanism:bio_generator" => bio_generator::open(info),
         "mekanism:boiler_valve" => thermoelectric_boiler::open(info),
+        "mekanism:chemical_crystallizer" => chemical_crystallizer::open(info),
+        "mekanism:chemical_dissolution_chamber" => chemical_dissolution_chamber::open(info),
+        "mekanism:chemical_infuser" => chemical_infuser::open(info),
         "mekanism:chemical_injection_chamber" => advanced_electric_machine::open(info),
         "mekanism:chemical_oxidizer" => chemical_oxidizer::open(info),
+        "mekanism:chemical_washer" => chemical_washer::open(info),
         "mekanism:combiner" => combiner::open(info),
         "mekanism:creative_bin" => bin::open(info),
         "mekanism:creative_chemical_tank" => chemical_tank::open(info),
@@ -46,6 +50,7 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:dimensional_stabilizer" => dimensional_stabilizer::open(info),
         "mekanism:dynamic_valve" => dynamic_tank::open(info),
         "mekanism:electric_pump" => electric_pump::open(info),
+        "mekanism:electrolytic_separator" => electrolytic_separator::open(info),
         "mekanism:elite_bin" => bin::open(info),
         "mekanism:elite_chemical_tank" => chemical_tank::open(info),
         "mekanism:elite_combining_factory" => factory::open(info),
@@ -69,6 +74,7 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:gas_burning_generator" => gas_generator::open(info),
         "mekanism:heat_generator" => heat_generator::open(info),
         "mekanism:induction_port" => induction_matrix::open(info),
+        "mekanism:isotopic_centrifuge" => isotopic_centrifuge::open(info),
         "mekanism:laser_amplifier" => laser_amplifier::open(info),
         "mekanism:laser_tractor_beam" => laser_tractor_beam::open(info),
         "mekanism:logistical_sorter" => logistical_sorter::open(info),
@@ -78,8 +84,10 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:nutritional_liquifier" => nutritional_liquifier::open(info),
         "mekanism:oredictionificator" => oredictionificator::open(info),
         "mekanism:osmium_compressor" => advanced_electric_machine::open(info),
+        "mekanism:painting_machine" => painting_machine::open(info),
         "mekanism:personal_barrel" => personal_storage::open(info),
         "mekanism:personal_chest" => personal_storage::open(info),
+        "mekanism:pigment_extractor" => pigment_extractor::open(info),
         "mekanism:portable_qio_dashboard" => portable_qio_dashboard::open(info),
         "mekanism:portable_teleporter" => portable_teleporter::open(info),
         "mekanism:precision_sawmill" => precision_sawmill::open(info),
@@ -90,10 +98,12 @@ pub fn open(info: &OpenInfo) -> Opened {
         "mekanism:qio_frequency_select" => qio_frequency_select::open(info),
         "mekanism:resistive_heater" => resistive_heater::open(info),
         "mekanism:robit" => robit::open(info),
+        "mekanism:rotary_condensentrator" => rotary_condensentrator::open(info),
         "mekanism:security_desk" => security_desk::open(info),
         "mekanism:seismic_reader" => seismic_reader::open(info),
         "mekanism:seismic_vibrator" => seismic_vibrator::open(info),
         "mekanism:solar_generator" => solar_generator::open(info),
+        "mekanism:solar_neutron_activator" => solar_neutron_activator::open(info),
         "mekanism:sps_port" => sps::open(info),
         "mekanism:teleporter" => teleporter::open(info),
         "mekanism:thermal_evaporation_controller" => thermal_evaporation_controller::open(info),

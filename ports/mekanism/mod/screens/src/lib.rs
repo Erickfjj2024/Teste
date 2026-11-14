@@ -65,6 +65,16 @@ mod thermoelectric_boiler;
 mod fission_reactor;
 mod thermal_evaporation_controller;
 mod induction_matrix;
+mod rotary_condensentrator;
+mod chemical_dissolution_chamber;
+mod chemical_crystallizer;
+mod chemical_washer;
+mod chemical_infuser;
+mod electrolytic_separator;
+mod isotopic_centrifuge;
+mod painting_machine;
+mod pigment_extractor;
+mod solar_neutron_activator;
 mod registry;
 mod teleporter;
 
