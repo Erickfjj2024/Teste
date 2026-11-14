@@ -1,0 +1,384 @@
+From 51a1c92948c0cb4110b93d33dba754fb3cd64741 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 10:57:16 +0000
+Subject: [PATCH] API 45: damage-entities-in-box part 2 (players, shields,
+ immunity) and player-state.blocking
+
+Players whose feet are in the box are hit too, through the game's own hurt: a shield raised toward the blow's new source blocks it and wears, armour counts, the hurt player burns. Creative and spectator players are immune. Each result says the player and whether it was blocked (counted at the call from the shield raised and the facing, shield_faces). player-control's player-state gains blocking.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game/server_mods.rs | 24 +++++-
+ .../examples/block-use/src/lib.rs             |  3 +-
+ .../examples/block-use/tests/block_use.toml   | 15 +++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 21 ++++--
+ crates/horizon-mods/src/api_level.rs          |  4 +-
+ crates/horizon-mods/src/runtime.rs            | 74 ++++++++++++++++---
+ crates/horizon-mods/src/testing.rs            | 11 ++-
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  8 +-
+ 9 files changed, 131 insertions(+), 33 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 1edf6bbf6..2f0ab04ee 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -734,7 +734,7 @@ mod run {
+                 return horizon_mods::PlayerState {
+                     velocity_x: 0.0, velocity_y: 0.0, velocity_z: 0.0, jumping: false, sprinting: false, flying: false, may_fly: false,
+                     fall_flying: false, swimming: false, in_water: false, eyes_in_water: false, in_lava: false, air: 300, max_air: 300,
+-                    fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects,
++                    fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects, blocking: false,
+                 };
+             };
+             horizon_mods::PlayerState {
+@@ -758,6 +758,7 @@ mod run {
+                 food: p.health.food.food.clamp(0, 20) as u32,
+                 saturation: p.health.food.saturation,
+                 effects,
++                blocking: self.player_blocking(None, "minecraft:generic", false).is_some(),
+             }
+         }
+ 
+@@ -3023,7 +3024,26 @@ mod run {
+                             self.native_set_display(&dimension, id, &d)
+                         }
+                         C::TakeDropped { id, count } => self.native_take_dropped(&dimension, id, count),
+-                        C::Damage { ids, damage_type: _, amount } => self.native_damage_mobs(&dimension, &ids, amount),
++                        C::Damage { ids, players, damage_type, amount, source } => {
++                            let mobs = self.native_damage_mobs(&dimension, &ids, amount);
++                            let mut any = false;
++                            for id in players {
++                                let Some((target, dim)) = self.mod_player(&id) else { continue };
++                                if dim != dimension {
++                                    continue;
++                                }
++                                // The game's own hurt: a shield raised toward `source` blocks it and wears, armour counts.
++                                let hurt = self.for_player(target, |g| {
++                                    let hurt = g.hurt_player_from(amount, source, &damage_type, Some(None));
++                                    if hurt && let Some(p) = g.player.as_mut() {
++                                        p.fire_ticks = p.fire_ticks.max(amount as i32);
++                                    }
++                                    hurt
++                                });
++                                any |= hurt.unwrap_or(false);
++                            }
++                            mobs || any
++                        }
+                         C::SpawnModEntity { ticket, kind, pos, data } => {
+                             let entity = self.native_spawn_mod_entity(&dimension, &kind, pos, data);
+                             self.mods.spawn_answers.push((mod_id, ticket, entity));
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index f8434d11a..54f4d6aee 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -89,8 +89,9 @@ impl ServerMod for Gate {
+                 (f64::from(pos.x) + 6.0, f64::from(pos.y) + 1.0, f64::from(pos.z) + 1.0),
+                 "mekanism:laser",
+                 4.0,
++                Some((f64::from(pos.x) + 0.5, f64::from(pos.y) + 0.5, f64::from(pos.z) + 0.5)),
+             );
+-            let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &[format!("hit {}", hit.len())]);
++            let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &[format!("hit {} blocked {}", hit.len(), hit.iter().filter(|h| h.blocked).count())]);
+         }
+         // API 41: the machine at y 79 puts a line on the player's HUD: a redstone icon, a text and a bar half full.
+         if pos.y == 79 {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 3bfaad36c..8d8390b1c 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -141,5 +141,16 @@ mobs = [
+ ]
+ use-block = { pos = [1, 81, 1] }
+ ticks = 1
+-expect.entity-commands = ["damage [7] mekanism:laser 4"]
+-expect.menu-text = ["minecraft:overworld 1 81 1 hit 1"]
++expect.entity-commands = ["damage [7] [] mekanism:laser 4"]
++expect.menu-text = ["minecraft:overworld 1 81 1 hit 1 blocked 0"]
++
++[[step]]
++# API 45: Alex in the laser's box with a shield raised facing it (yaw 90 faces west, toward the machine) blocks it: the blow still goes
++# to the game, whose own blocking wears the shield. A creative player would be immune and left out.
++player = { x = 3.5, y = 81.0, z = 1.5, yaw = 90.0 }
++state = { blocking = true }
++mobs = []
++use-block = { pos = [1, 81, 1] }
++ticks = 1
++expect.entity-commands = ["damage [] [\"Alex\"] mekanism:laser 4"]
++expect.menu-text = ["minecraft:overworld 1 81 1 hit 1 blocked 1"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 6eab856cb..3b65388ea 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -923,6 +923,8 @@ interface player-control {
+         max-air: s32,
+         /// Ticks of burning left (0 when not on fire).
+         fire-ticks: s32,
++        /// A shield (an item with `blocks_attacks`) is raised and ready to block, past its delay. API 45.
++        blocking: bool,
+         /// Riding a vehicle.
+         passenger: bool,
+         sleeping: bool,
+@@ -1182,18 +1184,23 @@ interface entities {
+     remove-mob: func(dimension: string, id: u32) -> result<_, string>;
+     /// What a blow of `damage-entities-in-box` did to one entity.
+     record damage-result {
++        /// The mob's entity id; 0 for a player.
+         id: u32,
++        /// The player's UUID, for a player.
++        player: option<string>,
+         /// The damage it takes (the blow's, as asked; 0 when blocked or immune).
+         applied: f32,
+-        /// Whether a shield or an immunity kept it off (always false until shields and immunity are in).
++        /// Whether a shield (raised, facing `source`) or an immunity (a creative or spectator player) kept it off.
+         blocked: bool,
+     }
+-    /// Hurts every living mob whose feet are in the box (`min` to `max`, at most 64 blocks across) of `dimension` (the level in place)
+-    /// for `amount` of damage and sets it on fire for `amount` ticks unless it does not burn (Mekanism's lasers,
+-    /// `TileEntityBasicLaser`: `mekanism:laser` damage that also ignites). `damage-type` names the damage; a mob takes it as
+-    /// generic damage (armour counts, no knockback source), whatever the type. Returns each mob hit and the damage it takes, counted at
+-    /// the call; the blows land after the call returns. Players, mod entities, shields and immunities are not in yet. API 44.
+-    damage-entities-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>, damage-type: string, amount: f32) -> list<damage-result>;
++    /// Hurts every living mob and player whose feet are in the box (`min` to `max`, at most 64 blocks across) of `dimension` (the level in
++    /// place) for `amount` of damage and sets it on fire for `amount` ticks unless it does not burn (Mekanism's lasers,
++    /// `TileEntityBasicLaser`: `mekanism:laser` damage that also ignites). `source` is where the blow comes from (the laser): a player
++    /// with a shield raised toward it (within 90 degrees of where they face) blocks it and the shield wears, as against an attack. A
++    /// creative or spectator player is immune (blocked, nothing applied). `damage-type` names the damage: a player takes that type, a mob
++    /// takes it as generic damage. Returns each one hit with the damage it takes, counted at the call; the blows land after it returns.
++    /// Mod entities are not in. API 44 (players, `source` and shields: API 45).
++    damage-entities-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>, damage-type: string, amount: f32, source: option<tuple<f64, f64, f64>>) -> list<damage-result>;
+     /// The items lying in the box of `dimension` (the level in place; none for another) as of the start of the call: up to 256, the
+     /// nearest to the box's centre first, whatever their pickup delay. The box is `min` to `max`, each at most 64 blocks across. API 37.
+     items-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>;
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 98b776042..e1962ae30 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,7 +7,7 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 44;
++pub const LEVEL: u32 = 45;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+@@ -83,7 +83,7 @@ pub const FUNCTIONS: [(&str, u32); 115] = [
+     ("entities.spawn-mod-entity", 36),
+     ("entities.items-in-box", 37),
+     ("entities.take-dropped-item", 37),
+-    ("entities.damage-entities-in-box", 44),
++    ("entities.damage-entities-in-box", 45),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index abddf2518..e123b9978 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -247,8 +247,11 @@ pub enum EntityCommand {
+     /// `entities.damage-entities-in-box`: the mobs hit, the damage type and amount (also the fire ticks).
+     Damage {
+         ids: Vec<u32>,
++        /// The players hit (their UUIDs) that neither block nor are immune.
++        players: Vec<String>,
+         damage_type: String,
+         amount: f32,
++        source: Option<[f64; 3]>,
+     },
+     /// `entities.take-dropped-item` (FORK-10 f).
+     TakeDropped {
+@@ -3054,6 +3057,39 @@ impl State {
+         t
+     }
+ }
++/// Whether a raised shield of a player facing `yaw` (degrees, F3's) at `at` (x, z) is turned toward `source`: within 90 degrees of
++/// where they face, as a shield's default `blocks_attacks` (`horizontal_blocking_angle` 90). With no source it blocks, as vanilla does
++/// for a blow from nowhere.
++pub fn shield_faces(yaw: f32, at: [f64; 2], source: Option<[f64; 3]>) -> bool {
++    let Some(src) = source else { return true };
++    let r = f64::from(-yaw).to_radians();
++    let view = [r.sin(), r.cos()];
++    let (dx, dz) = (src[0] - at[0], src[2] - at[1]);
++    let len = dx.hypot(dz);
++    if len < 1.0e-4 {
++        return true;
++    }
++    let cos = (dx / len) * view[0] + (dz / len) * view[1];
++    cos.clamp(-1.0, 1.0).acos() <= std::f64::consts::FRAC_PI_2 + 1.0e-9
++}
++
++#[cfg(test)]
++mod shield_tests {
++    use super::shield_faces;
++
++    #[test]
++    fn a_shield_faces_a_source_in_front_and_not_one_behind() {
++        // Yaw 0 faces south (+z): a laser to the south is in front, one to the north behind, one to the east at 90 degrees counts.
++        assert!(shield_faces(0.0, [0.0, 0.0], Some([0.0, 64.0, 5.0])));
++        assert!(!shield_faces(0.0, [0.0, 0.0], Some([0.0, 64.0, -5.0])));
++        assert!(shield_faces(0.0, [0.0, 0.0], Some([5.0, 64.0, 0.0])));
++        // Yaw 90 faces west (-x).
++        assert!(shield_faces(90.0, [0.0, 0.0], Some([-5.0, 64.0, 0.5])));
++        assert!(!shield_faces(90.0, [0.0, 0.0], Some([5.0, 64.0, 0.0])));
++        assert!(shield_faces(0.0, [0.0, 0.0], None));
++    }
++}
++
+ /// An entity kind: a namespaced id of plain characters.
+ fn kind_ok(kind: &str) -> bool {
+     (1..=128).contains(&kind.len())
+@@ -3215,6 +3251,7 @@ impl entities::Host for State {
+         max: (f64, f64, f64),
+         damage_type: String,
+         amount: f32,
++        source: Option<(f64, f64, f64)>,
+     ) -> Vec<entities::DamageResult> {
+         let (min, max) = ([min.0, min.1, min.2], [max.0, max.1, max.2]);
+         if min.iter().chain(&max).any(|v| !v.is_finite())
+@@ -3222,23 +3259,36 @@ impl entities::Host for State {
+             || !amount.is_finite()
+             || amount <= 0.0
+             || damage_type.len() > 128
+-            || self.snapshot.mobs_dimension != dimension
++            || source.is_some_and(|s| !(s.0.is_finite() && s.1.is_finite() && s.2.is_finite()))
+         {
+             return Vec::new();
+         }
+-        let ids: Vec<u32> = self
+-            .snapshot
+-            .mobs
+-            .iter()
+-            .filter(|m| m.health > 0.0 && (0..3).all(|i| m.pos[i] >= min[i] && m.pos[i] <= max[i]))
+-            .map(|m| m.id)
+-            .take(256)
+-            .collect();
+-        if ids.is_empty() {
++        let inside = |p: [f64; 3]| (0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]);
++        let ids: Vec<u32> = if self.snapshot.mobs_dimension == dimension {
++            self.snapshot.mobs.iter().filter(|m| m.health > 0.0 && inside(m.pos)).map(|m| m.id).take(256).collect()
++        } else {
++            Vec::new()
++        };
++        let source = source.map(|s| [s.0, s.1, s.2]);
++        let mut out: Vec<entities::DamageResult> =
++            ids.iter().map(|id| entities::DamageResult { id: *id, player: None, applied: amount, blocked: false }).collect();
++        let mut hit_players = Vec::new();
++        for p in self.snapshot.players.iter().filter(|p| p.dimension == dimension && p.health > 0.0 && inside([p.x, p.y, p.z])) {
++            let immune = matches!(p.game_mode, GameMode::Creative | GameMode::Spectator);
++            let raised = self.snapshot.states.iter().any(|(id, s)| *id == p.id && s.blocking);
++            let yaw = self.snapshot.looks.iter().find(|(id, _)| *id == p.id).map_or(0.0, |(_, (yaw, _))| *yaw);
++            let blocked = immune || (raised && shield_faces(yaw, [p.x, p.z], source));
++            out.push(entities::DamageResult { id: 0, player: Some(p.id.clone()), applied: if blocked { 0.0 } else { amount }, blocked });
++            if !immune {
++                // A shield's wear comes from the game's own blocking, so the blow goes through it.
++                hit_players.push(p.id.clone());
++            }
++        }
++        if out.is_empty() {
+             return Vec::new();
+         }
+-        let out = ids.iter().map(|id| entities::DamageResult { id: *id, applied: amount, blocked: false }).collect();
+-        if self.entity_request(dimension, EntityCommand::Damage { ids, damage_type, amount: amount.min(1_000_000.0) }, &[]).is_err() {
++        let command = EntityCommand::Damage { ids, players: hit_players, damage_type, amount: amount.min(1_000_000.0), source };
++        if self.entity_request(dimension, command, &[]).is_err() {
+             return Vec::new();
+         }
+         out
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 361f6f54d..19a43b129 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1073,6 +1073,8 @@ pub struct StateSet {
+     in_lava: Option<bool>,
+     air: Option<i32>,
+     fire_ticks: Option<i32>,
++    /// A shield raised and ready.
++    blocking: Option<bool>,
+     food: Option<u32>,
+     saturation: Option<f32>,
+     /// `"minecraft:poison 100 0"`: id, ticks, amplifier.
+@@ -1810,7 +1812,7 @@ impl Step {
+                     game.states.push((id, crate::PlayerState {
+                         velocity_x: 0.0, velocity_y: 0.0, velocity_z: 0.0, jumping: false, sprinting: false, flying: false, may_fly: false,
+                         fall_flying: false, swimming: false, in_water: false, eyes_in_water: false, in_lava: false, air: 300, max_air: 300,
+-                        fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects: Vec::new(),
++                        fire_ticks: 0, passenger: false, sleeping: false, food: 20, saturation: 5.0, effects: Vec::new(), blocking: false,
+                     }));
+                     game.states.len() - 1
+                 }
+@@ -1826,6 +1828,7 @@ impl Step {
+             s.in_lava = set.in_lava.unwrap_or(s.in_lava);
+             s.air = set.air.unwrap_or(s.air);
+             s.fire_ticks = set.fire_ticks.unwrap_or(s.fire_ticks);
++            s.blocking = set.blocking.unwrap_or(s.blocking);
+             s.food = set.food.unwrap_or(s.food);
+             s.saturation = set.saturation.unwrap_or(s.saturation);
+             if let Some(list) = &set.effects {
+@@ -2437,7 +2440,11 @@ impl Step {
+                         C::RemoveMob { id } => format!("remove-mob {id}"),
+                         C::SetFire { id, ticks } => format!("fire {id} {ticks}"),
+                         C::TakeDropped { id, count } => format!("take-dropped-item {id} {count}"),
+-                        C::Damage { ids, damage_type, amount } => format!("damage {ids:?} {damage_type} {amount}"),
++                        C::Damage { ids, players, damage_type, amount, .. } => {
++                            let names: Vec<String> =
++                                players.iter().map(|id| game.players.iter().find(|p| p.id == *id).map_or(id.clone(), |p| p.name.clone())).collect();
++                            format!("damage {ids:?} {names:?} {damage_type} {amount}")
++                        }
+                         C::SpawnModEntity { ticket, kind, pos, data } => {
+                             format!("spawn-mod-entity {kind} {} {} {} {} byte(s) #{ticket}", pos[0], pos[1], pos[2], data.len())
+                         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 161f27242..8ec8fbfbf 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 is `players.open-entity-menu`, 44 is `entities.damage-entities-in-box`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 is `players.open-entity-menu`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 44);
++    assert_eq!(LEVEL, 45);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 6fa3e242d..87f67eb44 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -809,6 +809,7 @@ What a player's body is doing as of the last server tick: what equipment that re
+ | `air` | `s32` | Air left, in ticks (300 is full), and the most they hold. |
+ | `max-air` | `s32` |  |
+ | `fire-ticks` | `s32` | Ticks of burning left (0 when not on fire). |
++| `blocking` | `bool` | A shield (an item with `blocks_attacks`) is raised and ready to block, past its delay. API 45. |
+ | `passenger` | `bool` | Riding a vehicle. |
+ | `sleeping` | `bool` |  |
+ | `food` | `u32` | Food level 0 to 20 and saturation. |
+@@ -998,9 +999,10 @@ What a blow of `damage-entities-in-box` did to one entity.
+ 
+ | Field | Type | |
+ | --- | --- | --- |
+-| `id` | `u32` |  |
++| `id` | `u32` | The mob's entity id; 0 for a player. |
++| `player` | `option<string>` | The player's UUID, for a player. |
+ | `applied` | `f32` | The damage it takes (the blow's, as asked; 0 when blocked or immune). |
+-| `blocked` | `bool` | Whether a shield or an immunity kept it off (always false until shields and immunity are in). |
++| `blocked` | `bool` | Whether a shield (raised, facing `source`) or an immunity (a creative or spectator player) kept it off. |
+ 
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+@@ -1015,7 +1017,7 @@ What a blow of `damage-entities-in-box` did to one entity.
+ | `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
+ | `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+ | `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
+-| `damage-entities-in-box` | `func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>, damage-type: string, amount: f32) -> list<damage-result>` | Hurts every living mob whose feet are in the box (`min` to `max`, at most 64 blocks across) of `dimension` (the level in place) for `amount` of damage and sets it on fire for `amount` ticks unless it does not burn (Mekanism's lasers, `TileEntityBasicLaser`: `mekanism:laser` damage that also ignites). `damage-type` names the damage; a mob takes it as generic damage (armour counts, no knockback source), whatever the type. Returns each mob hit and the damage it takes, counted at the call; the blows land after the call returns. Players, mod entities, shields and immunities are not in yet. API 44. |
++| `damage-entities-in-box` | `func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>, damage-type: string, amount: f32, source: option<tuple<f64, f64, f64>>) -> list<damage-result>` | Hurts every living mob and player whose feet are in the box (`min` to `max`, at most 64 blocks across) of `dimension` (the level in place) for `amount` of damage and sets it on fire for `amount` ticks unless it does not burn (Mekanism's lasers, `TileEntityBasicLaser`: `mekanism:laser` damage that also ignites). `source` is where the blow comes from (the laser): a player with a shield raised toward it (within 90 degrees of where they face) blocks it and the shield wears, as against an attack. A creative or spectator player is immune (blocked, nothing applied). `damage-type` names the damage: a player takes that type, a mob takes it as generic damage. Returns each one hit with the damage it takes, counted at the call; the blows land after it returns. Mod entities are not in. API 44 (players, `source` and shields: API 45). |
+ | `items-in-box` | `func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>` | The items lying in the box of `dimension` (the level in place; none for another) as of the start of the call: up to 256, the nearest to the box's centre first, whatever their pickup delay. The box is `min` to `max`, each at most 64 blocks across. API 37. |
+ | `take-dropped-item` | `func(dimension: string, id: u32, count: u32) -> result<_, string>` | Takes `count` items from the item entity `id` (all of them when it has fewer; the entity goes when it has none left), made after this call returns: the stack is the mod's to put somewhere (an entity's slots). An error for a count of 0. API 37. |
+ | `spawn-mod-entity` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>` | Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with. An error for a kind that is not a plain id or too many bytes. API 36. |
+-- 
+2.43.0
+

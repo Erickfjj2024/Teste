@@ -1,0 +1,507 @@
+From 2e2306c32542826fae07dd9380929e43f34acdec Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 03:03:54 +0000
+Subject: [PATCH] FORK-29: mod-decided block use (server-events.block-used:
+ default, pass, consume)
+
+A server mod that asked for blocks decides, for a right click on one of its blocks, whether the block's own use runs (default),
+is skipped so the held item is used against it (pass), or the click is taken (consume). Test mod: examples/block-use.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 ++++
+ Cargo.toml                                    |  1 +
+ crates/horizon-client/src/game.rs             | 21 +++++++++-
+ crates/horizon-client/src/game/server_mods.rs | 32 +++++++++++++++
+ .../examples/block-use/Cargo.toml             | 16 ++++++++
+ .../examples/block-use/horizon-mod.toml       |  8 ++++
+ .../examples/block-use/src/lib.rs             | 21 ++++++++++
+ .../examples/block-use/tests/block_use.toml   | 19 +++++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 15 ++++++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 18 +++++++-
+ crates/horizon-mods/src/runtime.rs            | 41 ++++++++++++++++++-
+ crates/horizon-mods/src/testing.rs            | 34 +++++++++++++++
+ docs/api/mods-reference.md                    | 13 +++++-
+ 13 files changed, 240 insertions(+), 6 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/block-use/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 00f6c3c60..4d48f8394 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -358,6 +358,13 @@ dependencies = [
+  "generic-array",
+ ]
+ 
++[[package]]
++name = "block-use"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "block2"
+ version = "0.5.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index f2f8f96fc..7669b7ba6 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -40,6 +40,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/coords-hud",
+     "crates/horizon-mod-sdk/examples/elevator",
+     "crates/horizon-mod-sdk/examples/block-counter",
++    "crates/horizon-mod-sdk/examples/block-use",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 6cefc98fe..b3a32f101 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -5757,8 +5757,27 @@ impl Game<'_> {
+             self.swing_arm();
+             return Ok(true);
+         }
++        // FORK-29: a mod that owns the block decides what its own use does: `pass` skips it (the held item is used
++        // against the block, a block in hand is placed), `consume` takes the click.
++        #[cfg(feature = "mods")]
++        let mut block_passed = false;
++        #[cfg(feature = "mods")]
++        if let Some(hit) = block_hit {
++            let held = self.held().cloned();
++            match self.mod_block_use(hit.pos, held.as_ref(), sneaking) {
++                horizon_mods::BlockUse::Default => {}
++                horizon_mods::BlockUse::Pass => block_passed = true,
++                horizon_mods::BlockUse::Consume => {
++                    self.swing_arm();
++                    return Ok(true);
++                }
++            }
++        }
++        #[cfg(not(feature = "mods"))]
++        let block_passed = false;
+         // MultiPlayerGameMode.useItemOn: blocks react first.
+-        if !(sneaking && hands_full)
++        if !block_passed
++            && !(sneaking && hands_full)
+             && let Some(hit) = block_hit
+         {
+             let held = self.held().cloned();
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index e48240d32..ad058a7cc 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -1637,6 +1637,38 @@ mod run {
+             claimed
+         }
+ 
++        /// FORK-29: the acting player right-clicked the block at `pos` holding `stack`; what a server mod that owns
++        /// the block decides for the block's own use. Only blocks of a mod are asked.
++        pub(in crate::game) fn mod_block_use(
++            &mut self,
++            pos: [i32; 3],
++            stack: Option<&horizon_client::items::ItemStack>,
++            sneaking: bool,
++        ) -> horizon_mods::BlockUse {
++            if !self.mods.server || !self.mods.mods.hears_blocks() {
++                return horizon_mods::BlockUse::Default;
++            }
++            let name = self
++                .res
++                .facts()
++                .get(self.world.block(pos[0], pos[1], pos[2]))
++                .name
++                .clone();
++            // The blocks the mods declared are the ones their ids name: vanilla blocks are not theirs to decide.
++            if name.starts_with("minecraft:") {
++                return horizon_mods::BlockUse::Default;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return horizon_mods::BlockUse::Default;
++            };
++            let stack = stack.map(Self::mod_stack);
++            self.lend_world();
++            let answer = self.mods.mods.block_used(&player, pos, sneaking, stack.as_ref());
++            self.return_world();
++            self.apply_mod_block_writes();
++            answer
++        }
++
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+         pub(in crate::game) fn mod_item_hit(
+             &mut self,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/Cargo.toml b/crates/horizon-mod-sdk/examples/block-use/Cargo.toml
+new file mode 100644
+index 000000000..c28b7dd1a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-use/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "block-use"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a mod decides what a right click on its block does (FORK-29)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml b/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
+new file mode 100644
+index 000000000..230e853cd
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "blockuse"
++name = "Block Use"
++version = "0.1.0"
++description = "Test mod for mod-decided block use (FORK-29): a click on a block decides between the block's own use, passing to the held item, or taking the click."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+new file mode 100644
+index 000000000..6c49eb93e
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -0,0 +1,21 @@
++//! Block Use (FORK-29): a mod that decides what a right click on one of its blocks does. Holding a block, the click
++//! passes (the block does not use itself; the held block is placed); sneaking with a hand held, or holding anything
++//! else, leaves it to the game; an empty hand and no sneaking is the block's own use, taken by the mod.
++use horizon_mod_sdk::server::{BlockPos, BlockUse, ItemStack, Player, Registration, ServerMod};
++
++struct Gate;
++
++impl ServerMod for Gate {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Gate, Registration::new().on_blocks()))
++    }
++    fn block_used(&mut self, _player: &Player, _pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
++        match stack {
++            Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
++            None if !sneaking => BlockUse::Consume,
++            _ => BlockUse::Default,
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Gate);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+new file mode 100644
+index 000000000..7b15f9b24
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -0,0 +1,19 @@
++[[step]]
++join = "Alex"
++# A block in hand: the mod's block does not use itself, the held block goes against it.
++use-block = { pos = [1, 64, 1], stack = "minecraft:stone*4" }
++expect.block-use = "pass"
++
++[[step]]
++# An empty hand, not sneaking: the mod takes the click.
++use-block = { pos = [1, 64, 1] }
++expect.block-use = "consume"
++
++[[step]]
++# Sneaking with an empty hand, or holding something else: the game does what it does.
++use-block = { pos = [1, 64, 1], sneaking = true }
++expect.block-use = "default"
++
++[[step]]
++use-block = { pos = [1, 64, 1], stack = "minecraft:stick*1" }
++expect.block-use = "default"
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index eb72d2b8a..c6970f5d1 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -208,7 +208,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -255,6 +255,12 @@ pub mod server {
+         fn item_used(&mut self, _player: &Player, _stack: ItemStack, _pos: Option<BlockPos>) -> bool {
+             false
+         }
++        /// A right click on one of the mod's blocks, asked before the block's own use, when [`Registration::blocks`]
++        /// is set: [`BlockUse::Default`] leaves it to the game, [`BlockUse::Pass`] skips the block's use and goes
++        /// on to the held item (a block in hand is placed against it), [`BlockUse::Consume`] takes the click.
++        fn block_used(&mut self, _player: &Player, _pos: BlockPos, _sneaking: bool, _stack: Option<ItemStack>) -> BlockUse {
++            BlockUse::Default
++        }
+         /// A player hit an entity holding `stack`. When [`Registration::on_items`] is set.
+         fn item_hit(&mut self, _player: &Player, _stack: ItemStack, _entity: u32, _kind: &str) {}
+         /// The answer to `entities::spawn_mob` or `summon`: the new entity's
+@@ -549,7 +555,7 @@ macro_rules! export_server_mod {
+         const _: () = {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+-                Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, Player, Registration,
++                Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, Player, Registration,
+                 ItemStack, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+@@ -606,6 +612,11 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.item_used(&player, stack, pos));
+                     out
+                 }
++                fn block_used(player: Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
++                    let mut out = BlockUse::Default;
++                    with(|m| out = m.block_used(&player, pos, sneaking, stack));
++                    out
++                }
+                 fn item_hit(player: Player, stack: ItemStack, entity: u32, kind: String) {
+                     with(|m| m.item_hit(&player, stack, entity, &kind))
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index a1d60e2cc..57ae2d5a4 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1014,6 +1014,13 @@ interface server-events {
+     use players.{player};
+     use item-types.{item-stack};
+ 
++    /// How a mod answers a click on one of its blocks (`block-used`).
++    enum block-use {
++        default,
++        pass,
++        consume,
++    }
++
+     record block-pos {
+         x: s32,
+         y: s32,
+@@ -1075,7 +1082,7 @@ interface server-events {
+         joins: bool,
+         /// Call `chat` for each chat message a player sends.
+         chat: bool,
+-        /// Call `block-broken` and `block-placed`.
++        /// Call `block-broken`, `block-placed` and `block-used`.
+         blocks: bool,
+         /// Blocks of the mod that carry a block entity: its saved bytes
+         /// (`block-entity.data`), kept with the chunk and ticked by
+@@ -1325,6 +1332,15 @@ interface server-events {
+     /// moment of the click, so what it asks for through imports is made at the
+     /// end of the tick; `world.get-block` reads the blocks as they are now.
+     item-used: func(player: player, stack: item-stack, pos: option<block-pos>) -> bool;
++    /// What a right click on a block of this mod does (`registration.blocks`),
++    /// asked at the moment of the click for the mod's own blocks, with the
++    /// block's own use still to come: `default` leaves it to the game (the
++    /// block opens its menu or acts as it would), `pass` skips the block's own
++    /// use and goes on to the held item (so a block in hand is placed against
++    /// it), `consume` takes the click (the hand swings and nothing else
++    /// runs). `sneaking` and `stack` (the held item, none for an empty hand)
++    /// are as at the click. API 24.
++    block-used: func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use;
+     /// A player hit the entity `entity` of `kind` holding `stack`
+     /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
+     item-hit: func(player: player, stack: item-stack, entity: u32, kind: string);
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index ff9fa3c4f..9d96f306f 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -769,6 +769,45 @@ impl Mods {
+         }
+         claimed
+     }
++    /// `player` right-clicked the block at `pos` (a block of a mod that asked for `blocks`), `stack` in hand: what the mod
++    /// decides for the block's own use (FORK-29). The first mod that does not answer `default` decides.
++    pub fn block_used(
++        &mut self,
++        player: &ServerPlayer,
++        pos: [i32; 3],
++        sneaking: bool,
++        stack: Option<&ModItemStack>,
++    ) -> BlockUse {
++        let at = BlockPos { x: pos[0], y: pos[1], z: pos[2] };
++        for i in 0..self.entries.len() {
++            if !self.entries[i]
++                .run
++                .as_ref()
++                .and_then(|r| r.hooks.server())
++                .is_some_and(|r| r.blocks)
++            {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_block_used(&mut run.store, player, at, sneaking, stack),
++                Hooks::Client(..) => Ok(BlockUse::Default),
++            });
++            match answer {
++                Some(BlockUse::Default) | None => {}
++                Some(other) => return other,
++            }
++        }
++        BlockUse::Default
++    }
++    /// Whether a running server mod asked for `blocks` (and so hears `block-used`).
++    pub fn hears_blocks(&self) -> bool {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .any(|r| r.blocks)
++    }
+     /// `player` hit entity `entity` of `kind` holding `stack`.
+     pub fn item_hit(&mut self, player: &ServerPlayer, stack: &ModItemStack, entity: u32, kind: &str) {
+         self.each_server(
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 4bab141d5..21d15c758 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -60,6 +60,8 @@ pub struct TestGame {
+     pub inventories: Vec<(String, Vec<Option<crate::ModItemStack>>)>,
+     /// What the last `item_used` answered.
+     pub claimed: Option<bool>,
++    /// What the last `block_used` answered (`default`, `pass` or `consume`).
++    pub block_use: Option<&'static str>,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -209,6 +211,7 @@ impl TestGame {
+             mobs: Vec::new(),
+             inventories: Vec::new(),
+             claimed: None,
++            block_use: None,
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -937,6 +940,15 @@ fn with_property(state: &str, property: &str, value: &str) -> String {
+ }
+ 
+ /// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct UseBlockSet {
++    pos: [i32; 3],
++    stack: Option<String>,
++    #[serde(default)]
++    sneaking: bool,
++}
++
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct UseSet {
+@@ -1103,6 +1115,8 @@ pub struct Step {
+     use_item: Option<UseSet>,
+     /// Server mods: the actor hits an entity holding a stack after the ticks.
+     hit_with: Option<UseSet>,
++    /// Server mods (FORK-29): the actor right-clicks the block at `pos` after the ticks, holding `stack` (none: an empty hand).
++    use_block: Option<UseBlockSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+     mobs: Option<Vec<MobSet>>,
+     /// Server mods: a spawn ticket is answered after the ticks.
+@@ -1151,6 +1165,8 @@ pub struct Expect {
+     chunk_forced: Option<Vec<String>>,
+     /// Server mods: whether the mod took the step's `use-item`.
+     claimed: Option<bool>,
++    /// Server mods (FORK-29): what the mod answered to the step's `use-block`: `default`, `pass` or `consume`.
++    block_use: Option<String>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+     /// (`-` for an empty slot), `"hurt Name type amount"` and `"effect Name id ticks level"`.
+     player_items: Option<Vec<String>>,
+@@ -1389,6 +1405,7 @@ impl Step {
+         let acts = self.player.is_some()
+             || self.inventory.is_some()
+             || self.use_item.is_some()
++            || self.use_block.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+             || self.net.is_some()
+@@ -1464,6 +1481,18 @@ impl Step {
+             let stack = parse_stack(&u.stack).ok_or("use-item: a stack is item*count")?;
+             game.claimed = Some(game.mods.item_used(who, &stack, u.pos));
+         }
++        if let (Some(u), Some(who)) = (&self.use_block, &who) {
++            game.snapshot();
++            let stack = match &u.stack {
++                Some(text) => Some(parse_stack(text).ok_or("use-block: a stack is item*count")?),
++                None => None,
++            };
++            game.block_use = Some(match game.mods.block_used(who, u.pos, u.sneaking, stack.as_ref()) {
++                crate::BlockUse::Default => "default",
++                crate::BlockUse::Pass => "pass",
++                crate::BlockUse::Consume => "consume",
++            });
++        }
+         if let (Some(u), Some(who)) = (&self.hit_with, &who) {
+             game.snapshot();
+             let stack = parse_stack(&u.stack).ok_or("hit-with: a stack is item*count")?;
+@@ -1726,6 +1755,11 @@ impl Step {
+                 .collect();
+             same("chunk-forced", want, &got)?;
+         }
++        if let Some(want) = &e.block_use {
++            if game.block_use != Some(want.as_str()) {
++                return Err(format!("block-use: expected {want}, got {:?}", game.block_use));
++            }
++        }
+         if let Some(want) = e.claimed {
+             if game.claimed != Some(want) {
+                 return Err(format!("claimed: expected {want}, got {:?}", game.claimed));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 02827b71c..5d7dedfeb 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -943,6 +943,16 @@ What the server calls in a server mod (manifest `api = "0.3"`, experimental). On
+ 
+ `type item-stack = item-stack`
+ 
++### enum `block-use`
++
++How a mod answers a click on one of its blocks (`block-used`).
++
++| Case | |
++| --- | --- |
++| `default` |  |
++| `pass` |  |
++| `consume` |  |
++
+ ### record `block-pos`
+ 
+ | Field | Type | |
+@@ -1113,7 +1123,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `tick` | `bool` | Call `tick` every server tick (20 per second). |
+ | `joins` | `bool` | Call `player-joined` and `player-left`. |
+ | `chat` | `bool` | Call `chat` for each chat message a player sends. |
+-| `blocks` | `bool` | Call `block-broken` and `block-placed`. |
++| `blocks` | `bool` | Call `block-broken`, `block-placed` and `block-used`. |
+ | `block-entities` | `list<block-entity-kind>` | Blocks of the mod that carry a block entity: its saved bytes (`block-entity.data`), kept with the chunk and ticked by `block-entities-tick`. The block's content `template` must itself have a block entity (a furnace, a chest...), so that breaking the block removes it. |
+ | `net` | `bool` | Call `net-message` for what players' client halves send. |
+ | `items` | `bool` | Call `item-used` and `item-hit`. |
+@@ -1171,4 +1181,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
+ | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |
+ | `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick; `world.get-block` reads the blocks as they are now. |
++| `block-used` | `func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use` | What a right click on a block of this mod does (`registration.blocks`), asked at the moment of the click for the mod's own blocks, with the block's own use still to come: `default` leaves it to the game (the block opens its menu or acts as it would), `pass` skips the block's own use and goes on to the held item (so a block in hand is placed against it), `consume` takes the click (the hand swings and nothing else runs). `sneaking` and `stack` (the held item, none for an empty hand) are as at the click. API 24. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

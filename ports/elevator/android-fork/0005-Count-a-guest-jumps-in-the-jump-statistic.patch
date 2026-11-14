@@ -1,0 +1,48 @@
+From 3ebf80aa7e65a275b13d3abcddbb2f695f90fe45 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 20:37:00 +0000
+Subject: [PATCH] Count a guest's jumps in the jump statistic
+
+On the server thread the owner of a single-player world is a guest, and the server's
+copy of their movement made them jump without awarding Stats.JUMP, so server mods
+that watch the jump statistic (the elevator) never saw it.
+---
+ crates/horizon-client/src/game/lan_actions.rs | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
+index 141c18c..2b92825 100644
+--- a/crates/horizon-client/src/game/lan_actions.rs
++++ b/crates/horizon-client/src/game/lan_actions.rs
+@@ -3740,6 +3740,7 @@ impl Game<'_> {
+                     });
+                 from = to;
+             }
++            let mut jump_count = 0;
+             for (moved, on_ground) in moves {
+                 let movement = Vec3::new(moved[0], moved[1], moved[2]);
+                 if w.player.ground.on_ground && !on_ground && moved[1] > 0.0 {
+@@ -3747,6 +3748,7 @@ impl Game<'_> {
+                     // the server's copy jumps with the player, so the velocity
+                     // it sends them keeps the jump.
+                     let _ = w.jump_from_ground();
++                    jump_count += 1;
+                 }
+                 let landed = (|| -> horizon_client::Result<()> {
+                     w.set_on_ground_with_movement(on_ground, false, movement)?;
+@@ -3814,6 +3816,12 @@ impl Game<'_> {
+             for d in travelled {
+                 game.movement_stats(Vec3::new(d[0], d[1], d[2]));
+             }
++            // ServerPlayer.jumpFromGround awards the jump statistic. The window's own player
++            // is counted in the frame loop; a guest's (the owner, with the server on its
++            // own thread) here, so server mods can see the jumps.
++            if jump_count > 0 {
++                game.stats.custom("jump", jump_count);
++            }
+             // LivingEntity.baseTick: a new block position runs the worn
+             // enchantments' location_changed effects (frost walker).
+             game.location_changed_effects([start.x, start.y, start.z], from_ground);
+-- 
+2.43.0
+

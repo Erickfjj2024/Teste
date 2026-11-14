@@ -1,0 +1,19 @@
+[package]
+name = "mekanism"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Mekanism for Horizon: a Rust port of Mekanism (MIT)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+horizon-mod-sdk = { path = "@SDK@" }
+
+[features]
+# chamadas a funcoes do host que o SDK ainda nao tem (FORK-n): ligadas quando o fork as trouxer / calls to host functions the SDK lacks (FORK-n)
+fork = []
+
+[workspace]

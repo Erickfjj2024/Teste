@@ -1,0 +1,93 @@
+From 4210ee5e5de990ab676b33f1267cf03fe38fc619 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 21:08:35 +0000
+Subject: [PATCH] Test harness: a carpet is a thin slab; elevator test with
+ carpets both ways
+
+---
+ .../elevator/tests/carpet_both_ways.toml      | 44 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 17 ++++---
+ 2 files changed, 56 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
+
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml b/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
+new file mode 100644
+index 0000000..46ccde6
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
+@@ -0,0 +1,44 @@
++# A carpet on an elevator does not block it, going up or down (isValidPos only refuses a full cube).
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0, on-ground = true }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 69, z = 0, state = "minecraft:white_carpet" },
++]
++command = "elevator watch off"
++ticks = 1
++
++# Up, onto the elevator that has a carpet on it: they land inside the carpet's sixteenth.
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++
++# Standing on that carpet (feet at 69.0625), sneak: down to the white elevator.
++[[step]]
++player = { y = 69.0625 }
++motion = { sneaking = true }
++ticks = 5
++expect.teleports = ["Alex: minecraft:overworld 0.5 64 0.5 ~ ~"]
++
++# A carpet on the white elevator too: up works from it, and down from the red one.
++[[step]]
++blocks = [{ x = 0, y = 64, z = 0, state = "minecraft:white_carpet" }]
++player = { y = 64.0625 }
++motion = { sneaking = false }
++ticks = 5
++expect.teleports = []
++
++[[step]]
++motion = { jumps = 2 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++
++[[step]]
++player = { y = 69.0625 }
++motion = { sneaking = true }
++ticks = 5
++expect.teleports = ["Alex: minecraft:overworld 0.5 64 0.5 ~ ~"]
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 6de69b8..7c89434 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -63,11 +63,18 @@ impl crate::WorldView for ScriptWorld {
+         let name = state.split('[').next().unwrap_or_default();
+         // No shapes table here: air, plants and carpets have none, every other
+         // block is a full cube.
+-        let none = name == "minecraft:air"
+-            || name.ends_with("_carpet")
+-            || name.ends_with("grass")
+-            || name.ends_with("_torch");
+-        Some(if none {
++        let none = name == "minecraft:air" || name.ends_with("grass") || name.ends_with("_torch");
++        // A carpet is a thin slab, a sixteenth of a block high (collision, not a full cube).
++        Some(if name.ends_with("_carpet") {
++            vec![CollisionBox {
++                min_x: 0.0,
++                min_y: 0.0,
++                min_z: 0.0,
++                max_x: 1.0,
++                max_y: 0.0625,
++                max_z: 1.0,
++            }]
++        } else if none {
+             Vec::new()
+         } else {
+             vec![CollisionBox {
+-- 
+2.43.0
+

@@ -1,0 +1,9 @@
+## 20. Máquinas Químicas, Tanques e Melhorias (1.21.1-10.7.19.85)
+
+| # | Diferença | Estado |
+|---|---|---|
+| 20.1 | Tanque Químico Criativo: no Java usa `Long.MAX_VALUE` de capacidade e `Long.MAX_VALUE / 2` de taxa (`ChemicalTankTier.java:16`). No port (`tank.rs:41-42`), usa 1 trilhão (1 000 000 000 000) mB de capacidade e 1 bilhão (1 000 000 000) mB/t de taxa de saída para evitar overflow na serialização e renderização da GUI do Horizon; a pureza de abastecimento infinito é garantida por `creative()`, que restaura a capacidade total a cada tick se houver conteúdo | LIMITE |
+| 20.2 | Tanque de Fluido Criativo: no Java usa `Integer.MAX_VALUE` (2 147 483 647 mB) de capacidade e metade disso na taxa (`FluidTankTier.java:13`). No port (`tank.rs:45-46`), padronizou-se 1 trilhão mB e taxa de 1 bilhão mB/t com restauração contínua a cada tick | LIMITE |
+| 20.3 | Nutritional Liquifier: no Java lê dinamicamente a propriedade `nutrition` do componente de alimento do item (`TileEntityNutritionalLiquifier.java`). No port (`process.rs:37-38`), usa tabela estática `FOODS` com alimentos vanilla (maçã, pão, carne, etc.), pois o Horizon/WASM não expõe API para consultar propriedades alimentares dos itens em tempo de execução | LIMITE |
+| 20.4 | Separador Eletrolítico (despejo de excesso): no Java escala com a melhoria de velocidade (`BASE_DUMP_RATE * 2^speed`). No port (`plus.rs:218-219`), a taxa de despejo em excesso está fixada em 8 mB/t sem escalar com velocidade | LIMITE |
+| 20.5 | Consumo probabilístico de gás (Poisson inverso): no Java (`StatUtils.java:14-25`) usa aproximação de Stirling sobre `RandomSource`. No port (`process.rs:118-124`), foi implementado o algoritmo clássico de Knuth com LCG determinístico de 64 bits (`wrapping_mul(6364136223846793005)`), provendo a mesma média e distribuição sem acoplamento à engine do jogo | CORRIGIDO |

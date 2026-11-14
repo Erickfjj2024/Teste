@@ -1,0 +1,52 @@
+From b6cac9973d7a98e8adbb844adf065bcba91345f4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 21:16:38 +0000
+Subject: [PATCH] player-control: read the sneak key, not the pose
+
+A player standing with their feet inside a thin block (a carpet) is put in the crawling pose
+whatever they press, so the pose never read as crouching and a sneak was not seen.
+---
+ crates/horizon-client/src/game/server_mods.rs | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 7f2a27e..4969025 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -407,7 +407,10 @@ mod run {
+         fn own_motion(&self) -> Motion {
+             let p = self.player.as_ref();
+             Motion {
+-                sneaking: p.is_some_and(|p| p.pose == horizon_client::pose::Pose::Crouching),
++                // The sneak key, not the pose: a player standing with their feet inside a carpet
++                // or another thin block is put in the crawling pose whatever they press, and
++                // never reads as crouching.
++                sneaking: p.is_some_and(|p| p.shift_key_down),
+                 on_ground: p.is_some_and(|p| p.ground.on_ground),
+                 jumps: self.stats.get("custom", "minecraft:jump").max(0) as u32,
+                 xp_level: self.experience.level,
+@@ -445,15 +448,17 @@ mod run {
+             {
+                 out.push((uuid_string(self.player_uuid()), self.own_motion()));
+             }
+-            let guests: Vec<(u32, u128)> = self
++            let guests: Vec<(u32, u128, bool)> = self
+                 .lan
+                 .iter()
+                 .flat_map(|h| &h.hub.guests)
+                 .filter(|g| g.placed)
+-                .map(|g| (g.conn, g.uuid))
++                .map(|g| (g.conn, g.uuid, g.sneaking))
+                 .collect();
+-            for (conn, uuid) in guests {
+-                if let Some(m) = self.for_player(Target::Guest(conn), |g| g.own_motion()) {
++            for (conn, uuid, sneaking) in guests {
++                if let Some(mut m) = self.for_player(Target::Guest(conn), |g| g.own_motion()) {
++                    // What the guest's client says about the sneak key.
++                    m.sneaking = sneaking;
+                     out.push((uuid_string(uuid), m));
+                 }
+             }
+-- 
+2.43.0
+

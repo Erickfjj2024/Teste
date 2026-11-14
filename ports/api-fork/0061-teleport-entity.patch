@@ -1,0 +1,901 @@
+From b0f944e697b6d4492784b08c7570cf81b97f3f41 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 20:05:16 +0000
+Subject: [PATCH] entities-in-box and teleport-entity (round 4 item 3, API 49)
+
+entities-in-box lists mobs, items, boats, minecarts, mod entities and players
+with their feet in a box, nearest the middle first. teleport-entity moves a
+non-player entity: in the same level at once with its mob riders; to another
+level through the portal arrival queue with an exact landing point (no portal
+search, no portal cooldown), saved until the chunks there load. Example
+teleport-probe.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ .../horizon-client/src/game/nether_portal.rs  | 159 ++++++++++++++++--
+ crates/horizon-client/src/game/server_mods.rs |  80 +++++++++
+ .../examples/teleport-probe/Cargo.toml        |  16 ++
+ .../examples/teleport-probe/horizon-mod.toml  |   9 +
+ .../examples/teleport-probe/src/lib.rs        |  34 ++++
+ .../teleport-probe/tests/teleport.toml        |  17 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  24 +++
+ crates/horizon-mods/src/api_level.rs          |   6 +-
+ crates/horizon-mods/src/runtime.rs            |  71 ++++++++
+ crates/horizon-mods/src/testing.rs            |  60 ++++++-
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  16 ++
+ 14 files changed, 486 insertions(+), 18 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/teleport-probe/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/teleport-probe/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/teleport-probe/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/teleport-probe/tests/teleport.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 66d5a80b9..220a8f80b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4517,6 +4517,13 @@ version = "0.13.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
+ 
++[[package]]
++name = "teleport-probe"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "termcolor"
+ version = "1.4.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index 913404107..88253826b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -49,6 +49,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/body-probe",
+     "crates/horizon-mod-sdk/examples/world-data-probe",
+     "crates/horizon-mod-sdk/examples/item-menu-demo",
++    "crates/horizon-mod-sdk/examples/teleport-probe",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game/nether_portal.rs b/crates/horizon-client/src/game/nether_portal.rs
+index 25cab7327..1deb4abb3 100644
+--- a/crates/horizon-client/src/game/nether_portal.rs
++++ b/crates/horizon-client/src/game/nether_portal.rs
+@@ -43,6 +43,8 @@ pub(super) struct Plan {
+     /// Through an End portal: `approximate` is the End's spawn point, or the
+     /// Overworld's shared spawn.
+     pub(super) end: bool,
++    /// A mod's `teleport-entity` (round 4, item 3): it lands at this point, facing this yaw when given, with no portal to find.
++    pub(super) exact: Option<(Vec3, Option<f32>)>,
+ }
+ 
+ impl Plan {
+@@ -64,6 +66,20 @@ impl Plan {
+             width,
+             height,
+             end: true,
++            exact: None,
++        }
++    }
++    /// A mod's `teleport-entity` to `at` of `dim`: no portal, the point itself.
++    pub(super) fn exact(dim: Dim, at: Vec3, yaw: Option<f32>, width: f32, height: f32) -> Self {
++        Self {
++            dim,
++            approximate: BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32),
++            entry_x_axis: true,
++            offset: Vec3::ZERO,
++            width,
++            height,
++            end: false,
++            exact: Some((at, yaw)),
+         }
+     }
+ }
+@@ -143,7 +159,7 @@ fn end_portal_rotation(into_end: bool, [yaw, pitch]: [f32; 2], spawn: [f32; 2])
+ /// A waiting entity as `horizon_portal_arrivals.dat` keeps it.
+ fn arrival_tag(a: &Arrival) -> Tag {
+     let p = &a.plan;
+-    Tag::compound([
++    let mut tag = Tag::compound([
+         ("dimension", Tag::String(p.dim.id().into())),
+         ("x", Tag::Int(p.approximate.x)),
+         ("y", Tag::Int(p.approximate.y)),
+@@ -156,7 +172,14 @@ fn arrival_tag(a: &Arrival) -> Tag {
+         ("height", Tag::Float(p.height.to_bits())),
+         ("end", Tag::Int(i32::from(p.end))),
+         ("entity", a.tag.clone()),
+-    ])
++    ]);
++    if let (Tag::Compound(c), Some((at, yaw))) = (&mut tag, p.exact) {
++        c.insert("exact".into(), doubles([at.x, at.y, at.z]));
++        if let Some(yaw) = yaw {
++            c.insert("exact_yaw".into(), Tag::Float(yaw.to_bits()));
++        }
++    }
++    tag
+ }
+ /// The waiting entity `arrival_tag` wrote.
+ fn arrival_from_tag(a: &Tag) -> Option<Arrival> {
+@@ -190,6 +213,16 @@ fn arrival_from_tag(a: &Tag) -> Option<Arrival> {
+             width: float("width").unwrap_or(0.25),
+             height: float("height").unwrap_or(0.25),
+             end: int("end").unwrap_or(0) != 0,
++            exact: match a.get("exact") {
++                Some(Tag::List(v)) if v.len() == 3 => {
++                    let d = |i: usize| match v[i] {
++                        Tag::Double(b) => f64::from_bits(b),
++                        _ => 0.0,
++                    };
++                    Some((Vec3::new(d(0), d(1), d(2)), float("exact_yaw")))
++                }
++                _ => None,
++            },
+         },
+         tag: tag.clone(),
+     })
+@@ -260,6 +293,7 @@ impl Game<'_> {
+             width,
+             height,
+             end: false,
++            exact: None,
+         }
+     }
+     /// The plan of an item or mob going through the portal block at `entry`:
+@@ -941,11 +975,18 @@ impl Game<'_> {
+     /// `Entity.teleportCrossDimension` away from the loaded dimension: the
+     /// entity is saved and removed, and waits for its dimension to load.
+     fn send_through_portal(&mut self, id: u32, entry: BlockPos) {
++        self.depart(id, &|g: &Self, at, width, height, mob| g.entity_plan(entry, at, width, height, mob));
++    }
++
++    /// Entity `id` (an item, a mob with its riders, a boat, a minecart) leaves the level in place for where `plan_of` sends it (from
++    /// its position, width, height and whether it is a mob), saved until its destination is loaded. False when it is none of those or
++    /// may not go there.
++    pub(super) fn depart(&mut self, id: u32, plan_of: &dyn Fn(&Self, Vec3, f32, f32, bool) -> Plan) -> bool {
+         if let Some(i) = self.dropped.iter().position(|e| e.id == id) {
+             let e = &self.dropped[i];
+-            let plan = self.entity_plan(entry, e.position, 0.25, 0.25, false);
++            let plan = plan_of(self, e.position, 0.25, 0.25, false);
+             if !self.may_enter(plan.dim) {
+-                return;
++                return false;
+             }
+             let uuid = self.uuid_for(id);
+             let tag = horizon_client::entity_nbt::item_entity_to_nbt(
+@@ -957,11 +998,12 @@ impl Game<'_> {
+             self.forget_entity(id);
+             self.portals.arrivals.push(Arrival { plan, tag });
+             self.portals.dirty = true;
++            return true;
+         } else if let Some(i) = self.mobs.iter().position(|m| m.id == id) {
+             let m = &self.mobs[i];
+-            let plan = self.entity_plan(entry, m.position, m.width(), m.height(), true);
++            let plan = plan_of(self, m.position, m.width(), m.height(), true);
+             if !self.may_enter(plan.dim) {
+-                return;
++                return false;
+             }
+             let mut tag = self.mob_tree_nbt(i);
+             // Entity.removeAfterChangingDimensions drops the leash.
+@@ -986,12 +1028,13 @@ impl Game<'_> {
+             }
+             self.portals.arrivals.push(Arrival { plan, tag });
+             self.portals.dirty = true;
++            return true;
+         } else if let Some(i) = self.boats.iter().position(|b| b.id == id) {
+             let b = &self.boats[i];
+             let (width, height) = (super::boats::WIDTH as f32, super::boats::HEIGHT as f32);
+-            let plan = self.entity_plan(entry, b.position, width, height, false);
++            let plan = plan_of(self, b.position, width, height, false);
+             if !self.may_enter(plan.dim) {
+-                return;
++                return false;
+             }
+             self.release_vehicle_container(id);
+             let uuid = self.uuid_for(id);
+@@ -1009,15 +1052,16 @@ impl Game<'_> {
+             self.forget_entity(id);
+             self.portals.arrivals.push(Arrival { plan, tag });
+             self.portals.dirty = true;
++            return true;
+         } else if let Some(i) = self.carts.iter().position(|c| c.id == id) {
+             let c = &self.carts[i];
+             let (width, height) = (
+                 super::minecarts::WIDTH as f32,
+                 super::minecarts::HEIGHT as f32,
+             );
+-            let plan = self.entity_plan(entry, c.position, width, height, false);
++            let plan = plan_of(self, c.position, width, height, false);
+             if !self.may_enter(plan.dim) {
+-                return;
++                return false;
+             }
+             self.release_vehicle_container(id);
+             let uuid = self.uuid_for(id);
+@@ -1026,8 +1070,92 @@ impl Game<'_> {
+             self.forget_entity(id);
+             self.portals.arrivals.push(Arrival { plan, tag });
+             self.portals.dirty = true;
++            return true;
+         }
++        false
+     }
++    /// A mod's `teleport-entity` (round 4, item 3) of entity `id` of the level in place to `at` of `to`, facing `yaw` when given:
++    /// `Entity.teleport`. In the same level it moves at once, its motion stopped, with the mobs riding it; to another level it leaves
++    /// as a portal's traveller does (a mob with its riders, a boat's or a minecart's mob riders each on its own beside it) and lands
++    /// once that level's chunks there are loaded. False for an entity it does not know, or one a player rides.
++    pub(super) fn teleport_entity(&mut self, id: u32, to: Dim, at: Vec3, yaw: Option<f32>) -> bool {
++        if self.guest_rides(id) {
++            return false;
++        }
++        // The mobs that ride it, and theirs.
++        let mut riders: Vec<u32> = Vec::new();
++        let mut k = 0;
++        let mut seeds = vec![id];
++        while k < seeds.len() {
++            let v = seeds[k];
++            let on: Vec<u32> = self.mobs.iter().filter(|m| m.extra.mount == Some(v) && !m.removed).map(|m| m.id).collect();
++            riders.extend(&on);
++            seeds.extend(on);
++            k += 1;
++        }
++        if to != self.dim {
++            if !self.may_enter(to) {
++                return false;
++            }
++            let plan = move |_: &Self, _: Vec3, width: f32, height: f32, _: bool| Plan::exact(to, at, yaw, width, height);
++            let is_mob = self.mobs.iter().any(|m| m.id == id);
++            // A mob takes its riders in its own compound; a vehicle's mob riders go each on its own.
++            if !is_mob {
++                for r in riders.iter().filter(|r| self.mobs.iter().any(|m| m.id == **r && m.extra.mount == Some(id))) .copied().collect::<Vec<_>>() {
++                    if let Some(m) = self.mobs.iter_mut().find(|m| m.id == r) {
++                        m.extra.mount = None;
++                        m.extra.passenger = false;
++                    }
++                    self.depart(r, &plan);
++                }
++            }
++            return self.depart(id, &plan);
++        }
++        let place = |position: &mut Vec3, previous: &mut Vec3, velocity: &mut Vec3| {
++            *position = at;
++            *previous = at;
++            *velocity = Vec3::ZERO;
++        };
++        let moved = if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id && !m.removed) {
++            place(&mut m.position, &mut m.previous, &mut m.velocity);
++            if let Some(y) = yaw {
++                (m.yaw, m.previous_yaw, m.body_yaw, m.head_yaw) = (y, y, y, y);
++            }
++            m.ai.nav.stop();
++            m.fall_distance = 0.0;
++            m.needs_sync = true;
++            true
++        } else if let Some(e) = self.dropped.iter_mut().find(|e| e.id == id) {
++            place(&mut e.position, &mut e.previous, &mut e.velocity);
++            e.needs_sync = true;
++            true
++        } else if let Some(b) = self.boats.iter_mut().find(|b| b.id == id) {
++            b.position = at;
++            b.velocity = Vec3::ZERO;
++            if let Some(y) = yaw {
++                b.yaw = y;
++            }
++            true
++        } else if let Some(c) = self.carts.iter_mut().find(|c| c.id == id) {
++            c.position = at;
++            c.velocity = Vec3::ZERO;
++            if let Some(y) = yaw {
++                c.yaw = y;
++            }
++            true
++        } else {
++            false
++        };
++        if moved {
++            for m in self.mobs.iter_mut().filter(|m| riders.contains(&m.id)) {
++                place(&mut m.position, &mut m.previous, &mut m.velocity);
++                m.fall_distance = 0.0;
++                m.needs_sync = true;
++            }
++        }
++        moved
++    }
++
+     /// The chunks of the arrivals still waiting to land in `dim`, for the
+     /// streaming `extra` areas that light them: vanilla's portal ticket
+     /// (`Entity.teleport` adds `TicketType.PORTAL` at the destination) keeps
+@@ -1061,7 +1189,10 @@ impl Game<'_> {
+             self.portals.dirty = true;
+             let motion = horizon_client::entity_nbt::motion(&tag);
+             let [yaw, pitch] = horizon_client::entity_nbt::rotation(&tag);
+-            let (at, motion, [yaw, pitch]) = if plan.end {
++            let (at, motion, [yaw, pitch]) = if let Some((at, turn)) = plan.exact {
++                // A mod's teleport (`Entity.teleport`): the point itself, its motion stopped.
++                (at, Vec3::ZERO, [turn.unwrap_or(yaw), pitch])
++            } else if plan.end {
+                 // Relative.DELTA: the motion is kept.
+                 let at = self.end_portal_exit(&plan);
+                 // EndPortalBlock.getPortalDestination: PLACE_PORTAL_TICKET.
+@@ -1084,8 +1215,10 @@ impl Game<'_> {
+                     "Rotation".into(),
+                     Tag::List(vec![Tag::Float(yaw.to_bits()), Tag::Float(pitch.to_bits())]),
+                 );
+-                // setPortalCooldown before the teleport, copied by restoreFrom.
+-                c.insert("PortalCooldown".into(), Tag::Int(ENTITY_DELAY));
++                // setPortalCooldown before the teleport, copied by restoreFrom (not for a mod's teleport).
++                if plan.exact.is_none() {
++                    c.insert("PortalCooldown".into(), Tag::Int(ENTITY_DELAY));
++                }
+             }
+             // ServerLevel.addDuringTeleport: a fresh add, not loaded from disk.
+             super::persist::mark_fresh(&mut tag);
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 96d2dfc3c..15d058664 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -125,6 +125,8 @@ mod run {
+         dimension: &'static str,
+         /// The items lying in the level in place, as the mods may look for them (`items-in-box`), at most 4096.
+         dropped: Vec<(u32, horizon_mods::ModItemStack, [f64; 3])>,
++        /// Every entity of the level in place (`entities-in-box`, round 4 item 3), at most 8192.
++        entities: Vec<horizon_mods::SeenEntity>,
+         /// The game's recipes and items, for `crafting-find`, `crafting-matches` and `item-max-stack-size`.
+         res: Arc<crate::game::Resources>,
+     }
+@@ -214,6 +216,12 @@ mod run {
+             let base = &*f.name;
+             !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava") && f.hardness >= 0.0
+         }
++        fn entities(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<horizon_mods::SeenEntity> {
++            if dimension != self.dimension {
++                return Vec::new();
++            }
++            self.entities.iter().filter(|e| (0..3).all(|i| e.pos[i] >= min[i] && e.pos[i] <= max[i])).cloned().collect()
++        }
+         fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, horizon_mods::ModItemStack, [f64; 3])> {
+             if dimension != self.dimension {
+                 return Vec::new();
+@@ -682,6 +690,7 @@ mod run {
+                 .take(4096)
+                 .map(|d| (d.id, Self::mod_stack(&d.stack), [d.position.x, d.position.y, d.position.z]))
+                 .collect();
++            let entities = self.seen_entities();
+             let registry = self.pack.assets.registry;
+             let biomes = self.res.biomes().clone();
+             let shapes = self.collision_table();
+@@ -698,10 +707,80 @@ mod run {
+                 signals,
+                 dimension,
+                 dropped,
++                entities,
+                 res: Arc::clone(&self.res),
+             }));
+         }
+ 
++        /// Every entity of the level in place as `entities-in-box` reports it: mobs, items, boats, minecarts, the mods' own entities
++        /// and the players here (round 4, item 3).
++        fn seen_entities(&self) -> Vec<horizon_mods::SeenEntity> {
++            let seen = |id: u32, kind: String, p: horizon_core::geometry::Vec3, vehicle: Option<u32>| horizon_mods::SeenEntity {
++                id,
++                kind,
++                pos: [p.x, p.y, p.z],
++                vehicle,
++                player: None,
++            };
++            let mut out: Vec<horizon_mods::SeenEntity> = Vec::new();
++            out.extend(self.mobs.iter().filter(|m| !m.removed).map(|m| seen(m.id, m.kind.id.clone(), m.position, m.extra.mount)));
++            out.extend(self.dropped.iter().map(|d| seen(d.id, "minecraft:item".into(), d.position, None)));
++            out.extend(self.boats.iter().map(|b| seen(b.id, b.entity_type(), b.position, None)));
++            out.extend(self.carts.iter().map(|c| seen(c.id, c.kind.id().into(), c.position, None)));
++            let dim = self.dim.id();
++            out.extend(self.mod_entities.list.iter().filter(|e| e.dimension == dim).map(|e| horizon_mods::SeenEntity {
++                id: e.id,
++                kind: e.kind.clone(),
++                pos: e.pos,
++                vehicle: None,
++                player: None,
++            }));
++            if let Some(h) = &self.lan {
++                out.extend(h.hub.guests.iter().filter(|g| g.placed && g.dimension == dim).map(|g| horizon_mods::SeenEntity {
++                    id: g.entity_id as u32,
++                    kind: "minecraft:player".into(),
++                    pos: g.position,
++                    vehicle: g.vehicle,
++                    player: Some(uuid_string(g.uuid)),
++                }));
++            }
++            out.truncate(8192);
++            out
++        }
++
++        /// A mod's `teleport-entity` (round 4, item 3): one of the mods' own entities changes its place (and dimension, its displays
++        /// made again there), any other goes as `teleport_entity` moves it.
++        fn native_teleport_entity(&mut self, dimension: &str, id: u32, to: &str, pos: [f64; 3], yaw: Option<f32>) -> bool {
++            if self.remote.is_some() || dimension != self.dim.id() {
++                return false;
++            }
++            if let Some(i) = self.mod_entities.list.iter().position(|e| e.id == id && e.dimension == dimension) {
++                let shows: Vec<u32> = {
++                    let e = &self.mod_entities.list[i];
++                    [e.carrier, e.hitbox].into_iter().flatten().chain(e.bone_carriers.iter().copied()).collect()
++                };
++                let e = &mut self.mod_entities.list[i];
++                e.pos = pos;
++                if let Some(y) = yaw {
++                    e.yaw = y;
++                }
++                (e.goal, e.path_goal, e.fall_velocity, e.fall_distance) = (None, None, 0.0, 0.0);
++                e.path.clear();
++                if to != dimension {
++                    e.dimension = to.to_owned();
++                    (e.carrier, e.hitbox, e.shown) = (None, None, None);
++                    e.bone_carriers.clear();
++                    for c in shows {
++                        self.others.retain(|o| o.id != c);
++                        self.persist.raw.remove(&c);
++                    }
++                }
++                return true;
++            }
++            let at = horizon_core::geometry::Vec3::new(pos[0], pos[1], pos[2]);
++            self.teleport_entity(id, crate::game::Dim::from_id(to), at, yaw)
++        }
++
+         /// Every state's collision boxes, made once. A shape the game works out
+         /// from the blocks around it is left out (`None`).
+         fn collision_table(&mut self) -> Arc<Vec<Option<Arc<[CollisionBox]>>>> {
+@@ -3580,6 +3659,7 @@ mod run {
+                         }
+                         C::RemoveEntity { id } => self.native_remove_entity(&dimension, id) || self.native_remove_mod_entity(&dimension, id),
+                         C::TeleportMob { id, pos } => self.native_teleport_mob(&dimension, id, pos),
++                        C::TeleportEntity { id, to_dimension, pos, yaw } => self.native_teleport_entity(&dimension, id, &to_dimension, pos, yaw),
+                         C::PushMob { id, velocity } => self.native_push_mob(&dimension, id, velocity),
+                         C::SetMobHealth { id, health } => self.native_set_mob_health(&dimension, id, health),
+                         C::KillMob { id } => self.native_kill_mob(&dimension, id),
+diff --git a/crates/horizon-mod-sdk/examples/teleport-probe/Cargo.toml b/crates/horizon-mod-sdk/examples/teleport-probe/Cargo.toml
+new file mode 100644
+index 000000000..94ee6f67a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/teleport-probe/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "teleport-probe"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: moving entities (teleport-entity, entities-in-box)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/teleport-probe/horizon-mod.toml b/crates/horizon-mod-sdk/examples/teleport-probe/horizon-mod.toml
+new file mode 100644
+index 000000000..1629cb14f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/teleport-probe/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "tpprobe"
++name = "Teleport Probe"
++version = "0.1.0"
++description = "Test mod for entities-in-box and teleport-entity (round 4, item 3): a message finds what stands in a 4-block box and sends it away, a pig to the Nether."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "entities", "net"]
++experimental = ["entities", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/teleport-probe/src/lib.rs b/crates/horizon-mod-sdk/examples/teleport-probe/src/lib.rs
+new file mode 100644
+index 000000000..00a5cdce0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/teleport-probe/src/lib.rs
+@@ -0,0 +1,34 @@
++//! Teleport Probe (round 4, item 3, `entities.entities-in-box` and `teleport-entity`): a message on `tpprobe:go` lists to its sender
++//! what has its feet in the box from (0, 63, 0) to (4, 66, 4), nearest the middle first, and sends each entity that is not a player
++//! away as Mekanism's teleporter does: a pig to the Nether (at an eighth of its place), anything else 100 blocks east, facing east.
++//! A player found is left for `player-control.teleport`.
++use horizon_mod_sdk::server::{Player, Registration, ServerMod, entities, players};
++
++struct Probe;
++
++impl ServerMod for Probe {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Probe, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, _data: &[u8]) {
++        if channel != "tpprobe:go" {
++            return;
++        }
++        let found = entities::entities_in_box(&player.dimension, (0.0, 63.0, 0.0), (4.0, 66.0, 4.0));
++        let names: Vec<String> = found.iter().map(|e| format!("{}#{}", e.kind, e.id)).collect();
++        let _ = players::tell(&player.id, &names.join(" "));
++        for e in found.iter().filter(|e| e.player.is_none()) {
++            let _ = if e.kind == "minecraft:pig" {
++                entities::teleport_entity(&player.dimension, e.id, "minecraft:the_nether", e.x / 8.0, e.y, e.z / 8.0, None)
++            } else {
++                entities::teleport_entity(&player.dimension, e.id, &player.dimension, e.x + 100.0, e.y, e.z, Some(-90.0))
++            };
++        }
++        // A bad position is refused at once.
++        if entities::teleport_entity(&player.dimension, 1, &player.dimension, f64::NAN, 0.0, 0.0, None).is_err() {
++            let _ = players::tell(&player.id, "refused");
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Probe);
+diff --git a/crates/horizon-mod-sdk/examples/teleport-probe/tests/teleport.toml b/crates/horizon-mod-sdk/examples/teleport-probe/tests/teleport.toml
+new file mode 100644
+index 000000000..589498558
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/teleport-probe/tests/teleport.toml
+@@ -0,0 +1,17 @@
++[[step]]
++join = "Alex"
++player = { x = 1.5, y = 64.0, z = 2.5 }
++mobs = [{ id = 5, kind = "minecraft:pig", x = 2.0, y = 64.0, z = 2.0 }, { id = 6, kind = "minecraft:zombie", x = 30.0, y = 64.0, z = 2.0 }]
++dropped = [{ id = 9, stack = "minecraft:stone*1", x = 3.5, y = 64.0, z = 1.0 }]
++
++[[step]]
++# The box holds the pig (nearest the middle), the player and the stone; the zombie is far. The pig goes to the Nether, the stone
++# 100 blocks east facing east (yaw -90), the player stays; a NaN position is refused.
++net = { channel = "tpprobe:go" }
++expect.told = ["Alex: minecraft:pig#5 minecraft:player#10000 minecraft:item#9", "Alex: refused"]
++expect.entity-commands = ["teleport-entity 5 minecraft:the_nether 0.25 64 0.25 None", "teleport-entity 9 minecraft:overworld 103.5 64 1 Some(-90.0)"]
++
++[[step]]
++# They are gone from the box: only the player is left in it.
++net = { channel = "tpprobe:go" }
++expect.told = ["Alex: minecraft:player#10000", "Alex: refused"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index e0a4f3b21..495c85c5f 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1190,6 +1190,30 @@ interface entities {
+     remove-entity: func(dimension: string, id: u32) -> result<_, string>;
+     /// Moves a mob to the position at once, as `/tp` does.
+     teleport-mob: func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>;
++    /// An entity `entities-in-box` found.
++    record entity-in-box {
++        id: u32,
++        /// `minecraft:zombie`, `minecraft:item`, `minecraft:oak_boat`, `minecraft:minecart`, a mod's own kind, `minecraft:player`.
++        kind: string,
++        x: f64,
++        y: f64,
++        z: f64,
++        /// What it rides, if anything.
++        vehicle: option<u32>,
++        /// For a player, their id (move them with `player-control.teleport`).
++        player: option<string>,
++    }
++    /// The entities of `dimension` (the level in place) with their feet in `min` to `max` (up to 64 blocks a side): mobs, items lying
++    /// there, boats, minecarts, the mods' own entities and players, nearest the middle first, at most 256 (what Mekanism's teleporter
++    /// finds in its frame). Empty for another level or a bigger box. API 49.
++    entities-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<entity-in-box>;
++    /// Moves entity `id` of `dimension` (the level in place) to `x, y, z` of `to-dimension`, facing `yaw` (none keeps its own), as
++    /// `Entity.teleport` does: a mob, an item, a boat, a minecart or one of the mods' own entities, not a player (those go with
++    /// `player-control.teleport`). Its motion stops. In the same dimension the mobs that ride it go with it, still riding; to another
++    /// dimension it waits, saved, until the chunks there are loaded (as a portal's traveller does), a mob takes its riders along,
++    /// and a boat's or a minecart's mob riders land beside it. An error for a position that is not a number or an unknown dimension;
++    /// the move itself happens after the call, and an entity that is gone, or that a player rides, stays. API 49.
++    teleport-entity: func(dimension: string, id: u32, to-dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>) -> result<_, string>;
+     /// Adds a velocity to a mob's.
+     push-mob: func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>;
+     /// Sets a living mob's health (above 0, cut to its maximum).
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index fa2f7bd5c..9e4b911d1 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 48;
++pub const LEVEL: u32 = 49;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 120] = [
++pub const FUNCTIONS: [(&str, u32); 122] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -89,6 +89,8 @@ pub const FUNCTIONS: [(&str, u32); 120] = [
+     ("world-data.remove", 47),
+     ("world-data.keys", 47),
+     ("players.open-item-menu", 48),
++    ("entities.entities-in-box", 49),
++    ("entities.teleport-entity", 49),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index cbca73403..0a79f107b 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -225,6 +225,13 @@ pub enum EntityCommand {
+         id: u32,
+         pos: [f64; 3],
+     },
++    /// `entities.teleport-entity` (round 4, item 3).
++    TeleportEntity {
++        id: u32,
++        to_dimension: String,
++        pos: [f64; 3],
++        yaw: Option<f32>,
++    },
+     PushMob {
+         id: u32,
+         velocity: [f64; 3],
+@@ -585,6 +592,16 @@ pub enum Output {
+     },
+ }
+ 
++/// An entity as `entities-in-box` reports it.
++#[derive(Clone, Debug, PartialEq)]
++pub struct SeenEntity {
++    pub id: u32,
++    pub kind: String,
++    pub pos: [f64; 3],
++    pub vehicle: Option<u32>,
++    pub player: Option<String>,
++}
++
+ /// The game's world as capability `world` reads it during a call: the
+ /// game lends one with [`Mods::lend_world`] and takes it back after.
+ pub trait WorldView: std::any::Any + Send {
+@@ -597,6 +614,10 @@ pub trait WorldView: std::any::Any + Send {
+     fn environment(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Environment>;
+     /// The redstone signal at a mod block entity's position, 0 to 15.
+     fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8;
++    /// The entities with their feet in `min` to `max` of `dimension` (round 4, item 3); none where the view does not know.
++    fn entities(&self, _dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<SeenEntity> {
++        Vec::new()
++    }
+     /// The items lying in `min` to `max` of `dimension`, as `(id, stack, position)`; none where the view does not know.
+     fn dropped_items(&self, _dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<(u32, ModItemStack, [f64; 3])> {
+         Vec::new()
+@@ -2499,6 +2520,16 @@ fn clip_widgets(widgets: Vec<UiWidget>) -> Vec<UiWidget> {
+         .collect()
+ }
+ 
++/// The entities found in `min` to `max`, those in it nearest its middle first, at most 256 (`entities-in-box`).
++pub fn nearest_first(found: Vec<SeenEntity>, min: [f64; 3], max: [f64; 3]) -> Vec<SeenEntity> {
++    let centre = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
++    let far = |p: &[f64; 3]| (0..3).map(|i| (p[i] - centre[i]).powi(2)).sum::<f64>();
++    let mut found: Vec<SeenEntity> = found.into_iter().filter(|e| (0..3).all(|i| e.pos[i] >= min[i] && e.pos[i] <= max[i])).collect();
++    found.sort_by(|a, b| far(&a.pos).total_cmp(&far(&b.pos)).then(a.id.cmp(&b.id)));
++    found.truncate(256);
++    found
++}
++
+ /// Whether a mod's update of an item menu is in bounds: 256 slots, 256 data slots and the menu strings' limits.
+ pub fn item_menu_update_ok(u: &ItemMenuUpdate) -> bool {
+     u.items.as_ref().is_none_or(|s| s.len() <= 256)
+@@ -3194,6 +3225,22 @@ pub fn shield_faces(yaw: f32, at: [f64; 2], source: Option<[f64; 3]>) -> bool {
+     cos.clamp(-1.0, 1.0).acos() <= std::f64::consts::FRAC_PI_2 + 1.0e-9
+ }
+ 
++#[cfg(test)]
++mod nearest_tests {
++    use super::*;
++
++    #[test]
++    fn entities_in_a_box_come_nearest_the_middle_first_and_those_outside_are_left() {
++        let e = |id: u32, pos: [f64; 3]| SeenEntity { id, kind: "minecraft:pig".into(), pos, vehicle: None, player: None };
++        let found = vec![e(1, [4.0, 64.0, 4.0]), e(2, [1.0, 64.0, 1.0]), e(3, [9.5, 64.0, 0.0]), e(4, [2.0, 64.0, 2.0]), e(5, [-0.5, 64.0, 2.0])];
++        let got: Vec<u32> = nearest_first(found, [0.0, 63.0, 0.0], [4.0, 66.0, 4.0]).iter().map(|e| e.id).collect();
++        // The middle is (2, 64.5, 2): 4 is nearest, then 2, then 1; 3 and 5 have their feet outside.
++        assert_eq!(got, [4, 2, 1]);
++        let many: Vec<SeenEntity> = (0..300).map(|i| e(i, [1.0, 64.0, 1.0])).collect();
++        assert_eq!(nearest_first(many, [0.0, 63.0, 0.0], [4.0, 66.0, 4.0]).len(), 256);
++    }
++}
++
+ #[cfg(test)]
+ mod shield_tests {
+     use super::shield_faces;
+@@ -3329,6 +3376,30 @@ impl entities::Host for State {
+     fn remove_entity(&mut self, dimension: String, id: u32) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::RemoveEntity { id }, &[])
+     }
++    fn entities_in_box(&mut self, dimension: String, min: (f64, f64, f64), max: (f64, f64, f64)) -> Vec<entities::EntityInBox> {
++        let (min, max) = ([min.0, min.1, min.2], [max.0, max.1, max.2]);
++        if min.iter().chain(&max).any(|v| !v.is_finite()) || (0..3).any(|i| max[i] - min[i] > 64.0) {
++            return Vec::new();
++        }
++        let Ok(view) = self.world.lock() else { return Vec::new() };
++        let Some(view) = view.as_ref() else { return Vec::new() };
++        nearest_first(view.entities(&dimension, min, max), min, max)
++            .into_iter()
++            .map(|e| entities::EntityInBox { id: e.id, kind: e.kind, x: e.pos[0], y: e.pos[1], z: e.pos[2], vehicle: e.vehicle, player: e.player })
++            .collect()
++    }
++    #[allow(clippy::too_many_arguments)]
++    fn teleport_entity(&mut self, dimension: String, id: u32, to_dimension: String, x: f64, y: f64, z: f64, yaw: Option<f32>) -> Result<(), String> {
++        if yaw.is_some_and(|y| !y.is_finite()) {
++            return Err("the yaw must be a number".into());
++        }
++        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
++            && !view.has_dimension(&to_dimension)
++        {
++            return Err(format!("no dimension {to_dimension}"));
++        }
++        self.entity_request(dimension, EntityCommand::TeleportEntity { id, to_dimension, pos: [x, y, z], yaw }, &[x, y, z])
++    }
+     fn teleport_mob(&mut self, dimension: String, id: u32, x: f64, y: f64, z: f64) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::TeleportMob { id, pos: [x, y, z] }, &[x, y, z])
+     }
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index a7d7860ec..ee9cad187 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -118,6 +118,7 @@ struct ScriptWorld(
+     std::collections::BTreeMap<String, u32>,
+     std::collections::BTreeMap<String, f32>,
+     Vec<DroppedSet>,
++    Vec<crate::SeenEntity>,
+ );
+ 
+ /// An item lying in the world of a script (`dropped = [...]` of a step): its entity id, stack and position.
+@@ -166,6 +167,9 @@ impl crate::WorldView for ScriptWorld {
+         let base = name.split('[').next().unwrap_or("");
+         !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava" | "minecraft:bedrock") && self.block_hardness(dimension, x, y, z).is_some_and(|h| h >= 0.0)
+     }
++    fn entities(&self, dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<crate::SeenEntity> {
++        if dimension == "minecraft:overworld" { self.6.clone() } else { Vec::new() }
++    }
+     fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, crate::ModItemStack, [f64; 3])> {
+         if dimension != "minecraft:overworld" {
+             return Vec::new();
+@@ -421,6 +425,43 @@ impl TestGame {
+             self.tick_item_menus();
+         }
+     }
++    /// Every entity of the script's Overworld as `entities-in-box` reports it: the mobs, the items lying there, the mod's own entities
++    /// and the players (whose entity ids here are 10000 and on, in the order they joined).
++    fn seen_entities(&self) -> Vec<crate::SeenEntity> {
++        let seen = |id: u32, kind: &str, pos: [f64; 3], player: Option<String>| crate::SeenEntity { id, kind: kind.into(), pos, vehicle: None, player };
++        let mobs = self.mobs.iter().map(|m| seen(m.id, &m.kind, m.pos, None));
++        let items = self.dropped.iter().map(|d| seen(d.id, "minecraft:item", [d.x, d.y, d.z], None));
++        let own = self.mod_entities.iter().filter(|e| e.dimension == "minecraft:overworld").map(|e| seen(e.id, &e.kind, [e.x, e.y, e.z], None));
++        let players = self
++            .players
++            .iter()
++            .enumerate()
++            .filter(|(_, p)| p.dimension == "minecraft:overworld")
++            .map(|(i, p)| seen(10_000 + i as u32, "minecraft:player", [p.x, p.y, p.z], Some(p.id.clone())));
++        mobs.chain(items).chain(own).chain(players).collect()
++    }
++    /// A mod's `teleport-entity`, as the game makes it: a mob, an item or one of the mod's entities moves (to another dimension too);
++    /// a player is not moved this way.
++    fn teleport_entity(&mut self, dimension: &str, id: u32, to: &str, pos: [f64; 3]) {
++        if dimension != "minecraft:overworld" {
++            return;
++        }
++        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
++            m.pos = pos;
++            if to != dimension {
++                self.mobs.retain(|m| m.id != id);
++            }
++        } else if let Some(d) = self.dropped.iter_mut().find(|d| d.id == id) {
++            (d.x, d.y, d.z) = (pos[0], pos[1], pos[2]);
++            if to != dimension {
++                self.dropped.retain(|d| d.id != id);
++            }
++        } else if let Some(e) = self.mod_entities.iter_mut().find(|e| e.id == id) {
++            (e.x, e.y, e.z) = (pos[0], pos[1], pos[2]);
++            e.dimension = to.to_owned();
++            self.entity_goals.remove(&id);
++        }
++    }
+     /// The item menu of player `id` as the mod sees it.
+     fn item_menu_view(&self, i: usize) -> crate::ItemMenu {
+         let m = &self.item_menus[i];
+@@ -1971,7 +2012,15 @@ impl Step {
+             game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
+         }
+         game.mods
+-            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone(), game.crafts.clone(), game.stack_sizes.clone(), game.hardness.clone(), game.dropped.clone())));
++            .lend_world(Box::new(ScriptWorld(
++                game.world.clone(),
++                game.power.clone(),
++                game.crafts.clone(),
++                game.stack_sizes.clone(),
++                game.hardness.clone(),
++                game.dropped.clone(),
++                game.seen_entities(),
++            )));
+         if let Some(name) = &self.join {
+             game.join(name);
+         }
+@@ -2374,6 +2423,12 @@ impl Step {
+                 crate::entity_state::open_menu(&mut e.items, usize::from(k.container_slots), slots);
+             }
+         }
++        // A mod's teleport-entity (round 4, item 3) is made after its call, as the game does.
++        for o in &out {
++            if let Output::Entity { dimension, command: crate::EntityCommand::TeleportEntity { id, to_dimension, pos, .. }, .. } = o {
++                game.teleport_entity(dimension, *id, to_dimension, *pos);
++            }
++        }
+         for o in &out {
+             let Output::Entity { dimension, command, .. } = o else { continue };
+             match command {
+@@ -2783,6 +2838,9 @@ impl Step {
+                         C::TeleportMob { id, pos } => {
+                             format!("teleport-mob {id} {} {} {}", pos[0], pos[1], pos[2])
+                         }
++                        C::TeleportEntity { id, to_dimension, pos, yaw } => {
++                            format!("teleport-entity {id} {to_dimension} {} {} {} {yaw:?}", pos[0], pos[1], pos[2])
++                        }
+                         C::PushMob { id, velocity } => {
+                             format!("push-mob {id} {} {} {}", velocity[0], velocity[1], velocity[2])
+                         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 9258c9def..fb8a9e7d6 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 48);
++    assert_eq!(LEVEL, 49);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 53ff66bea..3ebc7c476 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -994,6 +994,20 @@ A display entity's transformation (`block_display`, `item_display`, `text_displa
+ | `interpolation` | `s32` |  |
+ | `teleport` | `s32` |  |
+ 
++### record `entity-in-box`
++
++An entity `entities-in-box` found.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` |  |
++| `kind` | `string` | `minecraft:zombie`, `minecraft:item`, `minecraft:oak_boat`, `minecraft:minecart`, a mod's own kind, `minecraft:player`. |
++| `x` | `f64` |  |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `vehicle` | `option<u32>` | What it rides, if anything. |
++| `player` | `option<string>` | For a player, their id (move them with `player-control.teleport`). |
++
+ ### record `damage-result`
+ 
+ What a blow of `damage-entities-in-box` did to one entity.
+@@ -1014,6 +1028,8 @@ What a blow of `damage-entities-in-box` did to one entity.
+ | `set-display` | `func(dimension: string, id: u32, display: display) -> result<_, string>` | Sets a display's transformation. |
+ | `remove-entity` | `func(dimension: string, id: u32) -> result<_, string>` | Removes an entity Horizon keeps without simulating, as `/kill` does. |
+ | `teleport-mob` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>` | Moves a mob to the position at once, as `/tp` does. |
++| `entities-in-box` | `func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<entity-in-box>` | The entities of `dimension` (the level in place) with their feet in `min` to `max` (up to 64 blocks a side): mobs, items lying there, boats, minecarts, the mods' own entities and players, nearest the middle first, at most 256 (what Mekanism's teleporter finds in its frame). Empty for another level or a bigger box. API 49. |
++| `teleport-entity` | `func(dimension: string, id: u32, to-dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>) -> result<_, string>` | Moves entity `id` of `dimension` (the level in place) to `x, y, z` of `to-dimension`, facing `yaw` (none keeps its own), as `Entity.teleport` does: a mob, an item, a boat, a minecart or one of the mods' own entities, not a player (those go with `player-control.teleport`). Its motion stops. In the same dimension the mobs that ride it go with it, still riding; to another dimension it waits, saved, until the chunks there are loaded (as a portal's traveller does), a mob takes its riders along, and a boat's or a minecart's mob riders land beside it. An error for a position that is not a number or an unknown dimension; the move itself happens after the call, and an entity that is gone, or that a player rides, stays. API 49. |
+ | `push-mob` | `func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>` | Adds a velocity to a mob's. |
+ | `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
+ | `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+-- 
+2.43.0
+

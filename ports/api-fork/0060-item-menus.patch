@@ -1,0 +1,1239 @@
+From f576205fac484955ce7ec6c69eec06d4e6ec4d84 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 19:04:56 +0000
+Subject: [PATCH] Item menus: players.open-item-menu (round 4 item 2, API 48)
+
+A mod opens one of its declared menu types over a player's slot; every slot
+is virtual and goes back to the player on close. item-menu-tick sets slots,
+data and strings each tick, item-menu-button and item-menu-taken answer the
+buttons and result takes, text boxes carry (i32::MIN, 1, slot). The menu
+closes when the slot no longer holds the item or the mod says close.
+Example item-menu-demo; harness steps and checks.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   1 +
+ crates/horizon-client/src/game/lan_actions.rs |  30 ++-
+ .../horizon-client/src/game/lan_stations.rs   |  11 +
+ crates/horizon-client/src/game/mods.rs        |  30 +++
+ crates/horizon-client/src/game/server_mods.rs | 202 +++++++++++++++++-
+ crates/horizon-client/src/lan/menu.rs         |  10 +
+ .../examples/item-menu-demo/Cargo.toml        |  16 ++
+ .../data/imenu/horizon/menu/dictionary.json   |  16 ++
+ .../examples/item-menu-demo/horizon-mod.toml  |   9 +
+ .../examples/item-menu-demo/src/lib.rs        |  82 +++++++
+ .../item-menu-demo/tests/dictionary.toml      |  46 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |  31 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  40 ++++
+ crates/horizon-mods/src/api_level.rs          |   5 +-
+ crates/horizon-mods/src/runtime.rs            |  63 +++++-
+ crates/horizon-mods/src/testing.rs            | 166 ++++++++++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  27 +++
+ 20 files changed, 781 insertions(+), 16 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/dictionary.json
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 34c04b0b8..66d5a80b9 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2455,6 +2455,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "item-menu-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "itertools"
+ version = "0.14.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 1ed4d678a..913404107 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,6 +48,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/crafting-probe",
+     "crates/horizon-mod-sdk/examples/body-probe",
+     "crates/horizon-mod-sdk/examples/world-data-probe",
++    "crates/horizon-mod-sdk/examples/item-menu-demo",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index abc8b5fde..a822dba50 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -284,6 +284,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::TellOverlay { text, .. } => format!("action bar: {text}"),
+             Output::HudLine { id, text, .. } => format!("HUD line {id}: {text}"),
+             Output::EntityMenu { id, .. } => format!("opened the menu of entity {id}"),
++            Output::ItemMenu { slot, menu, .. } => format!("opened item menu {menu} over slot {slot}"),
+             Output::Radial { entries, .. } => format!("radial menu of {} entries", entries.len()),
+             Output::PlayerBody { change, .. } => format!("body: {change:?}"),
+             Output::SetFood { food, saturation, .. } => format!("set food to {food} and saturation to {saturation}"),
+diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
+index 2b96c11c1..a5815d5fb 100644
+--- a/crates/horizon-client/src/game/lan_actions.rs
++++ b/crates/horizon-client/src/game/lan_actions.rs
+@@ -1306,6 +1306,22 @@ impl Game<'_> {
+     /// `Container.stopOpen`'s no-op. Called by the close packet and by the
+     /// `ServerPlayer.tick` reach/destroyed close.
+     fn close_guest_vehicle_menu(&mut self, host: &mut LanHost, conn: u32, key: (i32, i32, i32)) {
++        // An item menu (round 4, item 2): its slots are all virtual, and what the player left there comes back to them.
++        #[cfg(feature = "mods")]
++        if key.0 == i32::MAX - 17 {
++            let items = match self.world.block_entities.remove(&key) {
++                Some(BlockEntity::Mod(m)) => m.items,
++                _ => Vec::new(),
++            };
++            let back = self.close_mod_item_menu(conn, items);
++            if let Some(gi) = host.hub.guests.iter().position(|g| g.conn == conn)
++                && !back.is_empty()
++            {
++                self.lan_place_back(host, gi, back);
++                host.hub.send_inventory(gi);
++            }
++            return;
++        }
+         self.store_cart_items(key);
+         self.world.block_entities.remove(&key);
+         // A mod entity's declared menu (FORK-10 5b): what the player left in its virtual slots comes back to them.
+@@ -1380,9 +1396,7 @@ impl Game<'_> {
+     fn container_menu_valid(&self, g: &horizon_client::lan::guest::Guest) -> bool {
+         g.menu.as_ref().is_none_or(|m| {
+             !(m.slots.valid(&self.world) && !m.slots.still_valid(&self.world, g, m.pos)
+-                || m.pos.is_some_and(|k| {
+-                    k.1 == super::minecarts::CART_KEY_Y && !self.chest_vehicle_still_valid(k.2, g)
+-                }))
++                || m.pos.is_some_and(|k| k.1 == super::minecarts::CART_KEY_Y && !self.vehicle_key_still_valid(k, g)))
+         })
+     }
+ 
+@@ -1450,6 +1464,16 @@ impl Game<'_> {
+     /// `ContainerEntity.isChestVehicleStillValid`: the chest minecart or chest
+     /// boat is still there and within the guest's entity interaction range
+     /// plus 4 of its box.
++    /// A menu kept under a placeholder key is still valid: an item menu while its item stays (round 4, item 2), else its vehicle
++    /// or mod entity in reach.
++    fn vehicle_key_still_valid(&self, k: (i32, i32, i32), g: &horizon_client::lan::guest::Guest) -> bool {
++        #[cfg(feature = "mods")]
++        if k.0 == i32::MAX - 17 {
++            return self.item_menu_still_valid(g);
++        }
++        self.chest_vehicle_still_valid(k.2, g)
++    }
++
+     fn chest_vehicle_still_valid(&self, id: i32, g: &horizon_client::lan::guest::Guest) -> bool {
+         let bounds = self
+             .carts
+diff --git a/crates/horizon-client/src/game/lan_stations.rs b/crates/horizon-client/src/game/lan_stations.rs
+index 77f09563f..b6161bed8 100644
+--- a/crates/horizon-client/src/game/lan_stations.rs
++++ b/crates/horizon-client/src/game/lan_stations.rs
+@@ -403,6 +403,17 @@ impl Game<'_> {
+         window: i32,
+         id: i32,
+     ) {
++        // An item menu (round 4, item 2): the button goes to the mod that owns the menu (`item-menu-button`).
++        #[cfg(feature = "mods")]
++        if let Some(g) = host.hub.guest(conn)
++            && let Some(menu) = g.menu.as_ref().filter(|m| m.window == window)
++            && menu.pos.is_some_and(|k| k.0 == i32::MAX - 17 && k.1 == super::minecarts::CART_KEY_Y)
++        {
++            if !g.spectator() {
++                self.mod_item_menu_button(conn, id);
++            }
++            return;
++        }
+         // A mod entity's declared menu (FORK-10 5b): the button goes to the mod that owns the kind (`entity-menu-button`).
+         #[cfg(feature = "mods")]
+         if let Some(g) = host.hub.guest(conn)
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index ec50a2682..c72dabacb 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -36,6 +36,32 @@ use {
+     winit::{event::MouseButton, keyboard::KeyCode},
+ };
+ 
++/// An item menu a mod opened over a player's slot (`players.open-item-menu`); its slots are in a placeholder under
++/// [`OpenItemMenu::key`].
++#[cfg(feature = "mods")]
++#[derive(Clone, Debug)]
++pub(super) struct OpenItemMenu {
++    pub(super) conn: u32,
++    pub(super) uuid: u128,
++    pub(super) slot: u32,
++    pub(super) menu: String,
++    /// The item it was opened over: the menu closes once the slot holds another.
++    pub(super) item: String,
++    pub(super) data: Vec<i32>,
++    /// The slots as the mod last saw or set them, to tell a take from a result slot.
++    pub(super) last: Vec<Option<horizon_mods::ModItemStack>>,
++    /// The mod asked to close it: it closes at the next check.
++    pub(super) closing: bool,
++}
++
++#[cfg(feature = "mods")]
++impl OpenItemMenu {
++    /// The placeholder key the menu of connection `conn` keeps its slots under.
++    pub(super) fn key(conn: u32) -> (i32, i32, i32) {
++        (i32::MAX - 17, super::minecarts::CART_KEY_Y, conn as i32)
++    }
++}
++
+ #[derive(Default)]
+ pub(super) struct ModsState {
+     /// Where each item network's round robin starts this tick.
+@@ -86,6 +112,9 @@ pub(super) struct ModsState {
+     pub(super) world_data_at: Option<u64>,
+     #[cfg(feature = "mods")]
+     pub(super) world_data_changed: bool,
++    /// The item menus open (round 4, item 2), one at most a player.
++    #[cfg(feature = "mods")]
++    pub(super) item_menus: Vec<OpenItemMenu>,
+     /// Every block state's collision boxes, by state id, for capability
+     /// `world`'s `get-collision`; made on the first lend.
+     #[cfg(feature = "mods")]
+@@ -885,6 +914,7 @@ impl Game<'_> {
+                 | Output::HudLine { .. }
+                 | Output::Radial { .. }
+                 | Output::EntityMenu { .. }
++                | Output::ItemMenu { .. }
+                 | Output::PackBlock { .. }
+                 | Output::UnpackBlock { .. }
+                 | Output::PlayerBody { .. }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index d13addbbc..96d2dfc3c 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -618,6 +618,9 @@ mod run {
+             self.return_world();
+             self.apply_mod_entity_ticks(taken);
+             self.apply_mod_entity_ticks(kept);
++            self.lend_world();
++            self.tick_item_menus();
++            self.return_world();
+             self.mirror_mod_entity_menus();
+             self.walk_mod_entities();
+             self.mod_entity_hazards();
+@@ -2498,6 +2501,183 @@ mod run {
+             }
+         }
+ 
++        /// A mod's `open-item-menu` (round 4, item 2): menu type `menu` opens for the player over their slot `slot`, its slots (all
++        /// virtual) empty, under the player's own placeholder.
++        pub(in crate::game) fn open_mod_item_menu(&mut self, mod_id: &str, player: &str, slot: u32, menu: &str) -> bool {
++            use horizon_client_render::containers::BlockEntity;
++            if self.remote.is_some() || menu.split_once(':').map(|(ns, _)| ns) != Some(mod_id) {
++                return false;
++            }
++            let Some(slots) = horizon_client::containers::mod_menu_type(menu).map(|t| t.slots) else {
++                return false;
++            };
++            let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
++            let Some(conn) = self.native_conn(uuid) else {
++                return false;
++            };
++            let Some(mut host) = self.lan.take() else {
++                return false;
++            };
++            let Some(item) = host.hub.guest(conn).and_then(|g| horizon_client::lan::menu::mod_slot(g, slot)).map(|s| s.item.to_string()) else {
++                self.lan = Some(host);
++                return false;
++            };
++            self.guest_close_all(&mut host, conn);
++            let key = crate::game::mods::OpenItemMenu::key(conn);
++            let items = vec![None; slots];
++            let placeholder = horizon_client_render::chunk::block_entity::ModBlockEntity {
++                id: menu.to_owned(),
++                nbt: Default::default(),
++                items: items.clone(),
++                data: Vec::new(),
++            };
++            self.world.block_entities.insert(key, BlockEntity::Mod(Box::new(placeholder)));
++            let title = horizon_protocol::text::translatable(&format!("menu.{}", menu.replace(':', ".")), &[]);
++            host.hub.open_container(conn, menu, title, key, horizon_client::lan::menu::Slots::Block(key), items);
++            self.lan = Some(host);
++            self.mods.item_menus.retain(|m| m.conn != conn);
++            self.mods.item_menus.push(crate::game::mods::OpenItemMenu {
++                conn,
++                uuid,
++                slot,
++                menu: menu.to_owned(),
++                item,
++                data: Vec::new(),
++                last: vec![None; slots],
++                closing: false,
++            });
++            let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, &[]);
++            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++            true
++        }
++
++        /// Item menu `i` as its mod sees it: the player's slot now and the placeholder's slots.
++        fn item_menu_view(&self, i: usize) -> Option<horizon_mods::ItemMenu> {
++            use horizon_client_render::containers::BlockEntity;
++            let m = &self.mods.item_menus[i];
++            let Some(BlockEntity::Mod(p)) = self.world.block_entities.get(&crate::game::mods::OpenItemMenu::key(m.conn)) else {
++                return None;
++            };
++            let stack = self
++                .lan
++                .as_ref()
++                .and_then(|h| h.hub.guest(m.conn))
++                .and_then(|g| horizon_client::lan::menu::mod_slot(g, m.slot))
++                .map(Self::mod_stack);
++            Some(horizon_mods::ItemMenu {
++                menu: m.menu.clone(),
++                slot: m.slot,
++                stack,
++                items: p.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect(),
++                menu_data: m.data.clone(),
++            })
++        }
++
++        /// What a mod answered for item menu `i`: its slots, data and strings go to the placeholder and the player; `close` closes
++        /// it at the next check.
++        fn apply_item_menu_update(&mut self, i: usize, u: horizon_mods::ItemMenuUpdate) {
++            use horizon_client_render::containers::BlockEntity;
++            let (conn, uuid) = (self.mods.item_menus[i].conn, self.mods.item_menus[i].uuid);
++            let key = crate::game::mods::OpenItemMenu::key(conn);
++            if let Some(items) = &u.items {
++                let made: Vec<Option<horizon_client::items::ItemStack>> = items.iter().map(|s| s.as_ref().and_then(|s| self.game_stack(s))).collect();
++                if let Some(BlockEntity::Mod(p)) = self.world.block_entities.get_mut(&key) {
++                    for (to, from) in p.items.iter_mut().zip(made.into_iter().chain(std::iter::repeat(None))) {
++                        *to = from;
++                    }
++                }
++            }
++            if let Some(d) = &u.menu_data {
++                self.mods.item_menus[i].data.clone_from(d);
++                if let Some(BlockEntity::Mod(p)) = self.world.block_entities.get_mut(&key) {
++                    p.data.clone_from(d);
++                }
++            }
++            if let Some(t) = &u.menu_text {
++                let bytes = horizon_mods::screen::encode_menu_text(ENTITY_MENU_TEXT_AT, t);
++                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++            }
++            if u.close {
++                self.mods.item_menus[i].closing = true;
++            }
++            if let Some(BlockEntity::Mod(p)) = self.world.block_entities.get(&key) {
++                self.mods.item_menus[i].last = p.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
++            }
++            self.container_changed(key);
++        }
++
++        /// The player of item menu `i`, as the mods know them.
++        fn item_menu_player(&self, i: usize) -> Option<ServerPlayer> {
++            let id = uuid_string(self.mods.item_menus[i].uuid);
++            self.mods.players.iter().find(|p| p.id == id).cloned()
++        }
++
++        /// Each tick (round 4, item 2): every open item menu's takes from its result slots, then its tick, go to the mod that owns it.
++        fn tick_item_menus(&mut self) {
++            if self.mods.item_menus.is_empty() {
++                return;
++            }
++            self.mods.item_menus.retain(|m| self.lan.as_ref().is_some_and(|h| h.hub.guest(m.conn).is_some()));
++            for i in 0..self.mods.item_menus.len() {
++                if self.mods.item_menus[i].closing {
++                    continue;
++                }
++                let (Some(view), Some(player)) = (self.item_menu_view(i), self.item_menu_player(i)) else {
++                    continue;
++                };
++                let results = horizon_client::containers::mod_menu_type(&view.menu).map_or_else(Vec::new, |t| t.results.clone());
++                let mut updates = Vec::new();
++                for r in results {
++                    let before = self.mods.item_menus[i].last.get(r).cloned().flatten();
++                    if let Some(t) = horizon_mods::entity_state::taken(before.as_ref(), view.items.get(r).and_then(Option::as_ref)) {
++                        updates.extend(self.mods.mods.item_menu_taken(&player, &view, r as u32, &t));
++                    }
++                }
++                self.mods.item_menus[i].last.clone_from(&view.items);
++                for u in updates {
++                    self.apply_item_menu_update(i, u);
++                }
++                let Some(view) = self.item_menu_view(i) else { continue };
++                if let Some(u) = self.mods.mods.item_menu_tick(&player, &view) {
++                    self.apply_item_menu_update(i, u);
++                }
++            }
++        }
++
++        /// The player of connection `conn` pressed button `id` of their open item menu.
++        pub(in crate::game) fn mod_item_menu_button(&mut self, conn: u32, id: i32) {
++            let Some(i) = self.mods.item_menus.iter().position(|m| m.conn == conn) else {
++                return;
++            };
++            let (Some(view), Some(player)) = (self.item_menu_view(i), self.item_menu_player(i)) else {
++                return;
++            };
++            self.lend_world();
++            let u = self.mods.mods.item_menu_button(&player, &view, id);
++            self.return_world();
++            self.apply_mod_block_writes();
++            if let Some(u) = u {
++                self.apply_item_menu_update(i, u);
++            }
++        }
++
++        /// The item menu of connection `conn` closed: what the player left in its slots (not the results) comes back to them.
++        pub(in crate::game) fn close_mod_item_menu(&mut self, conn: u32, items: Vec<Option<horizon_client::items::ItemStack>>) -> Vec<horizon_client::items::ItemStack> {
++            let Some(i) = self.mods.item_menus.iter().position(|m| m.conn == conn) else {
++                return Vec::new();
++            };
++            let m = self.mods.item_menus.remove(i);
++            let results = horizon_client::containers::mod_menu_type(&m.menu).map_or_else(Vec::new, |t| t.results.clone());
++            items.into_iter().enumerate().filter(|(n, _)| !results.contains(n)).filter_map(|(_, s)| s).collect()
++        }
++
++        /// Whether the item menu of connection `conn` may stay open: the mod did not close it and the slot still holds its item.
++        pub(in crate::game) fn item_menu_still_valid(&self, g: &horizon_client::lan::guest::Guest) -> bool {
++            self.mods.item_menus.iter().find(|m| m.conn == g.conn).is_some_and(|m| {
++                !m.closing && horizon_client::lan::menu::mod_slot(g, m.slot).is_some_and(|s| *s.item == *m.item)
++            })
++        }
++
+         /// The box of mod entity `id` (its kind's size at its place), for the reach of its menu.
+         pub(in crate::game) fn mod_entity_bounds(&self, id: i32) -> Option<horizon_core::geometry::Aabb> {
+             use horizon_core::geometry::{Aabb, Vec3};
+@@ -2732,15 +2912,20 @@ mod run {
+                 && let Some((pos, field, text)) = horizon_mods::screen::decode_menu_input(&data)
+                 && pos == ENTITY_MENU_TEXT_AT
+             {
+-                let entity = self.lan.as_ref().and_then(|h| {
++                let key = self.lan.as_ref().and_then(|h| {
+                     let g = h.hub.guests.iter().find(|g| g.uuid == player)?;
+-                    let key = g.menu.as_ref()?.pos?;
+-                    (key.0 == i32::MAX - 16 && key.1 == crate::game::minecarts::CART_KEY_Y).then_some(key.2)
++                    g.menu.as_ref()?.pos.filter(|k| k.1 == crate::game::minecarts::CART_KEY_Y)
+                 });
+-                let Some(entity) = entity else {
+-                    return;
++                // An entity's menu carries (i32::MIN, 0, entity id); an item menu (round 4, item 2) (i32::MIN, 1, slot).
++                let pos = match key {
++                    Some(k) if k.0 == i32::MAX - 16 => [i32::MIN, 0, k.2],
++                    Some(k) if k.0 == i32::MAX - 17 => match self.mods.item_menus.iter().find(|m| m.conn as i32 == k.2) {
++                        Some(m) => [i32::MIN, 1, m.slot as i32],
++                        None => return,
++                    },
++                    _ => return,
+                 };
+-                data = horizon_mods::screen::encode_menu_input([i32::MIN, 0, entity], field, &text);
++                data = horizon_mods::screen::encode_menu_input(pos, field, &text);
+             }
+             let data = &data[..];
+             self.mods.events.push(ModEvent::Net {
+@@ -2930,6 +3115,11 @@ mod run {
+                         log::debug!("Horizon: mod {name} could not unpack into {pos:?}");
+                     }
+                 }
++                Output::ItemMenu { name, mod_id, player, slot, menu } => {
++                    if !self.open_mod_item_menu(&mod_id, &player, slot, &menu) {
++                        log::debug!("Horizon: mod {name} could not open item menu {menu} for {player}");
++                    }
++                }
+                 Output::EntityMenu { name, mod_id, player, dimension, id } => {
+                     if !self.open_mod_entity_menu(&mod_id, &player, &dimension, id) {
+                         log::debug!("Horizon: mod {name} could not open the menu of entity {id} for {player}");
+diff --git a/crates/horizon-client/src/lan/menu.rs b/crates/horizon-client/src/lan/menu.rs
+index 974dfda94..18a6c2469 100644
+--- a/crates/horizon-client/src/lan/menu.rs
++++ b/crates/horizon-client/src/lan/menu.rs
+@@ -1226,3 +1226,13 @@ mod tests {
+         }
+     }
+ }
++
++/// The stack in a guest's slot as the mods number them: 0 to 35 the inventory, 36 to 39 the armour (36 the feet), 40 the off hand.
++pub fn mod_slot(guest: &Guest, slot: u32) -> Option<&ItemStack> {
++    match slot {
++        0..=35 => guest.inventory.get(slot as usize)?.as_ref(),
++        36..=39 => guest.armor.get(3 - (slot as usize - 36))?.as_ref(),
++        40 => guest.offhand.as_ref(),
++        _ => None,
++    }
++}
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/Cargo.toml
+new file mode 100644
+index 000000000..162f38e80
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "item-menu-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: an item menu (open-item-menu)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/dictionary.json b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/dictionary.json
+new file mode 100644
+index 000000000..73e8a878c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/dictionary.json
+@@ -0,0 +1,16 @@
++{
++  "slots": 2,
++  "data_slots": 1,
++  "results": [1],
++  "screen": {
++    "slots": [[26, 35], [134, 35]],
++    "widgets": [
++      {"type": "text", "x": 8, "y": 6, "text_data": 0},
++      {"type": "text", "x": 8, "y": 18, "text_data": 1},
++      {"type": "text", "x": 60, "y": 38, "text": "logs: {0}"},
++      {"type": "button", "x": 8, "y": 58, "w": 50, "h": 14, "id": 1, "tooltip": "Empty the input"},
++      {"type": "button", "x": 62, "y": 58, "w": 50, "h": 14, "id": 2, "tooltip": "Close"},
++      {"type": "textfield", "x": 116, "y": 58, "w": 52, "h": 14, "id": 5, "max_length": 16, "text_data": 2}
++    ]
++  }
++}
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
+new file mode 100644
+index 000000000..8283666f9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "imenu"
++name = "Item Menu Demo"
++version = "0.1.0"
++description = "Test mod for item menus (round 4, item 2): a message opens a dictionary-like menu over a slot; it names the item, crafts planks from a log, and takes a name from its text box."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["registries", "players", "net"]
++experimental = ["net"]
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+new file mode 100644
+index 000000000..ced3ccf6b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+@@ -0,0 +1,82 @@
++//! Item Menu Demo (round 4, item 2, `players.open-item-menu`): a message on `imenu:open` (one byte, the slot) opens the menu
++//! `imenu:dictionary` over that slot of the player's. Each tick (`item-menu-tick`) it names the item it was opened over and the input's,
++//! shows the logs in the input as data slot 0, and puts 4 oak planks in the result for a log; taking them (`item-menu-taken`) uses up a
++//! log. Button 1 empties the input, button 2 closes the menu, and the text box (`imenu:menu_text`) names the dictionary.
++use horizon_mod_sdk::server::{ItemMenu, ItemMenuUpdate, ItemStack, Player, Registration, ServerMod, menu_input, players};
++
++struct Demo {
++    name: String,
++}
++
++fn update() -> ItemMenuUpdate {
++    ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: false }
++}
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Demo { name: "-".into() }, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        match channel {
++            "imenu:open" => {
++                let _ = players::open_item_menu(&player.id, u32::from(data.first().copied().unwrap_or(0)), "imenu:dictionary");
++            }
++            // The text box: (i32::MIN, 1, slot) marks an item menu.
++            "imenu:menu_text" => {
++                if let Some(input) = menu_input::decode(data)
++                    && input.pos.x == i32::MIN
++                    && input.pos.y == 1
++                    && input.id == 5
++                {
++                    self.name = input.text;
++                }
++            }
++            _ => {}
++        }
++    }
++    fn item_menu_tick(&mut self, _player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
++        let input = menu.items.first().cloned().flatten();
++        let made = input.as_ref().filter(|s| s.item == "minecraft:oak_log").map(|_| ItemStack {
++            item: "minecraft:oak_planks".into(),
++            count: 4,
++            components: String::new(),
++        });
++        let mut u = update();
++        if menu.items.get(1).cloned().flatten() != made {
++            let mut items = menu.items.clone();
++            items[1] = made;
++            u.items = Some(items);
++        }
++        u.menu_data = Some(vec![input.as_ref().map_or(0, |s| s.count as i32)]);
++        let held = menu.stack.map_or_else(|| "-".to_owned(), |s| s.item);
++        u.menu_text = Some(vec![held, input.map_or_else(|| "-".to_owned(), |s| s.item), self.name.clone()]);
++        Some(u)
++    }
++    fn item_menu_button(&mut self, _player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> {
++        let mut u = update();
++        match id {
++            1 => {
++                let mut items = menu.items.clone();
++                items[0] = None;
++                u.items = Some(items);
++            }
++            2 => u.close = true,
++            _ => return None,
++        }
++        Some(u)
++    }
++    fn item_menu_taken(&mut self, _player: &Player, menu: ItemMenu, slot: u32, _stack: ItemStack) -> Option<ItemMenuUpdate> {
++        if slot != 1 {
++            return None;
++        }
++        let mut items = menu.items.clone();
++        let log = items.first_mut()?.as_mut()?;
++        log.count -= 1;
++        if log.count == 0 {
++            items[0] = None;
++        }
++        Some(ItemMenuUpdate { items: Some(items), ..update() })
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+new file mode 100644
+index 000000000..956e6ff9f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+@@ -0,0 +1,46 @@
++[[step]]
++join = "Alex"
++inventory = ["minecraft:book*1"]
++# A message opens the dictionary over slot 0: its two slots (input, result) start empty, with no data and no strings yet.
++net = { channel = "imenu:open", data = [0] }
++expect.item-menu-open = ["Alex 0 imenu:dictionary"]
++expect.item-menus = ["Alex 0 imenu:dictionary - data=[] text="]
++
++[[step]]
++# A tick (`item-menu-tick`): it names the book it was opened over and the empty input.
++ticks = 1
++expect.item-menus = ["Alex 0 imenu:dictionary - data=[0] text=minecraft:book|-|-"]
++
++[[step]]
++# Two logs in the input (a step's ticks run before what the player does, so the tick is the next step's).
++item-menu-set = [{ slot = 0, stack = "minecraft:oak_log*2" }]
++expect.item-menus = ["Alex 0 imenu:dictionary 0=minecraft:oak_log*2 data=[0] text=minecraft:book|-|-"]
++
++[[step]]
++ticks = 1
++expect.item-menus = ["Alex 0 imenu:dictionary 0=minecraft:oak_log*2,1=minecraft:oak_planks*4 data=[2] text=minecraft:book|minecraft:oak_log|-"]
++
++[[step]]
++# Taking the planks (`item-menu-taken`) uses up a log.
++item-menu-take = { slot = 1 }
++expect.item-menus = ["Alex 0 imenu:dictionary 0=minecraft:oak_log*1 data=[2] text=minecraft:book|minecraft:oak_log|-"]
++
++[[step]]
++# The text box's message names it: the position (i32::MIN, 1, slot 0), box 5, "Lexicon".
++net = { channel = "imenu:menu_text", data = [0, 0, 0, 128, 1, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 76, 101, 120, 105, 99, 111, 110] }
++
++[[step]]
++ticks = 1
++expect.item-menus = ["Alex 0 imenu:dictionary 0=minecraft:oak_log*1,1=minecraft:oak_planks*4 data=[1] text=minecraft:book|minecraft:oak_log|Lexicon"]
++
++[[step]]
++# Button 1 empties the input; the result goes at the next tick.
++item-menu-button = 1
++expect.item-menus = ["Alex 0 imenu:dictionary 1=minecraft:oak_planks*4 data=[1] text=minecraft:book|minecraft:oak_log|Lexicon"]
++
++[[step]]
++# Sticks in the input, then button 2 closes it: the sticks come back to the player, the planks (a result) do not.
++item-menu-set = [{ slot = 0, stack = "minecraft:stick*3" }]
++item-menu-button = 2
++expect.item-menus = []
++expect.entity-menu-returned = ["minecraft:stick*3"]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index eb1db0177..be74fa904 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -235,7 +235,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -320,6 +320,18 @@ pub mod server {
+         }
+         /// One of the mod's own entities died of damage. When [`Registration::on_mod_entities`] is set.
+         fn mod_entity_died(&mut self, _entity: ModEntity) {}
++        /// Each tick while a player has one of the mod's item menus open (`players::open_item_menu`): what to change in it.
++        fn item_menu_tick(&mut self, _player: &Player, _menu: ItemMenu) -> Option<ItemMenuUpdate> {
++            None
++        }
++        /// A player pressed button `id` of one of the mod's item menus.
++        fn item_menu_button(&mut self, _player: &Player, _menu: ItemMenu, _id: i32) -> Option<ItemMenuUpdate> {
++            None
++        }
++        /// A player took `stack` from result slot `slot` of one of the mod's item menus: use up what made it.
++        fn item_menu_taken(&mut self, _player: &Player, _menu: ItemMenu, _slot: u32, _stack: ItemStack) -> Option<ItemMenuUpdate> {
++            None
++        }
+         /// A player pressed button `id` of the declared menu of one of the mod's own entities (FORK-10 5b): what to change in it.
+         /// When [`Registration::on_mod_entities`] is set.
+         fn entity_menu_button(&mut self, _player: &Player, _entity: ModEntity, _id: i32) -> Option<ModEntityUpdate> {
+@@ -664,7 +676,7 @@ macro_rules! export_server_mod {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+                 Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, DamageSource, Player, Registration,
+-                ItemStack, ModEntity, ModEntityUpdate, ServerMod, Structure,
++                ItemMenu, ItemMenuUpdate, ItemStack, ModEntity, ModEntityUpdate, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+                 static STATE: RefCell<Option<$t>> = const { RefCell::new(None) };
+@@ -748,6 +760,21 @@ macro_rules! export_server_mod {
+                 fn mod_entity_died(entity: ModEntity) {
+                     with(|m| m.mod_entity_died(entity));
+                 }
++                fn item_menu_tick(player: Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
++                    let mut out = None;
++                    with(|m| out = m.item_menu_tick(&player, menu));
++                    out
++                }
++                fn item_menu_button(player: Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> {
++                    let mut out = None;
++                    with(|m| out = m.item_menu_button(&player, menu, id));
++                    out
++                }
++                fn item_menu_taken(player: Player, menu: ItemMenu, slot: u32, stack: ItemStack) -> Option<ItemMenuUpdate> {
++                    let mut out = None;
++                    with(|m| out = m.item_menu_taken(&player, menu, slot, stack));
++                    out
++                }
+                 fn entity_menu_button(player: Player, entity: ModEntity, id: i32) -> Option<ModEntityUpdate> {
+                     let mut out = None;
+                     with(|m| out = m.entity_menu_button(&player, entity, id));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index b8581a741..e0a4f3b21 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -702,6 +702,16 @@ interface players {
+     /// button calls the mod's `entity-menu-button`, taking from a result slot calls `entity-menu-taken`, and a `textfield`'s message
+     /// on `<mod id>:menu_text` carries the position `(i32::MIN, 0, entity id)`.
+     open-entity-menu: func(player: string, dimension: string, id: u32) -> bool;
++    /// Opens menu type `menu` (`<mod id>:<path>`, one of the mod's `data/<mod>/horizon/menu/*.json`, drawn by its `screen` as a
++    /// block's) for one player over the item in their slot `slot` (0 to 35 the inventory, 36 to 39 the armour, 40 the off hand): the
++    /// item menus of Mekanism (Module Tweaker, Dictionary, Portable Teleporter, Seismic Reader, Portable QIO Dashboard). Every slot of the
++    /// menu is virtual: empty when it opens, kept while it is open, and what the player left in them (not the `results`) comes back
++    /// to the player when it closes. Each tick the mod's `item-menu-tick` sees it and sets its slots, data slots and strings; a button
++    /// calls `item-menu-button`, taking from a result slot calls `item-menu-taken`, and a `textfield`'s message on `<mod id>:menu_text`
++    /// carries the position `(i32::MIN, 1, slot)`. It closes when the player closes it, when the slot no longer holds an item of the
++    /// one it opened on, or when the mod answers `close`. True when asked; false for a player who is not online, a slot past 40 or
++    /// a menu of another mod. API 48.
++    open-item-menu: func(player: string, slot: u32, menu: string) -> bool;
+     /// A system message to every player and the server's log, after the
+     /// mod's name. Counts toward the same 8 per call.
+     broadcast: func(text: string);
+@@ -1592,6 +1602,29 @@ interface server-events {
+         /// The data slots its menu shows (FORK-10 5b), as the mod last set them; not saved.
+         menu-data: list<s32>,
+     }
++    /// An open item menu (`players.open-item-menu`) as the mod sees it.
++    record item-menu {
++        /// The menu type, `<mod id>:<path>`.
++        menu: string,
++        /// The player's slot it was opened over, and what it holds now.
++        slot: u32,
++        stack: option<item-stack>,
++        /// The menu's slots (all virtual), as the player left them.
++        items: list<option<item-stack>>,
++        /// The data slots the mod last set.
++        menu-data: list<s32>,
++    }
++    /// What the mod changes in an open item menu; a none leaves that as it is.
++    record item-menu-update {
++        /// The menu's slots after the call; slots past the menu's, and stacks of unknown items, are dropped.
++        items: option<list<option<item-stack>>>,
++        /// Its data slots (16 bits each on the wire, up to 256).
++        menu-data: option<list<s32>>,
++        /// Its strings (up to 64 of up to 256 bytes): a `text` widget with `text_data: n` shows string `n`.
++        menu-text: option<list<string>>,
++        /// Closes it (its slots' items go back to the player).
++        close: bool,
++    }
+     /// What the mod makes of an entity in a tick; a none leaves that as it is.
+     record mod-entity-update {
+         dimension: string,
+@@ -1696,6 +1729,13 @@ interface server-events {
+     /// An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right
+     /// after; its drops, if it has any, are the mod's to spawn.
+     mod-entity-died: func(entity: mod-entity);
++    /// Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48.
++    item-menu-tick: func(player: player, menu: item-menu) -> option<item-menu-update>;
++    /// `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus.
++    item-menu-button: func(player: player, menu: item-menu, id: s32) -> option<item-menu-update>;
++    /// `player` took `stack` out of result slot `slot` of one of the mod's item menus (the menu as it is after the take): the mod
++    /// uses up what made it.
++    item-menu-taken: func(player: player, menu: item-menu, slot: u32, stack: item-stack) -> option<item-menu-update>;
+     /// A player pressed button `id` (a `button` widget's `id`, `shift_id` or `alt_id`, as the client chose it) of the menu of an
+     /// entity of the mod's own kind (FORK-10 5b), with the entity as it is. Returns what to change in it, if anything.
+     entity-menu-button: func(player: player, entity: mod-entity, id: s32) -> option<mod-entity-update>;
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index fd873aac1..fa2f7bd5c 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 47;
++pub const LEVEL: u32 = 48;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 119] = [
++pub const FUNCTIONS: [(&str, u32); 120] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -88,6 +88,7 @@ pub const FUNCTIONS: [(&str, u32); 119] = [
+     ("world-data.set", 47),
+     ("world-data.remove", 47),
+     ("world-data.keys", 47),
++    ("players.open-item-menu", 48),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index d02adbf4e..cbca73403 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, ItemMenu, ItemMenuUpdate, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::{EffectState, Motion, PlayerState},
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -473,6 +473,8 @@ pub enum Output {
+     BreakBlocks { name: String, dimension: String, positions: Vec<[i32; 3]>, tool: String, silk_touch: bool, fortune: u32 },
+     /// `players.open-entity-menu`: the container of a mod entity, opened as a chest for a player.
+     EntityMenu { name: String, mod_id: String, player: String, dimension: String, id: u32 },
++    /// `players.open-item-menu`: a menu type of the mod opened over a player's slot (round 4, item 2).
++    ItemMenu { name: String, mod_id: String, player: String, slot: u32, menu: String },
+     /// `players.open-radial-menu`: a radial menu on one player's screen, whose choice comes back on `<mod id>:radial`.
+     Radial { name: String, mod_id: String, player: String, entries: Vec<(String, String, String)>, current: u32 },
+     /// `players.set-hud-line`: a line of the mod's HUD on one player's screen.
+@@ -1722,6 +1724,44 @@ impl Mods {
+         }
+         out
+     }
++    /// The running server mod whose namespace menu type `menu` is in.
++    fn menu_owner(&self, menu: &str) -> Option<usize> {
++        let (ns, _) = menu.split_once(':')?;
++        self.entries.iter().position(|e| e.run.as_ref().is_some_and(|r| r.hooks.server().is_some()) && e.manifest.as_ref().is_some_and(|m| m.id == ns))
++    }
++    /// One tick of `player`'s open item menu (round 4, item 2): the update of the mod that owns the menu type, checked.
++    pub fn item_menu_tick(&mut self, player: &ServerPlayer, menu: &ItemMenu) -> Option<ItemMenuUpdate> {
++        let i = self.menu_owner(&menu.menu)?;
++        let u = self
++            .call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_item_menu_tick(&mut run.store, player, menu),
++                Hooks::Client(..) => Ok(None),
++            })
++            .flatten()?;
++        item_menu_update_ok(&u).then_some(u)
++    }
++    /// `player` pressed button `id` of their open item menu.
++    pub fn item_menu_button(&mut self, player: &ServerPlayer, menu: &ItemMenu, id: i32) -> Option<ItemMenuUpdate> {
++        let i = self.menu_owner(&menu.menu)?;
++        let u = self
++            .call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_item_menu_button(&mut run.store, player, menu, id),
++                Hooks::Client(..) => Ok(None),
++            })
++            .flatten()?;
++        item_menu_update_ok(&u).then_some(u)
++    }
++    /// `player` took `stack` from result slot `slot` of their open item menu.
++    pub fn item_menu_taken(&mut self, player: &ServerPlayer, menu: &ItemMenu, slot: u32, stack: &ModItemStack) -> Option<ItemMenuUpdate> {
++        let i = self.menu_owner(&menu.menu)?;
++        let u = self
++            .call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_item_menu_taken(&mut run.store, player, menu, slot, stack),
++                Hooks::Client(..) => Ok(None),
++            })
++            .flatten()?;
++        item_menu_update_ok(&u).then_some(u)
++    }
+     /// The running server mod that owns entity kind `kind` and asked for `mod-entities`.
+     fn entity_owner(&self, kind: &str) -> Option<usize> {
+         let (owner, _) = kind.split_once(':')?;
+@@ -2459,6 +2499,15 @@ fn clip_widgets(widgets: Vec<UiWidget>) -> Vec<UiWidget> {
+         .collect()
+ }
+ 
++/// Whether a mod's update of an item menu is in bounds: 256 slots, 256 data slots and the menu strings' limits.
++pub fn item_menu_update_ok(u: &ItemMenuUpdate) -> bool {
++    u.items.as_ref().is_none_or(|s| s.len() <= 256)
++        && u.menu_data.as_ref().is_none_or(|d| d.len() <= 256)
++        && u.menu_text.as_ref().is_none_or(|t| {
++            t.len() <= crate::content::MENU_TEXTS && t.iter().all(|s| s.len() <= crate::content::MENU_TEXT_BYTES)
++        })
++}
++
+ /// Whether a mod's update of one of its entities is in bounds: finite numbers, at most 64 KiB of bytes, 256 slots, a name of 128
+ /// bytes, 256 data slots and the menu strings' limits.
+ pub fn entity_update_ok(u: &ModEntityUpdate) -> bool {
+@@ -3761,6 +3810,18 @@ impl players::Host for State {
+         self.out.push(Output::EntityMenu { name: self.name.clone(), mod_id: self.id.clone(), player, dimension, id });
+         true
+     }
++    fn open_item_menu(&mut self, player: String, slot: u32, menu: String) -> bool {
++        let mine = menu.split_once(':').is_some_and(|(ns, path)| ns == self.id && !path.is_empty());
++        if !mine
++            || slot > 40
++            || !self.snapshot.players.iter().any(|p| p.id == player)
++            || self.out.iter().filter(|o| matches!(o, Output::ItemMenu { .. })).count() >= 8
++        {
++            return false;
++        }
++        self.out.push(Output::ItemMenu { name: self.name.clone(), mod_id: self.id.clone(), player, slot, menu });
++        true
++    }
+     fn broadcast(&mut self, text: String) {
+         self.say(|name| Output::Broadcast {
+             name,
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 07c5ba9f7..a7d7860ec 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -83,6 +83,8 @@ pub struct TestGame {
+     pub entity_menus: std::collections::BTreeSet<u32>,
+     pub entity_menu_text: std::collections::BTreeMap<u32, Vec<String>>,
+     pub menu_returned: Vec<String>,
++    /// The item menus open (round 4, item 2).
++    pub item_menus: Vec<HarnessItemMenu>,
+     /// The values the mods keep in the world (FORK-36), every mod's.
+     pub world_data: std::collections::BTreeMap<String, Vec<u8>>,
+     /// Each mod entity's walk animation (FORK-10 5d).
+@@ -332,6 +334,7 @@ impl TestGame {
+             menu_returned: Vec::new(),
+             walk_anims: std::collections::BTreeMap::new(),
+             world_data: std::collections::BTreeMap::new(),
++            item_menus: Vec::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
+             dropped: Vec::new(),
+@@ -415,6 +418,50 @@ impl TestGame {
+             self.tick_block_entities();
+             self.tick_mod_entities();
+             self.mod_entity_hazards();
++            self.tick_item_menus();
++        }
++    }
++    /// The item menu of player `id` as the mod sees it.
++    fn item_menu_view(&self, i: usize) -> crate::ItemMenu {
++        let m = &self.item_menus[i];
++        let stack = self.inventories.iter().find(|(p, _)| *p == m.player).and_then(|(_, inv)| inv.get(m.slot as usize).cloned()).flatten();
++        crate::ItemMenu { menu: m.menu.clone(), slot: m.slot, stack, items: m.items.clone(), menu_data: m.data.clone() }
++    }
++    /// What the mod answered for item menu `i`, as the game applies it; a `close` closes it.
++    fn apply_item_menu_update(&mut self, i: usize, u: crate::ItemMenuUpdate) {
++        let results = self.menu_types.iter().find(|t| t.id == self.item_menus[i].menu).map_or_else(Vec::new, |t| t.results.clone());
++        let m = &mut self.item_menus[i];
++        if let Some(mut items) = u.items {
++            items.resize(m.items.len(), None);
++            m.items = items;
++        }
++        if let Some(d) = u.menu_data {
++            m.data = d;
++        }
++        if let Some(t) = u.menu_text {
++            m.text = t;
++        }
++        if u.close {
++            let mut m = self.item_menus.remove(i);
++            let back = crate::entity_state::close_menu(&mut m.items, 0, &results);
++            self.menu_returned.extend(back.into_iter().map(|s| show_stack(&Some(s))));
++        }
++    }
++    /// Each open item menu's tick: the mod sees it and changes it.
++    fn tick_item_menus(&mut self) {
++        let mut i = 0;
++        while i < self.item_menus.len() {
++            let view = self.item_menu_view(i);
++            let player = self.players.iter().find(|p| p.id == self.item_menus[i].player).cloned();
++            let before = self.item_menus.len();
++            if let Some(p) = player
++                && let Some(u) = self.mods.item_menu_tick(&p, &view)
++            {
++                self.apply_item_menu_update(i, u);
++            }
++            if self.item_menus.len() == before {
++                i += 1;
++            }
+         }
+     }
+     /// The world's harm to the mod's entities, as the game does: they fall onto the script's blocks (a block that is not air is a
+@@ -1298,6 +1345,34 @@ pub struct BreakStartSet {
+     stack: String,
+ }
+ 
++/// An item menu open in the script (round 4, item 2).
++#[derive(Clone, Debug)]
++pub struct HarnessItemMenu {
++    pub player: String,
++    pub slot: u32,
++    pub menu: String,
++    pub items: Vec<Option<crate::ModItemStack>>,
++    pub data: Vec<i32>,
++    pub text: Vec<String>,
++}
++
++/// A stack the actor puts in slot `slot` of their open item menu (`-` for none).
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ItemMenuSlotSet {
++    slot: usize,
++    stack: String,
++}
++
++/// The actor takes `count` (all when unset) from result slot `slot` of their open item menu.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ItemMenuTakeSet {
++    slot: usize,
++    #[serde(default)]
++    count: Option<u32>,
++}
++
+ /// A stack the actor puts in slot `slot` of the open menu of entity `id` (`-` for none).
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -1551,6 +1626,13 @@ pub struct Step {
+     /// Server mods (FORK-10 5b): the actor puts stacks in slots of an entity's open menu (`-` empties one), presses one of its
+     /// buttons, takes from one of its result slots, or closes it.
+     entity_menu_set: Option<Vec<EntityMenuSlotSet>>,
++    /// Server mods (round 4, item 2): the actor puts stacks in their open item menu, presses one of its buttons, takes from one of
++    /// its result slots, or closes it.
++    item_menu_set: Option<Vec<ItemMenuSlotSet>>,
++    item_menu_button: Option<i32>,
++    item_menu_take: Option<ItemMenuTakeSet>,
++    #[serde(default)]
++    close_item_menu: bool,
+     entity_menu_button: Option<EntityMenuButtonSet>,
+     entity_menu_take: Option<EntityMenuTakeSet>,
+     close_entity_menu: Option<u32>,
+@@ -1663,6 +1745,10 @@ pub struct Expect {
+     entity_menu: Option<Vec<String>>,
+     /// Server mods (FORK-10 5b): the menu data and strings of the mod's entities that have any, as `"id data=[v,..] text=a|b"`.
+     mod_entity_menu: Option<Vec<String>>,
++    /// Server mods (round 4, item 2): every `open-item-menu`, as `"Name slot menu"`.
++    item_menu_open: Option<Vec<String>>,
++    /// Server mods (round 4, item 2): the item menus open after the step, as `"Name slot menu slot=item*count,.. data=[..] text=a|b"`.
++    item_menus: Option<Vec<String>>,
+     /// Server mods (FORK-36): every value kept in the world after the step, as `"key [bytes]"`.
+     world_data: Option<Vec<String>>,
+     /// Server mods (FORK-10 5d): the angles of the swinging bones of the mod's entities, as `"id bone=degrees,..."` (one decimal).
+@@ -1910,6 +1996,10 @@ impl Step {
+             || self.release_item.is_some()
+             || self.use_mod_entity.is_some()
+             || self.entity_menu_button.is_some()
++            || self.item_menu_button.is_some()
++            || self.item_menu_take.is_some()
++            || self.item_menu_set.is_some()
++            || self.close_item_menu
+             || self.entity_menu_take.is_some()
+             || self.break_start.is_some()
+             || self.damage_mod_entity.is_some()
+@@ -2128,6 +2218,46 @@ impl Step {
+                 }
+             }
+         }
++        let mine = |game: &TestGame, who: &crate::ServerPlayer| game.item_menus.iter().position(|m| m.player == who.id);
++        if let (Some(sets), Some(who)) = (&self.item_menu_set, &who) {
++            let i = mine(game, who).ok_or("item-menu-set: no item menu is open")?;
++            for set in sets {
++                let stack = if set.stack == "-" { None } else { Some(parse_stack(&set.stack).ok_or("item-menu-set: a stack is item*count")?) };
++                *game.item_menus[i].items.get_mut(set.slot).ok_or("item-menu-set: no such slot")? = stack;
++            }
++        }
++        if let (Some(button), Some(who)) = (self.item_menu_button, &who) {
++            let i = mine(game, who).ok_or("item-menu-button: no item menu is open")?;
++            game.snapshot();
++            let view = game.item_menu_view(i);
++            if let Some(u) = game.mods.item_menu_button(who, &view, button) {
++                game.apply_item_menu_update(i, u);
++            }
++        }
++        if let (Some(t), Some(who)) = (&self.item_menu_take, &who) {
++            let i = mine(game, who).ok_or("item-menu-take: no item menu is open")?;
++            let menu = game.item_menus[i].menu.clone();
++            if !game.menu_types.iter().any(|m| m.id == menu && m.results.iter().any(|&r| usize::from(r) == t.slot)) {
++                return Err(format!("item-menu-take: slot {} is not a result slot of {menu}", t.slot));
++            }
++            let before = game.item_menus[i].items.get(t.slot).cloned().flatten();
++            let after = before.clone().and_then(|mut s| {
++                s.count = s.count.saturating_sub(t.count.unwrap_or(s.count));
++                (s.count > 0).then_some(s)
++            });
++            game.item_menus[i].items[t.slot].clone_from(&after);
++            if let Some(stack) = crate::entity_state::taken(before.as_ref(), after.as_ref()) {
++                game.snapshot();
++                let view = game.item_menu_view(i);
++                if let Some(u) = game.mods.item_menu_taken(who, &view, t.slot as u32, &stack) {
++                    game.apply_item_menu_update(i, u);
++                }
++            }
++        }
++        if let (true, Some(who)) = (self.close_item_menu, &who) {
++            let i = mine(game, who).ok_or("close-item-menu: no item menu is open")?;
++            game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
++        }
+         if let Some(id) = self.close_entity_menu {
+             if !game.entity_menus.remove(&id) {
+                 return Err(format!("close-entity-menu: the menu of {id} is not open"));
+@@ -2223,6 +2353,16 @@ impl Step {
+                 }
+             }
+         }
++        // An item menu opened (round 4, item 2): its slots, all virtual, start empty; the player's earlier one closes.
++        for o in &out {
++            let Output::ItemMenu { player, slot, menu, .. } = o else { continue };
++            let Some(t) = game.menu_types.iter().find(|t| &t.id == menu) else { continue };
++            let slots = usize::from(t.slots);
++            if let Some(i) = game.item_menus.iter().position(|m| &m.player == player) {
++                game.apply_item_menu_update(i, crate::ItemMenuUpdate { items: None, menu_data: None, menu_text: None, close: true });
++            }
++            game.item_menus.push(HarnessItemMenu { player: player.clone(), slot: *slot, menu: menu.clone(), items: vec![None; slots], data: Vec::new(), text: Vec::new() });
++        }
+         // A mod entity spawned or removed (FORK-10): the spawn is answered with its id, as the game does.
+         // An entity's menu opened (FORK-10 5b): a kind with a menu type gets its virtual slots, empty, past the container's.
+         for o in &out {
+@@ -2803,6 +2943,32 @@ impl Step {
+                 .collect();
+             same("mod-entity-menu", want, &got)?;
+         }
++        if let Some(want) = &e.item_menu_open {
++            let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::ItemMenu { player, slot, menu, .. } => Some(format!("{} {slot} {menu}", name(player))),
++                    _ => None,
++                })
++                .collect();
++            same("item-menu-open", want, &got)?;
++        }
++        if let Some(want) = &e.item_menus {
++            let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
++            let got: Vec<String> = game
++                .item_menus
++                .iter()
++                .map(|m| {
++                    let slots: Vec<String> =
++                        m.items.iter().enumerate().filter_map(|(i, s)| s.as_ref().map(|s| format!("{i}={}", show_stack(&Some(s.clone()))))).collect();
++                    let data: Vec<String> = m.data.iter().map(i32::to_string).collect();
++                    let slots = if slots.is_empty() { "-".to_owned() } else { slots.join(",") };
++                    format!("{} {} {} {slots} data=[{}] text={}", name(&m.player), m.slot, m.menu, data.join(","), m.text.join("|"))
++                })
++                .collect();
++            same("item-menus", want, &got)?;
++        }
+         if let Some(want) = &e.world_data {
+             game.mods.store_world_data(&mut game.world_data);
+             let got: Vec<String> = game
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 111140fd0..9258c9def 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 47);
++    assert_eq!(LEVEL, 48);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 4e798fdb5..53ff66bea 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -692,6 +692,7 @@ One choice of a radial menu.
+ | `set-hud-line` | `func(player: string, id: string, icon: string, text: string, fraction: f32) -> bool` | Sets line `id` (`mymod:energy`, at most 64 bytes) of the mod's HUD on one player's screen (the MekaSuit's module HUD, `IModuleHUD`): the item `icon` (`mymod:jetpack_unit`; empty for none) drawn small, `text` beside it (at most 256 bytes), and, with `fraction` 0 to 1, a bar under the text filled that much (a negative fraction draws no bar). The lines show at the screen's top left, under what is there already, in the order of their ids, until changed; an empty text takes the line away, and the player's client forgets them all when it leaves the server. False for a player who is not online; at most 32 lines a call. API 41. |
+ | `open-radial-menu` | `func(player: string, entries: list<radial-entry>, current: u32) -> bool` | Opens a radial menu on one player's screen (Mekanism's mode selector of the Meka-Tool and the configurator, `IRadialSelectorEnum`): 2 to 16 entries around the screen's centre, `current` marked. The pointer is let go so the player can point; a click (a tap on a touch screen) on an entry chooses it and closes the menu, one in the middle or Escape closes it without a choice. The choice comes back as a mod message on channel `<mod id>:radial` whose bytes are the entry's id (UTF-8): register `on_net` to hear it. False for a player who is not online or entries out of bounds. API 42. |
+ | `open-entity-menu` | `func(player: string, dimension: string, id: u32) -> bool` | Opens the container of one of the mod's own entities (FORK-10 d2, the Robit's inventory) for one player, as a chest of as many rows of 9 as its `container_slots` fill (1 to 6; the slots past them stay out of the menu): the player moves items in and out as in a chest, the entity's slots follow each tick (what the mod's `entities-tick` puts there shows in the menu, and what the player puts there reaches the mod), and the menu closes when the player is more than 4 blocks from its box or the entity goes. Titled with the entity's name, else the kind's (`entity.<ns>.<path>`). False for a player who is not online, an entity of another mod, one with fewer than 9 slots, or one not in the level in place. API 43. A kind with a `menu` (FORK-10 5b, API 46) opens that menu type instead, drawn by its `screen` as a block's (slots, data slots, widgets, windows as tabs): its first `container_slots` slots are the entity's, the ones past them are virtual (a crafting grid, an anvil's), shown to the mod past the container's in `mod-entity.items` while the menu is open and handed back to the player (its result slots emptied) when it closes. Its data slots are the entity's `menu-data`, its strings the entity's `menu-text`, a button calls the mod's `entity-menu-button`, taking from a result slot calls `entity-menu-taken`, and a `textfield`'s message on `<mod id>:menu_text` carries the position `(i32::MIN, 0, entity id)`. |
++| `open-item-menu` | `func(player: string, slot: u32, menu: string) -> bool` | Opens menu type `menu` (`<mod id>:<path>`, one of the mod's `data/<mod>/horizon/menu/*.json`, drawn by its `screen` as a block's) for one player over the item in their slot `slot` (0 to 35 the inventory, 36 to 39 the armour, 40 the off hand): the item menus of Mekanism (Module Tweaker, Dictionary, Portable Teleporter, Seismic Reader, Portable QIO Dashboard). Every slot of the menu is virtual: empty when it opens, kept while it is open, and what the player left in them (not the `results`) comes back to the player when it closes. Each tick the mod's `item-menu-tick` sees it and sets its slots, data slots and strings; a button calls `item-menu-button`, taking from a result slot calls `item-menu-taken`, and a `textfield`'s message on `<mod id>:menu_text` carries the position `(i32::MIN, 1, slot)`. It closes when the player closes it, when the slot no longer holds an item of the one it opened on, or when the mod answers `close`. True when asked; false for a player who is not online, a slot past 40 or a menu of another mod. API 48. |
+ | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+ 
+ ## `world`
+@@ -1319,6 +1320,29 @@ A living entity of one of the mod's kinds (FORK-10, the Robit): the game keeps i
+ | `name` | `option<string>` | The name it was given, shown over it. |
+ | `menu-data` | `list<s32>` | The data slots its menu shows (FORK-10 5b), as the mod last set them; not saved. |
+ 
++### record `item-menu`
++
++An open item menu (`players.open-item-menu`) as the mod sees it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `menu` | `string` | The menu type, `<mod id>:<path>`. |
++| `slot` | `u32` | The player's slot it was opened over, and what it holds now. |
++| `stack` | `option<item-stack>` |  |
++| `items` | `list<option<item-stack>>` | The menu's slots (all virtual), as the player left them. |
++| `menu-data` | `list<s32>` | The data slots the mod last set. |
++
++### record `item-menu-update`
++
++What the mod changes in an open item menu; a none leaves that as it is.
++
++| Field | Type | |
++| --- | --- | --- |
++| `items` | `option<list<option<item-stack>>>` | The menu's slots after the call; slots past the menu's, and stacks of unknown items, are dropped. |
++| `menu-data` | `option<list<s32>>` | Its data slots (16 bits each on the wire, up to 256). |
++| `menu-text` | `option<list<string>>` | Its strings (up to 64 of up to 256 bytes): a `text` widget with `text_data: n` shows string `n`. |
++| `close` | `bool` | Closes it (its slots' items go back to the player). |
++
+ ### record `mod-entity-update`
+ 
+ What the mod makes of an entity in a tick; a none leaves that as it is.
+@@ -1373,6 +1397,9 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-break-start` | `func(player: player, stack: item-stack, pos: block-pos, state: string) -> bool` | A player is breaking the block `state` at `pos` holding `stack`, an item of the mod (`registration.block-break`; NeoForge's `IItemExtension.onBlockStartBreak`, where the Meka-Tool mines a vein or blasts an area): asked once the game allowed the break (the item can break blocks; a dig in survival when it ends, a creative click at once), on the PC and on Android (a long press) alike. Answer true to cancel the normal break: the block stays, nothing drops, and the mod breaks what it wants (`world.break-blocks`); false lets the game break it. The first mod that answers true decides. (An export: it has no level; a mod that implements it needs a Horizon that has it, from API 43.) |
+ | `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
+ | `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
++| `item-menu-tick` | `func(player: player, menu: item-menu) -> option<item-menu-update>` | Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48. |
++| `item-menu-button` | `func(player: player, menu: item-menu, id: s32) -> option<item-menu-update>` | `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus. |
++| `item-menu-taken` | `func(player: player, menu: item-menu, slot: u32, stack: item-stack) -> option<item-menu-update>` | `player` took `stack` out of result slot `slot` of one of the mod's item menus (the menu as it is after the take): the mod uses up what made it. |
+ | `entity-menu-button` | `func(player: player, entity: mod-entity, id: s32) -> option<mod-entity-update>` | A player pressed button `id` (a `button` widget's `id`, `shift_id` or `alt_id`, as the client chose it) of the menu of an entity of the mod's own kind (FORK-10 5b), with the entity as it is. Returns what to change in it, if anything. |
+ | `entity-menu-taken` | `func(player: player, entity: mod-entity, slot: u32, stack: item-stack) -> option<mod-entity-update>` | A player took `stack` out of result slot `slot` of the menu of an entity of the mod's own kind (a crafting or repair result, a slot listed in the menu type's `results`), with the entity as it is after the take: the mod uses up what made it (the grid's ingredients, the anvil's inputs). Returns what to change in it, if anything. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+-- 
+2.43.0
+

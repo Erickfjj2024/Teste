@@ -1,0 +1,556 @@
+From abb8ae7c36875d6a946304dece2a096cb5455786 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 00:14:56 +0000
+Subject: [PATCH] Energy in items any mod moves (round 4 item 5, API 51)
+
+An item declares "energy": {capacity, max_insert, max_extract} in content
+(NeoForge's item IEnergyStorage, FE); what it holds is its horizon:energy
+component. recipe-types.item-energy reads it, item-energy-insert and
+item-energy-extract charge and drain a stack (with simulate) and give it
+back. Example energy-items-demo.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/mods.rs        |   2 +
+ .../examples/energy-items-demo/Cargo.toml     |  16 +++
+ .../data/ebattery/horizon/item/battery.json   |   1 +
+ .../energy-items-demo/horizon-mod.toml        |   9 ++
+ .../examples/energy-items-demo/src/lib.rs     |  35 +++++
+ .../energy-items-demo/tests/battery.toml      |  25 ++++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  16 +++
+ crates/horizon-mods/src/api_level.rs          |   7 +-
+ crates/horizon-mods/src/content.rs            |  20 ++-
+ crates/horizon-mods/src/item_energy.rs        | 131 ++++++++++++++++++
+ crates/horizon-mods/src/lib.rs                |   1 +
+ crates/horizon-mods/src/runtime.rs            |  19 +++
+ crates/horizon-mods/src/testing.rs            |   1 +
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  14 ++
+ 17 files changed, 304 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-items-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-items-demo/data/ebattery/horizon/item/battery.json
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-items-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-items-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/energy-items-demo/tests/battery.toml
+ create mode 100644 crates/horizon-mods/src/item_energy.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 220a8f80b..2f2f9e0ed 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1200,6 +1200,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "energy-items-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "entity-kinds"
+ version = "0.1.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 88253826b..56a7474ca 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -50,6 +50,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/world-data-probe",
+     "crates/horizon-mod-sdk/examples/item-menu-demo",
+     "crates/horizon-mod-sdk/examples/teleport-probe",
++    "crates/horizon-mod-sdk/examples/energy-items-demo",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 8cdf70cc9..00f8f561c 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -436,6 +436,8 @@ pub(super) static MOD_REDSTONE_EMITTERS: std::sync::OnceLock<std::collections::H
+ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+     let emitters = mods.iter().flat_map(|m| m.content.blocks.iter()).filter(|b| b.redstone_emitter).map(|b| b.id.clone()).collect();
+     let _ = MOD_REDSTONE_EMITTERS.set(emitters);
++    // The mods' items that hold energy, for `recipe-types.item-energy` (round 4, item 5).
++    horizon_mods::item_energy::register(mods.iter().flat_map(|m| m.content.items.iter()).filter_map(|i| Some((i.id.clone(), i.energy?))));
+     use horizon_client::containers;
+     let menus = horizon_client::mod_content::menu_types(mods);
+     let screens = menus
+diff --git a/crates/horizon-mod-sdk/examples/energy-items-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/energy-items-demo/Cargo.toml
+new file mode 100644
+index 000000000..629457423
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-items-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "energy-items-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: energy in items (item-energy)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/energy-items-demo/data/ebattery/horizon/item/battery.json b/crates/horizon-mod-sdk/examples/energy-items-demo/data/ebattery/horizon/item/battery.json
+new file mode 100644
+index 000000000..c6d02ae5c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-items-demo/data/ebattery/horizon/item/battery.json
+@@ -0,0 +1 @@
++{"template": "minecraft:stick", "max_stack_size": 1, "energy": {"capacity": 1000, "max_insert": 100, "max_extract": 50}}
+diff --git a/crates/horizon-mod-sdk/examples/energy-items-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/energy-items-demo/horizon-mod.toml
+new file mode 100644
+index 000000000..37487ef38
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-items-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "ebattery"
++name = "Energy Items Demo"
++version = "0.1.0"
++description = "Test mod for energy in items (round 4, item 5): a battery declared in content holds energy any mod reads, charges and drains."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["registries", "players", "recipe-types", "player-items", "net"]
++experimental = ["recipe-types", "player-items", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/energy-items-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-items-demo/src/lib.rs
+new file mode 100644
+index 000000000..03adfd50d
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-items-demo/src/lib.rs
+@@ -0,0 +1,35 @@
++//! Energy Items Demo (round 4, item 5, `recipe-types.item-energy`): `ebattery:battery` (data/ebattery/horizon/item/battery.json) holds
++//! up to 1000 FE, takes 100 a call and gives 50. A message on `ebattery:charge` charges the item in the sender's first slot with 300
++//! (a simulation first), `ebattery:drain` drains 300 from it; each puts the stack back and tells what moved and what it holds. A stick
++//! holds none.
++use horizon_mod_sdk::server::{Player, Registration, ServerMod, player_items, players, recipe_types};
++
++struct Demo;
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Demo, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, _data: &[u8]) {
++        let Some(stack) = player_items::get_inventory(&player.id).and_then(|inv| inv.first().cloned().flatten()) else { return };
++        let Some(before) = recipe_types::item_energy(&stack) else {
++            let _ = players::tell(&player.id, &format!("{} holds no energy", stack.item));
++            return;
++        };
++        let (after, moved) = match channel {
++            "ebattery:charge" => {
++                let (_, would) = recipe_types::item_energy_insert(&stack, 300, true);
++                let (after, moved) = recipe_types::item_energy_insert(&stack, 300, false);
++                let _ = players::tell(&player.id, &format!("would take {would}"));
++                (after, moved)
++            }
++            "ebattery:drain" => recipe_types::item_energy_extract(&stack, 300, false),
++            _ => return,
++        };
++        let _ = player_items::set_slot(&player.id, 0, Some(&after));
++        let now = recipe_types::item_energy(&after).map_or(0, |e| e.stored);
++        let _ = players::tell(&player.id, &format!("moved {moved}: {}/{} (was {})", now, before.capacity, before.stored));
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/energy-items-demo/tests/battery.toml b/crates/horizon-mod-sdk/examples/energy-items-demo/tests/battery.toml
+new file mode 100644
+index 000000000..38c877fc9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/energy-items-demo/tests/battery.toml
+@@ -0,0 +1,25 @@
++[[step]]
++join = "Alex"
++inventory = ["ebattery:battery*1"]
++
++[[step]]
++# Charging 300: the battery takes 100 a call (a simulation says so first, changing nothing), and its component holds it.
++net = { channel = "ebattery:charge" }
++expect.told = ["Alex: would take 100", "Alex: moved 100: 100/1000 (was 0)"]
++expect.player-items = ['set-slot Alex 0 ebattery:battery*1{"horizon:energy":100L}']
++
++[[step]]
++# Draining 300 from a battery holding 900: 50 a call.
++inventory = ['ebattery:battery*1{"horizon:energy":900L}']
++
++[[step]]
++net = { channel = "ebattery:drain" }
++expect.told = ["Alex: moved 50: 850/1000 (was 900)"]
++
++[[step]]
++# A stick holds none.
++inventory = ["minecraft:stick*1"]
++
++[[step]]
++net = { channel = "ebattery:charge" }
++expect.told = ["Alex: minecraft:stick holds no energy"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 42fb33d5f..e877111d1 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1092,6 +1092,22 @@ interface recipe-types {
+     /// place, first occurrence kept: what `TagKey` lists and Mekanism's Oredictionificator offers as a filter's results); empty for a tag
+     /// the game does not have. The reverse of `item-tags`. API 40.
+     item-tag-members: func(tag: string) -> list<string>;
++    /// How much energy an item holds (round 4, item 5; NeoForge's item `IEnergyStorage`, in FE).
++    record energy-info {
++        stored: u64,
++        capacity: u64,
++        /// The most a call moves in, and out.
++        max-insert: u64,
++        max-extract: u64,
++    }
++    /// The energy of `stack`, of any mod's item whose content declares `"energy"` (the amount is its `horizon:energy` component);
++    /// none for an item that holds none. API 51.
++    item-energy: func(stack: item-stack) -> option<energy-info>;
++    /// Charges `stack` with up to `amount` (`receiveEnergy`): the stack after (as it was when `simulate`) and the energy it took, as
++    /// much as its room and its `max-insert` allow; 0 for an item that holds none. The mod puts the stack back where it was. API 51.
++    item-energy-insert: func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>;
++    /// Drains up to `amount` from `stack` (`extractEnergy`): the stack after and the energy it gave. API 51.
++    item-energy-extract: func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>;
+ }
+ 
+ /// Capability `net`, server mods only (manifest `api = "0.3"`, experimental):
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 6cf9ecb3e..dadf594eb 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 50;
++pub const LEVEL: u32 = 51;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 123] = [
++pub const FUNCTIONS: [(&str, u32); 126] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -92,6 +92,9 @@ pub const FUNCTIONS: [(&str, u32); 123] = [
+     ("entities.entities-in-box", 49),
+     ("entities.teleport-entity", 49),
+     ("world.set-redstone-output", 50),
++    ("recipe-types.item-energy", 51),
++    ("recipe-types.item-energy-insert", 51),
++    ("recipe-types.item-energy-extract", 51),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index d2ad95eff..e20ba91c7 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -221,6 +221,8 @@ struct ItemFile {
+     #[serde(default)]
+     components: BTreeMap<String, serde_json::Value>,
+     crafting_remainder: Option<String>,
++    #[serde(default)]
++    energy: Option<crate::item_energy::EnergySpec>,
+ }
+ 
+ /// An item the mod adds: a vanilla template item's components under a new
+@@ -237,6 +239,9 @@ pub struct Item {
+     /// What it leaves in the crafting grid (`Item.Properties.craftRemainder`):
+     /// a vanilla item or one of the mod's own.
+     pub crafting_remainder: Option<String>,
++    /// The energy it holds (round 4, item 5; NeoForge's item `IEnergyStorage`): what any mod reads and moves with
++    /// `recipe-types.item-energy`.
++    pub energy: Option<crate::item_energy::EnergySpec>,
+ }
+ 
+ /// `MobEffectCategory`.
+@@ -1721,7 +1726,10 @@ impl Content {
+                 return Err(format!("{name}: {item} is also a block's item"));
+             }
+             if let Some(rest) = &file.crafting_remainder {
+-                remainders.push((name, rest.clone()));
++                remainders.push((name.clone(), rest.clone()));
++            }
++            if file.energy.is_some_and(|e| e.capacity == 0) {
++                return Err(format!("{name}: energy capacity is above 0"));
+             }
+             self.items.push(Item {
+                 id: item,
+@@ -1730,6 +1738,7 @@ impl Content {
+                 rarity: file.rarity,
+                 components: file.components,
+                 crafting_remainder: file.crafting_remainder,
++                energy: file.energy,
+             });
+         }
+         for (effect, name) in effects {
+@@ -2122,6 +2131,15 @@ capabilities = ["registries"]
+         assert_eq!(content.items[0].rarity, Some(Rarity::Uncommon));
+         assert!(content.items[0].components.is_empty());
+         assert_eq!(content.items[0].crafting_remainder, None);
++        assert_eq!(content.items[0].energy, None);
++        // An item that holds energy says how much and how fast (round 4, item 5); the rates default to no limit.
++        let battery = br#"{"template": "minecraft:stick", "energy": {"capacity": 1000, "max_insert": 100}}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/item/battery.json", battery)];
++        let spec = hmod("battery", MANIFEST_TEXT, files).unwrap().items[0].energy;
++        assert_eq!(spec, Some(crate::item_energy::EnergySpec { capacity: 1000, max_insert: 100, max_extract: u64::MAX }));
++        let empty = br#"{"template": "minecraft:stick", "energy": {"capacity": 0}}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/item/battery.json", empty)];
++        assert!(hmod("battery-empty", MANIFEST_TEXT, files).unwrap_err().contains("energy capacity is above 0"));
+     }
+ 
+     #[test]
+diff --git a/crates/horizon-mods/src/item_energy.rs b/crates/horizon-mods/src/item_energy.rs
+new file mode 100644
+index 000000000..401b404b0
+--- /dev/null
++++ b/crates/horizon-mods/src/item_energy.rs
+@@ -0,0 +1,131 @@
++//! Energy in items any mod can read and move (round 4, item 5): NeoForge's `IEnergyStorage` item capability (Forge Energy, FE). An
++//! item declares how much it holds and how fast in its content (`"energy": {"capacity", "max_insert", "max_extract"}`); what it holds
++//! is the component `horizon:energy` (a long) of the stack, so a stack carries it wherever it goes. Pure: the runtime answers
++//! `recipe-types.item-energy`, `item-energy-insert` and `item-energy-extract` from here.
++use serde::Deserialize;
++
++/// The component that holds the energy, in FE.
++pub const COMPONENT: &str = "horizon:energy";
++
++/// How much an item holds and how much a call may move into or out of it (`EnergyStorage(capacity, maxReceive, maxExtract)`).
++#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct EnergySpec {
++    pub capacity: u64,
++    #[serde(default = "unlimited")]
++    pub max_insert: u64,
++    #[serde(default = "unlimited")]
++    pub max_extract: u64,
++}
++
++fn unlimited() -> u64 {
++    u64::MAX
++}
++
++/// The items that hold energy, every mod's, by id: the game (and a test script) adds them from the content it loads.
++static TABLE: std::sync::RwLock<Option<std::collections::HashMap<String, EnergySpec>>> = std::sync::RwLock::new(None);
++
++/// Adds the items that hold energy (from the mods' content).
++pub fn register(items: impl IntoIterator<Item = (String, EnergySpec)>) {
++    if let Ok(mut t) = TABLE.write() {
++        t.get_or_insert_with(Default::default).extend(items);
++    }
++}
++
++/// How much item `item` holds and how fast, if it holds energy.
++pub fn spec(item: &str) -> Option<EnergySpec> {
++    TABLE.read().ok()?.as_ref()?.get(item).copied()
++}
++
++/// The energy the components hold (0 when they have none or it does not read).
++pub fn stored(components: &str) -> u64 {
++    let Some(at) = find_key(components) else { return 0 };
++    let rest = components[at..].trim_start();
++    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
++    digits.parse().unwrap_or(0)
++}
++
++/// Where the value of the component starts, after its key and colon.
++fn find_key(components: &str) -> Option<usize> {
++    for key in [format!("\"{COMPONENT}\""), format!("'{COMPONENT}'"), COMPONENT.to_owned()] {
++        let mut from = 0;
++        while let Some(i) = components[from..].find(&key) {
++            let start = from + i;
++            let end = start + key.len();
++            // A whole key: after `{` or `,`, and followed by `:`.
++            let before = components[..start].trim_end().chars().last();
++            let after = components[end..].trim_start();
++            if matches!(before, Some('{') | Some(',')) && after.starts_with(':') {
++                return Some(components.len() - after.len() + 1);
++            }
++            from = end;
++        }
++    }
++    None
++}
++
++/// The components with the energy set to `energy` (the component added when missing; `{}` made when empty).
++pub fn with_stored(components: &str, energy: u64) -> String {
++    let value = format!("{energy}L");
++    if let Some(at) = find_key(components) {
++        let rest = &components[at..];
++        let lead = rest.len() - rest.trim_start().len();
++        let len = rest.trim_start().chars().take_while(|c| c.is_ascii_digit() || matches!(c, 'L' | 'l' | '-')).count();
++        let mut out = components.to_owned();
++        out.replace_range(at + lead..at + lead + len, &value);
++        return out;
++    }
++    let body = components.trim();
++    let inner = body.strip_prefix('{').and_then(|b| b.strip_suffix('}')).unwrap_or("").trim();
++    if inner.is_empty() { format!("{{\"{COMPONENT}\":{value}}}") } else { format!("{{{inner},\"{COMPONENT}\":{value}}}") }
++}
++
++/// `IEnergyStorage.receiveEnergy`: up to `amount` goes in, as much as the room and `max_insert` allow. The energy taken and the
++/// components after (unchanged when `simulate`).
++pub fn insert(spec: &EnergySpec, components: &str, amount: u64, simulate: bool) -> (u64, String) {
++    let have = stored(components).min(spec.capacity);
++    let taken = amount.min(spec.max_insert).min(spec.capacity - have);
++    let after = if simulate || taken == 0 { components.to_owned() } else { with_stored(components, have + taken) };
++    (taken, after)
++}
++
++/// `IEnergyStorage.extractEnergy`: up to `amount` comes out, as much as it holds and `max_extract` allow.
++pub fn extract(spec: &EnergySpec, components: &str, amount: u64, simulate: bool) -> (u64, String) {
++    let have = stored(components).min(spec.capacity);
++    let given = amount.min(spec.max_extract).min(have);
++    let after = if simulate || given == 0 { components.to_owned() } else { with_stored(components, have - given) };
++    (given, after)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const BATTERY: EnergySpec = EnergySpec { capacity: 1000, max_insert: 100, max_extract: 50 };
++
++    #[test]
++    fn the_energy_is_read_and_written_in_the_components() {
++        assert_eq!(stored(""), 0);
++        assert_eq!(stored("{\"horizon:energy\":250L}"), 250);
++        assert_eq!(stored("{\"minecraft:damage\":3, 'horizon:energy': 7L}"), 7);
++        // A key that only contains the name is not it.
++        assert_eq!(stored("{\"mymod:horizon:energy_old\":5L}"), 0);
++        assert_eq!(with_stored("", 40), "{\"horizon:energy\":40L}");
++        assert_eq!(with_stored("{\"minecraft:damage\":3}", 40), "{\"minecraft:damage\":3,\"horizon:energy\":40L}");
++        assert_eq!(with_stored("{\"horizon:energy\":250L,\"minecraft:damage\":3}", 9), "{\"horizon:energy\":9L,\"minecraft:damage\":3}");
++    }
++
++    #[test]
++    fn charging_and_draining_keep_to_the_room_the_charge_and_the_rates() {
++        // 100 at most a call goes in; the room limits it near full.
++        assert_eq!(insert(&BATTERY, "", 500, false), (100, "{\"horizon:energy\":100L}".to_owned()));
++        assert_eq!(insert(&BATTERY, "{\"horizon:energy\":950L}", 500, false).0, 50);
++        assert_eq!(insert(&BATTERY, "{\"horizon:energy\":1000L}", 500, false), (0, "{\"horizon:energy\":1000L}".to_owned()));
++        // A simulation answers without changing it.
++        assert_eq!(insert(&BATTERY, "", 30, true), (30, String::new()));
++        // 50 at most a call comes out, and no more than it holds.
++        assert_eq!(extract(&BATTERY, "{\"horizon:energy\":120L}", 500, false), (50, "{\"horizon:energy\":70L}".to_owned()));
++        assert_eq!(extract(&BATTERY, "{\"horizon:energy\":20L}", 500, false).0, 20);
++        assert_eq!(extract(&BATTERY, "", 500, false), (0, String::new()));
++    }
++}
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 09be922bc..d382219ac 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -32,6 +32,7 @@ mod runtime;
+ #[cfg(feature = "runtime")]
+ pub mod testing;
+ pub mod world_data;
++pub mod item_energy;
+ 
+ pub use content::Content;
+ pub use manifest::{Capability, Manifest, Package, Side, find};
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 562ef804b..075afbf5a 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3622,6 +3622,25 @@ impl recipe_types::Host for State {
+         tags.sort();
+         tags
+     }
++    fn item_energy(&mut self, stack: ModItemStack) -> Option<recipe_types::EnergyInfo> {
++        let spec = crate::item_energy::spec(&stack.item)?;
++        Some(recipe_types::EnergyInfo {
++            stored: crate::item_energy::stored(&stack.components).min(spec.capacity),
++            capacity: spec.capacity,
++            max_insert: spec.max_insert,
++            max_extract: spec.max_extract,
++        })
++    }
++    fn item_energy_insert(&mut self, stack: ModItemStack, amount: u64, simulate: bool) -> (ModItemStack, u64) {
++        let Some(spec) = crate::item_energy::spec(&stack.item) else { return (stack, 0) };
++        let (moved, components) = crate::item_energy::insert(&spec, &stack.components, amount, simulate);
++        (ModItemStack { components, ..stack }, moved)
++    }
++    fn item_energy_extract(&mut self, stack: ModItemStack, amount: u64, simulate: bool) -> (ModItemStack, u64) {
++        let Some(spec) = crate::item_energy::spec(&stack.item) else { return (stack, 0) };
++        let (moved, components) = crate::item_energy::extract(&spec, &stack.components, amount, simulate);
++        (ModItemStack { components, ..stack }, moved)
++    }
+     fn item_tag_members(&mut self, tag: String) -> Vec<String> {
+         let Ok(slot) = self.recipe_data.lock() else { return Vec::new() };
+         let Some(data) = slot.as_ref() else { return Vec::new() };
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index dcaa10bdc..3eca037d0 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -361,6 +361,7 @@ impl TestGame {
+         {
+             self.entity_kinds = content.entity_kinds.clone();
+             self.menu_types = content.menu_types.clone();
++            crate::item_energy::register(content.items.iter().filter_map(|i| Some((i.id.clone(), i.energy?))));
+         }
+         self.mods = Mods::load(std::slice::from_ref(&self.hmod), |_| true, |_| false);
+         self.mods.load_world_data(&self.world_data);
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 593423b36..77da686c6 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 50);
++    assert_eq!(LEVEL, 51);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 557d28bec..c121b4c8f 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -921,6 +921,17 @@ A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `ca
+ | `experience` | `f32` |  |
+ | `time` | `u32` | Ticks a furnace takes (`cookingtime`). |
+ 
++### record `energy-info`
++
++How much energy an item holds (round 4, item 5; NeoForge's item `IEnergyStorage`, in FE).
++
++| Field | Type | |
++| --- | --- | --- |
++| `stored` | `u64` |  |
++| `capacity` | `u64` |  |
++| `max-insert` | `u64` | The most a call moves in, and out. |
++| `max-extract` | `u64` |  |
++
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
+@@ -932,6 +943,9 @@ A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `ca
+ | `item-max-stack-size` | `func(item: string) -> option<u32>` | How many of `item` fit a stack (`Item.getMaxStackSize`, the `max_stack_size` component); none for an item the game does not know. API 28. |
+ | `item-tags` | `func(item: string) -> list<string>` | The item tags `item` is in (`c:ores/iron`, `minecraft:logs`, without the `#`), sorted; empty for an item in none or one the game does not know. The reverse of `ingredient-items` for a tag. API 30. |
+ | `item-tag-members` | `func(tag: string) -> list<string>` | The items of the item tag `tag` (`c:ingots/iron`; a leading `#` is taken off) in the game's order (the tag files', nested tags in place, first occurrence kept: what `TagKey` lists and Mekanism's Oredictionificator offers as a filter's results); empty for a tag the game does not have. The reverse of `item-tags`. API 40. |
++| `item-energy` | `func(stack: item-stack) -> option<energy-info>` | The energy of `stack`, of any mod's item whose content declares `"energy"` (the amount is its `horizon:energy` component); none for an item that holds none. API 51. |
++| `item-energy-insert` | `func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>` | Charges `stack` with up to `amount` (`receiveEnergy`): the stack after (as it was when `simulate`) and the energy it took, as much as its room and its `max-insert` allow; 0 for an item that holds none. The mod puts the stack back where it was. API 51. |
++| `item-energy-extract` | `func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>` | Drains up to `amount` from `stack` (`extractEnergy`): the stack after and the energy it gave. API 51. |
+ 
+ ## `entities`
+ 
+-- 
+2.43.0
+

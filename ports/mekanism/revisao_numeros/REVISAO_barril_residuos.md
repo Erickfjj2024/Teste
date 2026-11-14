@@ -1,0 +1,5 @@
+# Ligação do Radioactive Waste Barrel / Wiring the Radioactive Waste Barrel
+
+**PT-BR.** Ligado (`radioactive_waste_barrel.rs`, `run_waste_barrels`): bloco com um tanque de químico de 512 000 mB aberto só por cima e por baixo; filtro do tanque = os químicos radioativos e, enquanto guarda um, só esse; decaimento de 1 mB a cada 20 ticks (ignora o mesmo tick: proteção contra aceleradores); clique sneak do Configurator liga/desliga o dreno (som `ui.button.click` 0,3); com o dreno ligado, entrega ao barril de baixo só o que ele aceita (`min(falta, conteúdo)`). Conferido com `TileEntityRadioactiveWasteBarrel`.
+**Aberto (FORK):** dreno para algo que não seja outro barril (o jogo precisa empurrar o conteúdo de um tanque por uma face), nível do comparador (`set-comparator-output`), despejo de radiação ao quebrar (`handle_block_broken` + fonte de radiação), empilhamento do transbordo para o barril de cima (`StackedWasteBarrel`, o jogo decide a ordem do insert).
+**EN.** Wired the barrel: tank, filter, decay, configurator toggle, drain to the barrel below. Open: drain into non-barrels, comparator, radiation dump on break, overflow to the barrel above.

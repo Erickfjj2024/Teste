@@ -1,0 +1,371 @@
+item,estado,nota
+block:advanced_bin,OK,Advanced Bin
+block:advanced_chemical_tank,OK,Advanced Chemical Tank
+block:advanced_combining_factory,OK,Advanced Combining Factory
+block:advanced_compressing_factory,OK,Advanced Compressing Factory
+block:advanced_crushing_factory,OK,Advanced Crushing Factory
+block:advanced_energy_cube,OK,Advanced Energy Cube
+block:advanced_enriching_factory,OK,Advanced Enriching Factory
+block:advanced_fluid_tank,OK,Advanced Fluid Tank
+block:advanced_induction_cell,OK,Advanced Induction Cell
+block:advanced_induction_provider,OK,Advanced Induction Provider
+block:advanced_infusing_factory,OK,Advanced Infusing Factory
+block:advanced_injecting_factory,OK,Advanced Injecting Factory
+block:advanced_logistical_transporter,OK,Advanced Logistical Transporter
+block:advanced_mechanical_pipe,OK,Advanced Mechanical Pipe
+block:advanced_pressurized_tube,OK,Advanced Pressurized Tube
+block:advanced_purifying_factory,OK,Advanced Purifying Factory
+block:advanced_sawing_factory,OK,Advanced Sawing Factory
+block:advanced_smelting_factory,OK,Advanced Smelting Factory
+block:advanced_thermodynamic_conductor,OK,Advanced Thermodynamic Conductor
+block:advanced_universal_cable,OK,Advanced Universal Cable
+block:antiprotonic_nucleosynthesizer,OK,Antiprotonic Nucleosynthesizer
+block:basic_bin,OK,Basic Bin
+block:basic_chemical_tank,OK,Basic Chemical Tank
+block:basic_combining_factory,OK,Basic Combining Factory
+block:basic_compressing_factory,OK,Basic Compressing Factory
+block:basic_crushing_factory,OK,Basic Crushing Factory
+block:basic_energy_cube,OK,Basic Energy Cube
+block:basic_enriching_factory,OK,Basic Enriching Factory
+block:basic_fluid_tank,OK,Basic Fluid Tank
+block:basic_induction_cell,OK,Basic Induction Cell
+block:basic_induction_provider,OK,Basic Induction Provider
+block:basic_infusing_factory,OK,Basic Infusing Factory
+block:basic_injecting_factory,OK,Basic Injecting Factory
+block:basic_logistical_transporter,OK,Basic Logistical Transporter
+block:basic_mechanical_pipe,OK,Basic Mechanical Pipe
+block:basic_pressurized_tube,OK,Basic Pressurized Tube
+block:basic_purifying_factory,OK,Basic Purifying Factory
+block:basic_sawing_factory,OK,Basic Sawing Factory
+block:basic_smelting_factory,OK,Basic Smelting Factory
+block:basic_thermodynamic_conductor,OK,Basic Thermodynamic Conductor
+block:basic_universal_cable,OK,Basic Universal Cable
+block:block_bio_fuel,OK,Block of Bio Fuel
+block:block_bronze,OK,Block of Bronze
+block:block_charcoal,OK,Block of Charcoal
+block:block_fluorite,OK,Block of Fluorite
+block:block_lead,OK,Block of Lead
+block:block_osmium,OK,Block of Osmium
+block:block_raw_lead,OK,Block of Raw Lead
+block:block_raw_osmium,OK,Block of Raw Osmium
+block:block_raw_tin,OK,Block of Raw Tin
+block:block_raw_uranium,OK,Block of Raw Uranium
+block:block_refined_glowstone,OK,Refined Glowstone
+block:block_refined_obsidian,OK,Refined Obsidian
+block:block_salt,OK,Salt Block
+block:block_steel,OK,Block of Steel
+block:block_tin,OK,Block of Tin
+block:block_uranium,OK,Block of Uranium
+block:boiler_casing,OK,Boiler Casing
+block:boiler_valve,OK,Boiler Valve
+block:bounding_block,OK,Bounding Block
+block:brine,FALTA,Brine
+block:cardboard_box,OK,Cardboard Box
+block:chargepad,OK,Chargepad
+block:chemical_crystallizer,OK,Chemical Crystallizer
+block:chemical_dissolution_chamber,OK,Chemical Dissolution Chamber
+block:chemical_infuser,OK,Chemical Infuser
+block:chemical_injection_chamber,OK,Chemical Injection Chamber
+block:chemical_oxidizer,OK,Chemical Oxidizer
+block:chemical_washer,OK,Chemical Washer
+block:chlorine,FALTA,Liquid Chlorine
+block:combiner,OK,Combiner
+block:creative_bin,OK,Creative Bin
+block:creative_chemical_tank,OK,Creative Chemical Tank
+block:creative_energy_cube,OK,Creative Energy Cube
+block:creative_fluid_tank,OK,Creative Fluid Tank
+block:crusher,OK,Crusher
+block:deepslate_fluorite_ore,OK,Deepslate Fluorite Ore
+block:deepslate_lead_ore,OK,Deepslate Lead Ore
+block:deepslate_osmium_ore,OK,Deepslate Osmium Ore
+block:deepslate_tin_ore,OK,Deepslate Tin Ore
+block:deepslate_uranium_ore,OK,Deepslate Uranium Ore
+block:digital_miner,OK,Digital Miner
+block:dimensional_stabilizer,OK,Dimensional Stabilizer
+block:diversion_transporter,FALTA,Diversion Transporter
+block:dynamic_tank,OK,Dynamic Tank
+block:dynamic_valve,OK,Dynamic Valve
+block:electric_pump,OK,Electric Pump
+block:electrolytic_separator,OK,Electrolytic Separator
+block:elite_bin,OK,Elite Bin
+block:elite_chemical_tank,OK,Elite Chemical Tank
+block:elite_combining_factory,OK,Elite Combining Factory
+block:elite_compressing_factory,OK,Elite Compressing Factory
+block:elite_crushing_factory,OK,Elite Crushing Factory
+block:elite_energy_cube,OK,Elite Energy Cube
+block:elite_enriching_factory,OK,Elite Enriching Factory
+block:elite_fluid_tank,OK,Elite Fluid Tank
+block:elite_induction_cell,OK,Elite Induction Cell
+block:elite_induction_provider,OK,Elite Induction Provider
+block:elite_infusing_factory,OK,Elite Infusing Factory
+block:elite_injecting_factory,OK,Elite Injecting Factory
+block:elite_logistical_transporter,OK,Elite Logistical Transporter
+block:elite_mechanical_pipe,OK,Elite Mechanical Pipe
+block:elite_pressurized_tube,OK,Elite Pressurized Tube
+block:elite_purifying_factory,OK,Elite Purifying Factory
+block:elite_sawing_factory,OK,Elite Sawing Factory
+block:elite_smelting_factory,OK,Elite Smelting Factory
+block:elite_thermodynamic_conductor,OK,Elite Thermodynamic Conductor
+block:elite_universal_cable,OK,Elite Universal Cable
+block:energized_smelter,OK,Energized Smelter
+block:enrichment_chamber,OK,Enrichment Chamber
+block:ethene,FALTA,Liquid Ethene
+block:fluidic_plenisher,OK,Fluidic Plenisher
+block:fluorite_ore,OK,Fluorite Ore
+block:formulaic_assemblicator,OK,Formulaic Assemblicator
+block:fuelwood_heater,OK,Fuelwood Heater
+block:heavy_water,FALTA,Heavy Water
+block:hydrofluoric_acid,FALTA,Liquid Hydrofluoric Acid
+block:hydrogen,FALTA,Liquid Hydrogen
+block:hydrogen_chloride,FALTA,Liquid Hydrogen Chloride
+block:induction_casing,OK,Induction Casing
+block:induction_port,OK,Induction Port
+block:industrial_alarm,OK,Industrial Alarm
+block:isotopic_centrifuge,OK,Isotopic Centrifuge
+block:laser,OK,Laser
+block:laser_amplifier,OK,Laser Amplifier
+block:laser_tractor_beam,FALTA,Laser Tractor Beam
+block:lead_ore,OK,Lead Ore
+block:lithium,FALTA,Liquid Lithium
+block:logistical_sorter,OK,Logistical Sorter
+block:metallurgic_infuser,OK,Metallurgic Infuser
+block:modification_station,OK,Modification Station
+block:nutritional_liquifier,OK,Nutritional Liquifier
+block:nutritional_paste,FALTA,Nutritional Paste
+block:oredictionificator,OK,Oredictionificator
+block:osmium_compressor,OK,Osmium Compressor
+block:osmium_ore,OK,Osmium Ore
+block:oxygen,FALTA,Liquid Oxygen
+block:painting_machine,OK,Painting Machine
+block:personal_barrel,OK,Personal Barrel
+block:personal_chest,OK,Personal Chest
+block:pigment_extractor,OK,Pigment Extractor
+block:pigment_mixer,OK,Pigment Mixer
+block:precision_sawmill,OK,Precision Sawmill
+block:pressure_disperser,OK,Pressure Disperser
+block:pressurized_reaction_chamber,OK,Pressurized Reaction Chamber
+block:purification_chamber,OK,Purification Chamber
+block:qio_dashboard,FALTA,QIO Dashboard
+block:qio_drive_array,OK,QIO Drive Array
+block:qio_exporter,FALTA,QIO Exporter
+block:qio_importer,FALTA,QIO Importer
+block:qio_redstone_adapter,OK,QIO Redstone Adapter
+block:quantum_entangloporter,OK,Quantum Entangloporter
+block:radioactive_waste_barrel,OK,Radioactive Waste Barrel
+block:resistive_heater,OK,Resistive Heater
+block:restrictive_transporter,FALTA,Restrictive Transporter
+block:rotary_condensentrator,OK,Rotary Condensentrator
+block:security_desk,FALTA,Security Desk
+block:seismic_vibrator,OK,Seismic Vibrator
+block:sodium,FALTA,Liquid Sodium
+block:solar_neutron_activator,OK,Solar Neutron Activator
+block:sps_casing,OK,SPS Casing
+block:sps_port,OK,SPS Port
+block:steam,FALTA,Liquid Steam
+block:steel_casing,OK,Steel Casing
+block:structural_glass,OK,Structural Glass
+block:sulfur_dioxide,FALTA,Liquid Sulfur Dioxide
+block:sulfur_trioxide,FALTA,Liquid Sulfur Trioxide
+block:sulfuric_acid,FALTA,Liquid Sulfuric Acid
+block:supercharged_coil,OK,Supercharged Coil
+block:superheated_sodium,FALTA,Liquid Superheated Sodium
+block:superheating_element,OK,Superheating Element
+block:teleporter,OK,Teleporter
+block:teleporter_frame,OK,Teleporter Frame
+block:thermal_evaporation_block,OK,Thermal Evaporation Block
+block:thermal_evaporation_controller,OK,Thermal Evaporation Controller
+block:thermal_evaporation_valve,OK,Thermal Evaporation Valve
+block:tin_ore,OK,Tin Ore
+block:ultimate_bin,OK,Ultimate Bin
+block:ultimate_chemical_tank,OK,Ultimate Chemical Tank
+block:ultimate_combining_factory,OK,Ultimate Combining Factory
+block:ultimate_compressing_factory,OK,Ultimate Compressing Factory
+block:ultimate_crushing_factory,OK,Ultimate Crushing Factory
+block:ultimate_energy_cube,OK,Ultimate Energy Cube
+block:ultimate_enriching_factory,OK,Ultimate Enriching Factory
+block:ultimate_fluid_tank,OK,Ultimate Fluid Tank
+block:ultimate_induction_cell,OK,Ultimate Induction Cell
+block:ultimate_induction_provider,OK,Ultimate Induction Provider
+block:ultimate_infusing_factory,OK,Ultimate Infusing Factory
+block:ultimate_injecting_factory,OK,Ultimate Injecting Factory
+block:ultimate_logistical_transporter,OK,Ultimate Logistical Transporter
+block:ultimate_mechanical_pipe,OK,Ultimate Mechanical Pipe
+block:ultimate_pressurized_tube,OK,Ultimate Pressurized Tube
+block:ultimate_purifying_factory,OK,Ultimate Purifying Factory
+block:ultimate_sawing_factory,OK,Ultimate Sawing Factory
+block:ultimate_smelting_factory,OK,Ultimate Smelting Factory
+block:ultimate_thermodynamic_conductor,OK,Ultimate Thermodynamic Conductor
+block:ultimate_universal_cable,OK,Ultimate Universal Cable
+block:uranium_hexafluoride,FALTA,Liquid Uranium Hexafluoride
+block:uranium_ore,OK,Uranium Ore
+block:uranium_oxide,FALTA,Liquid Uranium Oxide
+entity:flame,?,Flamethrower Flame
+entity:robit,?,Robit
+item:advanced_control_circuit,OK,Advanced Control Circuit
+item:advanced_tier_installer,OK,Advanced Tier Installer
+item:alloy_atomic,OK,Atomic Alloy
+item:alloy_infused,OK,Infused Alloy
+item:alloy_reinforced,OK,Reinforced Alloy
+item:atomic_disassembler,OK,Atomic Disassembler
+item:basic_control_circuit,OK,Basic Control Circuit
+item:basic_tier_installer,OK,Basic Tier Installer
+item:bio_fuel,OK,Bio Fuel
+item:brine_bucket,OK,Brine Bucket
+item:canteen,OK,Canteen
+item:chlorine_bucket,OK,Liquid Chlorine Bucket
+item:clump_copper,OK,Copper Clump
+item:clump_gold,OK,Gold Clump
+item:clump_iron,OK,Iron Clump
+item:clump_lead,OK,Lead Clump
+item:clump_osmium,OK,Osmium Clump
+item:clump_tin,OK,Tin Clump
+item:clump_uranium,OK,Uranium Clump
+item:configuration_card,OK,Configuration Card
+item:configurator,OK,Configurator
+item:crafting_formula,OK,Crafting Formula
+item:crystal_copper,OK,Copper Crystal
+item:crystal_gold,OK,Gold Crystal
+item:crystal_iron,OK,Iron Crystal
+item:crystal_lead,OK,Lead Crystal
+item:crystal_osmium,OK,Osmium Crystal
+item:crystal_tin,OK,Tin Crystal
+item:crystal_uranium,OK,Uranium Crystal
+item:dictionary,OK,Dictionary
+item:dirty_dust_copper,OK,Dirty Copper Dust
+item:dirty_dust_gold,OK,Dirty Gold Dust
+item:dirty_dust_iron,OK,Dirty Iron Dust
+item:dirty_dust_lead,OK,Dirty Lead Dust
+item:dirty_dust_osmium,OK,Dirty Osmium Dust
+item:dirty_dust_tin,OK,Dirty Tin Dust
+item:dirty_dust_uranium,OK,Dirty Uranium Dust
+item:dirty_netherite_scrap,OK,Dirty Netherite Scrap
+item:dosimeter,OK,Dosimeter
+item:dust_bronze,OK,Bronze Dust
+item:dust_charcoal,OK,Charcoal Dust
+item:dust_coal,OK,Coal Dust
+item:dust_copper,OK,Copper Dust
+item:dust_diamond,OK,Diamond Dust
+item:dust_emerald,OK,Emerald Dust
+item:dust_fluorite,OK,Fluorite Dust
+item:dust_gold,OK,Gold Dust
+item:dust_iron,OK,Iron Dust
+item:dust_lapis_lazuli,OK,Lapis Lazuli Dust
+item:dust_lead,OK,Lead Dust
+item:dust_lithium,OK,Lithium Dust
+item:dust_netherite,OK,Netherite Dust
+item:dust_obsidian,OK,Obsidian Dust
+item:dust_osmium,OK,Osmium Dust
+item:dust_quartz,OK,Quartz Dust
+item:dust_refined_obsidian,OK,Refined Obsidian Dust
+item:dust_steel,OK,Steel Dust
+item:dust_sulfur,OK,Sulfur Dust
+item:dust_tin,OK,Tin Dust
+item:dust_uranium,OK,Uranium Dust
+item:dye_base,OK,Dye Base
+item:electric_bow,OK,Electric Bow
+item:electrolytic_core,OK,Electrolytic Core
+item:elite_control_circuit,OK,Elite Control Circuit
+item:elite_tier_installer,OK,Elite Tier Installer
+item:energy_tablet,OK,Energy Tablet
+item:enriched_carbon,OK,Enriched Carbon
+item:enriched_diamond,OK,Enriched Diamond
+item:enriched_gold,OK,Enriched Gold
+item:enriched_iron,OK,Enriched Iron
+item:enriched_redstone,OK,Enriched Redstone
+item:enriched_refined_obsidian,OK,Enriched Obsidian
+item:enriched_tin,OK,Enriched Tin
+item:ethene_bucket,OK,Liquid Ethene Bucket
+item:flamethrower,OK,Flamethrower
+item:fluorite_gem,OK,Fluorite
+item:free_runners,OK,Free Runners
+item:free_runners_armored,OK,Armored Free Runners
+item:gauge_dropper,OK,Gauge Dropper
+item:geiger_counter,OK,Geiger Counter
+item:hazmat_boots,OK,Hazmat Boots
+item:hazmat_gown,OK,Hazmat Gown
+item:hazmat_mask,OK,Hazmat Mask
+item:hazmat_pants,OK,Hazmat Pants
+item:hdpe_elytra,OK,HDPE Reinforced Elytra
+item:hdpe_pellet,OK,HDPE Pellet
+item:hdpe_rod,OK,HDPE Rod
+item:hdpe_sheet,OK,HDPE Sheet
+item:hdpe_stick,OK,PlaStick
+item:heavy_water_bucket,OK,Heavy Water Bucket
+item:hydrofluoric_acid_bucket,OK,Liquid Hydrofluoric Acid Bucket
+item:hydrogen_bucket,OK,Liquid Hydrogen Bucket
+item:hydrogen_chloride_bucket,OK,Liquid Hydrogen Chloride Bucket
+item:ingot_bronze,OK,Bronze Ingot
+item:ingot_lead,OK,Lead Ingot
+item:ingot_osmium,OK,Osmium Ingot
+item:ingot_refined_glowstone,OK,Refined Glowstone Ingot
+item:ingot_refined_obsidian,OK,Refined Obsidian Ingot
+item:ingot_steel,OK,Steel Ingot
+item:ingot_tin,OK,Tin Ingot
+item:ingot_uranium,OK,Uranium Ingot
+item:jetpack,OK,Jetpack
+item:jetpack_armored,OK,Armored Jetpack
+item:lithium_bucket,OK,Liquid Lithium Bucket
+item:meka_tool,OK,Meka-Tool
+item:mekasuit_bodyarmor,OK,MekaSuit Bodyarmor
+item:mekasuit_boots,OK,MekaSuit Boots
+item:mekasuit_helmet,OK,MekaSuit Helmet
+item:mekasuit_pants,OK,MekaSuit Pants
+item:module_base,OK,Module Base
+item:network_reader,OK,Network Reader
+item:nugget_bronze,OK,Bronze Nugget
+item:nugget_lead,OK,Lead Nugget
+item:nugget_osmium,OK,Osmium Nugget
+item:nugget_refined_glowstone,OK,Refined Glowstone Nugget
+item:nugget_refined_obsidian,OK,Refined Obsidian Nugget
+item:nugget_steel,OK,Steel Nugget
+item:nugget_tin,OK,Tin Nugget
+item:nugget_uranium,OK,Uranium Nugget
+item:nutritional_paste_bucket,OK,Nutritional Paste Bucket
+item:oxygen_bucket,OK,Liquid Oxygen Bucket
+item:pellet_antimatter,OK,Antimatter Pellet
+item:pellet_plutonium,OK,Plutonium Pellet
+item:pellet_polonium,OK,Polonium Pellet
+item:portable_qio_dashboard,OK,Portable QIO Dashboard
+item:portable_teleporter,OK,Portable Teleporter
+item:qio_drive_base,OK,QIO Drive
+item:qio_drive_hyper_dense,OK,Hyper-Dense QIO Drive
+item:qio_drive_supermassive,OK,Supermassive QIO Drive
+item:qio_drive_time_dilating,OK,Time-Dilating QIO Drive
+item:raw_lead,OK,Raw Lead
+item:raw_osmium,OK,Raw Osmium
+item:raw_tin,OK,Raw Tin
+item:raw_uranium,OK,Raw Uranium
+item:reprocessed_fissile_fragment,OK,Reprocessed Fissile Fragment
+item:robit,OK,Robit
+item:salt,OK,Salt
+item:sawdust,OK,Sawdust
+item:scuba_mask,OK,Scuba Mask
+item:scuba_tank,OK,Scuba Tank
+item:seismic_reader,OK,Seismic Reader
+item:shard_copper,OK,Copper Shard
+item:shard_gold,OK,Gold Shard
+item:shard_iron,OK,Iron Shard
+item:shard_lead,OK,Lead Shard
+item:shard_osmium,OK,Osmium Shard
+item:shard_tin,OK,Tin Shard
+item:shard_uranium,OK,Uranium Shard
+item:sodium_bucket,OK,Liquid Sodium Bucket
+item:steam_bucket,OK,Liquid Steam Bucket
+item:substrate,OK,Substrate
+item:sulfur_dioxide_bucket,OK,Liquid Sulfur Dioxide Bucket
+item:sulfur_trioxide_bucket,OK,Liquid Sulfur Trioxide Bucket
+item:sulfuric_acid_bucket,OK,Liquid Sulfuric Acid Bucket
+item:superheated_sodium_bucket,OK,Liquid Superheated Sodium Bucket
+item:teleportation_core,OK,Teleportation Core
+item:ultimate_control_circuit,OK,Ultimate Control Circuit
+item:ultimate_tier_installer,OK,Ultimate Tier Installer
+item:upgrade_anchor,OK,Anchor Upgrade
+item:upgrade_chemical,OK,Chemical Upgrade
+item:upgrade_energy,OK,Energy Upgrade
+item:upgrade_filter,OK,Filter Upgrade
+item:upgrade_muffling,OK,Muffling Upgrade
+item:upgrade_speed,OK,Speed Upgrade
+item:upgrade_stone_generator,OK,Stone Generator Upgrade
+item:uranium_hexafluoride_bucket,OK,Liquid Uranium Hexafluoride Bucket
+item:uranium_oxide_bucket,OK,Liquid Uranium Oxide Bucket
+item:yellow_cake_uranium,OK,Yellow Cake Uranium

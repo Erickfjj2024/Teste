@@ -1,0 +1,540 @@
+From 7a379f2c2dacee15a97d0f8b17f92e4be9402a1b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 11:06:49 +0000
+Subject: [PATCH 1/2] FORK-10 5a: the world's harm reaches mod entities (fall,
+ lava, fire, burning, explosions, lasers)
+
+Mod entities now fall with vanilla's gravity and a fall past 3 blocks hurts; lava and fire hurt every 10 ticks and set them burning, burning hurts a second, water puts it out (entity_kind's new fire_immune skips the fire); a blast in reach hurts them by distance and exposure; damage-entities-in-box hits those in its box. Every hurt goes through mod-entity-damaged with its damage type and tags, and death through mod-entity-died. Arrows and mob blows do not reach them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game/explosion.rs   |  27 ++++
+ crates/horizon-client/src/game/server_mods.rs | 127 +++++++++++++++++-
+ .../examples/entity-kinds/src/lib.rs          |   8 +-
+ .../examples/entity-kinds/tests/robits.toml   |  13 ++
+ crates/horizon-mods/src/content.rs            |   3 +
+ crates/horizon-mods/src/entity_state.rs       |  56 ++++++++
+ crates/horizon-mods/src/runtime.rs            |   7 +-
+ crates/horizon-mods/src/testing.rs            |  55 ++++++++
+ 8 files changed, 283 insertions(+), 13 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/explosion.rs b/crates/horizon-client/src/game/explosion.rs
+index 3f20956c4..2d76d5510 100644
+--- a/crates/horizon-client/src/game/explosion.rs
++++ b/crates/horizon-client/src/game/explosion.rs
+@@ -473,6 +473,33 @@ impl Game<'_> {
+             let pow = (1.0 - dist) * f64::from(exposure);
+             ((pow * pow + pow) / 2.0 * 7.0 * diameter + 1.0) as f32
+         };
++        // The mods' own entities in reach take the blast as a living entity does (FORK-10 5a): no knockback, no armour.
++        #[cfg(feature = "mods")]
++        {
++            let boxes: Vec<(u32, [f64; 3], [f64; 3])> = self
++                .mod_entities
++                .list
++                .iter()
++                .filter(|e| e.dimension == self.dim.id())
++                .filter_map(|e| {
++                    let b = self.mod_entity_bounds(e.id as i32)?;
++                    let (lo, hi) = (b.min_position(), b.max_position());
++                    Some((e.id, [lo.x, lo.y, lo.z], [hi.x, hi.y, hi.z]))
++                })
++                .collect();
++            for (id, lo, hi) in boxes {
++                let feet = [(lo[0] + hi[0]) / 2.0, lo[1], (lo[2] + hi[2]) / 2.0];
++                let dist = distance(feet) / diameter;
++                if dist > 1.0 {
++                    continue;
++                }
++                let exposure = self.seen_percent(center, lo, hi);
++                let amount = damage(dist, exposure);
++                if amount > 0.0 {
++                    self.hurt_mod_entity(id, damage_type, amount);
++                }
++            }
++        }
+         let direction = |origin: [f64; 3]| {
+             let d = [
+                 origin[0] - center[0],
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 2f0ab04ee..626047a92 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -569,6 +569,7 @@ mod run {
+             self.apply_mod_entity_ticks(kept);
+             self.mirror_mod_entity_menus();
+             self.walk_mod_entities();
++            self.mod_entity_hazards();
+             self.sync_mod_entity_carriers();
+             self.apply_mod_entity_updates(updates);
+             self.apply_mod_entity_updates(menu_updates);
+@@ -2354,14 +2355,44 @@ mod run {
+             };
+             let (amount, ..) = self.melee_damage(&view.kind, true);
+             self.reset_attack_strength();
++            self.hurt_mod_entity(view.id, "minecraft:player_attack", amount);
++            true
++        }
++
++        /// Mod entity `id` takes `amount` of `damage_type` (FORK-10 5a): the mod that owns its kind says how much lands
++        /// (`mod-entity-damaged`), its health goes down, and at 0 the mod hears `mod-entity-died` and the entity goes. False when it
++        /// is not there.
++        pub(in crate::game) fn hurt_mod_entity(&mut self, id: u32, damage_type: &str, amount: f32) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_mod_entities() {
++                return false;
++            }
++            let Some(view) = self.mod_entities_view().into_iter().find(|e| e.id == id) else {
++                return false;
++            };
++            let tag = |t: &str| format!("minecraft:{t}");
++            let is_fire = matches!(damage_type, "minecraft:in_fire" | "minecraft:on_fire" | "minecraft:lava" | "minecraft:hot_floor");
++            let is_explosion = matches!(damage_type, "minecraft:explosion" | "minecraft:player_explosion");
++            let mut tags = Vec::new();
++            if is_fire {
++                tags.push(tag("is_fire"));
++            }
++            if is_explosion {
++                tags.push(tag("is_explosion"));
++            }
++            if damage_type == "minecraft:fall" {
++                tags.push(tag("is_fall"));
++            }
++            if damage_type == "minecraft:player_attack" {
++                tags.push(tag("is_player_attack"));
++            }
+             let source = horizon_mods::DamageSource {
+-                damage_type: "minecraft:player_attack".into(),
++                damage_type: damage_type.to_owned(),
+                 causing: None,
+                 is_magic: false,
+-                is_fire: false,
+-                is_fall: false,
+-                is_explosion: false,
+-                tags: vec!["minecraft:is_player_attack".into()],
++                is_fire,
++                is_fall: damage_type == "minecraft:fall",
++                is_explosion,
++                tags,
+             };
+             self.lend_world();
+             let applied = self.mods.mods.mod_entity_damaged(&view, &source, amount);
+@@ -2377,6 +2408,79 @@ mod run {
+             true
+         }
+ 
++        /// The world's own harm to the mod entities of the level in place, once a tick (FORK-10 5a): they fall (vanilla's gravity) and a
++        /// fall past 3 blocks hurts (`minecraft:fall`); lava (`minecraft:lava`, 4) and fire (`minecraft:in_fire`, 1) hurt every 10 ticks
++        /// and set them burning (15 and 8 seconds); burning hurts 1 a second (`minecraft:on_fire`) and water puts it out. A fire-immune
++        /// kind skips the fire.
++        pub(in crate::game) fn mod_entity_hazards(&mut self) {
++            let Some(kinds) = crate::game::mod_entities::MOD_KINDS.get() else {
++                return;
++            };
++            let dim = self.dim.id().to_owned();
++            let mut hurts: Vec<(u32, &'static str, f32)> = Vec::new();
++            for i in 0..self.mod_entities.list.len() {
++                let e = &self.mod_entities.list[i];
++                if e.dimension != dim || !self.world.chunks.contains_key(&((e.pos[0].floor() as i32) >> 4, (e.pos[2].floor() as i32) >> 4)) {
++                    continue;
++                }
++                let Some(kind) = kinds.get(&e.kind) else { continue };
++                let (x, z) = (e.pos[0].floor() as i32, e.pos[2].floor() as i32);
++                let facts = self.res.facts();
++                let world = &self.world;
++                let name_at = |y: i32| -> &str { &facts.get(world.block(x, y, z)).name };
++                // The floor: the top of the highest full block at or below the feet, within 64 blocks.
++                let feet = (e.pos[1] - 1.0e-6).floor() as i32;
++                let floor_top = (feet - 64..=feet).rev().find(|y| facts.get(world.block(x, *y, z)).full_collision).map(|y| f64::from(y + 1));
++                let (y, v, fallen, landed) = horizon_mods::entity_state::fall_tick(e.pos[1], e.fall_velocity, floor_top);
++                let rooms = f64::from(kind.height).ceil().max(1.0) as i32;
++                let base = y.floor() as i32;
++                let touching: Vec<String> = (base..base + rooms).map(|cy| name_at(cy).to_string()).collect();
++                let in_lava = touching.iter().any(|n| n == "minecraft:lava");
++                let in_fire = touching.iter().any(|n| matches!(n.as_str(), "minecraft:fire" | "minecraft:soul_fire"));
++                let in_water = touching.iter().any(|n| n == "minecraft:water" || n == "minecraft:bubble_column");
++                let fall_distance = if landed { e.fall_distance + fallen } else { e.fall_distance + fallen };
++                let e = &mut self.mod_entities.list[i];
++                e.pos[1] = y;
++                e.fall_velocity = v;
++                if landed {
++                    let damage = horizon_mods::entity_state::fall_damage(fall_distance);
++                    if damage > 0.0 && !in_water {
++                        hurts.push((e.id, "minecraft:fall", damage));
++                    }
++                    e.fall_distance = 0.0;
++                } else {
++                    e.fall_distance = if in_water { 0.0 } else { fall_distance };
++                }
++                e.hurt_cooldown = e.hurt_cooldown.saturating_sub(1);
++                if in_water {
++                    e.burning = 0;
++                } else if !kind.fire_immune {
++                    if in_lava {
++                        e.burning = e.burning.max(300);
++                        if e.hurt_cooldown == 0 {
++                            hurts.push((e.id, "minecraft:lava", 4.0));
++                            e.hurt_cooldown = 10;
++                        }
++                    } else if in_fire {
++                        e.burning = e.burning.max(160);
++                        if e.hurt_cooldown == 0 {
++                            hurts.push((e.id, "minecraft:in_fire", 1.0));
++                            e.hurt_cooldown = 10;
++                        }
++                    }
++                    if e.burning > 0 {
++                        e.burning -= 1;
++                        if e.burning % 20 == 0 && !in_lava && !in_fire {
++                            hurts.push((e.id, "minecraft:on_fire", 1.0));
++                        }
++                    }
++                }
++            }
++            for (id, kind, amount) in hurts {
++                self.hurt_mod_entity(id, kind, amount);
++            }
++        }
++
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+         pub(in crate::game) fn mod_item_hit(
+             &mut self,
+@@ -3024,8 +3128,19 @@ mod run {
+                             self.native_set_display(&dimension, id, &d)
+                         }
+                         C::TakeDropped { id, count } => self.native_take_dropped(&dimension, id, count),
+-                        C::Damage { ids, players, damage_type, amount, source } => {
++                        C::Damage { ids, players, damage_type, amount, source, area } => {
+                             let mobs = self.native_damage_mobs(&dimension, &ids, amount);
++                            // The mods' own entities in the box (FORK-10 5a), as the laser hits any living entity.
++                            let inside: Vec<u32> = self
++                                .mod_entities
++                                .list
++                                .iter()
++                                .filter(|e| e.dimension == dimension && (0..3).all(|i| e.pos[i] >= area.0[i] && e.pos[i] <= area.1[i]))
++                                .map(|e| e.id)
++                                .collect();
++                            for id in inside {
++                                self.hurt_mod_entity(id, &damage_type, amount);
++                            }
+                             let mut any = false;
+                             for id in players {
+                                 let Some((target, dim)) = self.mod_player(&id) else { continue };
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+index ec41e28be..e52aed554 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -10,7 +10,9 @@ impl ServerMod for Robits {
+         Ok((Robits, Registration::new().on_net().on_mod_entities()))
+     }
+     fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
+-        if channel != "robits:spawn" || data.len() < 12 {
++        // `robits:spawn_old` spawns one already counted past its errands (its bytes start at 10): it only falls and takes harm.
++        let old = channel == "robits:spawn_old";
++        if !(channel == "robits:spawn" || old) || data.len() < 12 {
+             return;
+         }
+         let int = |at: usize| i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+@@ -20,7 +22,7 @@ impl ServerMod for Robits {
+             f64::from(int(0)) + 0.5,
+             f64::from(int(4)),
+             f64::from(int(8)) + 0.5,
+-            &[0],
++            &[if old { 10 } else { 0 }],
+         );
+     }
+     /// A red robit takes half of every blow (FORK-10 e); the others take it whole.
+@@ -72,7 +74,7 @@ impl ServerMod for Robits {
+                     path_to: (count == 1).then(|| (e.x + 1.0, e.y, e.z, 1.0)),
+                     stop: false,
+                     health: None,
+-                    remove: count >= 6,
++                    remove: count == 6,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+index d130dffa0..77a461493 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -1,6 +1,7 @@
+ [[step]]
+ join = "Alex"
+ # The message spawns a robit of the mod's own kind (declared in content): it exists as the step ends, untouched.
++blocks = [{ x = 3, y = 69, z = 4, state = "minecraft:stone" }, { x = 4, y = 69, z = 4, state = "minecraft:stone" }]
+ net = { channel = "robits:spawn", data = [3, 0, 0, 0, 70, 0, 0, 0, 4, 0, 0, 0] }
+ expect.mod-entities = ["1001 robits:robit 3.500 70.000 4.500 energy=0 data=[0] skin=default name=-"]
+ 
+@@ -49,3 +50,15 @@ damage-mod-entity = { id = 1001, amount = 4.0 }
+ expect.mod-entity-damage = 2.0
+ expect.mod-entities = []
+ expect.menu-text = ["minecraft:overworld 4 69 4 died:1001"]
++
++[[step]]
++# FORK-10 5a: a robit spawned 10 blocks over the stone falls (vanilla's gravity) and lands: 7 damage for the 7 blocks past 3, which
++# the mod halves for a red robit; more than its health, so it dies and the mod hears it.
++blocks = [{ x = 10, y = 69, z = 10, state = "minecraft:stone" }]
++net = { channel = "robits:spawn_old", data = [10, 0, 0, 0, 80, 0, 0, 0, 10, 0, 0, 0] }
++expect.mod-entities = ["1002 robits:robit 10.500 80.000 10.500 energy=0 data=[10] skin=default name=-"]
++
++[[step]]
++ticks = 30
++expect.mod-entities = []
++expect.menu-text = ["minecraft:overworld 10 69 10 died:1002"]
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 235b1c242..8c97f4cf5 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -305,6 +305,9 @@ pub struct EntityKind {
+     /// Slots of its container (the Robit's 30); 0 for none.
+     #[serde(default)]
+     pub container_slots: u16,
++    /// Fire and lava do not hurt it and it does not burn (`EntityType.fireImmune`).
++    #[serde(default)]
++    pub fire_immune: bool,
+ }
+ 
+ fn default_kind_health() -> f32 {
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index 54e921a82..67c49f399 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -30,6 +30,12 @@ pub struct ModEntityState {
+     pub hitbox: Option<u32>,
+     /// Where it walks to (the point and the speed multiplier), until it arrives, is blocked or is told to stop; not saved.
+     pub goal: Option<([f64; 3], f32)>,
++    /// Falling: its speed down (blocks a tick) and how far it has fallen since it last stood (FORK-10 5a); not saved.
++    pub fall_velocity: f64,
++    pub fall_distance: f64,
++    /// Ticks of fire left, and ticks before an environmental hurt (lava, fire) can land again; not saved.
++    pub burning: i32,
++    pub hurt_cooldown: u8,
+ }
+ 
+ /// The entities and whether the save was read.
+@@ -60,6 +66,10 @@ impl ModEntityState {
+             shown: None,
+             hitbox: None,
+             goal: None,
++            fall_velocity: 0.0,
++            fall_distance: 0.0,
++            burning: 0,
++            hurt_cooldown: 0,
+         }
+     }
+ }
+@@ -115,6 +125,10 @@ pub fn decode(text: &str) -> Vec<ModEntityState> {
+                 shown: None,
+                 hitbox: None,
+                 goal: None,
++                fall_velocity: 0.0,
++                fall_distance: 0.0,
++                burning: 0,
++                hurt_cooldown: 0,
+                 items: r["items"]
+                     .as_array()?
+                     .iter()
+@@ -202,6 +216,26 @@ pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height
+     if go >= dist { Walk::Arrived } else { Walk::Moving }
+ }
+ 
++/// One tick of falling for an entity at `y` whose next cell below holds a floor at `floor_top` (the top of the highest blocking cell under
++/// it, none for nothing within reach): vanilla's living gravity (0.08 a tick, 0.98 drag), landing on the floor. Returns the new y, the
++/// new downward speed, the distance fallen this tick, and whether it landed.
++pub fn fall_tick(y: f64, velocity: f64, floor_top: Option<f64>) -> (f64, f64, f64, bool) {
++    if floor_top.is_some_and(|f| y <= f + 1.0e-6) {
++        return (floor_top.unwrap_or(y).max(y), 0.0, 0.0, velocity > 0.0);
++    }
++    let v = ((velocity + 0.08) * 0.98).min(3.92);
++    let next = y - v;
++    match floor_top {
++        Some(f) if next <= f => (f, 0.0, y - f, true),
++        _ => (next, v, v, false),
++    }
++}
++
++/// `LivingEntity.calculateFallDamage`: a fall of `distance` blocks hurts for each block past 3, rounded up.
++pub fn fall_damage(distance: f64) -> f32 {
++    ((distance - 3.0).ceil()).max(0.0) as f32
++}
++
+ /// What a hit of `amount` after the mod's say leaves: the health, and whether the entity dies (health at or under 0).
+ pub fn after_damage(health: f32, amount: f32) -> (f32, bool) {
+     let left = health - amount.max(0.0);
+@@ -277,6 +311,7 @@ mod tests {
+                 EntitySkin { id: "red".into(), texture: "robits:entity/red".into(), model: None },
+             ],
+             container_slots: 3,
++            fire_immune: false,
+         }
+     }
+ 
+@@ -367,6 +402,27 @@ mod tests {
+         assert_eq!(e.goal, None);
+     }
+ 
++    #[test]
++    fn an_entity_falls_with_gravity_lands_on_the_floor_and_a_long_fall_hurts() {
++        // From y 70 onto a floor whose top is y 64: it speeds up, then lands on 64 exactly.
++        let (mut y, mut v, mut fallen) = (70.0, 0.0, 0.0);
++        let mut landed = false;
++        let mut ticks = 0;
++        while !landed {
++            let (ny, nv, d, l) = fall_tick(y, v, Some(64.0));
++            (y, v, landed) = (ny, nv, l);
++            fallen += d;
++            ticks += 1;
++        }
++        assert_eq!(y, 64.0);
++        assert!((fallen - 6.0).abs() < 1e-9 && ticks > 5, "{fallen} {ticks}");
++        assert_eq!(fall_damage(fallen), 3.0);
++        assert_eq!(fall_damage(3.0), 0.0);
++        assert_eq!(fall_damage(3.2), 1.0);
++        // Standing on the floor nothing happens.
++        assert_eq!(fall_tick(64.0, 0.0, Some(64.0)), (64.0, 0.0, 0.0, false));
++    }
++
+     #[test]
+     fn damage_takes_health_and_death_is_at_zero_and_a_cancelled_blow_does_nothing() {
+         assert_eq!(after_damage(1.0, 0.25), (0.75, false));
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index e123b9978..01f05d099 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -252,6 +252,8 @@ pub enum EntityCommand {
+         damage_type: String,
+         amount: f32,
+         source: Option<[f64; 3]>,
++        /// The box: the mod entities in it are hurt too (the game knows where they are).
++        area: ([f64; 3], [f64; 3]),
+     },
+     /// `entities.take-dropped-item` (FORK-10 f).
+     TakeDropped {
+@@ -3284,10 +3286,7 @@ impl entities::Host for State {
+                 hit_players.push(p.id.clone());
+             }
+         }
+-        if out.is_empty() {
+-            return Vec::new();
+-        }
+-        let command = EntityCommand::Damage { ids, players: hit_players, damage_type, amount: amount.min(1_000_000.0), source };
++        let command = EntityCommand::Damage { ids, players: hit_players, damage_type, amount: amount.min(1_000_000.0), source, area: (min, max) };
+         if self.entity_request(dimension, command, &[]).is_err() {
+             return Vec::new();
+         }
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 19a43b129..8c0a74ec7 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -81,6 +81,8 @@ pub struct TestGame {
+     /// The items lying in the world of the script (FORK-10 f).
+     pub dropped: Vec<DroppedSet>,
+     entity_goals: std::collections::BTreeMap<u32, ([f64; 3], f32)>,
++    /// Each mod entity's fall: its speed down and the distance fallen.
++    entity_falls: std::collections::BTreeMap<u32, (f64, f64)>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
+     /// The blocks packed into boxes (`world.pack-block`), by the box's position.
+@@ -318,6 +320,7 @@ impl TestGame {
+             next_mod_entity: 1000,
+             dropped: Vec::new(),
+             entity_goals: Default::default(),
++            entity_falls: Default::default(),
+             can_place_result: None,
+             packed: Default::default(),
+             crafts: Vec::new(),
+@@ -391,6 +394,58 @@ impl TestGame {
+             self.mods.server_tick(self.tick);
+             self.tick_block_entities();
+             self.tick_mod_entities();
++            self.mod_entity_hazards();
++        }
++    }
++    /// The world's harm to the mod's entities, as the game does: they fall onto the script's blocks (a block that is not air is a
++    /// floor) and a fall past 3 blocks hurts (`minecraft:fall`), lava hurts 4 (`minecraft:lava`).
++    fn mod_entity_hazards(&mut self) {
++        let mut hurts: Vec<(u32, &'static str, f32)> = Vec::new();
++        for e in &mut self.mod_entities {
++            let (x, z) = (e.x.floor() as i32, e.z.floor() as i32);
++            let feet = (e.y - 1.0e-6).floor() as i32;
++            let solid = |y: i32| self.world.get(&(x, y, z)).is_some_and(|s| !s.starts_with("minecraft:air") && !s.starts_with("minecraft:lava") && !s.starts_with("minecraft:water"));
++            let floor_top = (feet - 64..=feet).rev().find(|y| solid(*y)).map(|y| f64::from(y + 1));
++            let fall_v = self.entity_falls.get(&e.id).copied().unwrap_or((0.0, 0.0));
++            let (y, v, fallen, landed) = crate::entity_state::fall_tick(e.y, fall_v.0, floor_top);
++            e.y = y;
++            let distance = fall_v.1 + fallen;
++            if landed {
++                let damage = crate::entity_state::fall_damage(distance);
++                if damage > 0.0 {
++                    hurts.push((e.id, "minecraft:fall", damage));
++                }
++                self.entity_falls.insert(e.id, (0.0, 0.0));
++            } else {
++                self.entity_falls.insert(e.id, (v, distance));
++            }
++            if self.world.get(&(x, y.floor() as i32, z)).is_some_and(|s| s.starts_with("minecraft:lava")) && self.tick % 10 == 0 {
++                hurts.push((e.id, "minecraft:lava", 4.0));
++            }
++        }
++        for (id, kind, amount) in hurts {
++            let Some(entity) = self.mod_entities.iter().find(|m| m.id == id).cloned() else { continue };
++            let source = crate::DamageSource {
++                damage_type: kind.into(),
++                causing: None,
++                is_magic: false,
++                is_fire: kind == "minecraft:lava",
++                is_fall: kind == "minecraft:fall",
++                is_explosion: false,
++                tags: Vec::new(),
++            };
++            self.snapshot();
++            let applied = self.mods.mod_entity_damaged(&entity, &source, amount);
++            let (health, dead) = crate::entity_state::after_damage(entity.health, applied);
++            if let Some(m) = self.mod_entities.iter_mut().find(|m| m.id == id) {
++                m.health = health;
++            }
++            if dead {
++                let mut last = entity;
++                last.health = 0.0;
++                self.mods.mod_entity_died(&last);
++                self.mod_entities.retain(|m| m.id != id);
++            }
+         }
+     }
+     /// `entities-tick` with the mod's entities, and what it answers applied (as the game does: data, slots, energy, skin, name, a teleport, a removal).
+-- 
+2.43.0
+
+
+From 88c4986b97036fd42f642af7d3e86b57025a0058 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 11:08:15 +0000
+Subject: [PATCH 2/2] FORK-10 5a: fall damage rounds a sum of gravity steps a
+ hair past a block down to that block (the test of 0055 failed on it)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-mods/src/entity_state.rs | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index 67c49f399..3ebccbd5a 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -231,9 +231,10 @@ pub fn fall_tick(y: f64, velocity: f64, floor_top: Option<f64>) -> (f64, f64, f6
+     }
+ }
+ 
+-/// `LivingEntity.calculateFallDamage`: a fall of `distance` blocks hurts for each block past 3, rounded up.
++/// `LivingEntity.calculateFallDamage`: a fall of `distance` blocks hurts for each block past 3, rounded up (a sum of steps a hair
++/// past a whole block is that block: 6 blocks fallen are 3 damage).
+ pub fn fall_damage(distance: f64) -> f32 {
+-    ((distance - 3.0).ceil()).max(0.0) as f32
++    ((distance - 3.0 - 1.0e-6).ceil()).max(0.0) as f32
+ }
+ 
+ /// What a hit of `amount` after the mod's say leaves: the health, and whether the entity dies (health at or under 0).
+-- 
+2.43.0
+

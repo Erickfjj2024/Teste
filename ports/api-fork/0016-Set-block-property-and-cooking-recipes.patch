@@ -1,0 +1,492 @@
+From 7b3c33eb74ccee6b611003381dc250c885c603a5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 00:26:52 +0000
+Subject: [PATCH] set-block-property and cooking recipes for the Mekanism port
+ (API 14, 15)
+
+world.set-block-property changes one property keeping the block entity (a
+machine's lit); recipe-types.cooking-recipes gives the furnace recipes (the
+energized smelter uses them). API level 15.
+---
+ Cargo.lock                                    |  7 ++
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ crates/horizon-client/src/game/mods.rs        |  3 +-
+ crates/horizon-client/src/game/server_mods.rs | 32 +++++++++
+ crates/horizon-mod-sdk/src/lib.rs             |  2 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 22 ++++++
+ crates/horizon-mods/src/api_level.rs          |  6 +-
+ crates/horizon-mods/src/recipe_types.rs       | 14 ++++
+ crates/horizon-mods/src/runtime.rs            | 66 ++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 69 ++++++++++++++++++-
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    | 14 ++++
+ 12 files changed, 233 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 00f6c3c..4fbfda7 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2666,6 +2666,13 @@ version = "0.6.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
+ 
++[[package]]
++name = "mekanism"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "memchr"
+ version = "2.8.3"
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 1bf9ab0..47e9d18 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -280,6 +280,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
++            Output::SetBlockProperty { property, value, .. } => format!("set {property}={value}"),
+             Output::Chunk { chunk, forced, .. } => {
+                 format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
+             }
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index a5ddf12..003737e 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -853,7 +853,8 @@ impl Game<'_> {
+                 | Output::NetToServer { .. }
+                 | Output::Entity { .. }
+                 | Output::PlayerItems { .. }
+-                | Output::Chunk { .. }) => {
++                | Output::Chunk { .. }
++                | Output::SetBlockProperty { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 1f74678..2fa3485 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -807,6 +807,25 @@ mod run {
+                     .collect(),
+                 tags: items.item_tag_order.clone(),
+                 items: items.items.keys().map(|k| k.to_string()).collect(),
++                cooking: self
++                    .recipes()
++                    .cooking
++                    .iter()
++                    .map(|c| {
++                        let mut inputs: Vec<String> = c.ingredient.1.clone();
++                        if inputs.is_empty() {
++                            inputs = c.ingredient.0.iter().cloned().collect();
++                        }
++                        horizon_mods::recipe_types::Cooking {
++                            kind: c.kind.trim_start_matches("minecraft:").to_owned(),
++                            inputs,
++                            output: c.result.item.to_string(),
++                            count: c.result.count,
++                            experience: c.experience,
++                            time: c.time,
++                        }
++                    })
++                    .collect(),
+             };
+             self.mods.mods.set_recipe_data(Arc::new(data));
+         }
+@@ -1601,6 +1620,19 @@ mod run {
+                         });
+                     }
+                 }
++                Output::SetBlockProperty {
++                    name,
++                    dimension,
++                    pos,
++                    property,
++                    value,
++                } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_block_property(pos, &property, &value);
++                    } else {
++                        log::debug!("Horizon: mod {name} set a property in another level");
++                    }
++                }
+                 Output::Chunk {
+                     name,
+                     id,
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index e3ffaff..eb72d2b 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -216,7 +216,7 @@ pub mod server {
+     pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
+     pub use horizon::mods::{chunks, player_items};
+-    pub use horizon::mods::recipe_types::{self, CustomRecipe};
++    pub use horizon::mods::recipe_types::{self, CookingRecipe, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+ 
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 7240d47..783da48 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -706,6 +706,13 @@ interface %world {
+     /// in order after this call returns, before that dimension's next tick;
+     /// one in a chunk not loaded then is skipped. At most 4096 per call.
+     set-blocks: func(dimension: string, blocks: list<block-change>) -> result<_, string>;
++    /// Sets one property of the block at a position (`lit`, `facing`) to a value, as a
++    /// furnace's tick sets its `lit`: neighbours and players are told, and the
++    /// block entity **stays** (a block set with `set-blocks` loses it). Made
++    /// after this call returns, before the dimension's next tick; nothing
++    /// happens for a block with no such property or value, or one already set.
++    /// At most 4096 per call.
++    set-block-property: func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>;
+ }
+ 
+ /// Capability `player-control`, server mods only (manifest `api = "0.3"`,
+@@ -762,6 +769,21 @@ interface recipe-types {
+     /// The recipes of type `kind` (`mymod:crushing`), in file order, from the
+     /// content mods and the world's data packs. Empty for a type nobody uses.
+     recipes-of-type: func(kind: string) -> list<custom-recipe>;
++    /// A cooking recipe of the game's own kinds (`smelting`, `blasting`,
++    /// `smoking`, `campfire_cooking`), vanilla's and the mods', as a furnace
++    /// reads it.
++    record cooking-recipe {
++        /// The items that cook, as `minecraft:iron_ore`.
++        inputs: list<string>,
++        /// What it makes.
++        output: string,
++        count: u32,
++        experience: f32,
++        /// Ticks a furnace takes (`cookingtime`).
++        time: u32,
++    }
++    /// The cooking recipes of a kind (`smelting`, `blasting`...), in the game's order.
++    cooking-recipes: func(kind: string) -> list<cooking-recipe>;
+     /// The items an ingredient names, in order, once each: `ingredient` is
+     /// JSON, an item id, a `#tag`, a list of them, or an object with an
+     /// `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 9971633..7a52a62 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 13;
++pub const LEVEL: u32 = 15;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 71] = [
++pub const FUNCTIONS: [(&str, u32); 73] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -85,6 +85,8 @@ pub const FUNCTIONS: [(&str, u32); 71] = [
+     ("player-items.hurt", 12),
+     ("player-items.add-effect", 12),
+     ("chunks.set-forced", 13),
++    ("world.set-block-property", 14),
++    ("recipe-types.cooking-recipes", 15),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
+index 772dafb..02de080 100644
+--- a/crates/horizon-mods/src/recipe_types.rs
++++ b/crates/horizon-mods/src/recipe_types.rs
+@@ -16,6 +16,19 @@ pub struct RecipeData {
+     pub tags: HashMap<String, Vec<String>>,
+     /// Every item the game knows. Empty: nothing is filtered out.
+     pub items: HashSet<String>,
++    /// The cooking recipes of the game's own kinds, in the game's order.
++    pub cooking: Vec<Cooking>,
++}
++
++/// One cooking recipe (`smelting`, `blasting`...).
++#[derive(Clone, Debug, PartialEq)]
++pub struct Cooking {
++    pub kind: String,
++    pub inputs: Vec<String>,
++    pub output: String,
++    pub count: u32,
++    pub experience: f32,
++    pub time: u32,
+ }
+ 
+ /// A bare id as `minecraft:`, as vanilla reads one.
+@@ -84,6 +97,7 @@ mod tests {
+                 ),
+                 ("c:empty".into(), vec![]),
+             ]),
++            cooking: Vec::new(),
+             items: ["minecraft:redstone", "minecraft:stone", "mymod:redstone_dust"]
+                 .iter()
+                 .map(|s| s.to_string())
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 624d5ce..d3024e4 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -358,6 +358,14 @@ pub enum Output {
+         volume: f32,
+         pitch: f32,
+     },
++    /// `world.set-block-property`: one property of a block, its entity kept.
++    SetBlockProperty {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        property: String,
++        value: String,
++    },
+     /// `chunks.set-forced` of mod `id`.
+     Chunk {
+         name: String,
+@@ -2105,6 +2113,45 @@ impl chat::Host for State {
+     }
+ }
+ impl mod_world::Host for State {
++    fn set_block_property(
++        &mut self,
++        dimension: String,
++        x: i32,
++        y: i32,
++        z: i32,
++        property: String,
++        value: String,
++    ) -> Result<(), String> {
++        let word = |s: &str| {
++            !s.is_empty()
++                && s.len() <= 64
++                && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
++        };
++        if !word(&property) || !word(&value) {
++            return Err("a property and a value are lowercase words".into());
++        }
++        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
++            && !view.has_dimension(&dimension)
++        {
++            return Err(format!("no dimension {dimension}"));
++        }
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::SetBlockProperty { .. }))
++            .count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} property changes a call"));
++        }
++        self.out.push(Output::SetBlockProperty {
++            name: self.name.clone(),
++            dimension,
++            pos: [x, y, z],
++            property,
++            value,
++        });
++        Ok(())
++    }
+     fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
+         let view = self.world.lock().ok()?;
+         view.as_ref()?.block(&dimension, x, y, z)
+@@ -2501,6 +2548,25 @@ impl recipe_types::Host for State {
+                 .collect()
+         })
+     }
++    fn cooking_recipes(&mut self, kind: String) -> Vec<recipe_types::CookingRecipe> {
++        let Ok(slot) = self.recipe_data.lock() else {
++            return Vec::new();
++        };
++        slot.as_ref().map_or_else(Vec::new, |d| {
++            d.cooking
++                .iter()
++                .filter(|c| c.kind == kind)
++                .take(RECIPES_PER_CALL)
++                .map(|c| recipe_types::CookingRecipe {
++                    inputs: c.inputs.clone(),
++                    output: c.output.clone(),
++                    count: c.count,
++                    experience: c.experience,
++                    time: c.time,
++                })
++                .collect()
++        })
++    }
+     fn ingredient_items(&mut self, ingredient: String) -> Vec<String> {
+         let Ok(slot) = self.recipe_data.lock() else {
+             return Vec::new();
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 8de29ee..feecac5 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -719,6 +719,9 @@ pub struct Script {
+     /// knows (`items`; none listed: all are).
+     #[serde(default, rename = "recipe")]
+     pub recipes: Vec<RecipeSet>,
++    /// Cooking recipes (`[[cooking]]`: `kind`, `inputs`, `output`, `count`, `time`).
++    #[serde(default, rename = "cooking")]
++    pub cooking: Vec<CookingSet>,
+     #[serde(default)]
+     pub tags: std::collections::BTreeMap<String, Vec<String>>,
+     #[serde(default)]
+@@ -727,6 +730,29 @@ pub struct Script {
+     pub steps: Vec<Step>,
+ }
+ 
++/// A cooking recipe in a test.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct CookingSet {
++    #[serde(default = "smelting")]
++    kind: String,
++    inputs: Vec<String>,
++    output: String,
++    #[serde(default = "one")]
++    count: u32,
++    #[serde(default = "two_hundred")]
++    time: u32,
++}
++fn smelting() -> String {
++    "smelting".into()
++}
++fn one() -> u32 {
++    1
++}
++fn two_hundred() -> u32 {
++    200
++}
++
+ /// A recipe file of a mod's own type in a test.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -840,6 +866,26 @@ pub struct ChunkSet {
+     new: bool,
+ }
+ 
++/// `state` (`mymod:machine[facing=north,lit=false]`) with `property` set to `value`
++/// (added when it had none).
++fn with_property(state: &str, property: &str, value: &str) -> String {
++    let (name, props) = match state.split_once('[') {
++        Some((n, p)) => (n, p.trim_end_matches(']')),
++        None => (state, ""),
++    };
++    let mut list: Vec<(String, String)> = props
++        .split(',')
++        .filter_map(|p| p.split_once('='))
++        .map(|(k, v)| (k.to_owned(), v.to_owned()))
++        .collect();
++    match list.iter_mut().find(|(k, _)| k == property) {
++        Some(e) => e.1 = value.to_owned(),
++        None => list.push((property.to_owned(), value.to_owned())),
++    }
++    let body: Vec<String> = list.iter().map(|(k, v)| format!("{k}={v}")).collect();
++    format!("{name}[{}]", body.join(","))
++}
++
+ /// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -1089,7 +1135,7 @@ impl Script {
+         if let Some(c) = &mut game.clock {
+             self.clock.apply(c);
+         }
+-        if !self.recipes.is_empty() || !self.tags.is_empty() || !self.items.is_empty() {
++        if !self.recipes.is_empty() || !self.cooking.is_empty() || !self.tags.is_empty() || !self.items.is_empty() {
+             let mut data = crate::recipe_types::RecipeData::default();
+             for r in &self.recipes {
+                 let kind = serde_json::from_str::<serde_json::Value>(&r.json)
+@@ -1101,6 +1147,18 @@ impl Script {
+                     .or_default()
+                     .push((r.id.clone(), r.json.clone()));
+             }
++            data.cooking = self
++                .cooking
++                .iter()
++                .map(|c| crate::recipe_types::Cooking {
++                    kind: c.kind.clone(),
++                    inputs: c.inputs.clone(),
++                    output: c.output.clone(),
++                    count: c.count,
++                    experience: 0.0,
++                    time: c.time,
++                })
++                .collect();
+             data.tags = self.tags.clone().into_iter().collect();
+             data.items = self.items.iter().cloned().collect();
+             game.mods.set_recipe_data(std::sync::Arc::new(data));
+@@ -1384,6 +1442,15 @@ impl Step {
+                 }
+             }
+         }
++        // A property set keeps the block and changes the one property in its state.
++        for o in &out {
++            if let Output::SetBlockProperty { dimension, pos, property, value, .. } = o
++                && dimension == "minecraft:overworld"
++                && let Some(state) = game.world.get_mut(&(pos[0], pos[1], pos[2]))
++            {
++                *state = with_property(state, property, value);
++            }
++        }
+         // Teleports and experience taken happen as the game makes them.
+         for o in &out {
+             match o {
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 40bf743..151d098 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 13);
++    assert_eq!(LEVEL, 15);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 31e9582..57a0edc 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -714,6 +714,7 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
+ | `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
+ | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
++| `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
+ 
+ ## `player-control`
+ 
+@@ -753,9 +754,22 @@ Capability `recipe-types`, server mods only (manifest `api = "0.3"`, experimenta
+ | `id` | `string` | `<namespace>:<path>`, its place under `data/<namespace>/recipe/`. |
+ | `json` | `string` | The file's JSON. |
+ 
++### record `cooking-recipe`
++
++A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `campfire_cooking`), vanilla's and the mods', as a furnace reads it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `inputs` | `list<string>` | The items that cook, as `minecraft:iron_ore`. |
++| `output` | `string` | What it makes. |
++| `count` | `u32` |  |
++| `experience` | `f32` |  |
++| `time` | `u32` | Ticks a furnace takes (`cookingtime`). |
++
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
++| `cooking-recipes` | `func(kind: string) -> list<cooking-recipe>` | The cooking recipes of a kind (`smelting`, `blasting`...), in the game's order. |
+ | `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
+ 
+ ## `net`
+-- 
+2.43.0
+

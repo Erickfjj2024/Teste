@@ -1,0 +1,217 @@
+From ea3b8c920e388be0964899f205cdf7dbc76135d3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 10:06:56 +0000
+Subject: [PATCH] Tank eject to a cauldron: a tank's output face fills an empty
+ cauldron beside it with a bucket of water or lava
+
+The one fluid handler vanilla blocks have (NeoForge's cauldron wrapper takes a whole bucket at once): a mod tank that gives through a face, holds a bucket or more of water or lava and moves at least that a tick fills the empty cauldron there. A single tank now drains too (the tank transfers used to need two block entities).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game/server_mods.rs | 30 ++++++++-
+ .../examples/tank-demo/src/lib.rs             |  6 +-
+ .../examples/tank-demo/tests/cauldron.toml    | 20 ++++++
+ crates/horizon-mods/src/flow.rs               | 63 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 12 ++++
+ 5 files changed, 126 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/tests/cauldron.toml
+
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index de575289d..2b608dfe6 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -1904,12 +1904,36 @@ mod run {
+                     })
+                 })
+                 .collect();
+-            if nodes.len() < 2 {
++            if nodes.is_empty() {
+                 return;
+             }
+             let before = nodes.clone();
+-            horizon_mods::network::transfer_tanks(&transmitters, &mut nodes);
+-            horizon_mods::flow::transfer(&mut nodes);
++            if nodes.len() >= 2 {
++                horizon_mods::network::transfer_tanks(&transmitters, &mut nodes);
++                horizon_mods::flow::transfer(&mut nodes);
++            }
++            // A tank's output face fills an empty cauldron beside it with a bucket of water or lava (the one fluid handler vanilla
++            // blocks have, NeoForge's cauldron wrapper).
++            let mut cauldrons: Vec<([i32; 3], &'static str)> = Vec::new();
++            for n in &mut nodes {
++                for t in &mut n.tanks {
++                    for (face, d) in horizon_mods::energy::FACES.iter().enumerate() {
++                        let at = [n.pos[0] + d[0], n.pos[1] + d[1], n.pos[2] + d[2]];
++                        if cauldrons.iter().any(|(p, _)| *p == at) {
++                            continue;
++                        }
++                        let name = &self.res.facts().get(self.world.block(at[0], at[1], at[2])).name;
++                        if let Some(full) = horizon_mods::flow::fill_cauldron(t, face, name) {
++                            cauldrons.push((at, full));
++                        }
++                    }
++                }
++            }
++            for (at, full) in cauldrons {
++                if let Ok(state) = crate::game::render_control::parse_state(self.pack.assets.registry, full) {
++                    let _ = self.place_state(at, state, false);
++                }
++            }
+             for (n, was) in nodes.iter().zip(before) {
+                 if *n == was {
+                     continue;
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+index fa31124f5..5e33e710c 100644
+--- a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Tank Demo: the smallest user of block tanks. `tankdemo:pump` makes 20 of
+ //! `minecraft:water` a tick and only gives; `tankdemo:tank` stores 1000
+ //! fluid, 50 a tick in and out, and never ticks; `tankdemo:gas_tank` is a
+-//! `gas` tank, which no fluid enters.
++//! `gas` tank, which no fluid enters. `tankdemo:big_tank` gives a bucket a tick and more, so it fills an empty cauldron beside it.
+ use horizon_mod_sdk::server::{
+     BlockEntity, BlockEntityKind, BlockEntityUpdate, FlowSide, Registration, ServerMod, Tank,
+     TankSpec,
+@@ -35,7 +35,9 @@ impl ServerMod for Demo {
+         let r = Registration::new()
+             .block_entity_kind(kind("tankdemo:pump", true, spec("fluid", FlowSide::Output)))
+             .block_entity_kind(kind("tankdemo:tank", false, spec("fluid", FlowSide::Both)))
+-            .block_entity_kind(kind("tankdemo:gas_tank", false, spec("gas", FlowSide::Both)));
++            .block_entity_kind(kind("tankdemo:gas_tank", false, spec("gas", FlowSide::Both)))
++            // A big tank that only gives, a bucket a tick and more: it fills an empty cauldron beside it with water.
++            .block_entity_kind(kind("tankdemo:big_tank", false, TankSpec { kind: "fluid".into(), capacity: 8000, max_rate: 64_000, faces: vec![FlowSide::Output; 6] }));
+         Ok((Demo, r))
+     }
+     fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/tests/cauldron.toml b/crates/horizon-mod-sdk/examples/tank-demo/tests/cauldron.toml
+new file mode 100644
+index 000000000..ab9f51e45
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/tests/cauldron.toml
+@@ -0,0 +1,20 @@
++# A tank whose faces give fills an empty cauldron beside it with a whole bucket (NeoForge's cauldron fluid handler); the full
++# cauldron takes no more.
++
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "tankdemo:big_tank" },
++    { x = 1, y = 64, z = 0, state = "minecraft:cauldron" },
++]
++ticks = 1
++
++[[step]]
++set-tanks = [{ x = 0, y = 64, z = 0, tanks = ["minecraft:water*2500"] }]
++ticks = 1
++expect.block-tanks = [{ x = 0, y = 64, z = 0, tanks = ["minecraft:water*1500"] }]
++expect.blocks = [{ x = 1, y = 64, z = 0, state = "minecraft:water_cauldron[level=3]" }]
++
++[[step]]
++ticks = 3
++expect.block-tanks = [{ x = 0, y = 64, z = 0, tanks = ["minecraft:water*1500"] }]
+diff --git a/crates/horizon-mods/src/flow.rs b/crates/horizon-mods/src/flow.rs
+index 86721790a..c0d992d1a 100644
+--- a/crates/horizon-mods/src/flow.rs
++++ b/crates/horizon-mods/src/flow.rs
+@@ -39,6 +39,31 @@ fn takes(s: FlowSide) -> bool {
+     matches!(s, FlowSide::Input | FlowSide::Both)
+ }
+ 
++/// A bucket, in millibuckets: what a cauldron holds when full.
++pub const BUCKET: u64 = 1000;
++
++/// A tank giving through `face` into the block `neighbour` beside it when that is an empty cauldron (NeoForge's `CauldronFluidContent`:
++/// a cauldron takes a whole bucket of water or lava at once, nothing less): the cauldron it becomes, with the bucket taken from the
++/// tank. None when the face does not give, the tank holds less than a bucket of water or lava, or moves less than that a tick.
++pub fn fill_cauldron(tank: &mut TankState, face: usize, neighbour: &str) -> Option<&'static str> {
++    if neighbour != "minecraft:cauldron" || !tank.faces.get(face).is_some_and(|s| gives(*s)) {
++        return None;
++    }
++    if tank.amount < BUCKET || tank.max_rate < BUCKET {
++        return None;
++    }
++    let full = match tank.substance.as_str() {
++        "minecraft:water" => "minecraft:water_cauldron[level=3]",
++        "minecraft:lava" => "minecraft:lava_cauldron",
++        _ => return None,
++    };
++    tank.amount -= BUCKET;
++    if tank.amount == 0 {
++        tank.substance.clear();
++    }
++    Some(full)
++}
++
+ /// One tick of transfers, in position order, each block's tanks in order and
+ /// their faces in the order of [`FACES`]; a tank gives to the first tank of
+ /// the neighbour that accepts, and gives and takes at most its `max_rate` a
+@@ -190,3 +215,41 @@ mod tests {
+         assert_eq!(n[1].tanks[1].substance, "minecraft:water");
+     }
+ }
++
++#[cfg(test)]
++mod cauldron_tests {
++    use super::*;
++
++    fn tank(substance: &str, amount: u64, rate: u64, face: FlowSide) -> TankState {
++        TankState {
++            kind: "fluid".into(),
++            capacity: 64_000,
++            max_rate: rate,
++            faces: [FlowSide::None, FlowSide::None, face, FlowSide::None, FlowSide::None, FlowSide::None],
++            substance: substance.into(),
++            amount,
++            accepts: Vec::new(),
++        }
++    }
++
++    #[test]
++    fn an_output_face_fills_an_empty_cauldron_with_a_whole_bucket_of_water_or_lava() {
++        let mut t = tank("minecraft:water", 2500, 64_000, FlowSide::Output);
++        assert_eq!(fill_cauldron(&mut t, 2, "minecraft:cauldron"), Some("minecraft:water_cauldron[level=3]"));
++        assert_eq!(t.amount, 1500);
++        let mut lava = tank("minecraft:lava", 1000, 1000, FlowSide::Both);
++        assert_eq!(fill_cauldron(&mut lava, 2, "minecraft:cauldron"), Some("minecraft:lava_cauldron"));
++        assert_eq!((lava.amount, lava.substance.as_str()), (0, ""), "the tank emptied");
++    }
++
++    #[test]
++    fn a_cauldron_is_not_filled_by_less_than_a_bucket_another_fluid_a_full_one_or_a_face_that_does_not_give() {
++        let cauldron = "minecraft:cauldron";
++        assert_eq!(fill_cauldron(&mut tank("minecraft:water", 999, 64_000, FlowSide::Output), 2, cauldron), None);
++        assert_eq!(fill_cauldron(&mut tank("minecraft:water", 5000, 500, FlowSide::Output), 2, cauldron), None);
++        assert_eq!(fill_cauldron(&mut tank("mekanism:brine", 5000, 64_000, FlowSide::Output), 2, cauldron), None);
++        assert_eq!(fill_cauldron(&mut tank("minecraft:water", 5000, 64_000, FlowSide::Input), 2, cauldron), None);
++        assert_eq!(fill_cauldron(&mut tank("minecraft:water", 5000, 64_000, FlowSide::Output), 3, cauldron), None);
++        assert_eq!(fill_cauldron(&mut tank("minecraft:water", 5000, 64_000, FlowSide::Output), 2, "minecraft:water_cauldron"), None);
++    }
++}
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index beb9fb9b7..470328717 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -699,6 +699,18 @@ impl TestGame {
+             .collect();
+         crate::network::transfer_tanks(&transmitters, &mut tank_nodes);
+         crate::flow::transfer(&mut tank_nodes);
++        // An output face fills an empty cauldron beside it with a bucket of water or lava, as the game does.
++        for n in &mut tank_nodes {
++            for t in &mut n.tanks {
++                for (face, d) in crate::energy::FACES.iter().enumerate() {
++                    let at = (n.pos[0] + d[0], n.pos[1] + d[1], n.pos[2] + d[2]);
++                    let block = self.world.get(&at).cloned().unwrap_or_else(|| "minecraft:air".into());
++                    if let Some(full) = crate::flow::fill_cauldron(t, face, block.split('[').next().unwrap_or("")) {
++                        self.world.insert(at, full.to_owned());
++                    }
++                }
++            }
++        }
+         for n in tank_nodes {
+             if let Some(held) = self.block_tanks.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
+                 for (slot, t) in held.iter_mut().zip(&n.tanks) {
+-- 
+2.43.0
+

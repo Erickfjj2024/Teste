@@ -1,0 +1,1221 @@
+From 55c3ebc578f262bbbd5414e35e5a6994a6292fed Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:05:22 +0000
+Subject: [PATCH] Fluid and chemical tanks for WASM block entities (API block
+ 4)
+
+tank-spec/tank in the WIT (a kind, a substance, whole units), energy-side
+renamed flow-side, a pure per-tick transfer between neighbouring tanks
+(horizon_mods::flow, tested), the game applying it, harness support
+(set-tanks, block-tanks) and the tank-demo example.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/server_mods.rs | 203 +++++++++++++++++-
+ .../examples/block-counter/src/lib.rs         |   2 +
+ .../examples/block-mover/src/lib.rs           |   2 +
+ .../examples/energy-demo/src/lib.rs           |  11 +-
+ .../examples/tank-demo/Cargo.toml             |  16 ++
+ .../examples/tank-demo/horizon-mod.toml       |   8 +
+ .../examples/tank-demo/src/lib.rs             |  62 ++++++
+ .../examples/tank-demo/tests/pipe.toml        |  19 ++
+ crates/horizon-mod-sdk/src/lib.rs             |   6 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  41 +++-
+ crates/horizon-mods/src/energy.rs             |  16 +-
+ crates/horizon-mods/src/flow.rs               | 169 +++++++++++++++
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/runtime.rs            |   3 +-
+ crates/horizon-mods/src/testing.rs            | 135 +++++++++++-
+ docs/api/mods-reference.md                    |  35 ++-
+ 18 files changed, 704 insertions(+), 34 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/tests/pipe.toml
+ create mode 100644 crates/horizon-mods/src/flow.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 580e704..2988b8e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4370,6 +4370,13 @@ dependencies = [
+  "syn 3.0.6",
+ ]
+ 
++[[package]]
++name = "tank-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "target-lexicon"
+ version = "0.13.5"
+diff --git a/Cargo.toml b/Cargo.toml
+index 3527101..f5baafd 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -42,6 +42,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-counter",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
++    "crates/horizon-mod-sdk/examples/tank-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 8dbb36f..8343be7 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -340,6 +340,7 @@ mod run {
+             self.return_world();
+             self.apply_mod_entity_updates(updates);
+             self.transfer_mod_energy();
++            self.transfer_mod_tanks();
+             self.mods.players = players;
+             self.show_mod_output();
+             self.apply_mod_block_writes();
+@@ -478,8 +479,8 @@ mod run {
+         fn energy_faces(
+             m: &horizon_client_render::containers::ModBlockEntity,
+             spec: &horizon_mods::EnergySpec,
+-        ) -> [horizon_mods::EnergySide; 6] {
+-            use horizon_mods::EnergySide as S;
++        ) -> [horizon_mods::FlowSide; 6] {
++            use horizon_mods::FlowSide as S;
+             let from_byte = |b: u8| match b {
+                 1 => S::Input,
+                 2 => S::Output,
+@@ -501,8 +502,8 @@ mod run {
+             }
+             out
+         }
+-        fn side_byte(s: horizon_mods::EnergySide) -> u8 {
+-            use horizon_mods::EnergySide as S;
++        fn side_byte(s: horizon_mods::FlowSide) -> u8 {
++            use horizon_mods::FlowSide as S;
+             match s {
+                 S::None => 0,
+                 S::Input => 1,
+@@ -510,6 +511,82 @@ mod run {
+                 S::Both => 3,
+             }
+         }
++        fn jname(s: &str) -> horizon_world::nbt::JavaString {
++            horizon_world::nbt::JavaString::from(s)
++        }
++        /// What a block entity's tanks hold, one per tank the kind declares.
++        fn stored_tanks(
++            m: &horizon_client_render::containers::ModBlockEntity,
++            specs: &[horizon_mods::TankSpec],
++        ) -> Vec<horizon_mods::Tank> {
++            use horizon_world::nbt::Tag;
++            let saved = match m.nbt.get(&Self::jname("tanks")) {
++                Some(Tag::List(l)) => l.as_slice(),
++                _ => &[],
++            };
++            specs
++                .iter()
++                .enumerate()
++                .map(|(i, spec)| {
++                    let substance = match saved.get(i).and_then(|t| t.get("substance")) {
++                        Some(Tag::String(s)) => s.to_string_lossy(),
++                        _ => String::new(),
++                    };
++                    let amount = match saved.get(i).and_then(|t| t.get("amount")) {
++                        Some(Tag::Long(v)) => (*v).max(0) as u64,
++                        _ => 0,
++                    };
++                    let amount = if substance.is_empty() { 0 } else { amount.min(spec.capacity) };
++                    horizon_mods::Tank { substance, amount }
++                })
++                .collect()
++        }
++        fn tank_sides(
++            m: &horizon_client_render::containers::ModBlockEntity,
++            specs: &[horizon_mods::TankSpec],
++        ) -> Vec<[horizon_mods::FlowSide; 6]> {
++            use horizon_mods::FlowSide as S;
++            use horizon_world::nbt::Tag;
++            let saved = match m.nbt.get(&Self::jname("tank_faces")) {
++                Some(Tag::ByteArray(b)) => b.as_slice(),
++                _ => &[],
++            };
++            specs
++                .iter()
++                .enumerate()
++                .map(|(i, spec)| {
++                    let mut out = [S::None; 6];
++                    for (f, to) in out.iter_mut().enumerate() {
++                        *to = match saved.get(i * 6 + f) {
++                            Some(b) => match b {
++                                1 => S::Input,
++                                2 => S::Output,
++                                3 => S::Both,
++                                _ => S::None,
++                            },
++                            None => spec.faces.get(f).copied().unwrap_or(S::None),
++                        };
++                    }
++                    out
++                })
++                .collect()
++        }
++        fn put_tanks(
++            m: &mut horizon_client_render::containers::ModBlockEntity,
++            tanks: &[horizon_mods::Tank],
++        ) {
++            use horizon_world::nbt::Tag;
++            let list = tanks
++                .iter()
++                .map(|t| {
++                    Tag::compound([
++                        ("substance", Tag::String(t.substance.as_str().into())),
++                        ("amount", Tag::Long(t.amount.min(i64::MAX as u64) as i64)),
++                    ])
++                })
++                .collect();
++            m.nbt.insert(Self::jname("tanks"), Tag::List(list));
++        }
+         fn stored_energy(m: &horizon_client_render::containers::ModBlockEntity) -> u64 {
+             match m.nbt.get(&horizon_world::nbt::JavaString::from("energy")) {
+                 Some(horizon_world::nbt::Tag::Long(v)) => (*v).max(0) as u64,
+@@ -565,7 +642,7 @@ mod run {
+             }
+             let registry = self.pack.assets.registry;
+             let dim = self.dim.id();
+-            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>, u64, Vec<horizon_mods::EnergySide>)> = self
++            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>, u64, Vec<horizon_mods::FlowSide>, Vec<horizon_mods::Tank>, Vec<Vec<horizon_mods::FlowSide>>)> = self
+                 .world
+                 .block_entities
+                 .iter_mut()
+@@ -591,13 +668,18 @@ mod run {
+                         ),
+                         None => (0, Vec::new()),
+                     };
+-                    Some(([pos.0, pos.1, pos.2], data, items, energy, faces))
++                    let tanks = Self::stored_tanks(m, &kind.tanks);
++                    let tank_faces = Self::tank_sides(m, &kind.tanks)
++                        .into_iter()
++                        .map(|f| f.to_vec())
++                        .collect();
++                    Some(([pos.0, pos.1, pos.2], data, items, energy, faces, tanks, tank_faces))
+                 })
+                 .take(horizon_mods::BLOCK_ENTITIES_PER_CALL)
+                 .collect();
+             found
+                 .into_iter()
+-                .map(|(p, data, items, energy, energy_faces)| horizon_mods::BlockEntity {
++                .map(|(p, data, items, energy, energy_faces, tanks, tank_faces)| horizon_mods::BlockEntity {
+                     dimension: dim.into(),
+                     pos: BlockPos {
+                         x: p[0],
+@@ -609,6 +691,8 @@ mod run {
+                     items,
+                     energy,
+                     energy_faces,
++                    tanks,
++                    tank_faces,
+                 })
+                 .collect()
+         }
+@@ -653,6 +737,44 @@ mod run {
+                         self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                     }
+                 }
++                if u.tanks.is_some() || u.tank_faces.is_some() {
++                    let kinds = self.mods.mods.block_entity_kinds();
++                    if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                        self.world.block_entities.get_mut(&key)
++                        && let Some(specs) = kinds.iter().find(|k| k.block == m.id).map(|k| &k.tanks)
++                        && !specs.is_empty()
++                    {
++                        if let Some(tanks) = &u.tanks {
++                            let mut now = Self::stored_tanks(m, specs);
++                            for (to, from) in now.iter_mut().zip(tanks) {
++                                to.substance.clone_from(&from.substance);
++                                to.amount = if from.substance.is_empty() { 0 } else { from.amount };
++                            }
++                            for (t, spec) in now.iter_mut().zip(specs) {
++                                t.amount = t.amount.min(spec.capacity);
++                                if t.amount == 0 {
++                                    t.substance.clear();
++                                }
++                            }
++                            Self::put_tanks(m, &now);
++                        }
++                        if let Some(faces) = &u.tank_faces {
++                            let mut bytes = Vec::new();
++                            for (i, _) in specs.iter().enumerate() {
++                                let current = Self::tank_sides(m, specs)[i];
++                                for f in 0..6 {
++                                    let s = faces.get(i).and_then(|l| l.get(f)).copied().unwrap_or(current[f]);
++                                    bytes.push(Self::side_byte(s));
++                                }
++                            }
++                            m.nbt.insert(
++                                Self::jname("tank_faces"),
++                                horizon_world::nbt::Tag::ByteArray(bytes),
++                            );
++                        }
++                        self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                    }
++                }
+                 if let Some(items) = u.items {
+                     let slots = match self.world.block_entities.get_mut(&key) {
+                         Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.items.len(),
+@@ -720,6 +842,73 @@ mod run {
+             }
+         }
+ 
++        /// One tick of fluids and chemicals moving between neighbouring
++        /// block entities' tanks of this level (`horizon_mods::flow`).
++        fn transfer_mod_tanks(&mut self) {
++            let kinds = self.mods.mods.block_entity_kinds();
++            if !kinds.iter().any(|k| !k.tanks.is_empty()) {
++                return;
++            }
++            let mut nodes: Vec<horizon_mods::flow::TankNode> = self
++                .world
++                .block_entities
++                .iter_mut()
++                .filter_map(|(pos, e)| {
++                    let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
++                        return None;
++                    };
++                    let specs = &kinds.iter().find(|k| k.block == m.id)?.tanks;
++                    if specs.is_empty() {
++                        return None;
++                    }
++                    let held = Self::stored_tanks(m, specs);
++                    let sides = Self::tank_sides(m, specs);
++                    let tanks = specs
++                        .iter()
++                        .zip(held)
++                        .zip(sides)
++                        .map(|((s, h), faces)| horizon_mods::flow::TankState {
++                            kind: s.kind.clone(),
++                            capacity: s.capacity,
++                            max_rate: s.max_rate,
++                            faces,
++                            substance: h.substance,
++                            amount: h.amount,
++                        })
++                        .collect();
++                    Some(horizon_mods::flow::TankNode {
++                        pos: [pos.0, pos.1, pos.2],
++                        tanks,
++                    })
++                })
++                .collect();
++            if nodes.len() < 2 {
++                return;
++            }
++            let before = nodes.clone();
++            horizon_mods::flow::transfer(&mut nodes);
++            for (n, was) in nodes.iter().zip(before) {
++                if *n == was {
++                    continue;
++                }
++                let key = (n.pos[0], n.pos[1], n.pos[2]);
++                if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                    self.world.block_entities.get_mut(&key)
++                {
++                    let held: Vec<_> = n
++                        .tanks
++                        .iter()
++                        .map(|t| horizon_mods::Tank {
++                            substance: t.substance.clone(),
++                            amount: t.amount,
++                        })
++                        .collect();
++                    Self::put_tanks(m, &held);
++                    self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                }
++            }
++        }
++
+         /// Puts back the chunks [`Game::lend_world`] lent.
+         fn return_world(&mut self) {
+             let Some(view) = self.mods.mods.take_world() else {
+diff --git a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+index 1b8c25c..3f56cf8 100644
+--- a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+@@ -25,6 +25,8 @@ impl ServerMod for Counter {
+                     items: None,
+                     energy: None,
+                     energy_faces: None,
++                    tanks: None,
++                    tank_faces: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+index b924fcb..75319d6 100644
+--- a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+@@ -54,6 +54,8 @@ impl ServerMod for Mover {
+                 items: Some(items),
+                 energy: None,
+                 energy_faces: None,
++                    tanks: None,
++                    tank_faces: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+index 243f16a..98603b6 100644
+--- a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -3,7 +3,7 @@
+ //! stores up to 1000, 50 a tick in and out, and never ticks (the game moves
+ //! its energy); `energydemo:consumer` burns 5 a tick and only takes.
+ use horizon_mod_sdk::server::{
+-    BlockEntity, BlockEntityKind, BlockEntityUpdate, EnergySide, EnergySpec, Registration,
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, FlowSide, EnergySpec, Registration,
+     ServerMod,
+ };
+ 
+@@ -15,6 +15,7 @@ fn kind(block: &str, ticks: bool, energy: EnergySpec) -> BlockEntityKind {
+         ticks,
+         container: None,
+         energy: Some(energy),
++        tanks: Vec::new(),
+     }
+ }
+ 
+@@ -24,17 +25,17 @@ impl ServerMod for Demo {
+             .block_entity_kind(kind(
+                 "energydemo:generator",
+                 true,
+-                EnergySpec::open(100, 50, EnergySide::Output),
++                EnergySpec::open(100, 50, FlowSide::Output),
+             ))
+             .block_entity_kind(kind(
+                 "energydemo:battery",
+                 false,
+-                EnergySpec::open(1000, 50, EnergySide::Both),
++                EnergySpec::open(1000, 50, FlowSide::Both),
+             ))
+             .block_entity_kind(kind(
+                 "energydemo:consumer",
+                 true,
+-                EnergySpec::open(100, 50, EnergySide::Input),
++                EnergySpec::open(100, 50, FlowSide::Input),
+             ));
+         Ok((Demo, r))
+     }
+@@ -56,6 +57,8 @@ impl ServerMod for Demo {
+                     items: None,
+                     energy: Some(energy),
+                     energy_faces: None,
++                    tanks: None,
++                    tank_faces: None,
+                 })
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/tank-demo/Cargo.toml
+new file mode 100644
+index 0000000..bd410dc
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "tank-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a pump, a tank and a gas tank that pass fluids along"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/tank-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..1bb5abd
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "tankdemo"
++name = "Tank Demo"
++version = "0.1.0"
++description = "Test mod for block tanks: a pump makes 20 mB of water a tick, tanks pass it along; a gas tank takes nothing else."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+new file mode 100644
+index 0000000..44c8819
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -0,0 +1,62 @@
++//! Tank Demo: the smallest user of block tanks. `tankdemo:pump` makes 20 of
++//! `minecraft:water` a tick and only gives; `tankdemo:tank` stores 1000
++//! fluid, 50 a tick in and out, and never ticks; `tankdemo:gas_tank` is a
++//! `gas` tank, which no fluid enters.
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, FlowSide, Registration, ServerMod, Tank,
++    TankSpec,
++};
++
++struct Demo;
++
++fn kind(block: &str, ticks: bool, tank: TankSpec) -> BlockEntityKind {
++    BlockEntityKind {
++        block: block.into(),
++        ticks,
++        container: None,
++        energy: None,
++        tanks: vec![tank],
++    }
++}
++fn spec(kind: &str, side: FlowSide) -> TankSpec {
++    TankSpec {
++        kind: kind.into(),
++        capacity: 1000,
++        max_rate: 50,
++        faces: vec![side; 6],
++    }
++}
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        let r = Registration::new()
++            .block_entity_kind(kind("tankdemo:pump", true, spec("fluid", FlowSide::Output)))
++            .block_entity_kind(kind("tankdemo:tank", false, spec("fluid", FlowSide::Both)))
++            .block_entity_kind(kind("tankdemo:gas_tank", false, spec("gas", FlowSide::Both)));
++        Ok((Demo, r))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        entities
++            .into_iter()
++            .filter(|e| e.state.starts_with("tankdemo:pump"))
++            .map(|e| {
++                let held = e.tanks.first().map_or(0, |t| t.amount);
++                BlockEntityUpdate {
++                    dimension: e.dimension,
++                    pos: e.pos,
++                    data: e.data,
++                    items: None,
++                    energy: None,
++                    energy_faces: None,
++                    tanks: Some(vec![Tank {
++                        substance: "minecraft:water".into(),
++                        amount: held + 20,
++                    }]),
++                    tank_faces: None,
++                }
++            })
++            .collect()
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/tests/pipe.toml b/crates/horizon-mod-sdk/examples/tank-demo/tests/pipe.toml
+new file mode 100644
+index 0000000..0eba2e1
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/tests/pipe.toml
+@@ -0,0 +1,19 @@
++# pump -> tank -> gas tank: the water goes into the tank and stays out of the gas tank.
++
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "tankdemo:pump" },
++    { x = 1, y = 64, z = 0, state = "tankdemo:tank" },
++    { x = 2, y = 64, z = 0, state = "tankdemo:gas_tank" },
++]
++ticks = 1
++expect.block-tanks = [
++    { x = 0, y = 64, z = 0, tanks = [""] },
++    { x = 1, y = 64, z = 0, tanks = ["minecraft:water*20"] },
++    { x = 2, y = 64, z = 0, tanks = [""] },
++]
++
++[[step]]
++ticks = 4
++expect.block-tanks = [{ x = 1, y = 64, z = 0, tanks = ["minecraft:water*100"] }]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index a52444c..81dcc84 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -196,7 +196,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, EnergySide, EnergySpec, ItemStack, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -255,7 +255,7 @@ pub mod server {
+     }
+     impl EnergySpec {
+         /// A store of `capacity` that takes and gives `rate` a tick through every face.
+-        pub fn open(capacity: u64, rate: u64, side: EnergySide) -> Self {
++        pub fn open(capacity: u64, rate: u64, side: FlowSide) -> Self {
+             Self {
+                 capacity,
+                 max_receive: rate,
+@@ -294,6 +294,7 @@ pub mod server {
+                 ticks,
+                 container: None,
+                 energy: None,
++                tanks: Vec::new(),
+             });
+             self
+         }
+@@ -314,6 +315,7 @@ pub mod server {
+                 ticks,
+                 container: Some(container),
+                 energy: None,
++                tanks: Vec::new(),
+             });
+             self
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 4d1f36a..b63c064 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -835,9 +835,32 @@ interface server-events {
+         /// Stored energy, moved between neighbouring blocks by the game (see
+         /// `energy-spec`). None: the block holds no energy.
+         energy: option<energy-spec>,
++        /// Tanks for fluids and chemicals, moved between neighbouring blocks
++        /// by the game (see `tank-spec`).
++        tanks: list<tank-spec>,
++    }
++    /// One tank of a block. A `kind` is a family of substances that mix with
++    /// nothing outside it (`fluid`, `gas`, `infusion`...: the mod's own
++    /// words); a tank holds one substance (`minecraft:water`, `mymod:hydrogen`)
++    /// at a time, counted in whole units (millibuckets for a fluid). Every
++    /// tick the game moves substance from each block's output faces into the
++    /// tank of the block touching it that takes it in through the face that
++    /// touches back, has the same kind, and is empty or holds the same
++    /// substance; a tank gives and takes at most `max-rate` a tick.
++    record tank-spec {
++        kind: string,
++        capacity: u64,
++        max-rate: u64,
++        /// The sides of the six faces: down, up, north, south, west, east.
++        faces: list<flow-side>,
++    }
++    /// What a tank holds: an empty substance is an empty tank.
++    record tank {
++        substance: string,
++        amount: u64,
+     }
+-    /// Which way energy may pass through a face of a block.
+-    enum energy-side {
++    /// Which way energy, fluid or a chemical may pass through a face of a block.
++    enum flow-side {
+         none,
+         /// Energy may flow in through this face.
+         input,
+@@ -858,7 +881,7 @@ interface server-events {
+         /// The faces' sides, in this order of faces: down, up, north, south,
+         /// west, east. A block's mod may change them with `energy-faces`
+         /// (a machine turned to face another way).
+-        faces: list<energy-side>,
++        faces: list<flow-side>,
+     }
+     /// The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+     record container-spec {
+@@ -891,7 +914,10 @@ interface server-events {
+         /// The energy it stores (0 for a block with no energy), and the
+         /// sides of its faces now.
+         energy: u64,
+-        energy-faces: list<energy-side>,
++        energy-faces: list<flow-side>,
++        /// Its tanks, in the order of its kind's `tanks`, and their faces' sides now.
++        tanks: list<tank>,
++        tank-faces: list<list<flow-side>>,
+     }
+     /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+@@ -905,7 +931,12 @@ interface server-events {
+         /// it as it is. The game's transfers after the tick change it again.
+         energy: option<u64>,
+         /// New sides for the faces; none leaves them as they are.
+-        energy-faces: option<list<energy-side>>,
++        energy-faces: option<list<flow-side>>,
++        /// The tanks after the call (kept within their capacities); none
++        /// leaves them as they are.
++        tanks: option<list<tank>>,
++        /// New sides for each tank's faces; none leaves them as they are.
++        tank-faces: option<list<list<flow-side>>>,
+     }
+     /// Once, after loading. An error keeps the mod off and is logged.
+     init: func() -> result<registration, string>;
+diff --git a/crates/horizon-mods/src/energy.rs b/crates/horizon-mods/src/energy.rs
+index e2de1f5..98f5a67 100644
+--- a/crates/horizon-mods/src/energy.rs
++++ b/crates/horizon-mods/src/energy.rs
+@@ -1,6 +1,6 @@
+ //! Energy moving between neighbouring block entities (API block 3). Pure: the
+ //! game and the test harness build the nodes and write the energies back.
+-use crate::EnergySide;
++use crate::FlowSide;
+ 
+ /// Where face `i` looks: down, up, north, south, west, east.
+ pub const FACES: [[i32; 3]; 6] = [
+@@ -20,14 +20,14 @@ pub struct EnergyNode {
+     pub capacity: u64,
+     pub max_receive: u64,
+     pub max_extract: u64,
+-    pub faces: [EnergySide; 6],
++    pub faces: [FlowSide; 6],
+ }
+ 
+-fn gives(s: EnergySide) -> bool {
+-    matches!(s, EnergySide::Output | EnergySide::Both)
++fn gives(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Output | FlowSide::Both)
+ }
+-fn takes(s: EnergySide) -> bool {
+-    matches!(s, EnergySide::Input | EnergySide::Both)
++fn takes(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Input | FlowSide::Both)
+ }
+ 
+ /// One tick of transfers. Blocks are visited in position order, and each
+@@ -75,9 +75,9 @@ pub fn transfer(nodes: &mut [EnergyNode]) {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use EnergySide::{Both, Input, None as No, Output};
++    use FlowSide::{Both, Input, None as No, Output};
+ 
+-    fn node(pos: [i32; 3], energy: u64, faces: [EnergySide; 6]) -> EnergyNode {
++    fn node(pos: [i32; 3], energy: u64, faces: [FlowSide; 6]) -> EnergyNode {
+         EnergyNode {
+             pos,
+             energy,
+diff --git a/crates/horizon-mods/src/flow.rs b/crates/horizon-mods/src/flow.rs
+new file mode 100644
+index 0000000..cc5d02d
+--- /dev/null
++++ b/crates/horizon-mods/src/flow.rs
+@@ -0,0 +1,169 @@
++//! Fluids and chemicals moving between neighbouring block entities' tanks
++//! (API block 4). Pure, like [`crate::energy`]: the game and the test harness
++//! build the nodes and write the tanks back.
++use crate::FlowSide;
++use crate::energy::FACES;
++
++/// One tank, with what the block's mod declared and what it holds now.
++#[derive(Clone, Debug, PartialEq)]
++pub struct TankState {
++    pub kind: String,
++    pub capacity: u64,
++    pub max_rate: u64,
++    pub faces: [FlowSide; 6],
++    /// Empty when the tank is empty.
++    pub substance: String,
++    pub amount: u64,
++}
++
++/// One block with tanks.
++#[derive(Clone, Debug, PartialEq)]
++pub struct TankNode {
++    pub pos: [i32; 3],
++    pub tanks: Vec<TankState>,
++}
++
++fn gives(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Output | FlowSide::Both)
++}
++fn takes(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Input | FlowSide::Both)
++}
++
++/// One tick of transfers, in position order, each block's tanks in order and
++/// their faces in the order of [`FACES`]; a tank gives to the first tank of
++/// the neighbour that accepts, and gives and takes at most its `max_rate` a
++/// tick in all faces together.
++pub fn transfer(nodes: &mut [TankNode]) {
++    let mut order: Vec<usize> = (0..nodes.len()).collect();
++    order.sort_by_key(|&i| nodes[i].pos);
++    let at: std::collections::HashMap<[i32; 3], usize> =
++        nodes.iter().enumerate().map(|(i, n)| (n.pos, i)).collect();
++    let mut given: Vec<Vec<u64>> = nodes.iter().map(|n| vec![0; n.tanks.len()]).collect();
++    let mut taken = given.clone();
++    for &s in &order {
++        for ti in 0..nodes[s].tanks.len() {
++            for (face, d) in FACES.iter().enumerate() {
++                if !gives(nodes[s].tanks[ti].faces[face]) || nodes[s].tanks[ti].amount == 0 {
++                    continue;
++                }
++                let to = [
++                    nodes[s].pos[0] + d[0],
++                    nodes[s].pos[1] + d[1],
++                    nodes[s].pos[2] + d[2],
++                ];
++                let Some(&t) = at.get(&to) else { continue };
++                for di in 0..nodes[t].tanks.len() {
++                    let (a, b) = if s == t {
++                        continue;
++                    } else if s < t {
++                        let (l, r) = nodes.split_at_mut(t);
++                        (&mut l[s].tanks[ti], &mut r[0].tanks[di])
++                    } else {
++                        let (l, r) = nodes.split_at_mut(s);
++                        (&mut r[0].tanks[ti], &mut l[t].tanks[di])
++                    };
++                    if a.kind != b.kind
++                        || !takes(b.faces[face ^ 1])
++                        || (b.amount > 0 && b.substance != a.substance)
++                    {
++                        continue;
++                    }
++                    let amount = a
++                        .amount
++                        .min(a.max_rate.saturating_sub(given[s][ti]))
++                        .min(b.max_rate.saturating_sub(taken[t][di]))
++                        .min(b.capacity.saturating_sub(b.amount));
++                    if amount == 0 {
++                        continue;
++                    }
++                    if b.amount == 0 {
++                        b.substance.clone_from(&a.substance);
++                    }
++                    a.amount -= amount;
++                    b.amount += amount;
++                    if a.amount == 0 {
++                        a.substance.clear();
++                    }
++                    given[s][ti] += amount;
++                    taken[t][di] += amount;
++                    break;
++                }
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use FlowSide::{Input, Output};
++
++    fn tank(kind: &str, substance: &str, amount: u64, side: FlowSide) -> TankState {
++        TankState {
++            kind: kind.into(),
++            capacity: 100,
++            max_rate: 30,
++            faces: [side; 6],
++            substance: substance.into(),
++            amount,
++        }
++    }
++    fn node(x: i32, t: TankState) -> TankNode {
++        TankNode {
++            pos: [x, 0, 0],
++            tanks: vec![t],
++        }
++    }
++    #[test]
++    fn moves_the_substance_at_the_rate() {
++        let mut n = vec![
++            node(0, tank("fluid", "minecraft:water", 100, Output)),
++            node(1, tank("fluid", "", 0, Input)),
++        ];
++        transfer(&mut n);
++        assert_eq!(n[0].tanks[0].amount, 70);
++        assert_eq!(n[1].tanks[0].amount, 30);
++        assert_eq!(n[1].tanks[0].substance, "minecraft:water");
++    }
++    #[test]
++    fn another_substance_or_kind_does_not_mix() {
++        let mut n = vec![
++            node(0, tank("fluid", "minecraft:water", 50, Output)),
++            node(1, tank("fluid", "minecraft:lava", 10, Input)),
++        ];
++        transfer(&mut n);
++        assert_eq!((n[0].tanks[0].amount, n[1].tanks[0].amount), (50, 10));
++        let mut n = vec![
++            node(0, tank("gas", "mek:hydrogen", 50, Output)),
++            node(1, tank("fluid", "", 0, Input)),
++        ];
++        transfer(&mut n);
++        assert_eq!(n[1].tanks[0].amount, 0);
++    }
++    #[test]
++    fn an_emptied_tank_forgets_its_substance() {
++        let mut n = vec![
++            node(0, tank("fluid", "minecraft:water", 20, Output)),
++            node(1, tank("fluid", "", 0, Input)),
++        ];
++        transfer(&mut n);
++        assert_eq!(n[0].tanks[0].substance, "");
++        assert_eq!(n[1].tanks[0].amount, 20);
++    }
++    #[test]
++    fn the_second_tank_takes_what_the_first_cannot() {
++        let mut full = tank("fluid", "minecraft:lava", 100, Input);
++        full.capacity = 100;
++        let mut n = vec![
++            node(0, tank("fluid", "minecraft:water", 50, Output)),
++            TankNode {
++                pos: [1, 0, 0],
++                tanks: vec![full, tank("fluid", "", 0, Input)],
++            },
++        ];
++        transfer(&mut n);
++        assert_eq!(n[1].tanks[1].amount, 30);
++        assert_eq!(n[1].tanks[1].substance, "minecraft:water");
++    }
++}
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 743cc98..04e0334 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -10,6 +10,8 @@ pub mod api_level;
+ pub mod commands;
+ #[cfg(feature = "runtime")]
+ pub mod energy;
++#[cfg(feature = "runtime")]
++pub mod flow;
+ pub mod content;
+ #[cfg(feature = "index")]
+ pub mod index;
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 7498758..fca8f3c 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, EnergySide, EnergySpec, ItemStack as ModItemStack, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -962,6 +962,7 @@ impl Mods {
+                 if given
+                     && u.data.len() <= BLOCK_ENTITY_BYTES
+                     && u.items.as_ref().is_none_or(|s| s.len() <= 256)
++                    && u.tanks.as_ref().is_none_or(|s| s.len() <= 16)
+                 {
+                     out.push(u);
+                 }
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index f024c24..0d68bdb 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -44,7 +44,10 @@ pub struct TestGame {
+     /// Their slots, by position, as `"minecraft:stone*3"` (empty: no stack).
+     pub block_items: std::collections::BTreeMap<(i32, i32, i32), Vec<String>>,
+     /// Their stored energy and the sides of their faces, by position.
+-    pub block_energy: std::collections::BTreeMap<(i32, i32, i32), (u64, [crate::EnergySide; 6])>,
++    pub block_energy: std::collections::BTreeMap<(i32, i32, i32), (u64, [crate::FlowSide; 6])>,
++    /// Their tanks, by position: what each holds (`"minecraft:water*500"`,
++    /// empty for none) and the sides of its faces.
++    pub block_tanks: std::collections::BTreeMap<(i32, i32, i32), Vec<(String, [crate::FlowSide; 6])>>,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -165,6 +168,7 @@ impl TestGame {
+             block_entities: Default::default(),
+             block_items: Default::default(),
+             block_energy: Default::default(),
++            block_tanks: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -241,8 +245,33 @@ impl TestGame {
+                 .find(|k| k.block == block)
+                 .and_then(|k| k.energy.clone())
+         };
++        self.block_tanks
++            .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        let tanks_of = |state: &str| {
++            let block = state.split('[').next().unwrap_or("");
++            kinds
++                .iter()
++                .find(|k| k.block == block)
++                .map(|k| k.tanks.clone())
++                .unwrap_or_default()
++        };
++        let six = |faces: &[crate::FlowSide]| {
++            let mut f = [crate::FlowSide::None; 6];
++            for (to, from) in f.iter_mut().zip(faces) {
++                *to = *from;
++            }
++            f
++        };
++        for (pos, state) in &self.world {
++            let specs = tanks_of(state);
++            if !specs.is_empty() {
++                self.block_tanks.entry(*pos).or_insert_with(|| {
++                    specs.iter().map(|s| (String::new(), six(&s.faces))).collect()
++                });
++            }
++        }
+         let faces_of = |spec: &crate::EnergySpec| {
+-            let mut f = [crate::EnergySide::None; 6];
++            let mut f = [crate::FlowSide::None; 6];
+             for (to, from) in f.iter_mut().zip(&spec.faces) {
+                 *to = *from;
+             }
+@@ -280,6 +309,14 @@ impl TestGame {
+                 state,
+                 data: data.clone(),
+                 items: held.iter().map(|s| parse_stack(s)).collect(),
++                tanks: self
++                    .block_tanks
++                    .get(&(x, y, z))
++                    .map_or_else(Vec::new, |v| v.iter().map(|(s, _)| parse_tank(s)).collect()),
++                tank_faces: self
++                    .block_tanks
++                    .get(&(x, y, z))
++                    .map_or_else(Vec::new, |v| v.iter().map(|(_, f)| f.to_vec()).collect()),
+                 energy: self.block_energy.get(&(x, y, z)).map_or(0, |e| e.0),
+                 energy_faces: self
+                     .block_energy
+@@ -303,6 +340,18 @@ impl TestGame {
+                     }
+                 }
+             }
++            if let (Some(tanks), Some(held)) = (&u.tanks, self.block_tanks.get_mut(&key)) {
++                let specs = self.world.get(&key).map(|s| tanks_of(s)).unwrap_or_default();
++                for (i, tank) in tanks.iter().enumerate().take(held.len()) {
++                    let cap = specs.get(i).map_or(0, |s| s.capacity);
++                    let amount = if tank.substance.is_empty() { 0 } else { tank.amount.min(cap) };
++                    held[i].0 = if amount == 0 {
++                        String::new()
++                    } else {
++                        format!("{}*{amount}", tank.substance)
++                    };
++                }
++            }
+             if let Some(items) = u.items {
+                 let n = self.block_items.get(&key).map_or(0, Vec::len);
+                 let mut text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
+@@ -325,6 +374,41 @@ impl TestGame {
+                 })
+             })
+             .collect();
++        let mut tank_nodes: Vec<crate::flow::TankNode> = self
++            .block_tanks
++            .iter()
++            .filter_map(|(&(x, y, z), held)| {
++                let specs = tanks_of(self.world.get(&(x, y, z))?);
++                let tanks = specs
++                    .iter()
++                    .zip(held)
++                    .map(|(s, (text, faces))| {
++                        let (substance, amount) = split_tank(text);
++                        crate::flow::TankState {
++                            kind: s.kind.clone(),
++                            capacity: s.capacity,
++                            max_rate: s.max_rate,
++                            faces: *faces,
++                            substance,
++                            amount,
++                        }
++                    })
++                    .collect();
++                Some(crate::flow::TankNode { pos: [x, y, z], tanks })
++            })
++            .collect();
++        crate::flow::transfer(&mut tank_nodes);
++        for n in tank_nodes {
++            if let Some(held) = self.block_tanks.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
++                for (slot, t) in held.iter_mut().zip(&n.tanks) {
++                    slot.0 = if t.amount == 0 {
++                        String::new()
++                    } else {
++                        format!("{}*{}", t.substance, t.amount)
++                    };
++                }
++            }
++        }
+         crate::energy::transfer(&mut nodes);
+         for n in nodes {
+             if let Some(e) = self.block_energy.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
+@@ -537,6 +621,16 @@ pub struct MotionSet {
+     xp_progress: Option<f32>,
+ }
+ 
++fn split_tank(text: &str) -> (String, u64) {
++    match text.split_once('*') {
++        Some((s, n)) => (s.to_owned(), n.parse().unwrap_or(0)),
++        None => (String::new(), 0),
++    }
++}
++fn parse_tank(text: &str) -> crate::Tank {
++    let (substance, amount) = split_tank(text);
++    crate::Tank { substance, amount }
++}
+ fn parse_stack(text: &str) -> Option<crate::ModItemStack> {
+     let (item, count) = text.split_once('*')?;
+     Some(crate::ModItemStack {
+@@ -561,6 +655,17 @@ pub struct BlockItemsSet {
+     slots: Vec<String>,
+ }
+ 
++/// The tanks of a block entity a step sets or expects.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct BlockTanksSet {
++    x: i32,
++    y: i32,
++    z: i32,
++    /// `"minecraft:water*500"` for each tank, `""` for an empty one.
++    tanks: Vec<String>,
++}
++
+ /// The stored energy of a block entity a step sets or expects.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -639,6 +744,9 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Tanks of block entities before the ticks (as `set-items`).
++    #[serde(default)]
++    set_tanks: Vec<BlockTanksSet>,
+     /// Energy of block entities before the ticks (as `set-items`).
+     #[serde(default)]
+     set_energy: Vec<BlockEnergySet>,
+@@ -667,6 +775,8 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods: the tanks of block entities after the step.
++    block_tanks: Option<Vec<BlockTanksSet>>,
+     /// Server mods: the stored energy of block entities after the step.
+     block_energy: Option<Vec<BlockEnergySet>>,
+     /// Server mods: the slots of block entities after the step.
+@@ -824,6 +934,13 @@ impl Step {
+         for b in &self.blocks {
+             game.world.insert((b.x, b.y, b.z), b.state.clone());
+         }
++        for s in &self.set_tanks {
++            if let Some(held) = game.block_tanks.get_mut(&(s.x, s.y, s.z)) {
++                for (slot, text) in held.iter_mut().zip(&s.tanks) {
++                    slot.0.clone_from(text);
++                }
++            }
++        }
+         for s in &self.set_energy {
+             if let Some(e) = game.block_energy.get_mut(&(s.x, s.y, s.z)) {
+                 e.0 = s.energy;
+@@ -1032,6 +1149,20 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.block_tanks {
++            for b in want {
++                let got: Option<Vec<String>> = game
++                    .block_tanks
++                    .get(&(b.x, b.y, b.z))
++                    .map(|v| v.iter().map(|(s, _)| s.clone()).collect());
++                if got.as_ref() != Some(&b.tanks) {
++                    return Err(format!(
++                        "tanks at {} {} {}: expected {:?}, got {got:?}",
++                        b.x, b.y, b.z, b.tanks
++                    ));
++                }
++            }
++        }
+         if let Some(want) = &e.block_energy {
+             for b in want {
+                 let got = game.block_energy.get(&(b.x, b.y, b.z)).map(|e| e.0);
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 0677820..057e6e6 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -788,9 +788,18 @@ An argument's value, parsed as its kind says.
+ | `player` | `player` |  |
+ | `block-pos` | `block-pos` |  |
+ 
+-### enum `energy-side`
++### record `tank`
+ 
+-Which way energy may pass through a face of a block.
++What a tank holds: an empty substance is an empty tank.
++
++| Field | Type | |
++| --- | --- | --- |
++| `substance` | `string` |  |
++| `amount` | `u64` |  |
++
++### enum `flow-side`
++
++Which way energy, fluid or a chemical may pass through a face of a block.
+ 
+ | Case | |
+ | --- | --- |
+@@ -799,6 +808,17 @@ Which way energy may pass through a face of a block.
+ | `output` | Energy may flow out through this face. |
+ | `both` |  |
+ 
++### record `tank-spec`
++
++One tank of a block. A `kind` is a family of substances that mix with nothing outside it (`fluid`, `gas`, `infusion`...: the mod's own words); a tank holds one substance (`minecraft:water`, `mymod:hydrogen`) at a time, counted in whole units (millibuckets for a fluid). Every tick the game moves substance from each block's output faces into the tank of the block touching it that takes it in through the face that touches back, has the same kind, and is empty or holds the same substance; a tank gives and takes at most `max-rate` a tick.
++
++| Field | Type | |
++| --- | --- | --- |
++| `kind` | `string` |  |
++| `capacity` | `u64` |  |
++| `max-rate` | `u64` |  |
++| `faces` | `list<flow-side>` | The sides of the six faces: down, up, north, south, west, east. |
++
+ ### record `energy-spec`
+ 
+ A block's energy store. The game moves energy every tick, after the mods' `block-entities-tick`, from each block's output faces to the block touching it, when that block takes energy in through the face that touches back. The unit is the mod's own (Mekanism's joules); the game only counts whole numbers. Each block gives at most `max-extract` and takes at most `max-receive` a tick, in all faces together.
+@@ -808,7 +828,7 @@ A block's energy store. The game moves energy every tick, after the mods' `block
+ | `capacity` | `u64` |  |
+ | `max-receive` | `u64` |  |
+ | `max-extract` | `u64` |  |
+-| `faces` | `list<energy-side>` | The faces' sides, in this order of faces: down, up, north, south, west, east. A block's mod may change them with `energy-faces` (a machine turned to face another way). |
++| `faces` | `list<flow-side>` | The faces' sides, in this order of faces: down, up, north, south, west, east. A block's mod may change them with `energy-faces` (a machine turned to face another way). |
+ 
+ ### record `container-spec`
+ 
+@@ -829,6 +849,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `ticks` | `bool` | Include this block's entities in `block-entities-tick`. |
+ | `container` | `option<container-spec>` | Item slots the block entity holds, as a vanilla container does (players, hoppers and droppers use them; a broken block drops them). None: no slots. |
+ | `energy` | `option<energy-spec>` | Stored energy, moved between neighbouring blocks by the game (see `energy-spec`). None: the block holds no energy. |
++| `tanks` | `list<tank-spec>` | Tanks for fluids and chemicals, moved between neighbouring blocks by the game (see `tank-spec`). |
+ 
+ ### record `registration`
+ 
+@@ -863,7 +884,9 @@ A block entity of the mod, as the server holds it.
+ | `data` | `list<u8>` | What the mod saved last (empty for a new one): at most 65536 bytes. |
+ | `items` | `list<option<item-stack>>` | Its slots, as many as its container has (none for a block with no container). |
+ | `energy` | `u64` | The energy it stores (0 for a block with no energy), and the sides of its faces now. |
+-| `energy-faces` | `list<energy-side>` |  |
++| `energy-faces` | `list<flow-side>` |  |
++| `tanks` | `list<tank>` | Its tanks, in the order of its kind's `tanks`, and their faces' sides now. |
++| `tank-faces` | `list<list<flow-side>>` |  |
+ 
+ ### record `block-entity-update`
+ 
+@@ -876,7 +899,9 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `data` | `list<u8>` |  |
+ | `items` | `option<list<option<item-stack>>>` | The slots after the call; none leaves them as they are. Extra slots past the container's, and stacks of unknown items, are dropped. |
+ | `energy` | `option<u64>` | The energy after the call (kept within the capacity); none leaves it as it is. The game's transfers after the tick change it again. |
+-| `energy-faces` | `option<list<energy-side>>` | New sides for the faces; none leaves them as they are. |
++| `energy-faces` | `option<list<flow-side>>` | New sides for the faces; none leaves them as they are. |
++| `tanks` | `option<list<tank>>` | The tanks after the call (kept within their capacities); none leaves them as they are. |
++| `tank-faces` | `option<list<list<flow-side>>>` | New sides for each tank's faces; none leaves them as they are. |
+ 
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+-- 
+2.43.0
+

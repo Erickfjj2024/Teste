@@ -1,0 +1,221 @@
+From 9256554c9afa4a8eea811ccb97015f893d54a1d9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 12:16:21 +0000
+Subject: [PATCH] FORK-31: declared renderer element fluid_volume: the fluid of
+ a whole multiblock drawn inside its casing
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../src/game/block_renderers.rs               | 21 +++++++-
+ .../src/game/native_block_entity_draw.rs      |  4 ++
+ crates/horizon-mods/src/block_render.rs       | 47 +++++++++++++++++
+ crates/horizon-mods/src/content.rs            | 52 ++++++++++++++++++-
+ 4 files changed, 122 insertions(+), 2 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
+index 333ad920f..95b5c06b2 100644
+--- a/crates/horizon-client/src/game/block_renderers.rs
++++ b/crates/horizon-client/src/game/block_renderers.rs
+@@ -7,7 +7,7 @@
+ use super::{Game, native_block_entity_draw::{BlockEntityDraw, CubeFace}};
+ use horizon_client::containers::ModBlockEntity;
+ use horizon_mods::{
+-    block_render::{bounce_offset, fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees, turn_degrees},
++    block_render::{bounce_offset, fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees, turn_degrees, volume_fluid_box},
+     content::{BlockRenderer, RenderElement, parse_color},
+ };
+ use horizon_world::nbt::{JavaString, Tag};
+@@ -136,6 +136,25 @@ impl Game<'_> {
+                     let tint = fluid_tint(tints, &t.substance);
+                     self.native_draw_cube(draw, lo, hi, all(sprite), tint);
+                 }
++                RenderElement::FluidVolume { tank, box_at, draw_at, fill_at, sprites, default_sprite, tints } => {
++                    let Some(t) = tanks.get(usize::from(*tank)).filter(|t| t.amount > 0) else {
++                        continue;
++                    };
++                    let Some((lo, hi)) = volume_fluid_box(
++                        data_of(entity),
++                        usize::from(*box_at),
++                        usize::from(*draw_at),
++                        usize::from(*fill_at),
++                        draw.block_pos(),
++                    ) else {
++                        continue;
++                    };
++                    let Some(sprite) = fluid_sprite(sprites, default_sprite.as_ref(), &t.substance) else {
++                        continue;
++                    };
++                    let tint = fluid_tint(tints, &t.substance);
++                    self.native_draw_cube(draw, lo, hi, all(sprite), tint);
++                }
+                 RenderElement::Part { block, when } => {
+                     if when.as_ref().is_none_or(|w| w.matches(data_of(entity))) {
+                         self.native_draw_block(draw, block, &[]);
+diff --git a/crates/horizon-client/src/game/native_block_entity_draw.rs b/crates/horizon-client/src/game/native_block_entity_draw.rs
+index e620367ac..6845f2450 100644
+--- a/crates/horizon-client/src/game/native_block_entity_draw.rs
++++ b/crates/horizon-client/src/game/native_block_entity_draw.rs
+@@ -63,6 +63,10 @@ pub struct BlockEntityDraw {
+ 
+ #[allow(dead_code)]
+ impl BlockEntityDraw {
++    /// The block being drawn.
++    pub fn block_pos(&self) -> [i32; 3] {
++        self.block
++    }
+     /// `PoseStack.pushPose`: `pop` comes back to the pose as it is now.
+     pub fn push(&mut self) {
+         let pose = self.pose();
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+index e0b33aec4..a9fff1e08 100644
+--- a/crates/horizon-mods/src/block_render.rs
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -17,6 +17,30 @@ pub fn fluid_box(from: [f32; 3], to: [f32; 3], fraction: f32) -> Option<([f32; 3
+     Some((from, top))
+ }
+ 
++/// FORK-31: the box (in texels from the block at `block`) a structure's fluid fills, read from the block's `data`: the casing's
++/// corners at `box_at` (24 bytes), the draw flag at `draw_at` and how full it is (0 to 255) at `fill_at`. The fluid fills the
++/// casing's inside (one block in from each wall) and rises from its floor. None when this block does not draw it, when it is
++/// empty, or when the data does not say.
++pub fn volume_fluid_box(data: &[u8], box_at: usize, draw_at: usize, fill_at: usize, block: [i32; 3]) -> Option<([f32; 3], [f32; 3])> {
++    if data.get(draw_at) != Some(&1) || data.len() < box_at + 24 {
++        return None;
++    }
++    let fill = *data.get(fill_at)?;
++    let int = |i: usize| {
++        let at = box_at + 4 * i;
++        i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
++    };
++    let min = [int(0), int(1), int(2)];
++    let max = [int(3), int(4), int(5)];
++    if (0..3).any(|a| max[a] - min[a] < 2) {
++        return None;
++    }
++    // From the first interior block to the end of the last, as texels from the block drawn.
++    let lo: [f32; 3] = std::array::from_fn(|a| (min[a] + 1 - block[a]) as f32 * 16.0);
++    let hi: [f32; 3] = std::array::from_fn(|a| (max[a] - block[a]) as f32 * 16.0);
++    fluid_box(lo, hi, f32::from(fill) / 255.0)
++}
++
+ /// The sprite of `substance`: the renderer's own, else vanilla's for water
+ /// and lava, else the default.
+ pub fn fluid_sprite<'a>(
+@@ -84,6 +108,29 @@ mod tests {
+         assert_eq!(fluid_box(from, to, 2.0), Some((from, to)));
+     }
+     #[test]
++    fn a_structures_fluid_fills_its_inside_from_the_floor() {
++        // A casing from (10, 64, 20) to (13, 67, 23): inside it is 2 by 2 by 2 blocks, from (11, 65, 21).
++        let mut data = vec![0u8; 8];
++        for v in [10i32, 64, 20, 13, 67, 23] {
++            data.extend(v.to_le_bytes());
++        }
++        data.extend([1, 255]);
++        let (box_at, draw_at, fill_at) = (8, 32, 33);
++        // Drawn from the block at (11, 64, 21): the inside starts one block east of it and one up.
++        let full = volume_fluid_box(&data, box_at, draw_at, fill_at, [10, 64, 20]).unwrap();
++        assert_eq!(full, ([16.0, 16.0, 16.0], [48.0, 48.0, 48.0]));
++        data[fill_at] = 128;
++        let half = volume_fluid_box(&data, box_at, draw_at, fill_at, [10, 64, 20]).unwrap();
++        assert!((half.1[1] - (16.0 + 32.0 * 128.0 / 255.0)).abs() < 1e-4 && half.0 == [16.0, 16.0, 16.0]);
++        // Empty, not the drawing block, or no data: nothing.
++        data[fill_at] = 0;
++        assert_eq!(volume_fluid_box(&data, box_at, draw_at, fill_at, [10, 64, 20]), None);
++        data[fill_at] = 255;
++        data[draw_at] = 0;
++        assert_eq!(volume_fluid_box(&data, box_at, draw_at, fill_at, [10, 64, 20]), None);
++        assert_eq!(volume_fluid_box(&[], box_at, draw_at, fill_at, [0; 3]), None);
++    }
++    #[test]
+     fn substances_have_sprites_and_tints() {
+         let mut sprites = BTreeMap::new();
+         sprites.insert("mymod:hydrogen".to_owned(), "mymod:block/hydrogen".to_owned());
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 031137caa..72c99d7f1 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -887,6 +887,24 @@ pub enum RenderElement {
+         #[serde(default)]
+         tints: std::collections::BTreeMap<String, String>,
+     },
++    /// FORK-31: the fluid of a whole structure (a multiblock tank), drawn inside its casing as a box that rises with how full
++    /// it is. The block's data (what the mod saved with its updates, the first 64 bytes) says where: 24 bytes at `box_at` are
++    /// the least and greatest corners of the casing (six little-endian whole numbers, absolute block coordinates), the byte at
++    /// `draw_at` is 1 on the one block of the structure that draws it (so the others do not draw it again) and the byte at
++    /// `fill_at` is how full it is, 0 to 255. The interior is the casing's box less its walls; the substance is the block's
++    /// tank `tank`; `sprites`, `default_sprite` and `tints` are as for `fluid`.
++    FluidVolume {
++        tank: u16,
++        box_at: u16,
++        draw_at: u16,
++        fill_at: u16,
++        #[serde(default)]
++        sprites: std::collections::BTreeMap<String, String>,
++        #[serde(default)]
++        default_sprite: Option<String>,
++        #[serde(default)]
++        tints: std::collections::BTreeMap<String, String>,
++    },
+     /// The model of another block (never placed: a mod's own part, with `item = false`), drawn in this
+     /// block's place when a byte of the block entity's data (what the mod saved with its updates)
+     /// is one of `values`: what the original does with the data of a block entity, as Mekanism's energy
+@@ -956,7 +974,7 @@ impl BlockRenderer {
+     pub fn uses_data(&self) -> bool {
+         self.elements
+             .iter()
+-            .any(|e| matches!(e, RenderElement::Part { when: Some(_), .. }))
++            .any(|e| matches!(e, RenderElement::Part { when: Some(_), .. } | RenderElement::FluidVolume { .. }))
+     }
+ }
+ 
+@@ -1027,6 +1045,17 @@ impl BlockRenderer {
+                         colour(c)?;
+                     }
+                 }
++                RenderElement::FluidVolume { box_at, draw_at, fill_at, sprites, default_sprite, tints, .. } => {
++                    if u32::from(*box_at) + 24 > 64 || *draw_at >= 64 || *fill_at >= 64 {
++                        return Err(format!("{name}: a fluid volume reads the first 64 bytes of the data"));
++                    }
++                    for s in sprites.values().chain(default_sprite) {
++                        sprite(s)?;
++                    }
++                    for c in tints.values() {
++                        colour(c)?;
++                    }
++                }
+                 RenderElement::Part { block, when } => {
+                     if !block.contains(':') || block.len() > 128 {
+                         return Err(format!("{name}: a part is a block id, mymod:part"));
+@@ -1982,6 +2011,27 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn a_block_renderer_can_draw_the_fluid_of_a_whole_structure() {
++        let file = br##"{"elements": [
++            {"type": "fluid_volume", "tank": 0, "box_at": 20, "draw_at": 44, "fill_at": 45,
++             "sprites": {"ruby:steam": "ruby:block/steam"}, "default_sprite": "ruby:block/gas",
++             "tints": {"ruby:steam": "#CCCCCC"}}
++        ]}"##;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/renderer/tank.json", file)];
++        let content = hmod("volume", MANIFEST_TEXT, files).unwrap();
++        // The clients are sent the data of a block that draws by it.
++        assert!(content.renderers[0].uses_data());
++        for (case, file, why) in [
++            ("v-box", r#"{"elements":[{"type":"fluid_volume","tank":0,"box_at":41,"draw_at":0,"fill_at":1}]}"#, "first 64 bytes"),
++            ("v-fill", r#"{"elements":[{"type":"fluid_volume","tank":0,"box_at":0,"draw_at":0,"fill_at":64}]}"#, "first 64 bytes"),
++        ] {
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/renderer/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++    }
++
+     #[test]
+     fn entity_types_copy_a_throwable_and_name_its_item() {
+         let files: &[(&str, &[u8])] = &[
+-- 
+2.43.0
+

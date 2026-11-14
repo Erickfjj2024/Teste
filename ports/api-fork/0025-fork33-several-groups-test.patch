@@ -1,0 +1,89 @@
+From a1968b7315d7868bd522b8720f31d498dab9fd04 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 12:23:01 +0000
+Subject: [PATCH] FORK-33: several multiblock groups per block, now with a test
+ (examples/multiblock-demo: a glass in the cube and the line groups)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../examples/multiblock-demo/src/lib.rs       | 22 ++++++++++++++-----
+ .../examples/multiblock-demo/tests/cube.toml  |  9 ++++++++
+ 2 files changed, 26 insertions(+), 5 deletions(-)
+
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
+index 887cad069..1928b2d79 100644
+--- a/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
+@@ -7,7 +7,10 @@ use horizon_mod_sdk::server::{
+ };
+ use horizon_mod_sdk::server::MultiblockSpec;
+ 
+-struct Demo;
++#[derive(Default)]
++struct Demo {
++    calls: u8,
++}
+ 
+ impl ServerMod for Demo {
+     fn init() -> Result<(Self, Registration), String> {
+@@ -23,18 +26,27 @@ impl ServerMod for Demo {
+                 group: "mbdemo:cube".into(),
+             }),
+         };
+-        Ok((Demo, Registration::new().block_entity_kind(kind)))
++        // FORK-33: the glass is part of two groups at once, as a pressure disperser is of boilers and turbines.
++        let glass = BlockEntityKind {
++            block: "mbdemo:glass".into(),
++            multiblock: Some(MultiblockSpec { group: "mbdemo:cube,mbdemo:line".into() }),
++            ..kind.clone()
++        };
++        Ok((Demo::default(), Registration::new().block_entity_kind(kind).block_entity_kind(glass)))
+     }
+     fn multiblock_changed(
+         &mut self,
+-        _group: &str,
++        group: &str,
+         dimension: &str,
+         structures: Vec<Structure>,
+     ) -> Vec<BlockEntityUpdate> {
+         let mut out = Vec::new();
++        self.calls += 1;
++        let calls = self.calls;
++        let group_id = if group == "mbdemo:cube" { 1 } else { 2 };
+         for s in structures {
+             let size = |a: i32, b: i32| b - a + 1;
+-            let valid = s.members.len() == 8
++            let valid = group == "mbdemo:cube" && s.members.len() == 8
+                 && size(s.min.x, s.max.x) == 2
+                 && size(s.min.y, s.max.y) == 2
+                 && size(s.min.z, s.max.z) == 2;
+@@ -42,7 +54,7 @@ impl ServerMod for Demo {
+                 out.push(BlockEntityUpdate {
+                     dimension: dimension.to_owned(),
+                     pos: m.pos,
+-                    data: vec![u8::from(valid), s.members.len() as u8],
++                    data: if m.state.starts_with("mbdemo:glass") { vec![u8::from(valid), s.members.len() as u8, group_id, calls] } else { vec![u8::from(valid), s.members.len() as u8] },
+                     items: None,
+                     energy: None,
+                     energy_faces: None,
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml b/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
+index 76acd2aa8..90f91d4d6 100644
+--- a/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
+@@ -30,3 +30,12 @@ blocks = [{ x = 1, y = 64, z = 0, state = "minecraft:air" }]
+ ticks = 1
+ # One taken out: seven left, no longer valid.
+ expect.block-entities = [{ x = 0, y = 64, z = 0, data = [0, 7] }]
++
++[[step]]
++# FORK-33: a glass block belongs to the group of cubes and to the group of lines: both are told of it, in the order they were declared (the fifth and sixth calls to the mod: four came before).
++blocks = [
++    { x = 20, y = 64, z = 0, state = "mbdemo:glass" },
++    { x = 21, y = 64, z = 0, state = "mbdemo:glass" },
++]
++ticks = 1
++expect.block-entities = [{ x = 20, y = 64, z = 0, data = [0, 2, 2, 6] }, { x = 21, y = 64, z = 0, data = [0, 2, 2, 6] }]
+-- 
+2.43.0
+

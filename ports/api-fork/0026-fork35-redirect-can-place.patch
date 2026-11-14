@@ -1,0 +1,477 @@
+From c4418f7aba653bad41e1263663406dfa6790afcd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 12:32:56 +0000
+Subject: [PATCH] FORK-35: redirecting blocks (registration.redirects: a click
+ or a break reaches the block they stand for) and server-events.can-place
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game.rs             | 12 +++++
+ crates/horizon-client/src/game/server_mods.rs | 46 +++++++++++++++++++
+ .../examples/block-use/src/lib.rs             |  6 ++-
+ .../examples/block-use/tests/block_use.toml   | 13 ++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 18 +++++++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 22 +++++++++
+ crates/horizon-mods/src/block_render.rs       | 22 +++++++++
+ crates/horizon-mods/src/runtime.rs            | 27 ++++++++++-
+ crates/horizon-mods/src/testing.rs            | 30 ++++++++++++
+ docs/api/mods-reference.md                    | 12 +++++
+ 10 files changed, 205 insertions(+), 3 deletions(-)
+
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 733f2cb6b..7039d1c1d 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -5416,6 +5416,8 @@ impl Game<'_> {
+         broken
+     }
+     fn break_block_as_player(&mut self, pos: [i32; 3]) -> Result<()> {
++        // FORK-35: breaking a block that stands for another (a machine's bounding block) breaks that one.
++        let pos = self.mod_redirect(pos).unwrap_or(pos);
+         // DebugStickItem.canDestroyBlock: a left click selects a property and
+         // never destroys the block.
+         if !self.debug_stick_can_destroy(pos)? {
+@@ -5731,6 +5733,9 @@ impl Game<'_> {
+     /// then `useItem`. Whether the click ends here (it acted or failed).
+     fn use_hand(&mut self, block_hit: Option<&Hit>) -> Result<bool> {
+         self.use_failed = false;
++        // FORK-35: a block that stands for another (a machine's bounding block) is a click on that one.
++        let redirected = block_hit.and_then(|h| self.mod_redirect(h.pos).map(|pos| Hit { pos, ..*h }));
++        let block_hit = redirected.as_ref().or(block_hit);
+         // isSecondaryUseActive with something in either hand keeps blocks
+         // from reacting.
+         let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+@@ -6178,6 +6183,13 @@ impl Game<'_> {
+         };
+         let target = [pos.x, pos.y, pos.z];
+         let state = self.apply_item_block_state(target, state, &stack)?;
++        // FORK-35: a mod's block the mods refuse (a machine without the room its model fills) is taken away again, nothing used up.
++        if !self.mod_can_place(target, state) {
++            // (State 0 of the registry is `minecraft:air`.)
++            let _ = self.place_state(target, BlockStateId(0), false);
++            self.use_failed = true;
++            return Ok(true);
++        }
+         self.mod_block_event(target, state, true);
+         let name = self.res.facts().get(state).name.clone();
+         if let Some(entity) = self.new_block_entity(&name) {
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 1d4fb8798..4fd112b0d 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -69,6 +69,12 @@ impl Game<'_> {
+     pub(super) fn mod_incoming_damage(&mut self, _damage_type: &str, amount: f32, _causing: i32) -> Option<f32> {
+         Some(amount)
+     }
++    pub(super) fn mod_redirect(&self, _pos: [i32; 3]) -> Option<[i32; 3]> {
++        None
++    }
++    pub(super) fn mod_can_place(&mut self, _pos: [i32; 3], _state: BlockStateId) -> bool {
++        true
++    }
+     pub(super) fn mod_hit_damage(&mut self, _kind: &str, damage: f32) -> f32 {
+         damage
+     }
+@@ -1738,6 +1744,46 @@ mod run {
+             (left > 0.0).then_some(left)
+         }
+ 
++        /// FORK-35: the block that the one at `pos` stands for, when a server mod says it does (its bounding blocks stand for the machine).
++        pub(in crate::game) fn mod_redirect(&self, pos: [i32; 3]) -> Option<[i32; 3]> {
++            if !self.mods.server {
++                return None;
++            }
++            let horizon_client_render::containers::BlockEntity::Mod(m) =
++                self.world.block_entities.get(&(pos[0], pos[1], pos[2]))?
++            else {
++                return None;
++            };
++            let spec = self.mods.mods.redirects().into_iter().find(|r| r.block == m.id)?;
++            let data = match m.nbt.get(&horizon_world::nbt::JavaString::from("data")) {
++                Some(horizon_world::nbt::Tag::ByteArray(b)) => b.clone(),
++                _ => return None,
++            };
++            let target = horizon_mods::block_render::redirect_target(&data, spec.flag_at as usize, spec.pos_at as usize)?;
++            // Never to itself, and never far (a corrupted position): a machine's bounding blocks are within a few blocks.
++            let near = (0..3).all(|a| (target[a] - pos[a]).abs() <= 16);
++            (target != pos && near).then_some(target)
++        }
++
++        /// FORK-35: whether the mods allow the mod's block `state` just placed at `pos` to stay (`BlockItem.canPlace`).
++        pub(in crate::game) fn mod_can_place(&mut self, pos: [i32; 3], state: BlockStateId) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_blocks() {
++                return true;
++            }
++            let name = self.res.facts().get(state).name.clone();
++            if name.starts_with("minecraft:") {
++                return true;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return true;
++            };
++            let text = state_string(self.pack.assets.registry, state);
++            self.lend_world();
++            let allowed = self.mods.mods.can_place(&player, pos, &text);
++            self.return_world();
++            allowed
++        }
++
+         /// The attack damage of the acting player's melee blow against `kind`, as a server mod makes it.
+         pub(in crate::game) fn mod_hit_damage(&mut self, kind: &str, damage: f32) -> f32 {
+             if !self.mods.server || !self.mods.mods.hears_damage() {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 40a16f31c..650e33e0e 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -7,7 +7,11 @@ struct Gate;
+ 
+ impl ServerMod for Gate {
+     fn init() -> Result<(Self, Registration), String> {
+-        Ok((Gate, Registration::new().on_blocks()))
++        Ok((Gate, Registration::new().on_blocks().redirect("blockuse:bound", 0, 1)))
++    }
++    /// FORK-35: a machine of the mod needs the block above it free: with one over it (y 81 over a block at 80), the placement is refused.
++    fn can_place(&mut self, _player: &Player, pos: BlockPos, _state: &str) -> bool {
++        world::get_block("minecraft:overworld", pos.x, pos.y + 1, pos.z).is_none_or(|b| b == "minecraft:air")
+     }
+     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
+         // FORK-34: the gate at y 70 is a structure that is not formed: its items, tanks and energy are closed to the outside.
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index da1c7c514..11c605587 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -27,3 +27,16 @@ expect.capabilities = ["minecraft:overworld 1 70 1 items=false fluids=false ener
+ # FORK-30: a structure that has formed sparkles.
+ use-block = { pos = [1, 71, 1] }
+ expect.particles = ["minecraft:overworld minecraft:dust 1.5 71.5 1.5 8"]
++
++[[step]]
++# FORK-35: the mod stands bounding blocks for a machine (a click or a break on them reaches the machine), and tells the game it refuses
++# a machine without room above it.
++blocks = [{ x = 30, y = 65, z = 0, state = "minecraft:stone" }]
++place-mod-block = { pos = [30, 64, 0], state = "blockuse:machine" }
++expect.can-place = false
++expect.redirects = ["blockuse:bound 0 1"]
++
++[[step]]
++blocks = [{ x = 30, y = 65, z = 0, state = "minecraft:air" }]
++place-mod-block = { pos = [30, 64, 0], state = "blockuse:machine" }
++expect.can-place = true
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 537627f05..adb66e2f6 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -209,7 +209,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, DamageSource, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -272,6 +272,10 @@ pub mod server {
+         fn item_hit_damage(&mut self, _player: &Player, _stack: ItemStack, _kind: &str, damage: f32) -> f32 {
+             damage
+         }
++        /// A mod's block was placed at `pos`: false takes it away again (`BlockItem.canPlace`). When [`Registration::blocks`] is set.
++        fn can_place(&mut self, _player: &Player, _pos: BlockPos, _state: &str) -> bool {
++            true
++        }
+         /// A player hit an entity holding `stack`. When [`Registration::on_items`] is set.
+         fn item_hit(&mut self, _player: &Player, _stack: ItemStack, _entity: u32, _kind: &str) {}
+         /// The answer to `entities::spawn_mob` or `summon`: the new entity's
+@@ -361,6 +365,7 @@ pub mod server {
+                 items: false,
+                 chunks: false,
+                 damage: false,
++                redirects: Vec::new(),
+             }
+         }
+         /// `block` (`mymod:machine`) carries a block entity; `ticks` asks
+@@ -433,6 +438,12 @@ pub mod server {
+             self.chat = true;
+             self
+         }
++        /// `block` stands for another block while byte `flag_at` of its entity's data is 1: the three little-endian whole numbers at `pos_at`
++        /// are that block's position (FORK-35), so a click on it or breaking it reaches that block.
++        pub fn redirect(mut self, block: &str, flag_at: u32, pos_at: u32) -> Self {
++            self.redirects.push(RedirectSpec { block: block.into(), flag_at, pos_at });
++            self
++        }
+         /// Call [`ServerMod::player_damaged`] and [`ServerMod::item_hit_damage`].
+         pub fn on_damage(mut self) -> Self {
+             self.damage = true;
+@@ -644,6 +655,11 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.item_hit_damage(&player, stack, &kind, damage));
+                     out
+                 }
++                fn can_place(player: Player, pos: BlockPos, state: String) -> bool {
++                    let mut out = true;
++                    with(|m| out = m.can_place(&player, pos, &state));
++                    out
++                }
+                 fn item_hit(player: Player, stack: ItemStack, entity: u32, kind: String) {
+                     with(|m| m.item_hit(&player, stack, entity, &kind))
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index f2f992b98..42a7d4988 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1078,6 +1078,19 @@ interface server-events {
+         tags: list<string>,
+     }
+ 
++    /// A block of the mod that stands for another one (Mekanism's bounding
++    /// blocks stand for the machine whose model fills them). While byte
++    /// `flag-at` of its block entity's data is 1, the three whole numbers
++    /// (little-endian, four bytes each, absolute block coordinates) from byte
++    /// `pos-at` name that block: a right click on it is a right click on that
++    /// block (its menu opens, its `block-used` is asked), and breaking it
++    /// breaks that block, whose drops are the only drops.
++    record redirect-spec {
++        block: string,
++        flag-at: u32,
++        pos-at: u32,
++    }
++
+     /// How a mod answers a click on one of its blocks (`block-used`).
+     enum block-use {
+         default,
+@@ -1162,6 +1175,9 @@ interface server-events {
+         chunks: bool,
+         /// Call `player-damaged` and `item-hit-damage`.
+         damage: bool,
++        /// Blocks of the mod that stand for another block (FORK-35): a click on
++        /// them, or breaking them, reaches the block they name.
++        redirects: list<redirect-spec>,
+     }
+     record block-entity-kind {
+         /// The block's id, `mymod:machine`.
+@@ -1423,6 +1439,12 @@ interface server-events {
+     /// scale it, against an entity of `kind`, holding `stack`. Returns the
+     /// damage to use. The first mod to change it decides.
+     item-hit-damage: func(player: player, stack: item-stack, kind: string, damage: f32) -> f32;
++    /// A player placed the mod's block `state` at `pos` (`registration.blocks`):
++    /// asked right after the game set it, for the blocks of any mod that asked.
++    /// Answer false to refuse: the block is taken away again and nothing is
++    /// used up (a big machine whose model needs the blocks around it free).
++    /// Where `BlockItem.canPlace` is in the original.
++    can-place: func(player: player, pos: block-pos, state: string) -> bool;
+     /// A player hit the entity `entity` of `kind` holding `stack`
+     /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
+     item-hit: func(player: player, stack: item-stack, entity: u32, kind: string);
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+index a9fff1e08..4b96d541f 100644
+--- a/crates/horizon-mods/src/block_render.rs
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -41,6 +41,16 @@ pub fn volume_fluid_box(data: &[u8], box_at: usize, draw_at: usize, fill_at: usi
+     fluid_box(lo, hi, f32::from(fill) / 255.0)
+ }
+ 
++/// FORK-35: the block a redirecting block stands for, from its entity's `data`: byte `flag_at` is 1 and three little-endian whole numbers
++/// at `pos_at` are the position. None when it does not stand for one.
++pub fn redirect_target(data: &[u8], flag_at: usize, pos_at: usize) -> Option<[i32; 3]> {
++    if data.get(flag_at) != Some(&1) || data.len() < pos_at + 12 {
++        return None;
++    }
++    let int = |i: usize| i32::from_le_bytes(std::array::from_fn(|k| data[pos_at + 4 * i + k]));
++    Some([int(0), int(1), int(2)])
++}
++
+ /// The sprite of `substance`: the renderer's own, else vanilla's for water
+ /// and lava, else the default.
+ pub fn fluid_sprite<'a>(
+@@ -131,6 +141,18 @@ mod tests {
+         assert_eq!(volume_fluid_box(&[], box_at, draw_at, fill_at, [0; 3]), None);
+     }
+     #[test]
++    fn a_redirecting_block_names_the_block_it_stands_for() {
++        let mut data = vec![1u8];
++        for v in [5i32, -64, 300] {
++            data.extend(v.to_le_bytes());
++        }
++        assert_eq!(redirect_target(&data, 0, 1), Some([5, -64, 300]));
++        data[0] = 0;
++        assert_eq!(redirect_target(&data, 0, 1), None);
++        assert_eq!(redirect_target(&[1, 0, 0], 0, 1), None);
++        assert_eq!(redirect_target(&[], 0, 1), None);
++    }
++    #[test]
+     fn substances_have_sprites_and_tints() {
+         let mut sprites = BTreeMap::new();
+         sprites.insert("mymod:hydrogen".to_owned(), "mymod:block/hydrogen".to_owned());
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index f74dc92a7..8ca0f229e 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, DamageSource, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -841,6 +841,31 @@ impl Mods {
+         }
+         BlockUse::Default
+     }
++    /// The blocks the running server mods say stand for another block (FORK-35).
++    pub fn redirects(&self) -> Vec<RedirectSpec> {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .flat_map(|r| r.redirects.iter().cloned())
++            .collect()
++    }
++    /// `player` placed the mod's block `state` at `pos`: false when a mod refuses it (the first refusal decides).
++    pub fn can_place(&mut self, player: &ServerPlayer, pos: [i32; 3], state: &str) -> bool {
++        let at = BlockPos { x: pos[0], y: pos[1], z: pos[2] };
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.blocks) {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_can_place(&mut run.store, player, at, state),
++                Hooks::Client(..) => Ok(true),
++            });
++            if answer == Some(false) {
++                return false;
++            }
++        }
++        true
++    }
+     /// Whether a running server mod asked for `damage`.
+     pub fn hears_damage(&self) -> bool {
+         self.entries
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 207598f18..8c44448be 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -65,6 +65,8 @@ pub struct TestGame {
+     /// What the last `player_damaged` and `item_hit_damage` answered.
+     pub damage_result: Option<f32>,
+     pub hit_damage_result: Option<f32>,
++    /// What the last `can_place` answered.
++    pub can_place_result: Option<bool>,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -217,6 +219,7 @@ impl TestGame {
+             block_use: None,
+             damage_result: None,
+             hit_damage_result: None,
++            can_place_result: None,
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -948,6 +951,13 @@ fn with_property(state: &str, property: &str, value: &str) -> String {
+ }
+ 
+ /// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct PlaceSet {
++    pos: [i32; 3],
++    state: String,
++}
++
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct DamageSet {
+@@ -1146,6 +1156,8 @@ pub struct Step {
+     use_block: Option<UseBlockSet>,
+     /// Server mods: the actor is about to be hurt.
+     damage: Option<DamageSet>,
++    /// Server mods (FORK-35): the actor placed a block of the mod at a position (`pos` and `state`).
++    place_mod_block: Option<PlaceSet>,
+     /// Server mods: the actor's melee blow is worked out.
+     hit_damage: Option<HitDamageSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+@@ -1200,6 +1212,10 @@ pub struct Expect {
+     block_use: Option<String>,
+     /// Server mods: what the mod answered to the step's `damage` (the damage to go on with).
+     damage_result: Option<f32>,
++    /// Server mods (FORK-35): whether the mod let the step's `place` stand.
++    can_place: Option<bool>,
++    /// Server mods (FORK-35): the redirecting blocks the mods declared, as `"block flag-at pos-at"`.
++    redirects: Option<Vec<String>>,
+     /// Server mods: what the mod answered to the step's `hit-damage`.
+     hit_damage_result: Option<f32>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+@@ -1447,6 +1463,7 @@ impl Step {
+             || self.use_item.is_some()
+             || self.use_block.is_some()
+             || self.damage.is_some()
++            || self.place_mod_block.is_some()
+             || self.hit_damage.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+@@ -1538,6 +1555,10 @@ impl Step {
+             };
+             game.damage_result = Some(game.mods.player_damaged(who, &source, d.amount));
+         }
++        if let (Some(p), Some(who)) = (&self.place_mod_block, &who) {
++            game.snapshot();
++            game.can_place_result = Some(game.mods.can_place(who, p.pos, &p.state));
++        }
+         if let (Some(h), Some(who)) = (&self.hit_damage, &who) {
+             game.snapshot();
+             let stack = parse_stack(&h.stack).ok_or("hit-damage: a stack is item*count")?;
+@@ -1817,6 +1838,15 @@ impl Step {
+                 .collect();
+             same("chunk-forced", want, &got)?;
+         }
++        if let Some(want) = e.can_place {
++            if game.can_place_result != Some(want) {
++                return Err(format!("can-place: expected {want}, got {:?}", game.can_place_result));
++            }
++        }
++        if let Some(want) = &e.redirects {
++            let got: Vec<String> = game.mods.redirects().iter().map(|r| format!("{} {} {}", r.block, r.flag_at, r.pos_at)).collect();
++            same("redirects", want, &got)?;
++        }
+         if let Some(want) = e.damage_result {
+             if game.damage_result != Some(want) {
+                 return Err(format!("damage-result: expected {want}, got {:?}", game.damage_result));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 323a9730d..5a5cdb94c 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -963,6 +963,16 @@ What hurts a player (`player-damaged`): the damage type and what the game knows
+ | `is-explosion` | `bool` | In `minecraft:is_explosion`. |
+ | `tags` | `list<string>` | Every damage type tag the type is in (`minecraft:is_fire`, a mod's own...). |
+ 
++### record `redirect-spec`
++
++A block of the mod that stands for another one (Mekanism's bounding blocks stand for the machine whose model fills them). While byte `flag-at` of its block entity's data is 1, the three whole numbers (little-endian, four bytes each, absolute block coordinates) from byte `pos-at` name that block: a right click on it is a right click on that block (its menu opens, its `block-used` is asked), and breaking it breaks that block, whose drops are the only drops.
++
++| Field | Type | |
++| --- | --- | --- |
++| `block` | `string` |  |
++| `flag-at` | `u32` |  |
++| `pos-at` | `u32` |  |
++
+ ### enum `block-use`
+ 
+ How a mod answers a click on one of its blocks (`block-used`).
+@@ -1149,6 +1159,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `items` | `bool` | Call `item-used` and `item-hit`. |
+ | `chunks` | `bool` | Call `chunk-loaded`. |
+ | `damage` | `bool` | Call `player-damaged` and `item-hit-damage`. |
++| `redirects` | `list<redirect-spec>` | Blocks of the mod that stand for another block (FORK-35): a click on them, or breaking them, reaches the block they name. |
+ 
+ ### record `block-entity`
+ 
+@@ -1205,4 +1216,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-used` | `func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use` | What a right click on a block of this mod does (`registration.blocks`), asked at the moment of the click for the mod's own blocks, with the block's own use still to come: `default` leaves it to the game (the block opens its menu or acts as it would), `pass` skips the block's own use and goes on to the held item (so a block in hand is placed against it), `consume` takes the click (the hand swings and nothing else runs). `sneaking` and `stack` (the held item, none for an empty hand) are as at the click. API 24. |
+ | `player-damaged` | `func(player: player, source: damage-source, amount: f32) -> f32` | A player is about to be hurt (`registration.damage`): where NeoForge's `LivingIncomingDamageEvent` runs, in `hurtServer` once its guards (creative, dead, immune) have passed and before the armour, the enchantments, the resistance and the absorption take their share of `amount`. Returns the damage to go on with: the same to leave it, less to reduce it, 0 (or less) to cancel the hit. The first mod to change it decides. What the mod asks for through imports is made at the end of the tick; `player-items.get-inventory` is as of the last tick. (An export: it has no level; a mod that implements it needs a Horizon that has it.) |
+ | `item-hit-damage` | `func(player: player, stack: item-stack, kind: string, damage: f32) -> f32` | A player's melee blow is being worked out (`registration.damage`): the attack damage attribute, with the held weapon's modifiers, is `damage` before the attack strength, the critical hit and the enchantments scale it, against an entity of `kind`, holding `stack`. Returns the damage to use. The first mod to change it decides. |
++| `can-place` | `func(player: player, pos: block-pos, state: string) -> bool` | A player placed the mod's block `state` at `pos` (`registration.blocks`): asked right after the game set it, for the blocks of any mod that asked. Answer false to refuse: the block is taken away again and nothing is used up (a big machine whose model needs the blocks around it free). Where `BlockItem.canPlace` is in the original. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

@@ -1,0 +1,590 @@
+From c203ab13066e8ef4528c7e2aed43f01efd677f2a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 02:58:09 +0000
+Subject: [PATCH] API 42: players.open-radial-menu (a mod's mode selector on
+ one player's screen)
+
+The entries are drawn around the screen's centre with the current one marked, the pointer is let go, a click or a tap on an entry chooses it (the middle or Escape closes the menu), and the choice goes back to the mod as a message on <mod id>:radial.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |   1 +
+ crates/horizon-client/src/game.rs             |  10 ++
+ .../horizon-client/src/game/android_input.rs  |   7 ++
+ crates/horizon-client/src/game/mod_radial.rs  | 110 ++++++++++++++++++
+ crates/horizon-client/src/game/mods.rs        |   1 +
+ .../horizon-client/src/game/native_hooks.rs   |   3 +-
+ crates/horizon-client/src/game/native_net.rs  |   1 +
+ crates/horizon-client/src/game/server_mods.rs |   7 ++
+ .../examples/block-use/src/lib.rs             |  11 ++
+ .../examples/block-use/tests/block_use.toml   |  12 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  15 +++
+ crates/horizon-mods/src/api_level.rs          |   5 +-
+ crates/horizon-mods/src/runtime.rs            |  14 +++
+ crates/horizon-mods/src/screen.rs             |  86 ++++++++++++++
+ crates/horizon-mods/src/testing.rs            |  17 +++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  11 ++
+ 17 files changed, 310 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-client/src/game/mod_radial.rs
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index e1984afec..b8e05e659 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -283,6 +283,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::UnpackBlock { pos, .. } => format!("unpacked a block at {pos:?}"),
+             Output::TellOverlay { text, .. } => format!("action bar: {text}"),
+             Output::HudLine { id, text, .. } => format!("HUD line {id}: {text}"),
++            Output::Radial { entries, .. } => format!("radial menu of {} entries", entries.len()),
+             Output::PlayerBody { change, .. } => format!("body: {change:?}"),
+             Output::SetFood { food, saturation, .. } => format!("set food to {food} and saturation to {saturation}"),
+             Output::SetMotion { velocity, .. } => format!("set a player's motion to {velocity:?}"),
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 9c19fcb86..fe43a8df4 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -203,6 +203,7 @@ mod native_explosions;
+ mod native_falling;
+ mod block_renderers;
+ mod menu_screens;
++mod mod_radial;
+ mod mod_hud;
+ #[cfg(feature = "mods")]
+ mod mod_entities;
+@@ -15502,6 +15503,7 @@ impl Game<'_> {
+             return Ok(());
+         }
+         match key {
++            KeyCode::Escape if self.screen == Screen::Playing && self.close_mod_radial() => {}
+             KeyCode::Escape => match self.screen {
+                 Screen::Options => self.options_key(KeyCode::Escape, None)?,
+                 Screen::Playing => {
+@@ -17224,6 +17226,14 @@ impl Game<'_> {
+                     }
+                     match self.screen {
+                         Screen::Playing => {
++                            // A server mod's radial menu takes the press (and its release) while it is open.
++                            if self.mod_radial_open() {
++                                if pressed {
++                                    let at = [self.cursor.0, self.cursor.1];
++                                    self.mod_radial_press(at);
++                                }
++                                return Ok(());
++                            }
+                             if pressed && !self.captured {
+                                 self.capture(true);
+                                 return Ok(());
+diff --git a/crates/horizon-client/src/game/android_input.rs b/crates/horizon-client/src/game/android_input.rs
+index bc9eea070..cabfe8b8b 100644
+--- a/crates/horizon-client/src/game/android_input.rs
++++ b/crates/horizon-client/src/game/android_input.rs
+@@ -304,6 +304,13 @@ impl Game<'_> {
+         let size = self.window.as_ref().unwrap().inner_size();
+         let b = HudBatch::new([size.width, size.height]);
+         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
++        // A server mod's radial menu: a tap chooses the entry under it (or closes the menu in the middle).
++        if self.mod_radial_open() && self.screen == Screen::Playing {
++            if t.phase == TouchPhase::Started {
++                self.mod_radial_press(p);
++            }
++            return Ok(true);
++        }
+         if let Some(action) = self
+             .pad
+             .touch_ui
+diff --git a/crates/horizon-client/src/game/mod_radial.rs b/crates/horizon-client/src/game/mod_radial.rs
+new file mode 100644
+index 000000000..7c91c99ce
+--- /dev/null
++++ b/crates/horizon-client/src/game/mod_radial.rs
+@@ -0,0 +1,110 @@
++//! A server mod's radial menu on this client (`players.open-radial-menu`, Mekanism's mode selectors): the entries around the
++//! screen's centre while it is open, the pointer let go, and the choice sent back to the mod as a message on `<mod id>:radial`.
++use super::Game;
++use horizon_client::hud::HudBatch;
++use horizon_mods::screen::{decode_radial, radial_pick, radial_spot};
++use std::sync::Mutex;
++
++struct Radial {
++    mod_id: String,
++    entries: Vec<(String, String, String)>,
++    current: u32,
++}
++
++static RADIAL: Mutex<Option<Radial>> = Mutex::new(None);
++
++/// Ring radius and the middle that makes no choice, in GUI pixels.
++const RADIUS: f32 = 48.0;
++const DEAD_ZONE: f32 = 16.0;
++
++fn open() -> bool {
++    RADIAL.lock().is_ok_and(|r| r.is_some())
++}
++
++impl Game<'_> {
++    /// A `horizon:radial` message arrived: the menu opens and the pointer is let go.
++    pub(super) fn open_mod_radial(&mut self, data: &[u8]) {
++        let Some((mod_id, entries, current)) = decode_radial(data) else {
++            return;
++        };
++        if entries.len() < 2 {
++            return;
++        }
++        if let Ok(mut r) = RADIAL.lock() {
++            *r = Some(Radial { mod_id, entries, current });
++        }
++        if self.screen == super::Screen::Playing {
++            self.capture(false);
++        }
++    }
++
++    /// Whether a radial menu is open (a press goes to it).
++    pub(super) fn mod_radial_open(&self) -> bool {
++        open()
++    }
++
++    /// The centre of the screen, in GUI pixels.
++    fn radial_centre(&self) -> Option<[f32; 2]> {
++        let size = self.window.as_ref()?.inner_size();
++        let b = HudBatch::new([size.width, size.height]);
++        Some([b.width / 2.0, b.height / 2.0])
++    }
++
++    /// A press (or a tap at `at`, GUI pixels) while the menu is open: the entry under it is chosen and sent, the middle closes the menu
++    /// with no choice. True when the menu took the press.
++    pub(super) fn mod_radial_press(&mut self, at: [f32; 2]) -> bool {
++        let Some(centre) = self.radial_centre() else {
++            return false;
++        };
++        let Some(r) = RADIAL.lock().ok().and_then(|mut r| r.take()) else {
++            return false;
++        };
++        if let Some(i) = radial_pick(r.entries.len(), centre, at, DEAD_ZONE) {
++            let channel = format!("{}:radial", r.mod_id);
++            let _ = self.native_net_send_to_server(&channel, r.entries[i].0.as_bytes());
++        }
++        if self.screen == super::Screen::Playing {
++            self.capture(true);
++        }
++        true
++    }
++
++    /// Escape: the menu closes with no choice. True when one was open.
++    pub(super) fn close_mod_radial(&mut self) -> bool {
++        let was = RADIAL.lock().ok().and_then(|mut r| r.take()).is_some();
++        if was && self.screen == super::Screen::Playing {
++            self.capture(true);
++        }
++        was
++    }
++
++    /// Draws the open menu: each entry's icon and label around the centre, the current one and the one under the pointer marked.
++    pub(super) fn draw_mod_radial(&self, batch: &mut HudBatch) {
++        let Ok(r) = RADIAL.lock() else {
++            return;
++        };
++        let Some(r) = r.as_ref() else {
++            return;
++        };
++        let centre = [batch.width / 2.0, batch.height / 2.0];
++        let n = r.entries.len();
++        let pointed = radial_pick(n, centre, [self.cursor.0, self.cursor.1], DEAD_ZONE);
++        self.native_fill(batch, [centre[0] - RADIUS - 24.0, centre[1] - RADIUS - 24.0, 2.0 * RADIUS + 48.0, 2.0 * RADIUS + 48.0], 0x6000_0000);
++        for (i, (_, label, icon)) in r.entries.iter().enumerate() {
++            let [x, y] = radial_spot(i, n, centre, RADIUS);
++            let colour = if pointed == Some(i) {
++                0xC0FF_FFFF
++            } else if i as u32 == r.current {
++                0x8040_80FF
++            } else {
++                0x6020_2020
++            };
++            self.native_fill(batch, [x - 10.0, y - 10.0, 20.0, 20.0], colour);
++            if !icon.is_empty() {
++                self.native_item(batch, icon, [x - 8.0, y - 8.0], 16.0);
++            }
++            let w = self.native_text_width(label);
++            self.native_text(batch, label, [x - w / 2.0, y + 11.0], 0xFFFF_FFFF, true);
++        }
++    }
++}
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 4c7adffdf..0f2ccc302 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -875,6 +875,7 @@ impl Game<'_> {
+                 | Output::SetFood { .. }
+                 | Output::TellOverlay { .. }
+                 | Output::HudLine { .. }
++                | Output::Radial { .. }
+                 | Output::PackBlock { .. }
+                 | Output::UnpackBlock { .. }
+                 | Output::PlayerBody { .. }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 542e4a682..ff57c1e93 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1235,8 +1235,9 @@ impl Game<'_> {
+     /// `native_fill` and `native_text`. Skip a corner `native_corner_shown`
+     /// says is taken.
+     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
+-        // The server mods' HUD lines (`players.set-hud-line`).
++        // The server mods' HUD lines (`players.set-hud-line`) and radial menu (`players.open-radial-menu`).
+         self.draw_mod_hud(batch, corners);
++        self.draw_mod_radial(batch);
+         let _ = (batch, corners);
+     }
+     /// A player right-clicks the entity `entity` (`Entity.getId`) of type
+diff --git a/crates/horizon-client/src/game/native_net.rs b/crates/horizon-client/src/game/native_net.rs
+index c22309f75..69eb489a4 100644
+--- a/crates/horizon-client/src/game/native_net.rs
++++ b/crates/horizon-client/src/game/native_net.rs
+@@ -100,6 +100,7 @@ impl Game<'_> {
+         match mod_net::decode(data) {
+             Ok(m) if m.channel == horizon_mods::screen::MENU_TEXT_CHANNEL => super::menu_screens::remember_menu_text(&m.data),
+             Ok(m) if m.channel == horizon_mods::screen::HUD_CHANNEL => super::mod_hud::remember_hud_line(&m.data),
++            Ok(m) if m.channel == horizon_mods::screen::RADIAL_CHANNEL => self.open_mod_radial(&m.data),
+             Ok(m) => self.native_net_from_server(&m.channel, &m.data),
+             Err(e) => log::debug!("Horizon: a bad mod message: {e}"),
+         }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 678df371e..de575289d 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2441,6 +2441,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} could not unpack into {pos:?}");
+                     }
+                 }
++                Output::Radial { name, mod_id, player, entries, current } => {
++                    let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
++                    let data = horizon_mods::screen::encode_radial(&mod_id, &entries, current);
++                    if let Err(e) = self.native_net_send_to_player(uuid, horizon_mods::screen::RADIAL_CHANNEL, &data) {
++                        log::debug!("Horizon: mod {name}'s radial menu for {player}: {e}");
++                    }
++                }
+                 Output::HudLine { name, player, id, icon, text, fraction } => {
+                     let uuid = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
+                     let data = horizon_mods::screen::encode_hud_line(&id, &icon, &text, fraction);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index c11b5cbec..23b707a20 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -22,6 +22,11 @@ impl ServerMod for Gate {
+             let _ = world::set_menu_text(&player.dimension, input.pos.x, input.pos.y, input.pos.z, &[text]);
+             return;
+         }
++        // API 42: the choice of the radial menu: its entry's id, said back to the player.
++        if channel == "blockuse:radial" {
++            let _ = players::tell(&player.id, &format!("mode {}", String::from_utf8_lossy(data)));
++            return;
++        }
+         if channel != menu_input::channel("blockuse") {
+             return;
+         }
+@@ -60,6 +65,12 @@ impl ServerMod for Gate {
+             let n = world::break_blocks(&player.dimension, &[(pos.x + 1, pos.y, pos.z), (pos.x + 2, pos.y, pos.z), (pos.x + 3, pos.y, pos.z)], "minecraft:diamond_pickaxe", true, 0).unwrap_or(99);
+             let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &[format!("breaks {n}")]);
+         }
++        // API 42: the machine at y 80 opens a radial menu of three modes on the player's screen, the second one current; the choice comes
++        // back on `blockuse:radial` (see `net_message`).
++        if pos.y == 80 {
++            let entry = |id: &str, label: &str| players::RadialEntry { id: id.into(), label: label.into(), icon: String::new() };
++            let _ = players::open_radial_menu(&player.id, &[entry("off", "Off"), entry("vein", "Vein"), entry("extended", "Extended")], 1);
++        }
+         // API 41: the machine at y 79 puts a line on the player's HUD: a redstone icon, a text and a bar half full.
+         if pos.y == 79 {
+             let _ = players::set_hud_line(&player.id, "blockuse:energy", "minecraft:redstone", "Energy: 50%", 0.5);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 7dfe46e5c..c0f7663c4 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -107,3 +107,15 @@ expect.menu-text = ["minecraft:overworld 1 78 1 breaks 1"]
+ use-block = { pos = [1, 79, 1] }
+ ticks = 1
+ expect.hud = ["Alex: blockuse:energy [minecraft:redstone] Energy: 50% 0.5"]
++
++[[step]]
++# API 42: a click on the machine at y 80 opens a radial menu of three modes on Alex's screen.
++use-block = { pos = [1, 80, 1] }
++ticks = 1
++expect.radial = ["Alex: off=Off,vein=Vein,extended=Extended current 1"]
++
++[[step]]
++# The client sends the choice back as a message on blockuse:radial.
++net = { channel = "blockuse:radial", data = [118, 101, 105, 110] }
++ticks = 1
++expect.told = ["Alex: mode vein"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 8213cb6de..9ed8c5872 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -674,6 +674,21 @@ interface players {
+     /// top left, under what is there already, in the order of their ids, until changed; an empty text takes the line away, and the
+     /// player's client forgets them all when it leaves the server. False for a player who is not online; at most 32 lines a call. API 41.
+     set-hud-line: func(player: string, id: string, icon: string, text: string, fraction: f32) -> bool;
++    /// One choice of a radial menu.
++    record radial-entry {
++        /// What the mod hears back when it is chosen (at most 64 bytes).
++        id: string,
++        /// Its name under the icon (at most 64 bytes).
++        label: string,
++        /// An item drawn for it (`mymod:mode_vein`); empty for none.
++        icon: string,
++    }
++    /// Opens a radial menu on one player's screen (Mekanism's mode selector of the Meka-Tool and the configurator, `IRadialSelectorEnum`):
++    /// 2 to 16 entries around the screen's centre, `current` marked. The pointer is let go so the player can point; a click (a tap on
++    /// a touch screen) on an entry chooses it and closes the menu, one in the middle or Escape closes it without a choice. The choice comes
++    /// back as a mod message on channel `<mod id>:radial` whose bytes are the entry's id (UTF-8): register `on_net` to hear it. False for a
++    /// player who is not online or entries out of bounds. API 42.
++    open-radial-menu: func(player: string, entries: list<radial-entry>, current: u32) -> bool;
+     /// A system message to every player and the server's log, after the
+     /// mod's name. Counts toward the same 8 per call.
+     broadcast: func(text: string);
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 6db508a61..3772d1ced 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 41;
++pub const LEVEL: u32 = 42;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 112] = [
++pub const FUNCTIONS: [(&str, u32); 113] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -106,6 +106,7 @@ pub const FUNCTIONS: [(&str, u32); 112] = [
+     ("world.break-blocks", 39),
+     ("recipe-types.item-tag-members", 40),
+     ("players.set-hud-line", 41),
++    ("players.open-radial-menu", 42),
+     ("world.block-hardness", 35),
+     ("world.spawn-particles", 26),
+     ("recipe-types.burn-time", 27),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index ff5c6e0a2..57f116a10 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -460,6 +460,8 @@ pub enum Output {
+     UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
+     /// `world.break-blocks`: many blocks broken as a player holding a tool would.
+     BreakBlocks { name: String, dimension: String, positions: Vec<[i32; 3]>, tool: String, silk_touch: bool, fortune: u32 },
++    /// `players.open-radial-menu`: a radial menu on one player's screen, whose choice comes back on `<mod id>:radial`.
++    Radial { name: String, mod_id: String, player: String, entries: Vec<(String, String, String)>, current: u32 },
+     /// `players.set-hud-line`: a line of the mod's HUD on one player's screen.
+     HudLine { name: String, player: String, id: String, icon: String, text: String, fraction: f32 },
+     /// `world.set-comparator-output`: the signal a comparator reads from a block entity.
+@@ -3554,6 +3556,18 @@ impl players::Host for State {
+         self.out.push(Output::HudLine { name: self.name.clone(), player, id, icon, text, fraction: fraction.min(1.0) });
+         true
+     }
++    fn open_radial_menu(&mut self, player: String, entries: Vec<players::RadialEntry>, current: u32) -> bool {
++        if !(2..=16).contains(&entries.len())
++            || entries.iter().any(|e| e.id.is_empty() || e.id.len() > 64 || e.label.len() > 64 || e.icon.len() > 128)
++            || !self.snapshot.players.iter().any(|p| p.id == player)
++            || self.out.iter().any(|o| matches!(o, Output::Radial { .. }))
++        {
++            return false;
++        }
++        let entries = entries.into_iter().map(|e| (e.id, e.label, e.icon)).collect();
++        self.out.push(Output::Radial { name: self.name.clone(), mod_id: self.id.clone(), player, entries, current });
++        true
++    }
+     fn broadcast(&mut self, text: String) {
+         self.say(|name| Output::Broadcast {
+             name,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index c40e5225f..05a1f71ea 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -592,6 +592,68 @@ impl GraphHistory {
+     }
+ }
+ 
++/// The channel a radial menu travels on, host to client (`players.open-radial-menu`).
++pub const RADIAL_CHANNEL: &str = "horizon:radial";
++
++/// A radial menu as the channel carries it: the mod's id, the current entry (four bytes), then each entry's id, label and icon.
++pub fn encode_radial(mod_id: &str, entries: &[(String, String, String)], current: u32) -> Vec<u8> {
++    fn put(out: &mut Vec<u8>, s: &str) {
++        let b = &s.as_bytes()[..s.len().min(usize::from(u16::MAX))];
++        out.extend((b.len() as u16).to_le_bytes());
++        out.extend(b);
++    }
++    let mut out = Vec::new();
++    put(&mut out, mod_id);
++    out.extend(current.to_le_bytes());
++    out.push(entries.len().min(255) as u8);
++    for (id, label, icon) in entries.iter().take(255) {
++        put(&mut out, id);
++        put(&mut out, label);
++        put(&mut out, icon);
++    }
++    out
++}
++
++/// The mod id, entries and current entry of [`encode_radial`].
++pub fn decode_radial(data: &[u8]) -> Option<(String, Vec<(String, String, String)>, u32)> {
++    let mut at = 0;
++    let text = |at: &mut usize| -> Option<String> {
++        let n = usize::from(u16::from_le_bytes([*data.get(*at)?, *data.get(*at + 1)?]));
++        let s = String::from_utf8(data.get(*at + 2..*at + 2 + n)?.to_vec()).ok()?;
++        *at += 2 + n;
++        Some(s)
++    };
++    let mod_id = text(&mut at)?;
++    let c = data.get(at..at + 4)?;
++    let current = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
++    let n = usize::from(*data.get(at + 4)?);
++    at += 5;
++    let mut entries = Vec::with_capacity(n);
++    for _ in 0..n {
++        entries.push((text(&mut at)?, text(&mut at)?, text(&mut at)?));
++    }
++    Some((mod_id, entries, current))
++}
++
++/// Which of `n` entries spread around `centre` (the first at the top, then clockwise) the point `at` names: none within `dead_zone`
++/// of the centre (the middle closes the menu without a choice).
++pub fn radial_pick(n: usize, centre: [f32; 2], at: [f32; 2], dead_zone: f32) -> Option<usize> {
++    let (dx, dy) = (at[0] - centre[0], at[1] - centre[1]);
++    if n == 0 || dx.hypot(dy) < dead_zone {
++        return None;
++    }
++    // 0 at the top, growing clockwise (the screen's y grows down).
++    let angle = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU);
++    let slice = std::f32::consts::TAU / n as f32;
++    Some(((angle + slice / 2.0) / slice) as usize % n)
++}
++
++/// Where entry `i` of `n` sits around `centre` at `radius` (the first at the top, then clockwise).
++pub fn radial_spot(i: usize, n: usize, centre: [f32; 2], radius: f32) -> [f32; 2] {
++    let a = std::f32::consts::TAU * i as f32 / n.max(1) as f32;
++    [centre[0] + radius * a.sin(), centre[1] - radius * a.cos()]
++}
++
+ /// The channel a mod's HUD lines travel on, host to client (`players.set-hud-line`).
+ pub const HUD_CHANNEL: &str = "horizon:hud_line";
+ 
+@@ -764,6 +826,30 @@ mod menu_text_tests {
+         assert_eq!(hovered(&ok, &[1234, 0, 0], &Locals::default(), [10.0, 30.0]), Some(vec!["Heat 1234".to_owned()]));
+     }
+ 
++    #[test]
++    fn a_radial_menu_round_trips_and_a_point_picks_the_entry_around_it() {
++        let entries = vec![
++            ("vein".to_owned(), "Vein mining".to_owned(), "mekanism:module_vein".to_owned()),
++            ("silk".to_owned(), "Silk touch".to_owned(), String::new()),
++            ("off".to_owned(), "Off".to_owned(), String::new()),
++            ("fast".to_owned(), "Fast".to_owned(), String::new()),
++        ];
++        let bytes = encode_radial("mekanism", &entries, 2);
++        assert_eq!(decode_radial(&bytes), Some(("mekanism".to_owned(), entries, 2)));
++        assert_eq!(decode_radial(&bytes[..bytes.len() - 1]), None);
++        // Four entries: top, right, bottom, left; the middle is no choice.
++        let c = [200.0, 120.0];
++        assert_eq!(radial_pick(4, c, [200.0, 60.0], 16.0), Some(0));
++        assert_eq!(radial_pick(4, c, [260.0, 125.0], 16.0), Some(1));
++        assert_eq!(radial_pick(4, c, [205.0, 180.0], 16.0), Some(2));
++        assert_eq!(radial_pick(4, c, [140.0, 110.0], 16.0), Some(3));
++        assert_eq!(radial_pick(4, c, [205.0, 118.0], 16.0), None);
++        // Just past the border between the top and the right one (45 degrees) is the right one.
++        assert_eq!(radial_pick(4, c, [200.0 + 50.0, 120.0 - 49.0], 16.0), Some(1));
++        let spot = radial_spot(1, 4, c, 50.0);
++        assert!((spot[0] - 250.0).abs() < 1e-3 && (spot[1] - 120.0).abs() < 1e-3);
++    }
++
+     #[test]
+     fn a_hud_line_round_trips_and_a_cut_one_is_refused() {
+         let bytes = encode_hud_line("mekanism:energy", "mekanism:energy_unit", "Energy: 50% ✓", 0.5);
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 446710c0f..beb9fb9b7 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1499,6 +1499,8 @@ pub struct Expect {
+     sounds: Option<Vec<String>>,
+     /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (the coordinates with 3 decimals, name `-` for none).
+     mod_entities: Option<Vec<String>>,
++    /// Server mods: every `open-radial-menu`, as `"Name: id=label,id=label current n"`.
++    radial: Option<Vec<String>>,
+     /// Server mods: every `set-hud-line`, as `"Name: id [icon] text fraction"`.
+     hud: Option<Vec<String>>,
+     /// Server mods: every `break-blocks`, as `"count with tool silk=bool fortune=n"`.
+@@ -2527,6 +2529,21 @@ impl Step {
+                 .collect();
+             same("broken", want, &got)?;
+         }
++        if let Some(want) = &e.radial {
++            let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::Radial { player, entries, current, .. } => Some(format!(
++                        "{}: {} current {current}",
++                        name(player),
++                        entries.iter().map(|(id, label, _)| format!("{id}={label}")).collect::<Vec<_>>().join(",")
++                    )),
++                    _ => None,
++                })
++                .collect();
++            same("radial", want, &got)?;
++        }
+         if let Some(want) = &e.hud {
+             let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
+             let got: Vec<String> = out
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 7718ce726..7fb72cc15 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 41);
++    assert_eq!(LEVEL, 42);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 14edea507..92cf8bd85 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -674,12 +674,23 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
+ | `game-mode` | `game-mode` |  |
+ | `health` | `f32` | Hit points as vanilla counts them: 20 is full health without effects. |
+ 
++### record `radial-entry`
++
++One choice of a radial menu.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | What the mod hears back when it is chosen (at most 64 bytes). |
++| `label` | `string` | Its name under the icon (at most 64 bytes). |
++| `icon` | `string` | An item drawn for it (`mymod:mode_vein`); empty for none. |
++
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `online` | `func() -> list<player>` | The players online, in the order they joined. |
+ | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
+ | `tell-overlay` | `func(player: string, text: string) -> bool` | A message over the hotbar (the action bar, as `Player.displayClientMessage(text, true)`) to one player, for a line that is gone in seconds; false when no player with that id is online. No mod name in front of it. Counts toward the same 8 per call as `tell`. API 31. |
+ | `set-hud-line` | `func(player: string, id: string, icon: string, text: string, fraction: f32) -> bool` | Sets line `id` (`mymod:energy`, at most 64 bytes) of the mod's HUD on one player's screen (the MekaSuit's module HUD, `IModuleHUD`): the item `icon` (`mymod:jetpack_unit`; empty for none) drawn small, `text` beside it (at most 256 bytes), and, with `fraction` 0 to 1, a bar under the text filled that much (a negative fraction draws no bar). The lines show at the screen's top left, under what is there already, in the order of their ids, until changed; an empty text takes the line away, and the player's client forgets them all when it leaves the server. False for a player who is not online; at most 32 lines a call. API 41. |
++| `open-radial-menu` | `func(player: string, entries: list<radial-entry>, current: u32) -> bool` | Opens a radial menu on one player's screen (Mekanism's mode selector of the Meka-Tool and the configurator, `IRadialSelectorEnum`): 2 to 16 entries around the screen's centre, `current` marked. The pointer is let go so the player can point; a click (a tap on a touch screen) on an entry chooses it and closes the menu, one in the middle or Escape closes it without a choice. The choice comes back as a mod message on channel `<mod id>:radial` whose bytes are the entry's id (UTF-8): register `on_net` to hear it. False for a player who is not online or entries out of bounds. API 42. |
+ | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+ 
+ ## `world`
+-- 
+2.43.0
+

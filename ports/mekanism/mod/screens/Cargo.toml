@@ -1,0 +1,15 @@
+[package]
+name = "mekanism-screens"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The screens of the Mekanism port drawn by code (capability screen, API 56): Mekanism's GuiXxx classes in Rust"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+horizon-mod-sdk = { path = "@SDK@" }
+
+[workspace]

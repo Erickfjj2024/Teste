@@ -1,0 +1,1456 @@
+From 2b0e1835eb4eb6599a465d49a1bb0fb52e46f448 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 01:13:05 +0000
+Subject: [PATCH] API 36 (FORK-10 a): mod-defined living entities: entity_kind
+ content, spawn-mod-entity, entities-tick, saved with the world
+
+Kinds are declared in data/<id>/horizon/entity_kind/*.json. The game keeps each entity's state (saved bytes, container slots, energy, skin, name) in data/horizon/mod_entities.json, spawns it for the mod (spawn-mod-entity answers with a ticket as spawn-mob does), asks the mods for registration.mod-entities each tick (entities-tick) and removes it on remove-entity or an update's remove. Server side only: clients do not see it yet.
+Also: the menu text constants live in content (the content-only build compiled without them), and the bow hooks are cfg(mods).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game.rs             |  12 +
+ .../horizon-client/src/game/mod_entities.rs   | 130 ++++++++++
+ crates/horizon-client/src/game/mods.rs        |   2 +
+ crates/horizon-client/src/game/server_mods.rs |  10 +-
+ .../examples/entity-kinds/Cargo.toml          |  16 ++
+ .../robits/horizon/entity_kind/robit.json     |  11 +
+ .../examples/entity-kinds/horizon-mod.toml    |   9 +
+ .../examples/entity-kinds/src/lib.rs          |  46 ++++
+ .../examples/entity-kinds/tests/robits.toml   |  25 ++
+ crates/horizon-mod-sdk/src/lib.rs             |  19 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  48 ++++
+ crates/horizon-mods/src/api_level.rs          |   5 +-
+ crates/horizon-mods/src/content.rs            | 136 ++++++++++-
+ crates/horizon-mods/src/entity_state.rs       | 225 ++++++++++++++++++
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/runtime.rs            |  70 +++++-
+ crates/horizon-mods/src/testing.rs            | 107 +++++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  39 +++
+ 21 files changed, 907 insertions(+), 17 deletions(-)
+ create mode 100644 crates/horizon-client/src/game/mod_entities.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+ create mode 100644 crates/horizon-mods/src/entity_state.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 52ef506de..a6669460c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1200,6 +1200,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "entity-kinds"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "env_filter"
+ version = "0.1.4"
+diff --git a/Cargo.toml b/Cargo.toml
+index cececd222..9d187183f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -43,6 +43,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-use",
+     "crates/horizon-mod-sdk/examples/damage-mods",
+     "crates/horizon-mod-sdk/examples/bow-hooks",
++    "crates/horizon-mod-sdk/examples/entity-kinds",
+     "crates/horizon-mod-sdk/examples/fuel-demo",
+     "crates/horizon-mod-sdk/examples/crafting-probe",
+     "crates/horizon-mod-sdk/examples/body-probe",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 6f1143e76..01a13e017 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -203,6 +203,8 @@ mod native_explosions;
+ mod native_falling;
+ mod block_renderers;
+ mod menu_screens;
++#[cfg(feature = "mods")]
++mod mod_entities;
+ mod native_hooks;
+ #[cfg(target_os = "android")]
+ use android_bundled::{
+@@ -2835,6 +2837,8 @@ struct Game<'a> {
+     score: scoreboard::ScoreState,
+     fns: functions::FnState,
+     bosses: bossbars::BossState,
++    #[cfg(feature = "mods")]
++    mod_entities: horizon_mods::entity_state::ModEntities,
+     /// `Hud.bossOverlay`: the bars this window is showing.
+     boss_overlay: horizon_client::boss_overlay::BossOverlay,
+     exec: commands::execute::ExecState,
+@@ -11373,6 +11377,8 @@ impl Game<'_> {
+         self.tick_stats();
+         self.tick_scoreboard();
+         self.load_bossbars();
++        #[cfg(feature = "mods")]
++        self.load_mod_entities();
+         self.tick_worldborder();
+         self.tick_subtitles();
+         self.spawn_phantoms();
+@@ -13187,6 +13193,7 @@ impl Game<'_> {
+             return;
+         };
+         // A mod's bow-like item may cancel the shot (`item-released`): nothing is shot or used.
++        #[cfg(feature = "mods")]
+         if let Some(held) = self.held().cloned()
+             && self.res.items().get(&held.item).is_some_and(|i| i.behaves_as.is_some())
+             && !self.mod_item_released(&held, ticks)
+@@ -13245,6 +13252,7 @@ impl Game<'_> {
+         );
+         self.add_projectile(arrow);
+         // The arrow's id is the last one added; a mod's bow-like item hears it (`item-shot`).
++        #[cfg(feature = "mods")]
+         if let Some(held) = self.held().cloned()
+             && self.res.items().get(&held.item).is_some_and(|i| i.behaves_as.is_some())
+             && let Some(id) = self.creatures.projectiles.last().map(|p| p.id)
+@@ -14542,6 +14550,8 @@ impl Game<'_> {
+         self.save_advancements();
+         self.save_scoreboard();
+         self.save_bossbars();
++        #[cfg(feature = "mods")]
++        self.save_mod_entities();
+         self.save_schedule();
+         self.save_warden_tracker();
+         self.sync_level();
+@@ -18490,6 +18500,8 @@ impl<'a> Game<'a> {
+             score: Default::default(),
+             fns: Default::default(),
+             bosses: Default::default(),
++            #[cfg(feature = "mods")]
++            mod_entities: Default::default(),
+             boss_overlay: Default::default(),
+             exec: Default::default(),
+             rand_sequences: Default::default(),
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+new file mode 100644
+index 000000000..34c0a7b06
+--- /dev/null
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -0,0 +1,130 @@
++//! The game's part of the living entities of the mods' own kinds (FORK-10): spawning, removing, ticking by the server mods that asked
++//! for them (`entities-tick`) and keeping them in the world's folder. Their state and its save are `horizon_mods::entity_state`.
++
++use super::Game;
++use horizon_mods::{
++    content::EntityKind,
++    entity_state::{FILE, ModEntityState, apply, decode, encode},
++};
++use std::{collections::HashMap, sync::OnceLock};
++
++/// The mods' entity kinds by id, set once with the other content.
++pub(super) static MOD_KINDS: OnceLock<HashMap<String, EntityKind>> = OnceLock::new();
++
++use horizon_core::random::RandomSource as _;
++
++impl Game<'_> {
++    fn mod_entities_path(&self) -> std::path::PathBuf {
++        self.world_root.join(FILE)
++    }
++
++    /// Reads the saved entities once, on the server's side.
++    pub(super) fn load_mod_entities(&mut self) {
++        if self.mod_entities.loaded || self.remote.is_some() {
++            return;
++        }
++        self.mod_entities.loaded = true;
++        if let Ok(text) = std::fs::read_to_string(self.mod_entities_path()) {
++            self.mod_entities.list = decode(&text);
++            // The id counter goes past every id kept.
++            if let Some(top) = self.mod_entities.list.iter().map(|e| e.id).max() {
++                self.next_entity = self.next_entity.max(top);
++            }
++        }
++    }
++
++    /// Writes the entities (nothing for a world that never had one).
++    pub(super) fn save_mod_entities(&self) {
++        if !self.mod_entities.loaded || self.remote.is_some() {
++            return;
++        }
++        let path = self.mod_entities_path();
++        if self.mod_entities.list.is_empty() && !path.exists() {
++            return;
++        }
++        if let Some(dir) = path.parent() {
++            let _ = std::fs::create_dir_all(dir);
++        }
++        if let Err(e) = std::fs::write(&path, encode(&self.mod_entities.list)) {
++            log::warn!("the mods' entities were not written: {e}");
++        }
++    }
++
++    /// A mod's `spawn-mod-entity`: a new entity of its kind in the level in place; its id. None for another level, a kind no mod declared or
++    /// a position that is not on a loaded chunk.
++    pub(super) fn native_spawn_mod_entity(&mut self, dimension: &str, kind: &str, pos: [f64; 3], data: Vec<u8>) -> Option<u32> {
++        if self.remote.is_some() || dimension != self.dim.id() {
++            return None;
++        }
++        let kind = MOD_KINDS.get()?.get(kind)?;
++        self.load_mod_entities();
++        self.next_entity += 1;
++        let id = self.next_entity;
++        let mut e = ModEntityState::new(id, dimension, kind, pos, data);
++        e.yaw = self.world.random.next_float() * 360.0;
++        self.mod_entities.list.push(e);
++        Some(id)
++    }
++
++    /// Removes the mod entity `id` with no death and no drops; false for none.
++    pub(super) fn native_remove_mod_entity(&mut self, dimension: &str, id: u32) -> bool {
++        let before = self.mod_entities.list.len();
++        self.mod_entities.list.retain(|e| !(e.id == id && e.dimension == dimension));
++        self.mod_entities.list.len() != before
++    }
++
++    /// The entities of the level in place, as the mods see them.
++    #[cfg(feature = "mods")]
++    pub(super) fn mod_entities_view(&self) -> Vec<horizon_mods::ModEntity> {
++        let dim = self.dim.id();
++        self.mod_entities
++            .list
++            .iter()
++            .filter(|e| e.dimension == dim)
++            .map(|e| horizon_mods::ModEntity {
++                id: e.id,
++                dimension: e.dimension.clone(),
++                kind: e.kind.clone(),
++                x: e.pos[0],
++                y: e.pos[1],
++                z: e.pos[2],
++                yaw: e.yaw,
++                health: e.health,
++                data: e.data.clone(),
++                items: e.items.clone(),
++                energy: e.energy,
++                skin: e.skin.clone(),
++                name: e.name.clone(),
++            })
++            .collect()
++    }
++
++    /// Applies what the mods answered to `entities-tick`.
++    #[cfg(feature = "mods")]
++    pub(super) fn apply_mod_entity_ticks(&mut self, updates: Vec<horizon_mods::ModEntityUpdate>) {
++        let Some(kinds) = MOD_KINDS.get() else {
++            return;
++        };
++        for u in updates {
++            let Some(i) = self.mod_entities.list.iter().position(|e| e.id == u.id && e.dimension == u.dimension) else {
++                continue;
++            };
++            let Some(kind) = kinds.get(&self.mod_entities.list[i].kind) else {
++                continue;
++            };
++            if apply(&mut self.mod_entities.list[i], kind, &u) {
++                self.mod_entities.list.remove(i);
++            }
++        }
++    }
++}
++
++/// The mods' entity kinds, set once.
++pub(super) fn register_kinds(mods: &[horizon_client::mod_content::ContentMod]) {
++    let kinds = mods
++        .iter()
++        .flat_map(|m| m.content.entity_kinds.iter())
++        .map(|k| (k.id.clone(), k.clone()))
++        .collect();
++    let _ = MOD_KINDS.set(kinds);
++}
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 7f8c45abb..baea2c1ee 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -401,6 +401,8 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+         .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
+         .collect();
+     let _ = super::menu_screens::MENU_SCREENS.set(screens);
++    #[cfg(feature = "mods")]
++    super::mod_entities::register_kinds(mods);
+     let armor = menus
+         .iter()
+         .filter_map(|m| Some((m.id.clone(), m.armor.clone()?)))
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 811390762..4e656b919 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -533,7 +533,10 @@ mod run {
+             } else {
+                 self.mods.mods.block_entities_tick(self.ticks, &entities)
+             };
++            let kept = if self.mods.mods.hears_mod_entities() { self.mod_entities_view() } else { Vec::new() };
++            let kept = if kept.is_empty() { Vec::new() } else { self.mods.mods.entities_tick(self.ticks, &kept) };
+             self.return_world();
++            self.apply_mod_entity_ticks(kept);
+             self.apply_mod_entity_updates(updates);
+             self.apply_mod_entity_updates(menu_updates);
+             self.transfer_mod_energy();
+@@ -2692,7 +2695,12 @@ mod run {
+                             };
+                             self.native_set_display(&dimension, id, &d)
+                         }
+-                        C::RemoveEntity { id } => self.native_remove_entity(&dimension, id),
++                        C::SpawnModEntity { ticket, kind, pos, data } => {
++                            let entity = self.native_spawn_mod_entity(&dimension, &kind, pos, data);
++                            self.mods.spawn_answers.push((mod_id, ticket, entity));
++                            entity.is_some()
++                        }
++                        C::RemoveEntity { id } => self.native_remove_entity(&dimension, id) || self.native_remove_mod_entity(&dimension, id),
+                         C::TeleportMob { id, pos } => self.native_teleport_mob(&dimension, id, pos),
+                         C::PushMob { id, velocity } => self.native_push_mob(&dimension, id, velocity),
+                         C::SetMobHealth { id, health } => self.native_set_mob_health(&dimension, id, health),
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/Cargo.toml b/crates/horizon-mod-sdk/examples/entity-kinds/Cargo.toml
+new file mode 100644
+index 000000000..1eb64a07b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "entity-kinds"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a living entity kind of its own, spawned, ticked and removed by the mod"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+new file mode 100644
+index 000000000..d75e82eb4
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+@@ -0,0 +1,11 @@
++{
++  "width": 0.6,
++  "height": 0.65,
++  "max_health": 1.0,
++  "speed": 0.3,
++  "skins": [
++    {"id": "default", "texture": "robits:entity/robit"},
++    {"id": "red", "texture": "robits:entity/robit_red"}
++  ],
++  "container_slots": 3
++}
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml b/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
+new file mode 100644
+index 000000000..81c499cac
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "robits"
++name = "Robits"
++version = "0.1.0"
++description = "Test mod for mod-defined living entities (FORK-10): robits:robit is declared in content, a message spawns it, and the mod ticks it: it counts, changes skin, gets a name, moves and removes itself."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["registries", "players", "entities", "net"]
++experimental = ["entities", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+new file mode 100644
+index 000000000..084d43b9b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -0,0 +1,46 @@
++//! Robits (FORK-10): `robits:robit`, a living entity kind declared in `data/robits/horizon/entity_kind/robit.json`. A message on
++//! `robits:spawn` (a position as three little-endian whole numbers) spawns one; each tick the mod counts in its saved bytes and its
++//! energy, takes the red skin from the second tick, is named Bolt on the third and teleports a block up, and removes the robit on the fifth.
++use horizon_mod_sdk::server::{ModEntity, ModEntityUpdate, Player, Registration, ServerMod, entities};
++
++struct Robits;
++
++impl ServerMod for Robits {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Robits, Registration::new().on_net().on_mod_entities()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        if channel != "robits:spawn" || data.len() < 12 {
++            return;
++        }
++        let int = |at: usize| i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
++        let _ = entities::spawn_mod_entity(
++            &player.dimension,
++            "robits:robit",
++            f64::from(int(0)) + 0.5,
++            f64::from(int(4)),
++            f64::from(int(8)) + 0.5,
++            &[0],
++        );
++    }
++    fn entities_tick(&mut self, _tick: u64, list: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
++        list.into_iter()
++            .map(|e| {
++                let count = e.data.first().copied().unwrap_or(0) + 1;
++                ModEntityUpdate {
++                    dimension: e.dimension,
++                    id: e.id,
++                    data: Some(vec![count]),
++                    items: None,
++                    energy: Some(e.energy + 10),
++                    skin: (count >= 2).then(|| "red".to_owned()),
++                    name: (count == 3).then(|| Some("Bolt".to_owned())),
++                    teleport: (count == 3).then(|| (e.x, e.y + 1.0, e.z)),
++                    remove: count >= 5,
++                }
++            })
++            .collect()
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Robits);
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+new file mode 100644
+index 000000000..10b1425c1
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -0,0 +1,25 @@
++[[step]]
++join = "Alex"
++# The message spawns a robit of the mod's own kind (declared in content): it exists as the step ends, untouched.
++net = { channel = "robits:spawn", data = [3, 0, 0, 0, 70, 0, 0, 0, 4, 0, 0, 0] }
++expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=0 data=[0] skin=default name=-"]
++
++[[step]]
++# One tick: the robit exists, the mod counted once and gave it energy; its skin is still the first.
++ticks = 1
++expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=10 data=[1] skin=default name=-"]
++
++[[step]]
++# The second tick takes the red skin.
++ticks = 1
++expect.mod-entities = ["1001 robits:robit 3.5 70 4.5 energy=20 data=[2] skin=red name=-"]
++
++[[step]]
++# The third names it Bolt and moves it a block up.
++ticks = 1
++expect.mod-entities = ["1001 robits:robit 3.5 71 4.5 energy=30 data=[3] skin=red name=Bolt"]
++
++[[step]]
++# The fifth removes it, and nothing is left.
++ticks = 2
++expect.mod-entities = []
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index cc77ab6c0..60242fe93 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -235,7 +235,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -304,6 +304,10 @@ pub mod server {
+         }
+         /// The arrows of a shot exist, with these entity ids. When [`Registration::on_item_release`] is set.
+         fn item_shot(&mut self, _player: &Player, _stack: ItemStack, _projectiles: Vec<u32>) {}
++        /// The living entities of the mod's own kinds, each tick (FORK-10): what to do with them. When [`Registration::on_mod_entities`] is set.
++        fn entities_tick(&mut self, _tick: u64, _entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
++            Vec::new()
++        }
+         /// A mod's block was placed at `pos`: false takes it away again (`BlockItem.canPlace`). When [`Registration::blocks`] is set.
+         fn can_place(&mut self, _player: &Player, _pos: BlockPos, _state: &str) -> bool {
+             true
+@@ -398,6 +402,7 @@ pub mod server {
+                 chunks: false,
+                 damage: false,
+                 item_release: false,
++                mod_entities: false,
+                 redirects: Vec::new(),
+             }
+         }
+@@ -487,6 +492,11 @@ pub mod server {
+             self.item_release = true;
+             self
+         }
++        /// Call [`ServerMod::entities_tick`] for the mod's own entity kinds.
++        pub fn on_mod_entities(mut self) -> Self {
++            self.mod_entities = true;
++            self
++        }
+         /// Call [`ServerMod::chunk_loaded`].
+         pub fn on_chunks(mut self) -> Self {
+             self.chunks = true;
+@@ -622,7 +632,7 @@ macro_rules! export_server_mod {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+                 Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, DamageSource, Player, Registration,
+-                ItemStack, ServerMod, Structure,
++                ItemStack, ModEntity, ModEntityUpdate, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+                 static STATE: RefCell<Option<$t>> = const { RefCell::new(None) };
+@@ -698,6 +708,11 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.item_released(&player, stack, &hand, ticks_held));
+                     out
+                 }
++                fn entities_tick(tick: u64, entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
++                    let mut out = Vec::new();
++                    with(|m| out = m.entities_tick(tick, entities));
++                    out
++                }
+                 fn item_shot(player: Player, stack: ItemStack, projectiles: Vec<u32>) {
+                     with(|m| m.item_shot(&player, stack, projectiles));
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 405d64564..f07a7b9fb 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1128,6 +1128,10 @@ interface entities {
+     kill-mob: func(dimension: string, id: u32) -> result<_, string>;
+     /// Takes a mob out of the world with no death and no loot.
+     remove-mob: func(dimension: string, id: u32) -> result<_, string>;
++    /// Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position
++    /// with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with.
++    /// An error for a kind that is not a plain id or too many bytes. API 36.
++    spawn-mod-entity: func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>;
+     /// Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in
+     /// flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33.
+     set-entity-fire: func(dimension: string, id: u32, ticks: u32) -> result<_, string>;
+@@ -1315,6 +1319,8 @@ interface server-events {
+         damage: bool,
+         /// Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`).
+         item-release: bool,
++        /// Call `entities-tick` with the living entities of the mod's own kinds (`data/<id>/horizon/entity_kind/`).
++        mod-entities: bool,
+         /// Blocks of the mod that stand for another block (FORK-35): a click on
+         /// them, or breaking them, reaches the block they name.
+         redirects: list<redirect-spec>,
+@@ -1475,6 +1481,45 @@ interface server-events {
+         /// south, west, east); empty for a block that is not one.
+         transmitter-faces: list<bool>,
+     }
++    /// A living entity of one of the mod's kinds (FORK-10, the Robit): the game keeps it, its container and its saved bytes, and the
++    /// mod decides what it does each tick.
++    record mod-entity {
++        id: u32,
++        dimension: string,
++        /// The kind's id, `mymod:robit`.
++        kind: string,
++        x: f64,
++        y: f64,
++        z: f64,
++        yaw: f32,
++        health: f32,
++        /// The mod's own saved bytes (at most 64 KiB).
++        data: list<u8>,
++        /// The container's slots (the kind's `container_slots`).
++        items: list<option<item-stack>>,
++        energy: u64,
++        /// The id of the kind's skin it shows.
++        skin: string,
++        /// The name it was given, shown over it.
++        name: option<string>,
++    }
++    /// What the mod makes of an entity in a tick; a none leaves that as it is.
++    record mod-entity-update {
++        dimension: string,
++        id: u32,
++        data: option<list<u8>>,
++        /// The slots after the call; extra slots past the container's, and stacks of unknown items, are dropped.
++        items: option<list<option<item-stack>>>,
++        energy: option<u64>,
++        /// A skin id of the kind; an unknown one is ignored.
++        skin: option<string>,
++        /// `some(none)` takes the name away.
++        name: option<option<string>>,
++        /// Moves it at once (as `/tp` does).
++        teleport: option<tuple<f64, f64, f64>>,
++        /// Takes it out of the world with no death and no drops.
++        remove: bool,
++    }
+     /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+         dimension: string,
+@@ -1524,6 +1569,9 @@ interface server-events {
+     /// turn). Returns the entities whose bytes changed; the chunk is then
+     /// saved with them.
+     block-entities-tick: func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>;
++    /// Each tick, the living entities of the mod's own kinds (`registration.mod-entities`, FORK-10) in the level in place, up to 256: what
++    /// the mod answers is applied at once. Not asked of an entity whose chunk is not loaded. API 36.
++    entities-tick: func(tick: u64, entities: list<mod-entity>) -> list<mod-entity-update>;
+     /// A player pressed button `id` of the menu of the block entity at `pos`
+     /// (a `button` widget of the menu type's screen), with the entity as it
+     /// is. Returns what to change in it, if anything.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 4c8e031ad..f62c0e7c5 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 35;
++pub const LEVEL: u32 = 36;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 105] = [
++pub const FUNCTIONS: [(&str, u32); 106] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -80,6 +80,7 @@ pub const FUNCTIONS: [(&str, u32); 105] = [
+     ("entities.set-mob-health", 11),
+     ("entities.kill-mob", 11),
+     ("entities.set-entity-fire", 33),
++    ("entities.spawn-mod-entity", 36),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 568aa6f33..c0319d0f8 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -276,6 +276,93 @@ pub struct EntityType {
+     pub damage: f32,
+ }
+ 
++/// Most strings a menu carries and bytes each holds (`world.set-menu-text`, a screen's `text_data` and lists).
++pub const MENU_TEXTS: usize = 64;
++pub const MENU_TEXT_BYTES: usize = 256;
++
++/// A living entity the mod adds (FORK-10, the Robit): its size, health and speed, its skins and the slots of its container. The game
++/// keeps the entities of a kind with a state of the mod's own (`data`, items, energy, skin, name) and asks the mod to tick them.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct EntityKind {
++    /// `<mod id>:<path>`.
++    #[serde(skip)]
++    pub id: String,
++    pub width: f32,
++    pub height: f32,
++    /// Eye height; the entity's own height times 0.85 (a living entity's usual) when unset.
++    #[serde(default)]
++    pub eye_height: Option<f32>,
++    #[serde(default = "default_kind_health")]
++    pub max_health: f32,
++    #[serde(default = "default_kind_speed")]
++    pub speed: f32,
++    /// Kept when its chunk unloads and never despawned (`persistent`).
++    #[serde(default = "default_true")]
++    pub persistent: bool,
++    /// What it can look like: a texture and optionally a model of the mod's own. The first is the default.
++    pub skins: Vec<EntitySkin>,
++    /// Slots of its container (the Robit's 30); 0 for none.
++    #[serde(default)]
++    pub container_slots: u16,
++}
++
++fn default_kind_health() -> f32 {
++    20.0
++}
++fn default_kind_speed() -> f32 {
++    0.25
++}
++fn default_true() -> bool {
++    true
++}
++
++/// One look of an entity kind.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct EntitySkin {
++    pub id: String,
++    /// A sprite (`mymod:entity/robit`, from `assets/mymod/textures/entity/`).
++    pub texture: String,
++    /// A model of the mod's own (`assets/<ns>/horizon/entity_model/<name>.json`), the kind's default when unset.
++    #[serde(default)]
++    pub model: Option<String>,
++}
++
++impl EntityKind {
++    fn check(&self, name: &str) -> Result<(), String> {
++        let finite = |v: f32| v.is_finite();
++        if !(finite(self.width) && finite(self.height) && (0.1..=16.0).contains(&self.width) && (0.1..=16.0).contains(&self.height)) {
++            return Err(format!("{name}: width and height are 0.1 to 16"));
++        }
++        if self.eye_height.is_some_and(|e| !finite(e) || !(0.0..=16.0).contains(&e)) {
++            return Err(format!("{name}: eye_height is 0 to 16"));
++        }
++        if !finite(self.max_health) || !(0.5..=1024.0).contains(&self.max_health) {
++            return Err(format!("{name}: max_health is 0.5 to 1024"));
++        }
++        if !finite(self.speed) || !(0.0..=4.0).contains(&self.speed) {
++            return Err(format!("{name}: speed is 0 to 4"));
++        }
++        if self.skins.is_empty() || self.skins.len() > 64 {
++            return Err(format!("{name}: 1 to 64 skins"));
++        }
++        for (i, s) in self.skins.iter().enumerate() {
++            let ok = |t: &str| t.split_once(':').is_some_and(|(n, p)| !n.is_empty() && !p.is_empty() && !t.contains(".."));
++            if s.id.is_empty() || s.id.len() > 64 || self.skins[..i].iter().any(|o| o.id == s.id) {
++                return Err(format!("{name}: skin ids are 1 to 64 bytes and not repeated"));
++            }
++            if !ok(&s.texture) || s.model.as_deref().is_some_and(|m| !ok(m)) {
++                return Err(format!("{name}: a skin's texture and model are <mod id>:<path>"));
++            }
++        }
++        if self.container_slots > 256 {
++            return Err(format!("{name}: container_slots is 256 at most"));
++        }
++        Ok(())
++    }
++}
++
+ /// a menu type the mod adds (vanilla's `MenuType`, NeoForge's
+ /// `IMenuTypeExtension.create`): its container's slot count, the
+ /// `ContainerData` count its menu syncs, and its take-only slots
+@@ -838,8 +925,8 @@ fn check_widget(
+             }
+         }
+         Widget::Text { x, y, text, color, scale, text_data } => {
+-            if text_data.is_some_and(|n| usize::from(n) >= crate::runtime::MENU_TEXTS) {
+-                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", crate::runtime::MENU_TEXTS - 1));
++            if text_data.is_some_and(|n| usize::from(n) >= MENU_TEXTS) {
++                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", MENU_TEXTS - 1));
+             }
+             if scale.is_some_and(|s| !(10..=400).contains(&s)) {
+                 return Err(format!("{name}: a text's scale is 10 to 400 percent"));
+@@ -921,8 +1008,8 @@ fn check_widget(
+             if !(8..=64).contains(row_height) || *row_height > *h {
+                 return Err(format!("{name}: a list's row_height is 8 to 64 and at most its height"));
+             }
+-            if usize::from(*first) >= crate::runtime::MENU_TEXTS {
+-                return Err(format!("{name}: a list's first string is 0 to {}", crate::runtime::MENU_TEXTS - 1));
++            if usize::from(*first) >= MENU_TEXTS {
++                return Err(format!("{name}: a list's first string is 0 to {}", MENU_TEXTS - 1));
+             }
+             data(count)?;
+             if let Some(c) = color {
+@@ -934,8 +1021,8 @@ fn check_widget(
+             if !(1..=256).contains(max_length) {
+                 return Err(format!("{name}: a text field's max_length is 1 to 256"));
+             }
+-            if text_data.is_some_and(|n| usize::from(n) >= crate::runtime::MENU_TEXTS) {
+-                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", crate::runtime::MENU_TEXTS - 1));
++            if text_data.is_some_and(|n| usize::from(n) >= MENU_TEXTS) {
++                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", MENU_TEXTS - 1));
+             }
+         }
+         Widget::Item { x, y, item } => {
+@@ -1256,6 +1343,8 @@ pub struct Content {
+     /// Its creative inventory tabs, by id.
+     pub creative_tabs: Vec<CreativeTab>,
+     pub entity_types: Vec<EntityType>,
++    /// Its own living entity kinds (FORK-10), by id.
++    pub entity_kinds: Vec<EntityKind>,
+     pub menu_types: Vec<MenuType>,
+     /// Its block entity renderers, by block id.
+     pub renderers: Vec<BlockRenderer>,
+@@ -1348,6 +1437,7 @@ impl Content {
+             effects: Vec::new(),
+             creative_tabs: Vec::new(),
+             entity_types: Vec::new(),
++            entity_kinds: Vec::new(),
+             menu_types: Vec::new(),
+             renderers: Vec::new(),
+             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
+@@ -1397,6 +1487,7 @@ impl Content {
+         let mut types = Vec::new();
+         let mut menus = Vec::new();
+         let mut renderers = Vec::new();
++        let mut kinds = Vec::new();
+         for name in &self.files {
+             let mut parts = name.splitn(3, '/');
+             let (top, namespace, rest) = (
+@@ -1443,13 +1534,15 @@ impl Content {
+                 tabs.push((tab, name.clone()));
+             } else if let Some(kind) = parse("entity_type") {
+                 types.push((kind, name.clone()));
++            } else if let Some(kind) = parse("entity_kind") {
++                kinds.push((kind, name.clone()));
+             } else if let Some(menu) = parse("menu") {
+                 menus.push((menu, name.clone()));
+             } else if let Some(block) = parse("renderer") {
+                 renderers.push((block, name.clone()));
+             } else {
+                 return Err(format!(
+-                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/, menu/ and renderer/*.json only"
++                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/, entity_kind/, menu/ and renderer/*.json only"
+                 ));
+             }
+         }
+@@ -1616,6 +1709,12 @@ impl Content {
+             }
+             self.menu_types.push(MenuType { id: menu, ..file });
+         }
++        for (kind, name) in kinds {
++            let file: EntityKind =
++                serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
++            file.check(&name)?;
++            self.entity_kinds.push(EntityKind { id: kind, ..file });
++        }
+         Ok(())
+     }
+ }
+@@ -2040,6 +2139,29 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn an_entity_kind_is_declared_in_content_and_bad_ones_are_refused() {
++        let good = br##"{"width": 0.6, "height": 0.65, "max_health": 1, "speed": 0.3, "container_slots": 30,
++            "skins": [{"id": "default", "texture": "ruby:entity/robit"}, {"id": "gold", "texture": "ruby:entity/gold", "model": "ruby:robit_gold"}]}"##;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/entity_kind/robit.json", good)];
++        let content = hmod("kind-ok", MANIFEST_TEXT, files).unwrap();
++        let k = &content.entity_kinds[0];
++        assert_eq!((k.id.as_str(), k.container_slots, k.skins.len(), k.persistent), ("ruby:robit", 30, 2, true));
++        for (case, file, why) in [
++            ("kind-size", r#"{"width":0,"height":1,"skins":[{"id":"a","texture":"ruby:a"}]}"#, "width and height are 0.1 to 16"),
++            ("kind-health", r#"{"width":1,"height":1,"max_health":0,"skins":[{"id":"a","texture":"ruby:a"}]}"#, "max_health is 0.5 to 1024"),
++            ("kind-skins", r#"{"width":1,"height":1,"skins":[]}"#, "1 to 64 skins"),
++            ("kind-twice", r#"{"width":1,"height":1,"skins":[{"id":"a","texture":"ruby:a"},{"id":"a","texture":"ruby:b"}]}"#, "not repeated"),
++            ("kind-texture", r#"{"width":1,"height":1,"skins":[{"id":"a","texture":"nope"}]}"#, "<mod id>:<path>"),
++            ("kind-slots", r#"{"width":1,"height":1,"container_slots":300,"skins":[{"id":"a","texture":"ruby:a"}]}"#, "256 at most"),
++            ("kind-key", r#"{"width":1,"height":1,"legs":4,"skins":[{"id":"a","texture":"ruby:a"}]}"#, "unknown field"),
++        ] {
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/entity_kind/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++    }
++
+     #[test]
+     fn a_screen_takes_lists_and_text_fields_and_refuses_bad_ones() {
+         let good = br##"{"slots": 1, "data_slots": 2, "screen": {"slots": [null], "widgets": [
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+new file mode 100644
+index 000000000..eb9259d16
+--- /dev/null
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -0,0 +1,225 @@
++//! The state the game keeps for the living entities of the mods' own kinds (FORK-10, the Robit): declared in content
++//! (`data/<id>/horizon/entity_kind/*.json`, [`crate::content::EntityKind`]), kept with a state of the mod's own (saved bytes, container
++//! slots, energy, skin, name) that outlives the world's save. What a save looks like and how a mod's update applies are here, with
++//! tests; the game's part (spawning, ticking, saving to the world's folder) is `game/mod_entities.rs`.
++use crate::{ModEntityUpdate, ModItemStack, content::EntityKind};
++use serde_json::{Value, json};
++
++/// Where the saved entities are, inside the world's folder.
++pub const FILE: &str = "data/horizon/mod_entities.json";
++
++/// One entity of a mod's kind.
++#[derive(Clone, Debug, PartialEq)]
++pub struct ModEntityState {
++    pub id: u32,
++    pub dimension: String,
++    pub kind: String,
++    pub pos: [f64; 3],
++    pub yaw: f32,
++    pub health: f32,
++    pub data: Vec<u8>,
++    pub items: Vec<Option<ModItemStack>>,
++    pub energy: u64,
++    pub skin: String,
++    pub name: Option<String>,
++}
++
++/// The entities and whether the save was read.
++#[derive(Default)]
++pub struct ModEntities {
++    pub loaded: bool,
++    pub list: Vec<ModEntityState>,
++}
++
++impl ModEntityState {
++    /// A new entity of `kind` with `data`: full health, the kind's first skin, an empty container.
++    pub fn new(id: u32, dimension: &str, kind: &EntityKind, pos: [f64; 3], data: Vec<u8>) -> Self {
++        Self {
++            id,
++            dimension: dimension.to_owned(),
++            kind: kind.id.clone(),
++            pos,
++            yaw: 0.0,
++            health: kind.max_health,
++            data,
++            items: vec![None; usize::from(kind.container_slots)],
++            energy: 0,
++            skin: kind.skins.first().map(|s| s.id.clone()).unwrap_or_default(),
++            name: None,
++        }
++    }
++}
++
++fn hex(bytes: &[u8]) -> String {
++    bytes.iter().map(|b| format!("{b:02x}")).collect()
++}
++
++fn unhex(text: &str) -> Option<Vec<u8>> {
++    (text.len() % 2 == 0)
++        .then(|| (0..text.len()).step_by(2).map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok()).collect())
++        .flatten()
++}
++
++/// The save of `entities`.
++pub fn encode(entities: &[ModEntityState]) -> String {
++    let list: Vec<Value> = entities
++        .iter()
++        .map(|e| {
++            json!({
++                "id": e.id, "dimension": e.dimension, "kind": e.kind, "pos": e.pos, "yaw": e.yaw, "health": e.health,
++                "data": hex(&e.data), "energy": e.energy, "skin": e.skin, "name": e.name,
++                "items": e.items.iter().map(|s| s.as_ref().map(|s| json!({"item": s.item, "count": s.count, "components": s.components}))).collect::<Vec<_>>(),
++            })
++        })
++        .collect();
++    json!({ "version": 1, "entities": list }).to_string()
++}
++
++/// The entities a save holds; a row that is not one is left out.
++pub fn decode(text: &str) -> Vec<ModEntityState> {
++    let Ok(root) = serde_json::from_str::<Value>(text) else {
++        return Vec::new();
++    };
++    let Some(rows) = root["entities"].as_array() else {
++        return Vec::new();
++    };
++    rows.iter()
++        .filter_map(|r| {
++            let pos = r["pos"].as_array()?;
++            Some(ModEntityState {
++                id: u32::try_from(r["id"].as_u64()?).ok()?,
++                dimension: r["dimension"].as_str()?.to_owned(),
++                kind: r["kind"].as_str()?.to_owned(),
++                pos: [pos.first()?.as_f64()?, pos.get(1)?.as_f64()?, pos.get(2)?.as_f64()?],
++                yaw: r["yaw"].as_f64().unwrap_or(0.0) as f32,
++                health: r["health"].as_f64()? as f32,
++                data: unhex(r["data"].as_str().unwrap_or(""))?,
++                energy: r["energy"].as_u64().unwrap_or(0),
++                skin: r["skin"].as_str().unwrap_or("").to_owned(),
++                name: r["name"].as_str().map(str::to_owned),
++                items: r["items"]
++                    .as_array()?
++                    .iter()
++                    .map(|s| {
++                        s.as_object().and_then(|s| {
++                            Some(ModItemStack {
++                                item: s.get("item")?.as_str()?.to_owned(),
++                                count: u32::try_from(s.get("count")?.as_u64()?).ok()?,
++                                components: s.get("components").and_then(Value::as_str).unwrap_or("").to_owned(),
++                            })
++                        })
++                    })
++                    .collect(),
++            })
++        })
++        .collect()
++}
++
++/// An update the mod made (`mod-entity-update`) applied to `e` (`kind` is its kind): what it changes, whether it asks for the
++/// entity to be taken out. A skin the kind does not have, and slots past its container, are dropped.
++pub fn apply(e: &mut ModEntityState, kind: &EntityKind, u: &ModEntityUpdate) -> bool {
++    if let Some(d) = &u.data {
++        e.data.clone_from(d);
++    }
++    if let Some(items) = &u.items {
++        let mut items = items.clone();
++        items.resize(usize::from(kind.container_slots), None);
++        e.items = items;
++    }
++    if let Some(energy) = u.energy {
++        e.energy = energy;
++    }
++    if let Some(skin) = &u.skin
++        && kind.skins.iter().any(|s| &s.id == skin)
++    {
++        e.skin.clone_from(skin);
++    }
++    if let Some(name) = &u.name {
++        e.name.clone_from(name);
++    }
++    if let Some((x, y, z)) = u.teleport {
++        e.pos = [x, y, z];
++    }
++    u.remove
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::content::EntitySkin;
++
++    fn kind() -> EntityKind {
++        EntityKind {
++            id: "robits:robit".into(),
++            width: 0.6,
++            height: 0.65,
++            eye_height: None,
++            max_health: 1.0,
++            speed: 0.3,
++            persistent: true,
++            skins: vec![
++                EntitySkin { id: "default".into(), texture: "robits:entity/robit".into(), model: None },
++                EntitySkin { id: "red".into(), texture: "robits:entity/red".into(), model: None },
++            ],
++            container_slots: 3,
++        }
++    }
++
++    fn update(id: u32) -> ModEntityUpdate {
++        ModEntityUpdate {
++            dimension: "minecraft:overworld".into(),
++            id,
++            data: None,
++            items: None,
++            energy: None,
++            skin: None,
++            name: None,
++            teleport: None,
++            remove: false,
++        }
++    }
++
++    #[test]
++    fn a_new_entity_has_full_health_the_first_skin_and_an_empty_container() {
++        let e = ModEntityState::new(7, "minecraft:overworld", &kind(), [1.0, 64.0, 2.0], vec![9]);
++        assert_eq!((e.health, e.skin.as_str(), e.items.len(), e.data.clone()), (1.0, "default", 3, vec![9]));
++    }
++
++    #[test]
++    fn a_save_gives_back_what_was_kept() {
++        let mut e = ModEntityState::new(7, "minecraft:overworld", &kind(), [1.5, 64.0, -2.25], vec![0, 255, 16]);
++        e.energy = 123_456_789_012;
++        e.name = Some("Bolt".into());
++        e.yaw = 90.0;
++        e.items[1] = Some(ModItemStack { item: "minecraft:coal".into(), count: 5, components: "{a:1}".into() });
++        let again = decode(&encode(&[e.clone(), e.clone()]));
++        assert_eq!(again, vec![e.clone(), e]);
++        // A broken row is left out, a broken file is empty.
++        assert!(decode(r#"{"entities":[{"id":1}]}"#).is_empty());
++        assert!(decode("not json").is_empty());
++    }
++
++    #[test]
++    fn an_update_changes_what_it_names_and_drops_what_does_not_fit() {
++        let k = kind();
++        let mut e = ModEntityState::new(1, "minecraft:overworld", &k, [0.0; 3], vec![1]);
++        let mut u = update(1);
++        u.data = Some(vec![2, 3]);
++        u.energy = Some(40);
++        u.skin = Some("red".into());
++        u.name = Some(Some("Bolt".into()));
++        u.teleport = Some((5.0, 70.0, 5.0));
++        u.items = Some(vec![Some(ModItemStack { item: "minecraft:stick".into(), count: 1, components: String::new() }); 5]);
++        assert!(!apply(&mut e, &k, &u));
++        assert_eq!((e.data.clone(), e.energy, e.skin.as_str(), e.pos), (vec![2, 3], 40, "red", [5.0, 70.0, 5.0]));
++        assert_eq!(e.name.as_deref(), Some("Bolt"));
++        assert_eq!(e.items.len(), 3, "the container keeps its 3 slots");
++        // An unknown skin is ignored, `some(none)` takes the name away, remove is told back.
++        let mut u = update(1);
++        u.skin = Some("gold".into());
++        u.name = Some(None);
++        u.remove = true;
++        assert!(apply(&mut e, &k, &u));
++        assert_eq!((e.skin.as_str(), e.name.clone()), ("red", None));
++    }
++}
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 4b1458379..3b0be6ee9 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -12,6 +12,8 @@ pub mod commands;
+ #[cfg(feature = "runtime")]
+ pub mod energy;
+ #[cfg(feature = "runtime")]
++pub mod entity_state;
++#[cfg(feature = "runtime")]
+ pub mod flow;
+ #[cfg(feature = "runtime")]
+ pub mod multiblock;
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 6d78c8ad0..94223e58b 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, ModEntity, ModEntityUpdate, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::{EffectState, Motion, PlayerState},
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -63,6 +63,8 @@ pub use server_bindings::{
+ /// Block entities handed to one mod in one tick, and the most bytes one keeps.
+ pub const BLOCK_ENTITIES_PER_CALL: usize = 4096;
+ pub const BLOCK_ENTITY_BYTES: usize = 65536;
++/// Most entities of one mod's kinds a tick call carries.
++pub const MOD_ENTITIES_PER_CALL: usize = 256;
+ type ClientEvents = bindings::exports::horizon::mods::events::Guest;
+ type ServerEvents = server_bindings::exports::horizon::mods::server_events::Guest;
+ /// The widget model a `ui` screen or settings page shows (WIT `interface
+@@ -241,6 +243,13 @@ pub enum EntityCommand {
+         id: u32,
+         ticks: u32,
+     },
++    /// `entities.spawn-mod-entity` (FORK-10): a living entity of the mod's own kind.
++    SpawnModEntity {
++        ticket: u64,
++        kind: String,
++        pos: [f64; 3],
++        data: Vec<u8>,
++    },
+ }
+ 
+ /// What mods may read of the game, copied once per tick by the game.
+@@ -1536,6 +1545,47 @@ impl Mods {
+         }
+         out
+     }
++    /// Whether a running server mod asked for `mod-entities`.
++    pub fn hears_mod_entities(&self) -> bool {
++        self.entries.iter().filter_map(|e| e.run.as_ref()?.hooks.server()).any(|r| r.mod_entities)
++    }
++    /// Each mod's own entities (`kind` of its namespace, at most [`MOD_ENTITIES_PER_CALL`]) tick: the updates, checked, of mods that
++    /// asked for them.
++    pub fn entities_tick(&mut self, tick: u64, entities: &[ModEntity]) -> Vec<ModEntityUpdate> {
++        let mut out = Vec::new();
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.mod_entities) {
++                continue;
++            }
++            let Some(id) = self.entries[i].manifest.as_ref().map(|m| m.id.clone()) else { continue };
++            let mine: Vec<ModEntity> = entities
++                .iter()
++                .filter(|e| e.kind.split_once(':').map(|(ns, _)| ns) == Some(id.as_str()))
++                .take(MOD_ENTITIES_PER_CALL)
++                .cloned()
++                .collect();
++            if mine.is_empty() {
++                continue;
++            }
++            let updates = self.call(i, FUEL_TICK, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_entities_tick(&mut run.store, tick, &mine),
++                Hooks::Client(..) => Ok(Vec::new()),
++            });
++            for u in updates.into_iter().flatten() {
++                let given = mine.iter().any(|e| e.dimension == u.dimension && e.id == u.id);
++                let finite = u.teleport.is_none_or(|t| t.0.is_finite() && t.1.is_finite() && t.2.is_finite());
++                if given
++                    && finite
++                    && u.data.as_ref().is_none_or(|d| d.len() <= BLOCK_ENTITY_BYTES)
++                    && u.items.as_ref().is_none_or(|s| s.len() <= 256)
++                    && u.name.as_ref().is_none_or(|n| n.as_ref().is_none_or(|n| n.len() <= 128))
++                {
++                    out.push(u);
++                }
++            }
++        }
++        out
++    }
+     /// `player` pressed menu button `id` of the menu of `entity` (a block
+     /// entity of a running server mod's block, as the game holds it): the
+     /// update the mod answers with, checked as a tick's.
+@@ -3006,13 +3056,27 @@ impl entities::Host for State {
+     fn remove_mob(&mut self, dimension: String, id: u32) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::RemoveMob { id }, &[])
+     }
++    fn spawn_mod_entity(&mut self, dimension: String, kind: String, x: f64, y: f64, z: f64, data: Vec<u8>) -> Result<u64, String> {
++        if !kind_ok(&kind) {
++            return Err(format!("{kind:?} is not an entity kind"));
++        }
++        if kind.split_once(':').map(|(ns, _)| ns) != Some(self.id.as_str()) {
++            return Err(format!("{kind} is not a kind of this mod ({}:...)", self.id));
++        }
++        if data.len() > BLOCK_ENTITY_BYTES {
++            return Err(format!("data is {BLOCK_ENTITY_BYTES} bytes at most"));
++        }
++        let ticket = self.next_ticket;
++        self.entity_request(dimension, EntityCommand::SpawnModEntity { ticket, kind, pos: [x, y, z], data }, &[x, y, z])?;
++        self.next_ticket += 1;
++        Ok(ticket)
++    }
+     fn set_entity_fire(&mut self, dimension: String, id: u32, ticks: u32) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::SetFire { id, ticks: ticks.min(72_000) }, &[])
+     }
+ }
+ /// Most strings a menu carries and bytes each holds (`world.set-menu-text`).
+-pub const MENU_TEXTS: usize = 64;
+-pub const MENU_TEXT_BYTES: usize = 256;
++pub use crate::content::{MENU_TEXT_BYTES, MENU_TEXTS};
+ /// Most bytes a mod message holds, and messages a call may send.
+ const NET_BYTES: usize = 30_000;
+ const NET_PER_CALL: usize = 32;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 00644bd49..a0b706566 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -69,6 +69,10 @@ pub struct TestGame {
+     pub hit_damage_result: Option<f32>,
+     /// What the last `item_released` answered.
+     pub release_result: Option<bool>,
++    /// The living entities of the mod's own kinds (FORK-10) and the kinds its content declares.
++    pub mod_entities: Vec<crate::ModEntity>,
++    pub entity_kinds: Vec<crate::content::EntityKind>,
++    next_mod_entity: u32,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
+     /// The blocks packed into boxes (`world.pack-block`), by the box's position.
+@@ -271,6 +275,9 @@ impl TestGame {
+             damage_result: None,
+             hit_damage_result: None,
+             release_result: None,
++            mod_entities: Vec::new(),
++            entity_kinds: Vec::new(),
++            next_mod_entity: 1000,
+             can_place_result: None,
+             packed: Default::default(),
+             crafts: Vec::new(),
+@@ -283,6 +290,11 @@ impl TestGame {
+     }
+ 
+     fn start(&mut self) -> Result<(), String> {
++        if let Ok(package) = crate::manifest::Package::read(&self.hmod)
++            && let Ok(content) = crate::Content::read(&self.hmod, &package.manifest)
++        {
++            self.entity_kinds = content.entity_kinds.clone();
++        }
+         self.mods = Mods::load(std::slice::from_ref(&self.hmod), |_| true, |_| false);
+         match &self.mods.entries()[0].status {
+             Status::Failed(reason) => Err(format!("the mod didn't start: {reason}")),
+@@ -338,6 +350,50 @@ impl TestGame {
+             self.mods.tick(self.tick);
+             self.mods.server_tick(self.tick);
+             self.tick_block_entities();
++            self.tick_mod_entities();
++        }
++    }
++    /// `entities-tick` with the mod's entities, and what it answers applied (as the game does: data, slots, energy, skin, name, a teleport, a removal).
++    fn tick_mod_entities(&mut self) {
++        if self.mod_entities.is_empty() || !self.mods.hears_mod_entities() {
++            return;
++        }
++        let list = self.mod_entities.clone();
++        for u in self.mods.entities_tick(self.tick, &list) {
++            let Some(i) = self.mod_entities.iter().position(|e| e.id == u.id && e.dimension == u.dimension) else {
++                continue;
++            };
++            if u.remove {
++                self.mod_entities.remove(i);
++                continue;
++            }
++            let slots = self.entity_kinds.iter().find(|k| k.id == self.mod_entities[i].kind).map_or(0, |k| usize::from(k.container_slots));
++            let skins: Vec<String> = self
++                .entity_kinds
++                .iter()
++                .find(|k| k.id == self.mod_entities[i].kind)
++                .map(|k| k.skins.iter().map(|s| s.id.clone()).collect())
++                .unwrap_or_default();
++            let e = &mut self.mod_entities[i];
++            if let Some(d) = u.data {
++                e.data = d;
++            }
++            if let Some(mut items) = u.items {
++                items.resize(slots, None);
++                e.items = items;
++            }
++            if let Some(energy) = u.energy {
++                e.energy = energy;
++            }
++            if let Some(skin) = u.skin.filter(|s| skins.contains(s)) {
++                e.skin = skin;
++            }
++            if let Some(name) = u.name {
++                e.name = name;
++            }
++            if let Some((x, y, z)) = u.teleport {
++                (e.x, e.y, e.z) = (x, y, z);
++            }
+         }
+     }
+     /// Makes and drops block entities to match `world`, then runs
+@@ -1349,6 +1405,8 @@ pub struct Expect {
+     teleports: Option<Vec<String>>,
+     xp_taken: Option<Vec<String>>,
+     sounds: Option<Vec<String>>,
++    /// Server mods (FORK-10): the mod's entities after the step, as `"id kind x y z energy=E data=[bytes] skin=S name=N"` (name `-` for none).
++    mod_entities: Option<Vec<String>>,
+     /// Server mods (FORK-20): every `set-menu-text`, as `"dimension x y z text|text"`.
+     menu_text: Option<Vec<String>>,
+     /// Server mods (FORK-34): every `set-capabilities-enabled`, as `"dimension x y z items=true fluids=true energy=false"`.
+@@ -1790,6 +1848,39 @@ impl Step {
+                 }
+             }
+         }
++        // A mod entity spawned or removed (FORK-10): the spawn is answered with its id, as the game does.
++        for o in &out {
++            let Output::Entity { dimension, command, .. } = o else { continue };
++            match command {
++                crate::EntityCommand::SpawnModEntity { ticket, kind, pos, data } => {
++                    let Some(k) = game.entity_kinds.iter().find(|k| &k.id == kind).cloned() else {
++                        game.mods.entity_spawned(&game.mod_id(), *ticket, None);
++                        continue;
++                    };
++                    game.next_mod_entity += 1;
++                    let id = game.next_mod_entity;
++                    game.mod_entities.push(crate::ModEntity {
++                        id,
++                        dimension: dimension.clone(),
++                        kind: kind.clone(),
++                        x: pos[0],
++                        y: pos[1],
++                        z: pos[2],
++                        yaw: 0.0,
++                        health: k.max_health,
++                        data: data.clone(),
++                        items: vec![None; usize::from(k.container_slots)],
++                        energy: 0,
++                        skin: k.skins.first().map(|s| s.id.clone()).unwrap_or_default(),
++                        name: None,
++                    });
++                    game.snapshot();
++                    game.mods.entity_spawned(&game.mod_id(), *ticket, Some(id));
++                }
++                crate::EntityCommand::RemoveEntity { id } => game.mod_entities.retain(|e| e.id != *id),
++                _ => {}
++            }
++        }
+         // A block packed goes into its box (the scripts keep its state), and comes out at the place it is unpacked.
+         for o in &out {
+             match o {
+@@ -2122,6 +2213,9 @@ impl Step {
+                         C::KillMob { id } => format!("kill-mob {id}"),
+                         C::RemoveMob { id } => format!("remove-mob {id}"),
+                         C::SetFire { id, ticks } => format!("fire {id} {ticks}"),
++                        C::SpawnModEntity { ticket, kind, pos, data } => {
++                            format!("spawn-mod-entity {kind} {} {} {} {} byte(s) #{ticket}", pos[0], pos[1], pos[2], data.len())
++                        }
+                     }),
+                     _ => None,
+                 })
+@@ -2227,6 +2321,19 @@ impl Step {
+                 .collect();
+             same("particles", want, &got)?;
+         }
++        if let Some(want) = &e.mod_entities {
++            let got: Vec<String> = game
++                .mod_entities
++                .iter()
++                .map(|m| {
++                    format!(
++                        "{} {} {} {} {} energy={} data={:?} skin={} name={}",
++                        m.id, m.kind, m.x, m.y, m.z, m.energy, m.data, m.skin, m.name.as_deref().unwrap_or("-")
++                    )
++                })
++                .collect();
++            same("mod-entities", want, &got)?;
++        }
+         if let Some(want) = &e.menu_text {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 1054b1271..68269cd76 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 35);
++    assert_eq!(LEVEL, 36);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 37715cd58..03aa65d1f 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -906,6 +906,7 @@ A display entity's transformation (`block_display`, `item_display`, `text_displa
+ | `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
+ | `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+ | `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
++| `spawn-mod-entity` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>` | Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with. An error for a kind that is not a plain id or too many bytes. API 36. |
+ | `set-entity-fire` | `func(dimension: string, id: u32, ticks: u32) -> result<_, string>` | Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33. |
+ 
+ ## `item-types`
+@@ -1228,6 +1229,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `chunks` | `bool` | Call `chunk-loaded`. |
+ | `damage` | `bool` | Call `player-damaged` and `item-hit-damage`. |
+ | `item-release` | `bool` | Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`). |
++| `mod-entities` | `bool` | Call `entities-tick` with the living entities of the mod's own kinds (`data/<id>/horizon/entity_kind/`). |
+ | `redirects` | `list<redirect-spec>` | Blocks of the mod that stand for another block (FORK-35): a click on them, or breaking them, reaches the block they name. |
+ 
+ ### record `block-entity`
+@@ -1248,6 +1250,42 @@ A block entity of the mod, as the server holds it.
+ | `menu-data` | `list<s32>` | The data slots its menu shows (progress, a mode), 16 bits each on the wire. |
+ | `transmitter-faces` | `list<bool>` | The faces a transmitter connects through now (down, up, north, south, west, east); empty for a block that is not one. |
+ 
++### record `mod-entity`
++
++A living entity of one of the mod's kinds (FORK-10, the Robit): the game keeps it, its container and its saved bytes, and the mod decides what it does each tick.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` |  |
++| `dimension` | `string` |  |
++| `kind` | `string` | The kind's id, `mymod:robit`. |
++| `x` | `f64` |  |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `yaw` | `f32` |  |
++| `health` | `f32` |  |
++| `data` | `list<u8>` | The mod's own saved bytes (at most 64 KiB). |
++| `items` | `list<option<item-stack>>` | The container's slots (the kind's `container_slots`). |
++| `energy` | `u64` |  |
++| `skin` | `string` | The id of the kind's skin it shows. |
++| `name` | `option<string>` | The name it was given, shown over it. |
++
++### record `mod-entity-update`
++
++What the mod makes of an entity in a tick; a none leaves that as it is.
++
++| Field | Type | |
++| --- | --- | --- |
++| `dimension` | `string` |  |
++| `id` | `u32` |  |
++| `data` | `option<list<u8>>` |  |
++| `items` | `option<list<option<item-stack>>>` | The slots after the call; extra slots past the container's, and stacks of unknown items, are dropped. |
++| `energy` | `option<u64>` |  |
++| `skin` | `option<string>` | A skin id of the kind; an unknown one is ignored. |
++| `name` | `option<option<string>>` | `some(none)` takes the name away. |
++| `teleport` | `option<tuple<f64, f64, f64>>` | Moves it at once (as `/tp` does). |
++| `remove` | `bool` | Takes it out of the world with no death and no drops. |
++
+ ### record `block-entity-update`
+ 
+ New bytes and slots for the block entity at `pos` in `dimension`.
+@@ -1276,6 +1314,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-broken` | `func(player: player, pos: block-pos, state: string)` | A player broke the block at `pos` in their dimension: `state` is what was there, as `minecraft:oak_log[axis=y]`. |
+ | `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
++| `entities-tick` | `func(tick: u64, entities: list<mod-entity>) -> list<mod-entity-update>` | Each tick, the living entities of the mod's own kinds (`registration.mod-entities`, FORK-10) in the level in place, up to 256: what the mod answers is applied at once. Not asked of an entity whose chunk is not loaded. API 36. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+-- 
+2.43.0
+

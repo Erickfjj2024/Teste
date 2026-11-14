@@ -1,0 +1,693 @@
+From d04f18f3da10c431e19c7b7004bd5b2ce6a697a3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 21:54:20 +0000
+Subject: [PATCH] Item slots for WASM block entities (API block 2)
+
+container-spec in block-entity-kind, item-stack, items in block-entity and
+block-entity-update; the game builds the container table when server mods
+appear; block-mover example and harness support (set-items, block-items).
+---
+ Cargo.lock                                    |  7 ++
+ Cargo.toml                                    |  1 +
+ .../src/game/block_entity_ticks.rs            |  8 ++
+ crates/horizon-client/src/game/mods.rs        |  3 +
+ .../horizon-client/src/game/native_hooks.rs   | 24 ++++++
+ crates/horizon-client/src/game/server_mods.rs | 70 +++++++++++++--
+ .../examples/block-counter/src/lib.rs         |  1 +
+ .../examples/block-mover/Cargo.toml           | 16 ++++
+ .../examples/block-mover/horizon-mod.toml     |  8 ++
+ .../examples/block-mover/src/lib.rs           | 61 +++++++++++++
+ .../examples/block-mover/tests/moves.toml     | 27 ++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 39 ++++++++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 29 ++++++-
+ crates/horizon-mods/src/runtime.rs            |  7 +-
+ crates/horizon-mods/src/testing.rs            | 85 +++++++++++++++++--
+ 15 files changed, 368 insertions(+), 18 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/block-mover/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/block-mover/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/block-mover/tests/moves.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 9056839..9be18d9 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -342,6 +342,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "block-mover"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "block-padding"
+ version = "0.3.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 72937ae..c3a5349 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -40,6 +40,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/coords-hud",
+     "crates/horizon-mod-sdk/examples/elevator",
+     "crates/horizon-mod-sdk/examples/block-counter",
++    "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game/block_entity_ticks.rs b/crates/horizon-client/src/game/block_entity_ticks.rs
+index 57e6acb..5b75319 100644
+--- a/crates/horizon-client/src/game/block_entity_ticks.rs
++++ b/crates/horizon-client/src/game/block_entity_ticks.rs
+@@ -29,6 +29,14 @@ impl Game<'_> {
+             let fluids = self.native_fluid_tables();
+             self.world.block_entities.set_mod_fluids(fluids);
+         }
++        // Server mods start after the table is first made: their blocks'
++        // containers join it when they appear.
++        #[cfg(feature = "mods")]
++        if self.mods.container_generation != Some(self.mods.mods.generation()) {
++            self.mods.container_generation = Some(self.mods.mods.generation());
++            let containers = self.native_containers();
++            self.world.block_entities.set_mod_containers(containers);
++        }
+         // Only lingering cooldowns are dropped; a hopper that ticks checks
+         // its own block. Once a second is soon enough for the rest.
+         if self.world.game_time % 20 == 0 {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index f889468..579baa4 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -99,6 +99,9 @@ pub(super) struct ModsState {
+     /// Extras that are official mods now, being installed.
+     #[cfg(feature = "mods")]
+     pub(super) moved: super::moved_extras::MovedState,
++    /// The mods' generation the block entity containers were last made for.
++    #[cfg(feature = "mods")]
++    pub(super) container_generation: Option<u64>,
+     /// Playing at the last frame, for `mod_input_frame`.
+     #[cfg(feature = "mods")]
+     pub(super) playing: bool,
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index e0ad922..5b80217 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1449,6 +1449,30 @@ impl Game<'_> {
+         block: &str,
+         container: &mut Option<ModContainer>,
+     ) {
++        // A server mod's block entity (WASM) with slots.
++        #[cfg(feature = "mods")]
++        if container.is_none()
++            && let Some(spec) = self
++                .mods
++                .mods
++                .block_entity_kinds()
++                .into_iter()
++                .find(|k| k.block == block)
++                .and_then(|k| k.container)
++        {
++            let list = |l: &[u32]| l.iter().map(|&s| s as usize).collect::<Vec<_>>();
++            let mut faces: [Vec<usize>; 6] = Default::default();
++            for (face, slots) in faces.iter_mut().zip(&spec.faces) {
++                *face = list(slots);
++            }
++            *container = Some(ModContainer {
++                slots: spec.slots as usize,
++                faces,
++                inputs: list(&spec.inputs),
++                outputs: list(&spec.outputs),
++                menu: None,
++            });
++        }
+         let _ = (block, container);
+     }
+     /// Block `block`'s block entity has fluid tanks: set `fluids` when the
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 067fe0e..136a7e0 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -472,6 +472,45 @@ mod run {
+             out
+         }
+ 
++        /// A slot as the mod sees it: id, count and the SNBT of its components.
++        fn mod_stack(stack: &horizon_client::items::ItemStack) -> horizon_mods::ModItemStack {
++            let tag = horizon_client::save::item_to_nbt(stack);
++            let components = tag
++                .get("components")
++                .map(horizon_world::snbt_text::to_snbt)
++                .unwrap_or_default();
++            horizon_mods::ModItemStack {
++                item: stack.item.to_string(),
++                count: stack.count,
++                components,
++            }
++        }
++
++        /// A slot from the mod: none for an item the game doesn't know, an
++        /// empty stack or components that don't parse; the count is kept
++        /// within the item's stack size.
++        fn game_stack(
++            &self,
++            s: &horizon_mods::ModItemStack,
++        ) -> Option<horizon_client::items::ItemStack> {
++            let max = self.items().get(&s.item).map(|i| i.max_stack)?;
++            if s.count == 0 {
++                return None;
++            }
++            let mut entries = vec![
++                ("id", horizon_world::nbt::Tag::String(s.item.as_str().into())),
++                (
++                    "count",
++                    horizon_world::nbt::Tag::Int(s.count.min(max) as i32),
++                ),
++            ];
++            if !s.components.is_empty() {
++                let (components, _) = horizon_world::nbt::parse_snbt(&s.components).ok()?;
++                entries.push(("components", components));
++            }
++            horizon_client::save::item_from_nbt(&horizon_world::nbt::Tag::compound(entries))
++        }
++
+         /// The loaded block entities (this level's) of blocks server mods
+         /// gave one and asked to tick, with their saved bytes.
+         fn collect_mod_entities(&mut self) -> Vec<horizon_mods::BlockEntity> {
+@@ -481,7 +520,7 @@ mod run {
+             }
+             let registry = self.pack.assets.registry;
+             let dim = self.dim.id();
+-            let found: Vec<([i32; 3], Vec<u8>)> = self
++            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>)> = self
+                 .world
+                 .block_entities
+                 .iter_mut()
+@@ -489,20 +528,24 @@ mod run {
+                     let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
+                         return None;
+                     };
+-                    if !kinds.iter().any(|k| k.ticks && k.block == m.id) {
+-                        return None;
++                    let kind = kinds.iter().find(|k| k.ticks && k.block == m.id)?;
++                    // Grown only, as the engine's own tick does.
++                    let slots = kind.container.as_ref().map_or(0, |c| c.slots.min(256) as usize);
++                    if m.items.len() < slots {
++                        m.items.resize(slots, None);
+                     }
+                     let data = match m.nbt.get(&horizon_world::nbt::JavaString::from("data")) {
+                         Some(horizon_world::nbt::Tag::ByteArray(b)) => b.clone(),
+                         _ => Vec::new(),
+                     };
+-                    Some(([pos.0, pos.1, pos.2], data))
++                    let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
++                    Some(([pos.0, pos.1, pos.2], data, items))
+                 })
+                 .take(horizon_mods::BLOCK_ENTITIES_PER_CALL)
+                 .collect();
+             found
+                 .into_iter()
+-                .map(|(p, data)| horizon_mods::BlockEntity {
++                .map(|(p, data, items)| horizon_mods::BlockEntity {
+                     dimension: dim.into(),
+                     pos: BlockPos {
+                         x: p[0],
+@@ -511,6 +554,7 @@ mod run {
+                     },
+                     state: state_string(registry, self.world.block(p[0], p[1], p[2])),
+                     data,
++                    items,
+                 })
+                 .collect()
+         }
+@@ -534,6 +578,22 @@ mod run {
+                         self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                     }
+                 }
++                if let Some(items) = u.items {
++                    let slots = match self.world.block_entities.get_mut(&key) {
++                        Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.items.len(),
++                        _ => continue,
++                    };
++                    let mut new: Vec<_> = items.iter().map(|s| s.as_ref().and_then(|s| self.game_stack(s))).collect();
++                    new.resize(slots, None);
++                    if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                        self.world.block_entities.get_mut(&key)
++                        && m.items != new
++                    {
++                        m.items = new;
++                        self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                        self.container_changed(key);
++                    }
++                }
+             }
+         }
+ 
+diff --git a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+index dd1d729..9cb484a 100644
+--- a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+@@ -22,6 +22,7 @@ impl ServerMod for Counter {
+                     dimension: e.dimension,
+                     pos: e.pos,
+                     data: (n + 1).to_le_bytes().to_vec(),
++                    items: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/Cargo.toml b/crates/horizon-mod-sdk/examples/block-mover/Cargo.toml
+new file mode 100644
+index 0000000..2d851f8
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-mover/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "block-mover"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a block entity with two slots that moves items from the first to the second"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/horizon-mod.toml b/crates/horizon-mod-sdk/examples/block-mover/horizon-mod.toml
+new file mode 100644
+index 0000000..850ea22
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-mover/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "blockmover"
++name = "Block Mover"
++version = "0.1.0"
++description = "Test mod for block entity slots: every blockmover:mover block moves one item a tick from its first slot to its second."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+new file mode 100644
+index 0000000..2b3ec0e
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+@@ -0,0 +1,61 @@
++//! Block Mover: the smallest user of block entity slots. `blockmover:mover`
++//! has two slots; every tick it moves one item from slot 0 to slot 1 when
++//! slot 1 is empty or holds the same item (and has room: 64).
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityUpdate, ContainerSpec, Registration, ServerMod,
++};
++
++struct Mover;
++
++impl ServerMod for Mover {
++    fn init() -> Result<(Self, Registration), String> {
++        let slots = ContainerSpec {
++            slots: 2,
++            // Hoppers above feed slot 0; the rest of the faces take from slot 1.
++            faces: vec![vec![1], vec![0], vec![1], vec![1], vec![1], vec![1]],
++            inputs: vec![0],
++            outputs: vec![1],
++        };
++        Ok((
++            Mover,
++            Registration::new().block_entity_with_slots("blockmover:mover", true, slots),
++        ))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        let mut out = Vec::new();
++        for e in entities {
++            let mut items = e.items.clone();
++            items.resize(2, None);
++            let Some(src) = items[0].clone() else { continue };
++            let room = match &items[1] {
++                None => true,
++                Some(d) => d.item == src.item && d.components == src.components && d.count < 64,
++            };
++            if !room {
++                continue;
++            }
++            match &mut items[1] {
++                Some(d) => d.count += 1,
++                slot => {
++                    let mut one = src.clone();
++                    one.count = 1;
++                    *slot = Some(one);
++                }
++            }
++            if src.count <= 1 {
++                items[0] = None;
++            } else if let Some(s) = &mut items[0] {
++                s.count -= 1;
++            }
++            out.push(BlockEntityUpdate {
++                dimension: e.dimension,
++                pos: e.pos,
++                data: e.data,
++                items: Some(items),
++            });
++        }
++        out
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Mover);
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/tests/moves.toml b/crates/horizon-mod-sdk/examples/block-mover/tests/moves.toml
+new file mode 100644
+index 0000000..12ef82a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/block-mover/tests/moves.toml
+@@ -0,0 +1,27 @@
++# The mover takes one item a tick from slot 0 to slot 1, until slot 0 is empty;
++# a different item in slot 1 blocks it; replacing the block drops the slots.
++
++[[step]]
++join = "Alex"
++blocks = [{ x = 0, y = 64, z = 0, state = "blockmover:mover" }]
++set-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:stone*3", ""] }]
++ticks = 1
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:stone*2", "minecraft:stone*1"] }]
++
++[[step]]
++ticks = 5
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["", "minecraft:stone*3"] }]
++
++[[step]]
++set-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:dirt*2", "minecraft:stone*3"] }]
++ticks = 2
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["minecraft:dirt*2", "minecraft:stone*3"] }]
++
++[[step]]
++blocks = [{ x = 0, y = 64, z = 0, state = "minecraft:air" }]
++ticks = 1
++
++[[step]]
++blocks = [{ x = 0, y = 64, z = 0, state = "blockmover:mover" }]
++ticks = 1
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ["", ""] }]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 2419ccf..0cef5a2 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -196,7 +196,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, ContainerSpec, ItemStack, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -241,6 +241,28 @@ pub mod server {
+         }
+     }
+ 
++    impl ContainerSpec {
++        /// `slots` slots that every face reaches and hoppers may fill and empty.
++        pub fn open(slots: u32) -> Self {
++            let all: Vec<u32> = (0..slots).collect();
++            Self {
++                slots,
++                faces: vec![all.clone(); 6],
++                inputs: all.clone(),
++                outputs: all,
++            }
++        }
++    }
++    impl ItemStack {
++        pub fn new(item: &str, count: u32) -> Self {
++            Self {
++                item: item.into(),
++                count,
++                components: String::new(),
++            }
++        }
++    }
++
+     impl Registration {
+         /// No commands and no hooks.
+         pub fn new() -> Self {
+@@ -259,6 +281,21 @@ pub mod server {
+             self.block_entities.push(BlockEntityKind {
+                 block: block.into(),
+                 ticks,
++                container: None,
++            });
++            self
++        }
++        /// As [`Registration::block_entity`], with item slots.
++        pub fn block_entity_with_slots(
++            mut self,
++            block: &str,
++            ticks: bool,
++            container: ContainerSpec,
++        ) -> Self {
++            self.block_entities.push(BlockEntityKind {
++                block: block.into(),
++                ticks,
++                container: Some(container),
+             });
+             self
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index a12ae7f..aa8bb98 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -828,6 +828,28 @@ interface server-events {
+         block: string,
+         /// Include this block's entities in `block-entities-tick`.
+         ticks: bool,
++        /// Item slots the block entity holds, as a vanilla container does
++        /// (players, hoppers and droppers use them; a broken block drops
++        /// them). None: no slots.
++        container: option<container-spec>,
++    }
++    /// The slots of a block entity. Slot numbers start at 0; at most 256 slots.
++    record container-spec {
++        slots: u32,
++        /// The slots each face reaches, in this order of faces: down, up,
++        /// north, south, west, east (what a hopper next to that face sees).
++        faces: list<list<u32>>,
++        /// The slots hoppers may put into.
++        inputs: list<u32>,
++        /// The slots hoppers may take from.
++        outputs: list<u32>,
++    }
++    /// An item stack. `components` is the SNBT of its data components
++    /// (`{"minecraft:damage":3}`), empty for none.
++    record item-stack {
++        item: string,
++        count: u32,
++        components: string,
+     }
+     /// A block entity of the mod, as the server holds it.
+     record block-entity {
+@@ -837,12 +859,17 @@ interface server-events {
+         state: string,
+         /// What the mod saved last (empty for a new one): at most 65536 bytes.
+         data: list<u8>,
++        /// Its slots, as many as its container has (none for a block with no container).
++        items: list<option<item-stack>>,
+     }
+-    /// New bytes for the block entity at `pos` in `dimension`.
++    /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+         dimension: string,
+         pos: block-pos,
+         data: list<u8>,
++        /// The slots after the call; none leaves them as they are. Extra
++        /// slots past the container's, and stacks of unknown items, are dropped.
++        items: option<list<option<item-stack>>>,
+     }
+     /// Once, after loading. An error keeps the mod off and is logged.
+     init: func() -> result<registration, string>;
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 9c73554..c600f16 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ServerCommand,
++        BlockPos, ContainerSpec, ItemStack as ModItemStack, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -959,7 +959,10 @@ impl Mods {
+                 let given = mine
+                     .iter()
+                     .any(|e| e.dimension == u.dimension && e.pos == u.pos);
+-                if given && u.data.len() <= BLOCK_ENTITY_BYTES {
++                if given
++                    && u.data.len() <= BLOCK_ENTITY_BYTES
++                    && u.items.as_ref().is_none_or(|s| s.len() <= 256)
++                {
+                     out.push(u);
+                 }
+             }
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 9aeefd4..15145b7 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -41,6 +41,8 @@ pub struct TestGame {
+     /// is made when a script sets a block a mod gave a block entity, and
+     /// dropped when the block changes to another.
+     pub block_entities: std::collections::BTreeMap<(i32, i32, i32), Vec<u8>>,
++    /// Their slots, by position, as `"minecraft:stone*3"` (empty: no stack).
++    pub block_items: std::collections::BTreeMap<(i32, i32, i32), Vec<String>>,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -159,6 +161,7 @@ impl TestGame {
+             tick: 0,
+             world: Default::default(),
+             block_entities: Default::default(),
++            block_items: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -224,24 +227,44 @@ impl TestGame {
+         };
+         self.block_entities
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        self.block_items
++            .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
+         for (pos, state) in &self.world {
+             if of(state) {
+                 self.block_entities.entry(*pos).or_default();
+             }
+         }
+-        let list: Vec<crate::BlockEntity> = self
+-            .block_entities
+-            .iter()
+-            .map(|(&(x, y, z), data)| crate::BlockEntity {
++        let slots_of = |state: &str| {
++            let block = state.split('[').next().unwrap_or("");
++            kinds
++                .iter()
++                .find(|k| k.block == block)
++                .and_then(|k| k.container.as_ref())
++                .map_or(0, |c| c.slots as usize)
++        };
++        let mut list = Vec::new();
++        for (&(x, y, z), data) in &self.block_entities {
++            let state = self.world[&(x, y, z)].clone();
++            let n = slots_of(&state);
++            let held = self.block_items.entry((x, y, z)).or_default();
++            held.resize(n, String::new());
++            list.push(crate::BlockEntity {
+                 dimension: "minecraft:overworld".into(),
+                 pos: BlockPos { x, y, z },
+-                state: self.world[&(x, y, z)].clone(),
++                state,
+                 data: data.clone(),
+-            })
+-            .collect();
++                items: held.iter().map(|s| parse_stack(s)).collect(),
++            });
++        }
+         for u in self.mods.block_entities_tick(self.tick, &list) {
+-            self.block_entities
+-                .insert((u.pos.x, u.pos.y, u.pos.z), u.data);
++            let key = (u.pos.x, u.pos.y, u.pos.z);
++            self.block_entities.insert(key, u.data);
++            if let Some(items) = u.items {
++                let n = self.block_items.get(&key).map_or(0, Vec::len);
++                let mut text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
++                text.resize(n, String::new());
++                self.block_items.insert(key, text);
++            }
+         }
+     }
+     /// `n` frames, 1/60 s apart.
+@@ -449,6 +472,30 @@ pub struct MotionSet {
+     xp_progress: Option<f32>,
+ }
+ 
++fn parse_stack(text: &str) -> Option<crate::ModItemStack> {
++    let (item, count) = text.split_once('*')?;
++    Some(crate::ModItemStack {
++        item: item.into(),
++        count: count.parse().ok()?,
++        components: String::new(),
++    })
++}
++fn show_stack(s: &Option<crate::ModItemStack>) -> String {
++    s.as_ref()
++        .map_or(String::new(), |s| format!("{}*{}", s.item, s.count))
++}
++
++/// The slots of a block entity a step sets or expects.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct BlockItemsSet {
++    x: i32,
++    y: i32,
++    z: i32,
++    /// `"minecraft:stone*3"`, or `""` for an empty slot.
++    slots: Vec<String>,
++}
++
+ /// A block entity's bytes a step expects.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -513,6 +560,10 @@ pub struct Step {
+     /// `world`); every other block is air.
+     #[serde(default)]
+     blocks: Vec<BlockSet>,
++    /// Slots of block entities before the ticks (the entity must exist: set
++    /// its block in an earlier step).
++    #[serde(default)]
++    set_items: Vec<BlockItemsSet>,
+     #[serde(default)]
+     expect: Expect,
+ }
+@@ -538,6 +589,8 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods: the slots of block entities after the step.
++    block_items: Option<Vec<BlockItemsSet>>,
+     /// Server mods: the saved bytes of block entities after the step.
+     block_entities: Option<Vec<BlockEntityExpect>>,
+     /// Server mods, capability `player-control`: every `teleport` as
+@@ -691,6 +744,9 @@ impl Step {
+         for b in &self.blocks {
+             game.world.insert((b.x, b.y, b.z), b.state.clone());
+         }
++        for s in &self.set_items {
++            game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
++        }
+         game.mods
+             .lend_world(Box::new(ScriptWorld(game.world.clone())));
+         if let Some(name) = &self.join {
+@@ -891,6 +947,17 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.block_items {
++            for b in want {
++                let got = game.block_items.get(&(b.x, b.y, b.z));
++                if got != Some(&b.slots) {
++                    return Err(format!(
++                        "slots at {} {} {}: expected {:?}, got {got:?}",
++                        b.x, b.y, b.z, b.slots
++                    ));
++                }
++            }
++        }
+         if let Some(want) = &e.block_entities {
+             for b in want {
+                 let got = game.block_entities.get(&(b.x, b.y, b.z));
+-- 
+2.43.0
+
