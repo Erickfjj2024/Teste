@@ -26,6 +26,7 @@ pub const EDIT_MODE_PREV: i32 = 5101;
 pub const SECURITY_NEXT: i32 = 9100;
 pub const SECURITY_PREV: i32 = 9101;
 
+pub const TAB_CONTAINER_EDIT_MODE: u32 = 0xFF36_6BD0; // SpecialColors.TAB_CONTAINER_EDIT_MODE
 pub const TAB_SECURITY: u32 = 0xFFFF_A160;
 
 pub struct FluidTankScreen {
@@ -109,7 +110,12 @@ impl MekScreen for FluidTankScreen {
 
         if stored > 0 && capacity > 0 {
             let fill = (stored as f32 / capacity as f32).clamp(0.0, 1.0);
-            c.fluid("minecraft:block/water_still", gauge_rect, fill, 0xFF3F_76E4);
+            let fluid_color = if kind > 0 {
+                crate::factory::chemical_color_by_index(kind)
+            } else {
+                0xFF3F_76E4
+            };
+            c.fluid("minecraft:block/water_still", gauge_rect, fill, fluid_color);
         }
 
         c.blit_sprite("mekanism:gauge/overlay/wide", 49.0, 19.0, 64.0, 48.0);
@@ -118,21 +124,27 @@ impl MekScreen for FluidTankScreen {
 
         if inside(mouse, gauge_rect) {
             if stored == 0 {
-                tooltip_lines = Some(vec![("Empty".to_string(), WHITE)]);
+                let empty_trans = host::translate("gui.mekanism.empty", &[]);
+                let empty_text = if !empty_trans.is_empty() && !empty_trans.starts_with("gui.") {
+                    empty_trans
+                } else {
+                    "Empty".to_string()
+                };
+                tooltip_lines = Some(vec![(empty_text, WHITE)]);
             } else {
                 let label = if kind == 0 {
                     "Fluid".to_string()
                 } else {
-                    format!("Fluid #{kind}")
+                    crate::factory::chemical_name_by_index(kind)
                 };
                 tooltip_lines = Some(vec![(format!("{label}: {stored} mB"), WHITE)]);
             }
         }
 
-        // Edit Mode Tab at (176, 138, 26, 18)
+        // Edit Mode Tab at (176, 138, 26, 18) (GuiContainerEditModeTab.java:31-62, SpecialColors.TAB_CONTAINER_EDIT_MODE = 0xFF366BD0)
         let edit_rect = [176.0, 138.0, 26.0, 18.0];
         let edit_mode = (data(5).max(0) as usize) % 3;
-        c.blit_sprite_tinted("mekanism:holder_right", edit_rect, WHITE);
+        c.blit_sprite_tinted("mekanism:holder_right", edit_rect, TAB_CONTAINER_EDIT_MODE);
         let edit_sprite = match edit_mode {
             1 => "mekanism:container_edit_mode/fill",
             2 => "mekanism:container_edit_mode/empty",
@@ -141,12 +153,22 @@ impl MekScreen for FluidTankScreen {
         c.blit_sprite(edit_sprite, 180.0, 138.0, 18.0, 18.0);
         c.area(EDIT_MODE_NEXT, edit_rect, AreaKind::Tab, true, "Edit mode");
         if inside(mouse, edit_rect) {
-            let tip = match edit_mode {
-                1 => "Fill only",
-                2 => "Empty only",
-                _ => "Fill and empty",
+            let key = match edit_mode {
+                1 => "fluid_container.mekanism.fill",
+                2 => "fluid_container.mekanism.empty",
+                _ => "fluid_container.mekanism.both",
             };
-            tooltip_lines = Some(vec![(format!("Edit mode: {tip}"), WHITE)]);
+            let trans = host::translate(key, &[]);
+            let tip = if !trans.is_empty() && !trans.starts_with("fluid_container.") {
+                trans
+            } else {
+                match edit_mode {
+                    1 => "Fill".to_string(),
+                    2 => "Empty".to_string(),
+                    _ => "Both".to_string(),
+                }
+            };
+            tooltip_lines = Some(vec![(tip, WHITE)]);
         }
 
         // Security Tab at (176, 34, 26, 18)
@@ -253,6 +275,8 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:gauge/normal")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:gauge/overlay/wide")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Fluid { sprite, .. } if sprite == "minecraft:block/water_still")));
+        // Check edit mode tab tinted with SpecialColors.TAB_CONTAINER_EDIT_MODE
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, argb, .. } if sprite == "mekanism:holder_right" && *argb == TAB_CONTAINER_EDIT_MODE)));
 
         // Click Edit Mode tab (left click)
         let click_edit = InputEvent::MousePressed(Pointer {
@@ -275,5 +299,55 @@ mod tests {
         assert!(screen.input(&click_sec));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 9101".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_fluid_tank_edit_mode_hover_and_toggle_prev() {
+        host::set_menu(host::Menu {
+            data: vec![
+                0, // stored lo = 0 (empty)
+                0, // stored hi
+                0, // fluid kind
+                32000, // capacity lo
+                0, // capacity hi
+                1, // edit mode (Fill)
+                0, // security mode (public)
+            ],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:basic_fluid_tank".into(),
+            gui_width: 176.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _setup) = open(&info).expect("open fluid tank");
+
+        // Hover over edit mode tab at (185, 145)
+        let frame_edit = Frame {
+            mouse_x: 185.0,
+            mouse_y: 145.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame_edit, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+
+        // Check tooltip has Fill (fluid_container.mekanism.fill) without "Edit mode:" prefix
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "Fill" || t == "fluid_container.mekanism.fill"))));
+
+        // Right click edit mode tab sends EDIT_MODE_PREV (5101)
+        let click_edit_prev = InputEvent::MousePressed(Pointer {
+            x: 185.0,
+            y: 145.0,
+            button: MouseButton::Right,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_edit_prev));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 5101".to_string(), "click".to_string()]);
     }
 }

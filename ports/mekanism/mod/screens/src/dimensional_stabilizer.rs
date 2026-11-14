@@ -87,9 +87,15 @@ impl MekScreen for DimensionalStabilizerScreen {
         slot_frame(c, 142.0, 34.0);
         c.blit_sprite("mekanism:slot/power", 142.0, 34.0, 18.0, 18.0);
 
-        // Up arrow at (52, 28) and North label "N" centered at (49, 41)
+        // Up arrow at (52, 28) and North label "N" centered at (49, 41) width 15 (GuiDimensionalStabilizer.java:140)
         c.blit_sprite("mekanism:arrow/up", 52.0, 28.0, 8.0, 12.0);
-        c.text("N", 49.0, 41.0, TITLE, 0, 1.0);
+        let north_trans = host::translate("direction.mekanism.north.short", &[]);
+        let north_text = if !north_trans.is_empty() && !north_trans.starts_with("direction.") {
+            north_trans
+        } else {
+            "N".to_string()
+        };
+        c.text(&north_text, 56.5, 41.0, TITLE, horizon_mod_sdk::screen::TEXT_CENTER, 1.0);
 
         let mut hovered_tooltip: Option<Vec<(String, u32)>> = None;
 
@@ -113,20 +119,32 @@ impl MekScreen for DimensionalStabilizerScreen {
                     );
 
                     if is_hover {
-                        let mut lines = vec![("The chunk of the stabilizer is always loaded.".to_string(), WHITE)];
+                        let center_trans = host::translate("gui.mekanism.stabilizer.center", &["0".into(), "0".into()]);
+                        let center_line = if !center_trans.is_empty() && !center_trans.starts_with("gui.") {
+                            center_trans
+                        } else {
+                            "The chunk of the stabilizer is always loaded.".to_string()
+                        };
+                        let mut lines = vec![(center_line, WHITE)];
                         let enable_r = data(8);
                         let disable_r = data(9);
                         if enable_r > 0 {
-                            lines.push((
-                                format!("Left click to enable chunk loading for all chunks with a radius of {enable_r}."),
-                                WHITE,
-                            ));
+                            let enable_trans = host::translate("gui.mekanism.stabilizer.radius.enable", &[enable_r.to_string(), "0".into(), "0".into()]);
+                            let enable_line = if !enable_trans.is_empty() && !enable_trans.starts_with("gui.") {
+                                enable_trans
+                            } else {
+                                format!("Left click to enable chunk loading for all chunks with a radius of {enable_r}.")
+                            };
+                            lines.push((enable_line, WHITE));
                         }
                         if disable_r > 0 {
-                            lines.push((
-                                format!("Right click to disable chunk loading for all chunks with a radius of {disable_r}."),
-                                WHITE,
-                            ));
+                            let disable_trans = host::translate("gui.mekanism.stabilizer.radius.disable", &[disable_r.to_string(), "0".into(), "0".into()]);
+                            let disable_line = if !disable_trans.is_empty() && !disable_trans.starts_with("gui.") {
+                                disable_trans
+                            } else {
+                                format!("Right click to disable chunk loading for all chunks with a radius of {disable_r}.")
+                            };
+                            lines.push((disable_line, WHITE));
                         }
                         hovered_tooltip = Some(lines);
                     }
@@ -142,7 +160,12 @@ impl MekScreen for DimensionalStabilizerScreen {
                         let dx = x as i32 - 2;
                         let dz = z as i32 - 2;
                         let action = if loaded { "off" } else { "on" };
-                        let tip = format!("Toggle chunk loading {action} at ({dx:+}, {dz:+}) from here");
+                        let toggle_trans = host::translate("gui.mekanism.stabilizer.toggle_loading", &[action.into(), format!("{dx:+}"), format!("{dz:+}")]);
+                        let tip = if !toggle_trans.is_empty() && !toggle_trans.starts_with("gui.") {
+                            toggle_trans
+                        } else {
+                            format!("Toggle chunk loading {action} at ({dx:+}, {dz:+}) from here")
+                        };
                         hovered_tooltip = Some(vec![(tip, WHITE)]);
                     }
                 }
@@ -268,7 +291,8 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:bar/base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:slot/power")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:arrow/up")));
-        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "N")));
+        // Check North "N" label centered at x = 56.5 under the arrow (GuiDimensionalStabilizer.java:140)
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, x, flags, .. } if text == "N" && *x == 56.5 && (*flags & horizon_mod_sdk::screen::TEXT_CENTER != 0))));
 
         // Test clicking chunk (0, 0) -> id 7500
         let click_chunk = InputEvent::MousePressed(Pointer {
@@ -291,5 +315,66 @@ mod tests {
         assert!(screen.input(&click_center));
         let sent2 = host::take_sent();
         assert_eq!(sent2, vec!["button 7531".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_dimensional_stabilizer_radius_disable_click_and_tooltip() {
+        let mut test_data = vec![
+            1000, 0, // energy
+            16000, 0, // capacity
+            1,    // active
+            5,    // chunks loaded
+            10000, 0, // energy per tick
+            0,    // enable radius (0 = none)
+            2,    // disable radius (2)
+            0,    // redstone control
+            15000, 0, // needed
+        ];
+        // 25 chunks: all loaded
+        for _ in 0..25 {
+            test_data.push(1);
+        }
+        test_data.push(0 * 3 + 2); // data(38)
+        test_data.push(0);         // data(39) security mode
+
+        host::set_menu(host::Menu {
+            data: test_data,
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:dimensional_stabilizer".into(),
+            gui_width: 176.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _setup) = open(&info).expect("open dimensional stabilizer");
+
+        // Hover over center chunk (85, 42)
+        let frame = Frame {
+            mouse_x: 85.0,
+            mouse_y: 42.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        let commands = decoded.commands;
+
+        // Verify tooltip has radius disable translation or text
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("radius of 2") || t.contains("gui.mekanism.stabilizer.radius.disable")))));
+
+        // Right click center chunk -> triggers disable radius 2 -> 7540 + 2 = 7542
+        let click_disable = InputEvent::MousePressed(Pointer {
+            x: 85.0,
+            y: 42.0,
+            button: MouseButton::Right,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_disable));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 7542".to_string(), "click".to_string()]);
     }
 }

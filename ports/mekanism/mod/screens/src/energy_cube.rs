@@ -150,28 +150,43 @@ impl MekScreen for EnergyCubeScreen {
             hovered_tooltip = Some(vec![(format!("Energy: {stored} / {capacity}"), WHITE)]);
         }
 
-        // Energy tab at (-26, 137, 26, 26)
+        // Energy tab at (-26, 137, 26, 26) (GuiEnergyCube.java:38-39: MATRIX_INPUT_RATE & MAX_OUTPUT)
         let energy_rect = [-26.0, 137.0, 26.0, 26.0];
         c.blit_sprite("mekanism:tab/energy_info", -26.0, 137.0, 26.0, 26.0);
         c.area(-1, energy_rect, AreaKind::Tab, true, "Energy");
         if inside(mouse, energy_rect) {
             let input_rate = data(0).max(0) as u64;
             let max_output = self.max_output_rate();
-            if self.joules {
-                let in_j = (input_rate as f64 * 2.5).round() as u64;
-                let out_j = (max_output as f64 * 2.5).round() as u64;
-                hovered_tooltip = Some(vec![
-                    (format!("Input Rate: {in_j} J"), WHITE),
-                    (format!("Max Output: {out_j} J"), WHITE),
-                    ("Unit: Joules".to_string(), WHITE),
-                ]);
+            let (in_val, out_val, unit_val) = if self.joules {
+                (
+                    format!("{} J", (input_rate as f64 * 2.5).round() as u64),
+                    format!("{} J", (max_output as f64 * 2.5).round() as u64),
+                    "Unit: Joules",
+                )
             } else {
-                hovered_tooltip = Some(vec![
-                    (format!("Input Rate: {input_rate} FE"), WHITE),
-                    (format!("Max Output: {max_output} FE"), WHITE),
-                    ("Unit: Forge Energy".to_string(), WHITE),
-                ]);
-            }
+                (
+                    format!("{input_rate} FE"),
+                    format!("{max_output} FE"),
+                    "Unit: Forge Energy",
+                )
+            };
+            let in_trans = host::translate("matrix.mekanism.input_rate", &[in_val.clone()]);
+            let in_line = if !in_trans.is_empty() && !in_trans.starts_with("matrix.") {
+                in_trans
+            } else {
+                format!("Input: {in_val}/t")
+            };
+            let out_trans = host::translate("gui.mekanism.max_output", &[out_val.clone()]);
+            let out_line = if !out_trans.is_empty() && !out_trans.starts_with("gui.") {
+                out_trans
+            } else {
+                format!("Max Output: {out_val}/t")
+            };
+            hovered_tooltip = Some(vec![
+                (in_line, WHITE),
+                (out_line, WHITE),
+                (unit_val.to_string(), WHITE),
+            ]);
         }
 
         // Render Chrome (side config, transporter, security tab at y=6)
@@ -252,6 +267,20 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:gauge/normal")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:gauge/overlay/wide")));
+
+        // Hover over energy tab at (-15.0, 145.0) and verify tooltip commands
+        let frame_energy_hover = Frame {
+            mouse_x: -15.0,
+            mouse_y: 145.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas_hover = Canvas::new();
+        screen.render(&frame_energy_hover, &mut canvas_hover);
+        let bytes_hover = canvas_hover.finish();
+        let decoded_hover = horizon_mod_sdk::screen::format::decode(&bytes_hover).expect("decode canvas hover");
+        assert!(decoded_hover.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(text, _)| text.contains("Input: 500 FE/t") || text.contains("matrix.mekanism.input_rate")))));
+        assert!(decoded_hover.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(text, _)| text.contains("Max Output: 4000 FE/t") || text.contains("gui.mekanism.max_output")))));
 
         // Toggle energy tab unit
         let click_energy = InputEvent::MousePressed(Pointer {

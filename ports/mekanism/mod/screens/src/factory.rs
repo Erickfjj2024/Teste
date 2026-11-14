@@ -688,18 +688,26 @@ impl MekScreen for FactoryScreen {
         crate::elements::title(c, &title_text, 0.0, width, 4.0);
         crate::elements::inventory_label(c, inv_x, self.kind.inventory_label_y());
 
-        // 9. Auto-sort Tab at (-26, 62, 26, 35)
+        // 9. Auto-sort Tab at (-26, 62, 26, 35) (GuiSortingTab.java:21-39, getButtonX()=-21, getButtonY()=66)
         let sort_rect = [-26.0, 62.0, 26.0, 35.0];
         c.blit_sprite_tinted("mekanism:holder_left", sort_rect, colors::TAB_CONFIGURATION);
-        c.blit_sprite("mekanism:button/sorting", -22.0, 65.0, 18.0, 18.0);
+        c.blit_sprite("mekanism:button/sorting", -21.0, 66.0, 18.0, 18.0);
 
         let sort_slot = 32 + lines + if self.kind.has_secondary_bar() { 2 } else { 0 };
         let is_sorting = crate::elements::data(sort_slot) != 0;
-        let sort_label = if is_sorting { "On" } else { "Off" };
-        c.text(sort_label, -13.0, 86.0, TITLE, horizon_mod_sdk::screen::TEXT_CENTER, 1.0);
+        let on_off_key = if is_sorting { "boolean.mekanism.on" } else { "boolean.mekanism.off" };
+        let on_off_trans = host::translate(on_off_key, &[]);
+        let sort_label = if !on_off_trans.is_empty() && !on_off_trans.starts_with("boolean.") {
+            on_off_trans
+        } else if is_sorting {
+            "On".to_string()
+        } else {
+            "Off".to_string()
+        };
+        c.text(&sort_label, -13.0, 86.0, TITLE, horizon_mod_sdk::screen::TEXT_CENTER, 1.0);
         c.area(4100, sort_rect, AreaKind::Tab, true, "Auto-sort");
         if !is_modal && inside(mouse, sort_rect) {
-            let sort_str = host::translate("auto.sort", &[]);
+            let sort_str = host::translate("auto.mekanism.sort", &[]);
             let text = if sort_str.is_empty() || sort_str.starts_with("auto.") {
                 "Auto-sort"
             } else {
@@ -837,14 +845,65 @@ mod tests {
 
         // Check base panel sprite
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        // Check sorting button sprite
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:button/sorting")));
+        // Check sorting button sprite at exact Java getButtonX/Y: (-21, 66)
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:button/sorting" && rect[0] == -21.0 && rect[1] == 66.0)));
         // Check sorting Off text
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Off")));
         // Check title
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Basic Smelting Factory")));
 
         // Click auto-sort tab at (-26, 62, 26, 35)
+        let sort_click = InputEvent::MousePressed(Pointer {
+            x: -15.0,
+            y: 75.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&sort_click));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 4100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_factory_sorting_tab_on_state_and_hover_tooltip() {
+        let _ = host::take_sent();
+        let mut data = vec![0; 45];
+        data[1] = 500;
+        data[3] = 1000;
+        data[19] = 200;
+        data[35] = 1; // sort_at = 35: On (true)
+
+        host::set_menu(host::Menu {
+            data,
+            strings: vec![],
+            grid: vec![],
+            slots: vec![],
+            carried: None,
+        });
+
+        let (mut screen, _setup) = open(&make_open_info("mekanism:basic_smelting_factory"))
+            .expect("open basic smelting factory");
+
+        // Hover over auto-sort tab (-15, 75)
+        let frame = Frame {
+            mouse_x: -15.0,
+            mouse_y: 75.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = decode(&bytes).expect("decode canvas");
+
+        // Check sorting On text
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "On")));
+        // Check sorting button sprite at exact Java getButtonX/Y: (-21, 66)
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:button/sorting" && rect[0] == -21.0 && rect[1] == 66.0)));
+        // Check tooltip contains auto.mekanism.sort or Auto-sort
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "Auto-sort" || t == "auto.mekanism.sort"))));
+
+        // Click auto-sort tab
         let sort_click = InputEvent::MousePressed(Pointer {
             x: -15.0,
             y: 75.0,

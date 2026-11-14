@@ -140,9 +140,9 @@ impl MekScreen for ChemicalTankScreen {
         let mouse = (frame.mouse_x, frame.mouse_y);
         base_panel(c, 176.0, 166.0);
 
-        // Title and Inventory labels (in Java, inventory label is at y = 85)
+        // Title and Inventory labels (inventory label at y = 72 as in standard Mekanism/vanilla; 85 in Java was the end X coordinate)
         title(c, &self.title_text(), 0.0, 176.0, 6.0);
-        inventory_label(c, 8.0, 85.0);
+        inventory_label(c, 8.0, 72.0);
 
         // Armor holder at (-26, 62, 26, 98) with 5 slot frames
         c.blit_sprite_tinted("mekanism:holder_left", [-26.0, 62.0, 26.0, 98.0], WHITE);
@@ -170,7 +170,12 @@ impl MekScreen for ChemicalTankScreen {
             let fill = (stored as f32 / capacity as f32).clamp(0.0, 1.0);
             let fill_w = (116.0 * fill).floor();
             if fill_w > 0.0 {
-                c.fill(43.0, 17.0, fill_w, 10.0, 0xFF3C_FE9A);
+                let chem_color = if kind > 0 {
+                    0xFF00_0000 | crate::factory::chemical_color_by_index(kind as i32)
+                } else {
+                    0xFF3C_FE9A
+                };
+                c.fill(43.0, 17.0, fill_w, 10.0, chem_color);
             }
         }
 
@@ -178,9 +183,15 @@ impl MekScreen for ChemicalTankScreen {
         let mut hovered_tooltip: Option<Vec<(String, u32)>> = None;
         if inside(mouse, bar_rect) {
             if stored == 0 {
-                hovered_tooltip = Some(vec![("Empty".to_string(), WHITE)]);
+                let empty_trans = host::translate("gui.mekanism.empty", &[]);
+                let empty_text = if !empty_trans.is_empty() && !empty_trans.starts_with("gui.") {
+                    empty_trans
+                } else {
+                    "Empty".to_string()
+                };
+                hovered_tooltip = Some(vec![(empty_text, WHITE)]);
             } else {
-                let chem_label = self.chemical_name(kind).unwrap_or_else(|| "Chemical".to_string());
+                let chem_label = crate::factory::chemical_name_by_index(kind as i32);
                 hovered_tooltip = Some(vec![(format!("{chem_label}: {stored} mB"), WHITE)]);
             }
         }
@@ -190,32 +201,33 @@ impl MekScreen for ChemicalTankScreen {
         if kind == 0 || stored == 0 {
             c.text("Chemical: None", 45.0, 40.0, GREEN, 0, 1.0);
             let cap_str = if is_creative { "Infinite" } else { &format!("{capacity}") };
-            c.text(&format!("0 / {cap_str}"), 45.0, 51.0, GREEN, 0, 1.0);
+            c.text(&format!("0/{cap_str}"), 45.0, 51.0, GREEN, 0, 1.0);
         } else {
-            let chem_label = self.chemical_name(kind).unwrap_or_else(|| "Chemical".to_string());
+            let chem_label = crate::factory::chemical_name_by_index(kind as i32);
             c.text(&format!("Chemical: {chem_label}"), 45.0, 40.0, GREEN, 0, 1.0);
-            let cap_str = if is_creative {
-                "Infinite".to_string()
-            } else {
-                format!("{capacity}")
-            };
             if is_creative {
                 c.text("Infinite", 45.0, 51.0, GREEN, 0, 1.0);
             } else {
-                c.text(&format!("{stored} / {cap_str}"), 45.0, 51.0, GREEN, 0, 1.0);
+                c.text(&format!("{stored}/{capacity}"), 45.0, 51.0, GREEN, 0, 1.0);
             }
         }
 
         // Gas Mode button at (159, 72, 10, 10)
         let dump_mode = (data(5).max(0) as usize) % 3;
-        let (dump_sprite, dump_label) = match dump_mode {
-            1 => ("mekanism:chemical_mode/dump", "Dumping"),
-            2 => ("mekanism:chemical_mode/dump_excess", "Dump excess"),
-            _ => ("mekanism:chemical_mode/idle", "Idle"),
+        let (dump_sprite, dump_key, dump_fallback) = match dump_mode {
+            1 => ("mekanism:chemical_mode/dump", "chemical_mode.mekanism.dumping", "Dumping"),
+            2 => ("mekanism:chemical_mode/dump_excess", "chemical_mode.mekanism.dumping_excess", "Dumping Excess"),
+            _ => ("mekanism:chemical_mode/idle", "chemical_mode.mekanism.idle", "Idle"),
+        };
+        let dump_trans = host::translate(dump_key, &[]);
+        let dump_label = if !dump_trans.is_empty() && !dump_trans.starts_with("chemical_mode.") {
+            dump_trans
+        } else {
+            dump_fallback.to_string()
         };
         c.blit_sprite(dump_sprite, 159.0, 72.0, 10.0, 10.0);
-        let tw = host::text_width(dump_label);
-        c.text(dump_label, 159.0 - 3.0 - tw, 73.0, TITLE, 0, 1.0);
+        let tw = host::text_width(&dump_label);
+        c.text(&dump_label, 159.0 - 3.0 - tw, 73.0, TITLE, 0, 1.0);
         c.area(DUMP_MODE, [159.0, 72.0, 10.0, 10.0], AreaKind::Button, true, "Chemical dumping mode");
         if inside(mouse, [159.0, 72.0, 10.0, 10.0]) {
             hovered_tooltip = Some(vec![("Chemical dumping mode".to_string(), WHITE)]);
@@ -301,7 +313,68 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:bar/base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:chemical_mode/idle")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Chemical: Oxygen")));
-        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "1000 / 64000")));
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "1000/64000")));
+        // Check inventory label at y = 72.0 (not 85.0)
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, y, .. } if *y == 72.0 && (text == "Inventory" || text.contains("inventory")))));
+
+        // Click dump mode button
+        let click_dump = InputEvent::MousePressed(Pointer {
+            x: 162.0,
+            y: 75.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_dump));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 5000".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_chemical_tank_dumping_excess_and_empty_state() {
+        host::set_menu(host::Menu {
+            data: vec![
+                0, // stored lo = 0
+                0, // stored hi
+                0, // no chemical
+                64000, // capacity lo
+                0, // capacity hi
+                2, // dump mode (2 = Dumping Excess)
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, // data(16) transporter
+                0, // data(17)
+                0, // data(18) security
+            ],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:basic_chemical_tank".into(),
+            gui_width: 176.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _setup) = open(&info).expect("open chemical tank");
+
+        let frame = Frame {
+            mouse_x: 162.0,
+            mouse_y: 75.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        let commands = decoded.commands;
+
+        // Verify dump_excess sprite and text
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:chemical_mode/dump_excess")));
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Dumping Excess" || text == "chemical_mode.mekanism.dumping_excess")));
+        // Verify empty chemical text
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Chemical: None")));
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "0/64000")));
+        // Verify inventory label at y = 72
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, y, .. } if *y == 72.0 && (text == "Inventory" || text.contains("inventory")))));
 
         // Click dump mode button
         let click_dump = InputEvent::MousePressed(Pointer {
