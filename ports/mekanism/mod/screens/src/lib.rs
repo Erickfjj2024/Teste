@@ -20,6 +20,18 @@ mod portable_teleporter;
 mod robit;
 mod security_desk;
 mod seismic_reader;
+mod factory;
+mod bin;
+mod chemical_tank;
+mod dimensional_stabilizer;
+mod energy_cube;
+mod fluid_tank;
+mod personal_storage;
+mod portable_qio_dashboard;
+mod qio_dashboard;
+mod qio_drive_array;
+pub mod qio_frequency_select;
+pub mod qio_item_viewer;
 mod registry;
 mod teleporter;
 
