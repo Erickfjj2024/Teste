@@ -64,7 +64,7 @@ impl Selector {
         let field = self.base + if private { 34 } else { 33 };
         c.field(field, [x + 24.0, y + 100.0, 96.0, 9.0], 16, FieldFilter::Any, "", 1, WHITE);
         let delete = [x + 62.0, y + 113.0, 60.0, 18.0];
-        crate::elements::button(c, self.base + 32, delete, &host::translate("gui.mekanism.delete", &[]), true, mouse, None);
+        crate::elements::button(c, self.base + 32, delete, &host::translate("button.mekanism.delete", &[]), true, mouse, None);
         let _ = element_holder;
     }
 

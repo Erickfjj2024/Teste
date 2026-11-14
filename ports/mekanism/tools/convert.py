@@ -4207,6 +4207,8 @@ out = {k: v for k, v in lang.items() if k in keep}
 # the sound subtitles (every sound event ships), the colour names, and the screen titles of the machines that are kept
 out.update({k: v for k, v in lang.items() if k.startswith(('sound_event.mekanism.', 'color.mekanism.'))})
 out.update({k: v for k, v in lang.items() if k.startswith('container.mekanism.') and k[len('container.mekanism.'):] in kept_blocks})
+# the texts the code screens translate (`host::translate`): every other Mekanism key but the advancements, the config screens and the death messages
+out.update({k: v for k, v in lang.items() if '.mekanism.' in k and not k.startswith(('advancements.', 'config.', 'configuration.', 'death.', 'jei.', 'emi.', 'recipe_viewer.', 'entity.')) and k not in out})
 for g in GENERATORS + TURBINE + FISSION + FUSION:
     out[f'block.{NS}.{g}'] = glang[f'block.{GSRC}.{g}']
 out[f'block.{NS}.bounding_block'] = 'Bounding Block'
