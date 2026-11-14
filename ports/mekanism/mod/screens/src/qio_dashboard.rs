@@ -57,7 +57,7 @@ impl CraftingWindow {
     pub fn new(index: usize, panel_width: f32, panel_height: f32) -> Self {
         let wx = ((panel_width - CRAFTING_WINDOW_WIDTH as f32) / 2.0).floor() as i32 + (index as i32 * 10);
         let wy = 30 + (index as i32 * 10);
-        let title_str = format!("Crafting Window {}", index + 1);
+        let title_str = host::translate("gui.mekanism.crafting.window", &[(index + 1).to_string()]);
         CraftingWindow {
             index,
             window: Window::new(wx, wy, CRAFTING_WINDOW_WIDTH, CRAFTING_WINDOW_HEIGHT, &title_str),
@@ -244,7 +244,7 @@ impl MekScreen for QIODashboard {
             c.blit_sprite("mekanism:holder_left", r[0], r[1], r[2], r[3]);
             let tint = if open { 0xFF80_8080 } else { WHITE };
             c.blit_sprite_tinted("mekanism:button/crafting", [-22.0, tab_y, 18.0, 18.0], tint);
-            let tab_label = format!("Crafting Window {}", w + 1);
+            let tab_label = host::translate("gui.mekanism.crafting.window", &[(w + 1).to_string()]);
             c.area(-1, r, AreaKind::Tab, !open, &tab_label);
             if inside(mouse, r) {
                 c.tooltip(&[(&tab_label, WHITE)]);
@@ -263,12 +263,13 @@ impl MekScreen for QIODashboard {
         c.blit_sprite(icon_sprite, 178.0 + 4.0, 34.0, 18.0, 18.0);
         c.area(SECURITY_NEXT, sec_r, AreaKind::Tab, true, "Security");
         if inside(mouse, sec_r) {
-            let sec_tip = match sec_mode {
-                1 => "Security: Private",
-                2 => "Security: Trusted",
-                _ => "Security: Public",
+            let mode_key = match sec_mode {
+                1 => "security.mekanism.private",
+                2 => "security.mekanism.trusted",
+                _ => "security.mekanism.public",
             };
-            c.tooltip(&[(sec_tip, WHITE)]);
+            let sec_tip = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+            c.tooltip(&[(&sec_tip, WHITE)]);
         }
 
         // Emit slot positions for the 3 crafting windows
@@ -455,5 +456,55 @@ mod tests {
         assert!(screen.input(&click_clear));
         let sent_clear = host::take_sent();
         assert_eq!(sent_clear, vec!["button 7611".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_qio_dashboard_crafting_window_title_and_security_tooltip() {
+        let mut d = vec![0; 10];
+        // Security mode: 2 (trusted -> protected) at data[8]
+        d[8] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:qio_dashboard".into(),
+            gui_width: 178.0,
+            gui_height: 211.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        // Hover over security tab at (180, 40)
+        let frame_sec = Frame {
+            mouse_x: 180.0,
+            mouse_y: 40.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame_sec, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.security"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+
+        // Open crafting window 1 (click tab at -10, 36)
+        let click_tab = InputEvent::MousePressed(Pointer {
+            x: -10.0,
+            y: 36.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_tab));
+
+        // Render and check translated crafting window title
+        let mut canvas2 = Canvas::new();
+        screen.render(&frame_sec, &mut canvas2);
+        let decoded2 = horizon_mod_sdk::screen::format::decode(&canvas2.finish()).expect("decode");
+        assert!(decoded2.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanism.crafting.window")));
     }
 }

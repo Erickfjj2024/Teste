@@ -78,10 +78,10 @@ impl MekScreen for QIODriveArray {
         };
         c.text(&freq_display, 17.0, 24.0, GREEN, 0, 0.8);
 
-        // Items Bar at (26, 39, 52, 8)
-        c.blit_sprite("mekanism:bar/base", 26.0, 39.0, 52.0, 8.0);
+        // Items Bar at (26, 39, 50, 8)
+        c.blit_sprite("mekanism:bar/base", 26.0, 39.0, 50.0, 8.0);
         let item_fraction = (data(1) as f32 / 1000.0).clamp(0.0, 1.0);
-        let item_fill_w = (50.0 * item_fraction).round();
+        let item_fill_w = (48.0 * item_fraction).round();
         if item_fill_w > 0.0 {
             c.fill(27.0, 40.0, item_fill_w, 6.0, 0xFF00_CD00);
         }
@@ -91,15 +91,15 @@ impl MekScreen for QIODriveArray {
         if !items_detail.is_empty() {
             c.text(&items_detail, 22.0, 58.0, GREEN, 0, 0.6);
         }
-        if inside(mouse, [26.0, 39.0, 52.0, 8.0]) {
+        if inside(mouse, [26.0, 39.0, 50.0, 8.0]) {
             let tip = if items_detail.is_empty() { "Items" } else { &items_detail };
             c.tooltip(&[(tip, WHITE)]);
         }
 
-        // Types Bar at (98, 39, 52, 8)
-        c.blit_sprite("mekanism:bar/base", 98.0, 39.0, 52.0, 8.0);
+        // Types Bar at (98, 39, 50, 8)
+        c.blit_sprite("mekanism:bar/base", 98.0, 39.0, 50.0, 8.0);
         let type_fraction = (data(2) as f32 / 1000.0).clamp(0.0, 1.0);
-        let type_fill_w = (50.0 * type_fraction).round();
+        let type_fill_w = (48.0 * type_fraction).round();
         if type_fill_w > 0.0 {
             c.fill(99.0, 40.0, type_fill_w, 6.0, 0xFF00_CD00);
         }
@@ -109,7 +109,7 @@ impl MekScreen for QIODriveArray {
         if !types_detail.is_empty() {
             c.text(&types_detail, 94.0, 58.0, GREEN, 0, 0.6);
         }
-        if inside(mouse, [98.0, 39.0, 52.0, 8.0]) {
+        if inside(mouse, [98.0, 39.0, 50.0, 8.0]) {
             let tip = if types_detail.is_empty() { "Types" } else { &types_detail };
             c.tooltip(&[(tip, WHITE)]);
         }
@@ -139,12 +139,13 @@ impl MekScreen for QIODriveArray {
         c.blit_sprite(icon_sprite, 176.0 + 4.0, 34.0, 18.0, 18.0);
         c.area(SECURITY_NEXT, sec_r, AreaKind::Tab, true, "Security");
         if inside(mouse, sec_r) {
-            let sec_tip = match sec_mode {
-                1 => "Security: Private",
-                2 => "Security: Trusted",
-                _ => "Security: Public",
+            let mode_key = match sec_mode {
+                1 => "security.mekanism.private",
+                2 => "security.mekanism.trusted",
+                _ => "security.mekanism.public",
             };
-            c.tooltip(&[(sec_tip, WHITE)]);
+            let sec_tip = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+            c.tooltip(&[(&sec_tip, WHITE)]);
         }
 
         // Frequency window overlay (when open)
@@ -274,5 +275,44 @@ mod tests {
         let bytes2 = canvas2.finish();
         let decoded2 = horizon_mod_sdk::screen::format::decode(&bytes2).expect("decode canvas");
         assert!(decoded2.commands.iter().any(|cmd| matches!(cmd, Command::Area { id, .. } if *id == 8500)));
+    }
+
+    #[test]
+    fn test_qio_drive_array_digital_bars_and_security_tooltip() {
+        let mut d = vec![0; 10];
+        // Security mode: 2 (trusted -> protected) at data[6]
+        d[6] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:qio_drive_array".into(),
+            gui_width: 176.0,
+            gui_height: 206.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        // Hover over security tab at (180, 40)
+        let frame_sec = Frame {
+            mouse_x: 180.0,
+            mouse_y: 40.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame_sec, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.security"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+
+        // Digital bars base width 50, height 8 at x=26 and x=98
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[0] == 26.0 && rect[2] == 50.0 && rect[3] == 8.0)));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[0] == 98.0 && rect[2] == 50.0 && rect[3] == 8.0)));
     }
 }

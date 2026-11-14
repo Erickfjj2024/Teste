@@ -75,31 +75,31 @@ impl ThermoelectricBoilerScreen {
         if inside(mouse, rect) {
             let label = host::translate(label_key, &[]);
             let tip = if amount == 0 {
-                format!("{label}: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("{label}: {amount} / {capacity} mB")
+                host::translate("generic.mekanism.stored.mb", &[label, amount.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
     }
 
     fn render_rate_bar(&self, c: &mut Canvas, mouse: (f32, f32), x: f32, y: f32, level: f32, tip: &str) {
-        c.blit_sprite("mekanism:bar/base", x, y, 6.0, 58.0);
-        let filled = (56.0 * level.clamp(0.0, 1.0)).floor();
+        c.blit_sprite("mekanism:bar/base", x, y, 8.0, 60.0);
+        let filled = (58.0 * level.clamp(0.0, 1.0)).floor();
         if filled > 0.0 {
             c.blit(
                 "mekanism:gui/bar/vertical_rate",
                 x + 1.0,
-                y + 57.0 - filled,
+                y + 59.0 - filled,
                 0.0,
                 58.0 - filled,
-                4.0,
+                6.0,
                 filled,
                 6.0,
                 58.0,
             );
         }
-        if inside(mouse, [x, y, 6.0, 58.0]) {
+        if inside(mouse, [x, y, 8.0, 60.0]) {
             c.tooltip(&[(tip, WHITE)]);
         }
     }
@@ -181,15 +181,15 @@ impl MekScreen for ThermoelectricBoilerScreen {
             0xFF00_FFFF,
         );
 
-        // Rate bars
+        // Rate bars (outer box 8x60, inner 6x58)
         let boil_rate = data(21);
         let max_boil = data(22);
         let boil_lvl = if max_boil == 0 { 0.0 } else { boil_rate as f32 / max_boil as f32 };
-        let boil_tip = format!("Boil Rate: {boil_rate} mB/t");
+        let boil_tip = host::translate("boiler.mekanism.boil_rate", &[boil_rate.to_string()]);
         self.render_rate_bar(c, mouse, 44.0, 13.0, boil_lvl, &boil_tip);
 
         let max_lvl = data(25) as f32 / 1000.0;
-        let max_tip = format!("Max Boil: {max_boil} mB/t");
+        let max_tip = host::translate("boiler.mekanism.max_boil", &[max_boil.to_string()]);
         self.render_rate_bar(c, mouse, 166.0, 13.0, max_lvl, &max_tip);
 
         // Heat tab at (-26, 109, 26, 26)
@@ -200,29 +200,30 @@ impl MekScreen for ThermoelectricBoilerScreen {
             let loss_w = data(26);
             let loss_t = data(27);
             let loss_h = data(28);
-            let tip = format!("Dissipated: {loss_w}.{loss_t}{loss_h} K/t");
+            let tip = host::translate("gui.mekanism.dissipated", &[format!("{loss_w}.{loss_t}{loss_h} K")]);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
-        // Security tab at (218, 6, 26, 18)
+        // Security tab at (218, 34, 26, 18) - Java GuiSecurityTab defaults to y = 34
         if let Some(sec_idx) = self.security_idx {
-            let sec_rect = [218.0, 6.0, 26.0, 18.0];
+            let sec_rect = [218.0, 34.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", sec_rect, TAB_SECURITY);
             let mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
-            c.blit_sprite(icon_sprite, 218.0 + 4.0, 6.0, 18.0, 18.0);
+            c.blit_sprite(icon_sprite, 218.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -231,8 +232,8 @@ impl MekScreen for ThermoelectricBoilerScreen {
         match event {
             InputEvent::MousePressed(p) => {
                 let mouse = (p.x, p.y);
-                // Security tab
-                if self.security_idx.is_some() && inside(mouse, [218.0, 6.0, 26.0, 18.0]) {
+                // Security tab at y = 34
+                if self.security_idx.is_some() && inside(mouse, [218.0, 34.0, 26.0, 18.0]) {
                     if p.button == MouseButton::Right {
                         host::send_button(9101);
                     } else {
@@ -310,15 +311,60 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Boil Rate: 100 mB/t")));
 
-        // Test click on security tab
+        // Test click on security tab at y = 34..52
         let click_sec = InputEvent::MousePressed(Pointer {
             x: 220.0,
-            y: 10.0,
+            y: 38.0,
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
         });
         assert!(screen.input(&click_sec));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 9100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_boiler_rate_bars_and_protected_security() {
+        let mut d = vec![0; 30];
+        // water: 0 (empty)
+        d[0] = 0;
+        d[2] = 10000;
+        // boil rate 50, max 100
+        d[21] = 50;
+        d[22] = 100;
+        // security mode 2 (trusted -> protected) at slot 29
+        d[29] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:boiler_valve".into(),
+            gui_width: 218.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        let frame = Frame {
+            mouse_x: 28.0,
+            mouse_y: 20.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        // Empty gauge tooltip
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.empty"))));
+        // Protected security sprite
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+        // Rate bars base 8x60 at x=44 and x=166
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[0] == 44.0 && rect[2] == 8.0 && rect[3] == 60.0)));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[0] == 166.0 && rect[2] == 8.0 && rect[3] == 60.0)));
     }
 }

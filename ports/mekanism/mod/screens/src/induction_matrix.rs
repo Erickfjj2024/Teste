@@ -54,8 +54,8 @@ impl MekScreen for InductionMatrixScreen {
         // Armor holder at left: (-26, 36, 26, 98)
         c.blit_sprite("mekanism:holder_left", -26.0, 36.0, 26.0, 98.0);
 
-        // Title and inventory label
-        title(c, &host::translate("block.mekanism.induction_port", &[]), 0.0, 176.0, 5.0);
+        // Title and inventory label (titleLabelY = 6 in Minecraft AbstractContainerScreen)
+        title(c, &host::translate("block.mekanism.induction_port", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 74.0);
 
         // Element holder at (141, 16, 26, 56)
@@ -108,29 +108,32 @@ impl MekScreen for InductionMatrixScreen {
         if inside(mouse, energy_rect) {
             let in_rate = pair(9, 10);
             let out_rate = pair(11, 12);
-            let tip = format!("Storing: {energy} / {capacity} MFE\nInput: {in_rate} kFE/t\nOutput: {out_rate} kFE/t");
-            c.tooltip(&[(&tip, WHITE)]);
+            let line1 = host::translate("gui.mekanism.storing", &[format!("{energy} / {capacity} MFE")]);
+            let line2 = host::translate("matrix.mekanism.input_rate", &[format!("{in_rate} kFE")]);
+            let line3 = host::translate("matrix.mekanism.output_rate", &[format!("{out_rate} kFE")]);
+            c.tooltip(&[(&line1, WHITE), (&line2, WHITE), (&line3, WHITE)]);
         }
 
-        // Security tab at (176, 6, 26, 18)
+        // Security tab at (176, 34, 26, 18) - Java GuiSecurityTab defaults to y = 34
         if let Some(sec_idx) = self.security_idx {
-            let sec_rect = [176.0, 6.0, 26.0, 18.0];
+            let sec_rect = [176.0, 34.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", sec_rect, TAB_SECURITY);
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
-            c.blit_sprite(icon_sprite, 176.0 + 4.0, 6.0, 18.0, 18.0);
+            c.blit_sprite(icon_sprite, 176.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -144,8 +147,8 @@ impl MekScreen for InductionMatrixScreen {
                     host::play_click();
                     return true;
                 }
-                // Security tab
-                if self.security_idx.is_some() && inside(mouse, [176.0, 6.0, 26.0, 18.0]) {
+                // Security tab at y = 34
+                if self.security_idx.is_some() && inside(mouse, [176.0, 34.0, 26.0, 18.0]) {
                     if p.button == MouseButton::Right {
                         host::send_button(9101);
                     } else {
@@ -222,15 +225,53 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Energy: 500 MFE")));
 
-        // Test click on security tab
+        // Test click on security tab at y = 34..52
         let click_sec = InputEvent::MousePressed(Pointer {
             x: 180.0,
-            y: 10.0,
+            y: 38.0,
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
         });
         assert!(screen.input(&click_sec));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 9100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_induction_matrix_energy_tab_and_protected_security() {
+        let mut d = vec![0; 15];
+        // Security mode: 2 (trusted -> protected) at index 13
+        d[13] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:induction_port".into(),
+            gui_width: 176.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        let frame = Frame {
+            mouse_x: -10.0,
+            mouse_y: 145.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        // Energy tab tooltip lines
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.storing"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "matrix.mekanism.input_rate"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "matrix.mekanism.output_rate"))));
+        // Protected security sprite
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
     }
 }

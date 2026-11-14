@@ -92,9 +92,9 @@ impl FissionReactorScreen {
         if inside(mouse, rect) {
             let label = host::translate(label_key, &[]);
             let tip = if amount == 0 {
-                format!("{label}: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("{label}: {amount} / {capacity} mB")
+                host::translate("generic.mekanism.stored.mb", &[label, amount.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
@@ -113,16 +113,16 @@ impl MekScreen for FissionReactorScreen {
             c.blit_sprite("mekanism:button/back", 6.0, 6.0, 12.0, 12.0);
             c.area(7102, [6.0, 6.0, 12.0, 12.0], AreaKind::Button, true, "Back");
 
-            c.text("Heat Statistics", 6.0, 20.0, TITLE, 0, 1.0);
+            c.text(&host::translate("fission.mekanismgenerators.heat_statistics", &[]), 6.0, 20.0, TITLE, 0, 1.0);
             c.text(&string(4), 6.0, 32.0, TITLE, 0, 0.9);
             c.text(&string(5), 6.0, 42.0, TITLE, 0, 0.9);
             c.text(&string(6), 6.0, 52.0, TITLE, 0, 0.9);
 
-            c.text("Fuel Statistics", 6.0, 68.0, TITLE, 0, 1.0);
+            c.text(&host::translate("fission.mekanismgenerators.fuel_statistics", &[]), 6.0, 68.0, TITLE, 0, 1.0);
             c.text(&string(7), 6.0, 80.0, TITLE, 0, 0.9);
             c.text(&string(8), 6.0, 90.0, TITLE, 0, 0.9);
 
-            c.text("Current Burn Rate:", 6.0, 104.0, TITLE, 0, 0.9);
+            c.text(&host::translate("fission.mekanismgenerators.burn_rate", &[]), 6.0, 104.0, TITLE, 0, 0.9);
             c.blit_sprite("mekanism:bar/base", 5.0, 114.0, 185.0, 10.0);
             let burn_val = data(23);
             let max_val = data(35).max(1);
@@ -136,7 +136,7 @@ impl MekScreen for FissionReactorScreen {
                 c.tooltip(&[(&tip, WHITE)]);
             }
 
-            c.text("Set Rate Limit:", 5.0, 131.0, TITLE, 0, 0.9);
+            c.text(&host::translate("fission.mekanismgenerators.set_rate_limit", &[]), 5.0, 131.0, TITLE, 0, 0.9);
             c.blit_sprite("mekanism:digital_text_input", 76.0, 127.0, 56.0, 14.0);
             c.field(7110, [77.0, 128.0, 54.0, 12.0], 8, horizon_mod_sdk::screen::FieldFilter::Any, &self.rate_limit_text, 1, WHITE);
             inventory_label(c, 6.0, 163.0);
@@ -257,21 +257,21 @@ impl MekScreen for FissionReactorScreen {
         };
         c.blit_sprite(light_sprite, 173.0, 76.0, 12.0, 12.0);
 
-        // Temperature label and bar at (5, 102, 183, 8)
-        c.text("Temperature:", 5.0, 93.0, TITLE, 0, 0.9);
-        c.blit_sprite("mekanism:bar/base", 5.0, 102.0, 183.0, 8.0);
+        // Temperature label and bar at (5, 102, 185, 10)
+        c.text(&host::translate("temperature.mekanism.long", &["".to_string()]), 5.0, 93.0, TITLE, 0, 0.9);
+        c.blit_sprite("mekanism:bar/base", 5.0, 102.0, 185.0, 10.0);
         let temp_fraction = (data(20) as f32 / 18000.0).clamp(0.0, 1.0);
-        let t_bar_width = (181.0 * temp_fraction).floor();
+        let t_bar_width = (183.0 * temp_fraction).floor();
         if t_bar_width > 0.0 {
-            c.fill(6.0, 103.0, t_bar_width, 6.0, 0xFFFF_3300);
+            c.fill(6.0, 103.0, t_bar_width, 8.0, 0xFFFF_3300);
         }
-        if inside(mouse, [5.0, 102.0, 183.0, 8.0]) {
+        if inside(mouse, [5.0, 102.0, 185.0, 10.0]) {
             let tip = format!("Temperature: {} K", data(20) as f32 / 10.0);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
         // Heat Graph label and well at (5, 123, 185, 38)
-        c.text("Heat Graph:", 5.0, 114.0, TITLE, 0, 0.9);
+        c.text(&host::translate("fission.mekanismgenerators.heat_graph", &[]), 5.0, 114.0, TITLE, 0, 0.9);
         elements::inner_screen(c, [5.0, 123.0, 185.0, 38.0]);
 
         // Heat Tab at (-26, 109, 26, 26)
@@ -279,7 +279,7 @@ impl MekScreen for FissionReactorScreen {
         c.blit_sprite("mekanism:tab/heat_info_k", heat_rect[0], heat_rect[1], heat_rect[2], heat_rect[3]);
         c.area(7002, heat_rect, AreaKind::Tab, true, "Heat");
         if inside(mouse, heat_rect) {
-            let tip = format!("Dissipated: {}.{}{} K/t", data(32), data(33), data(34));
+            let tip = host::translate("gui.mekanism.dissipated", &[format!("{}.{}{} K", data(32), data(33), data(34))]);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
@@ -299,18 +299,19 @@ impl MekScreen for FissionReactorScreen {
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
             c.blit_sprite(icon_sprite, 195.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -465,5 +466,46 @@ mod tests {
         assert!(screen.input(&field_sub));
         let sent_field = host::take_sent();
         assert_eq!(sent_field, vec!["text 7110 \"10.0\"".to_string()]);
+    }
+
+    #[test]
+    fn test_fission_reactor_rate_bar_and_protected_security() {
+        let mut d = vec![0; 40];
+        // Coolant: 0 (empty)
+        d[4] = 0;
+        d[6] = 10000;
+        // Security mode: 2 (trusted -> protected) at index 36
+        d[36] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:fission_reactor_port".into(),
+            gui_width: 195.0,
+            gui_height: 255.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        let frame = Frame {
+            mouse_x: 10.0,
+            mouse_y: 20.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        // Empty gauge tooltip
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.empty"))));
+        // Protected security sprite
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+        // Temperature rate bar base 185x10 at y=102
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[0] == 5.0 && rect[1] == 102.0 && rect[2] == 185.0 && rect[3] == 10.0)));
     }
 }

@@ -14,7 +14,7 @@
 //! Differences from Java / Não Feito:
 //! - // NÃO FEITO: GuiTurbineStats (segunda página com estatores, pás, bobinas e condensadores) não implementada no servidor
 //! - // NÃO FEITO: GuiWarningTab não suportada no servidor
-use crate::elements::{self, base_panel, data, inside, inventory_label, pair, string, title, vertical_power_bar, GREEN, WHITE};
+use crate::elements::{self, base_panel, data, inside, inventory_label, pair, string, title, vertical_power_bar, GREEN, TITLE, WHITE};
 use crate::security_table;
 use crate::{MekScreen, Opened};
 use horizon_mod_sdk::screen::{AreaKind, Canvas, Frame, InputEvent, MouseButton, OpenInfo, Setup, host};
@@ -53,7 +53,7 @@ impl MekScreen for IndustrialTurbineScreen {
         base_panel(c, 190.0, 166.0);
 
         // Title and inventory label
-        title(c, "Industrial Turbine", 0.0, 190.0, 5.0);
+        title(c, &host::translate("turbine.mekanismgenerators.industrial_turbine", &[]), 0.0, 190.0, 5.0);
         inventory_label(c, 15.0, 74.0);
 
         // Medium Steam Gauge at (6, 13, 34, 60), inner (7, 14, 32, 58)
@@ -72,32 +72,32 @@ impl MekScreen for IndustrialTurbineScreen {
         c.blit_sprite("mekanism:gauge/overlay/medium", inner[0], inner[1], inner[2], inner[3]);
         if inside(mouse, [6.0, 13.0, 34.0, 60.0]) {
             let tip = if steam == 0 {
-                format!("Steam: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("Steam: {steam} / {steam_cap} mB")
+                host::translate("generic.mekanism.stored.mb", &["Steam".to_string(), steam.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
 
-        // Steam rate bar at (40, 13, 6, 58)
-        c.blit_sprite("mekanism:bar/base", 40.0, 13.0, 6.0, 58.0);
+        // Steam rate bar at (40, 13, 8, 60), inner (41, 14, 6, 58)
+        c.blit_sprite("mekanism:bar/base", 40.0, 13.0, 8.0, 60.0);
         let rate_frac = (data(22) as f32 / 1000.0).clamp(0.0, 1.0);
-        let r_fill = (56.0 * rate_frac).floor();
+        let r_fill = (58.0 * rate_frac).floor();
         if r_fill > 0.0 {
             c.blit(
                 "mekanism:gui/bar/vertical_rate",
                 41.0,
-                14.0 + 56.0 - r_fill,
+                14.0 + 58.0 - r_fill,
                 0.0,
                 58.0 - r_fill,
-                4.0,
+                6.0,
                 r_fill,
                 6.0,
                 58.0,
             );
         }
-        if inside(mouse, [40.0, 13.0, 6.0, 58.0]) {
-            let tip = format!("Steam Input: {} mB/t", data(22));
+        if inside(mouse, [40.0, 13.0, 8.0, 60.0]) {
+            let tip = host::translate("turbine.mekanismgenerators.steam_input", &[data(22).to_string()]);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
@@ -126,14 +126,24 @@ impl MekScreen for IndustrialTurbineScreen {
             _ => "mekanism:gui/gas_mode_idle",
         };
         c.blit(mode_texture, 173.0, 72.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0);
-        let mode_tip = match mode {
-            1 => "Dumping excess Steam\nWater will NOT be recycled",
-            2 => "Dumping Steam\nWater will NOT be recycled",
-            _ => "Steam mode: idle",
+        let mode_label_key = match mode {
+            1 => "chemical_mode.mekanism.dumping_excess",
+            2 => "chemical_mode.mekanism.dumping",
+            _ => "chemical_mode.mekanism.idle",
         };
+        let mode_label = host::translate(mode_label_key, &[]);
+        let label_w = host::text_width(&mode_label);
+        c.draw_string(&mode_label, 173.0 - 2.0 - label_w, 73.0, TITLE, false);
         c.area(7400, [173.0, 72.0, 10.0, 10.0], AreaKind::Button, true, "Dump Mode");
         if inside(mouse, [173.0, 72.0, 10.0, 10.0]) {
-            c.tooltip(&[(mode_tip, WHITE)]);
+            let warning = host::translate("turbine.mekanismgenerators.tooltip.steamdump.warning", &[]);
+            if mode == 1 {
+                let line1 = host::translate("turbine.mekanismgenerators.tooltip.steamdump_excess", &[]);
+                c.tooltip(&[(&line1, WHITE), (&warning, 0xFFFF_5555)]);
+            } else if mode == 2 {
+                let line1 = host::translate("turbine.mekanismgenerators.tooltip.steamdump", &[]);
+                c.tooltip(&[(&line1, WHITE), (&warning, 0xFFFF_5555)]);
+            }
         }
 
         // Energy tab at (-26, 137, 26, 26)
@@ -141,29 +151,31 @@ impl MekScreen for IndustrialTurbineScreen {
         c.blit_sprite("mekanism:tab/energy_info", energy_rect[0], energy_rect[1], energy_rect[2], energy_rect[3]);
         c.area(7006, energy_rect, AreaKind::Tab, true, "Energy");
         if inside(mouse, energy_rect) {
-            let tip = format!("Storing: {} kFE\nProducing: {} FE/t\nUnit: Forge Energy", data(24), data(11));
-            c.tooltip(&[(&tip, WHITE)]);
+            let line1 = host::translate("gui.mekanism.storing", &[format!("{} kFE", data(24))]);
+            let line2 = host::translate("generators.mekanismgenerators.producing.amount", &[format!("{} FE", data(11))]);
+            c.tooltip(&[(&line1, WHITE), (&line2, WHITE)]);
         }
 
-        // Security tab at (190, 6, 26, 18)
+        // Security tab at (190, 34, 26, 18) - Java GuiSecurityTab defaults to y = 34
         if let Some(sec_idx) = self.security_idx {
-            let sec_rect = [190.0, 6.0, 26.0, 18.0];
+            let sec_rect = [190.0, 34.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", sec_rect, TAB_SECURITY);
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
-            c.blit_sprite(icon_sprite, 190.0 + 4.0, 6.0, 18.0, 18.0);
+            c.blit_sprite(icon_sprite, 190.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -183,8 +195,8 @@ impl MekScreen for IndustrialTurbineScreen {
                     host::play_click();
                     return true;
                 }
-                // Security tab
-                if self.security_idx.is_some() && inside(mouse, [190.0, 6.0, 26.0, 18.0]) {
+                // Security tab at y = 34
+                if self.security_idx.is_some() && inside(mouse, [190.0, 34.0, 26.0, 18.0]) {
                     if p.button == MouseButton::Right {
                         host::send_button(9101);
                     } else {
@@ -268,5 +280,60 @@ mod tests {
         assert!(screen.input(&click_dump));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 7400".to_string(), "click".to_string()]);
+
+        // Test click on security tab at y = 34..52
+        let click_sec = InputEvent::MousePressed(Pointer {
+            x: 195.0,
+            y: 38.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_sec));
+        let sent2 = host::take_sent();
+        assert_eq!(sent2, vec!["button 9100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_industrial_turbine_dump_mode_and_security_protected() {
+        let mut d = vec![0; 30];
+        // steam: 0 (empty)
+        d[6] = 0;
+        d[8] = 5000;
+        // dump mode: 1 (dumping excess)
+        d[21] = 1;
+        // security: 2 (trusted -> protected) at index 25
+        d[25] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:turbine_valve".into(),
+            gui_width: 190.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        // Hover over steam dump button at (175, 75)
+        let frame_dump = Frame {
+            mouse_x: 175.0,
+            mouse_y: 75.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame_dump, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        // Should render steam dump excess tooltip with warning line
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, color)| t == "turbine.mekanismgenerators.tooltip.steamdump.warning" && *color == 0xFFFF_5555))));
+        // Security sprite should be protected
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+        // Steam rate bar base should be 8x60
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:bar/base" && rect[2] == 8.0 && rect[3] == 60.0)));
     }
 }

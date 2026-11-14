@@ -106,9 +106,9 @@ impl FusionReactorControllerScreen {
         if inside(mouse, rect) {
             let label = host::translate(label_key, &[]);
             let tip = if amount == 0 {
-                format!("{label}: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("{label}: {amount} / {capacity} mB")
+                host::translate("generic.mekanism.stored.mb", &[label, amount.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
@@ -122,9 +122,9 @@ impl MekScreen for FusionReactorControllerScreen {
         match self.page {
             ActivePage::Heat => {
                 base_panel(c, 186.0, 166.0);
-                title(c, "Heat", 0.0, 186.0, 5.0);
-                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 12.0, 12.0);
-                c.area(7210, [6.0, 6.0, 12.0, 12.0], AreaKind::Button, true, "Back");
+                title(c, &host::translate("reactor.mekanismgenerators.heat", &[]), 18.0, 168.0, 5.0);
+                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 14.0, 14.0);
+                c.area(7210, [6.0, 6.0, 14.0, 14.0], AreaKind::Button, true, "Back");
 
                 // Plasma temperature gauge at (12, 50, 18, 60)
                 let p_frac = (data(29) as f32 / 1000.0).clamp(0.0, 1.0);
@@ -135,7 +135,7 @@ impl MekScreen for FusionReactorControllerScreen {
                 }
                 c.blit_sprite("mekanism:gauge/overlay/standard", 13.0, 51.0, 16.0, 58.0);
                 if inside(mouse, [12.0, 50.0, 18.0, 60.0]) {
-                    let tip = format!("Plasma Temp: {} kK", data(21));
+                    let tip = host::translate("reactor.mekanismgenerators.heat.plasma", &[format!("{} kK", data(21))]);
                     c.tooltip(&[(&tip, WHITE)]);
                 }
 
@@ -148,7 +148,7 @@ impl MekScreen for FusionReactorControllerScreen {
                 }
                 c.blit_sprite("mekanism:gauge/overlay/standard", 67.0, 51.0, 16.0, 58.0);
                 if inside(mouse, [66.0, 50.0, 18.0, 60.0]) {
-                    let tip = format!("Case Temp: {} K", data(22) as f32 / 10.0);
+                    let tip = host::translate("reactor.mekanismgenerators.heat.case", &[format!("{} K", data(22) as f32 / 10.0)]);
                     c.tooltip(&[(&tip, WHITE)]);
                 }
 
@@ -194,15 +194,19 @@ impl MekScreen for FusionReactorControllerScreen {
             }
             ActivePage::Fuel => {
                 base_panel(c, 186.0, 166.0);
-                title(c, "Fuel", 0.0, 186.0, 5.0);
-                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 12.0, 12.0);
-                c.area(7210, [6.0, 6.0, 12.0, 12.0], AreaKind::Button, true, "Back");
+                title(c, &host::translate("reactor.mekanismgenerators.fuel", &[]), 18.0, 168.0, 5.0);
+                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 14.0, 14.0);
+                c.area(7210, [6.0, 6.0, 14.0, 14.0], AreaKind::Button, true, "Back");
 
                 // Injection rate
-                c.text(&format!("Injection Rate: {}", data(23)), 6.0, 35.0, TITLE, 0, 1.0);
-                c.text("Set:", 75.0, 117.0, TITLE, 0, 0.9);
-                c.blit_sprite("mekanism:digital_text_input", 102.0, 114.0, 32.0, 14.0);
-                c.field(7200, [103.0, 115.0, 30.0, 12.0], 2, FieldFilter::Digits, &self.injection_rate_text, 1, WHITE);
+                let inj_text = host::translate("reactor.mekanismgenerators.fuel.injection_rate", &[data(23).to_string()]);
+                c.draw_string(&inj_text, 186.0 / 2.0 - host::text_width(&inj_text) / 2.0, 35.0, TITLE, false);
+
+                let edit_text = host::translate("reactor.mekanismgenerators.fuel.edit_rate", &[]);
+                let edit_w = host::text_width(&edit_text);
+                c.draw_string(&edit_text, 101.0 - edit_w, 117.0, TITLE, false);
+                c.blit_sprite("mekanism:digital_text_input", 102.0, 114.0, 28.0, 13.0);
+                c.field(7200, [103.0, 115.0, 26.0, 11.0], 2, FieldFilter::Digits, &self.injection_rate_text, 1, WHITE);
 
                 // Gauges:
                 // Deuterium (small) at (30, 64, 18, 30)
@@ -249,23 +253,25 @@ impl MekScreen for FusionReactorControllerScreen {
             }
             ActivePage::Stats => {
                 base_panel(c, 186.0, 166.0);
-                title(c, "Stats", 0.0, 186.0, 5.0);
-                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 12.0, 12.0);
-                c.area(7210, [6.0, 6.0, 12.0, 12.0], AreaKind::Button, true, "Back");
+                title(c, &host::translate("reactor.mekanismgenerators.stats", &[]), 18.0, 168.0, 5.0);
+                c.blit_sprite("mekanism:button/back", 6.0, 6.0, 14.0, 14.0);
+                c.area(7210, [6.0, 6.0, 14.0, 14.0], AreaKind::Button, true, "Back");
 
-                c.text("Passive Cooling:", 6.0, 20.0, TITLE, 0, 1.0);
+                let passive_hdr = host::translate("reactor.mekanismgenerators.stats.passive", &[]);
+                c.text(&passive_hdr, 6.0, 26.0, 0xFF00_AA00, 0, 1.0);
                 for i in 3..8 {
                     let s = string(i);
                     if !s.is_empty() {
-                        c.text(&s, 6.0, 22.0 + 10.0 * (i - 2) as f32, TITLE, 0, 0.85);
+                        c.text(&s, 6.0, 36.0 + 10.0 * (i - 3) as f32, TITLE, 0, 0.85);
                     }
                 }
 
-                c.text("Active Cooling:", 6.0, 86.0, TITLE, 0, 1.0);
+                let active_hdr = host::translate("reactor.mekanismgenerators.stats.active", &[]);
+                c.text(&active_hdr, 6.0, 92.0, 0xFF00_00AA, 0, 1.0);
                 for i in 8..14 {
                     let s = string(i);
                     if !s.is_empty() {
-                        c.text(&s, 6.0, 88.0 + 10.0 * (i - 7) as f32, TITLE, 0, 0.85);
+                        c.text(&s, 6.0, 102.0 + 10.0 * (i - 8) as f32, TITLE, 0, 0.85);
                     }
                 }
                 return;
@@ -275,11 +281,11 @@ impl MekScreen for FusionReactorControllerScreen {
 
         // Main controller screen
         base_panel(c, 186.0, 166.0);
-        title(c, "Fusion Reactor Controller", 0.0, 186.0, 5.0);
-        inventory_label(c, 13.0, 74.0);
+        title(c, &host::translate("block.mekanismgenerators.fusion_reactor_controller", &[]), 0.0, 186.0, 5.0);
+        inventory_label(c, 13.0, 72.0);
 
         // Formed label at (13, 16)
-        c.text(&host::translate("gui.mekanism.formed", &[]), 13.0, 16.0, TITLE, 0, 1.0);
+        c.text(&host::translate("multiblock.mekanism.formed", &[]), 13.0, 16.0, TITLE, 0, 1.0);
 
         // Hohlraum slot at (84, 38)
         c.blit_sprite("mekanism:slot/normal", 84.0, 38.0, 18.0, 18.0);
@@ -339,18 +345,19 @@ impl MekScreen for FusionReactorControllerScreen {
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
             c.blit_sprite(icon_sprite, 186.0 + 4.0, 90.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -360,7 +367,7 @@ impl MekScreen for FusionReactorControllerScreen {
             InputEvent::MousePressed(p) => {
                 let mouse = (p.x, p.y);
                 // Sub-page back button
-                if self.page != ActivePage::Controller && inside(mouse, [6.0, 6.0, 12.0, 12.0]) {
+                if self.page != ActivePage::Controller && inside(mouse, [6.0, 6.0, 14.0, 14.0]) {
                     self.page = ActivePage::Controller;
                     host::play_click();
                     return true;
@@ -475,6 +482,7 @@ mod tests {
         let commands = decoded.commands;
 
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "multiblock.mekanism.formed")));
 
         // Test click Fuel tab (at 190, 40)
         let click_fuel = InputEvent::MousePressed(Pointer {
@@ -495,5 +503,73 @@ mod tests {
         assert!(screen.input(&field_sub));
         let sent_field = host::take_sent();
         assert_eq!(sent_field, vec!["text 7200 \"4\"".to_string()]);
+
+        // Test back button from Fuel page at (10, 10)
+        let click_back = InputEvent::MousePressed(Pointer {
+            x: 10.0,
+            y: 10.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_back));
+        let sent_back = host::take_sent();
+        assert_eq!(sent_back, vec!["click".to_string()]);
+    }
+
+    #[test]
+    fn test_fusion_reactor_subpages_and_protected_security() {
+        let mut d = vec![0; 40];
+        // Security: 2 (trusted -> protected) at index 37
+        d[37] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![
+                "".into(), "".into(), "".into(),
+                "Ignition Temp: 100 MK".into(),
+                "Max Plasma Temp: 200 MK".into(),
+                "Max Casing Temp: 50 MK".into(),
+                "Passive Gen: 10,000 FE/t".into(),
+                "Min Inject Rate: 2".into(),
+            ],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:fusion_reactor_controller".into(),
+            gui_width: 186.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        // Verify protected security sprite on main page
+        let frame = Frame {
+            mouse_x: 10.0,
+            mouse_y: 10.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+
+        // Navigate to stats page (click tab at 190, 70)
+        let click_stats = InputEvent::MousePressed(Pointer {
+            x: 190.0,
+            y: 70.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_stats));
+
+        // Render stats page and check headers & back button size 14x14
+        let mut canvas_stats = Canvas::new();
+        screen.render(&frame, &mut canvas_stats);
+        let decoded_stats = horizon_mod_sdk::screen::format::decode(&canvas_stats.finish()).expect("decode stats");
+        assert!(decoded_stats.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "reactor.mekanismgenerators.stats.passive")));
+        assert!(decoded_stats.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "reactor.mekanismgenerators.stats.active")));
+        assert!(decoded_stats.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, rect, .. } if sprite == "mekanism:button/back" && rect[2] == 14.0 && rect[3] == 14.0)));
     }
 }

@@ -68,9 +68,9 @@ impl SPSScreen {
         c.blit_sprite("mekanism:gauge/overlay/standard", inner[0], inner[1], inner[2], inner[3]);
         if inside(mouse, rect) {
             let tip = if amount == 0 {
-                format!("{label}: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("{label}: {amount} / {capacity} mB")
+                host::translate("generic.mekanism.stored.mb", &[label.to_string(), amount.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
@@ -82,8 +82,8 @@ impl MekScreen for SPSScreen {
         let mouse = (frame.mouse_x, frame.mouse_y);
         base_panel(c, 176.0, 182.0);
 
-        // Title and inventory label
-        title(c, &host::translate("block.mekanism.sps_port", &[]), 0.0, 176.0, 5.0);
+        // Title and inventory label (titleLabelY = 6 in Minecraft AbstractContainerScreen)
+        title(c, &host::translate("block.mekanism.sps_port", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 90.0);
 
         // 2 Gauges: Input (polonium) at (7, 17) and Output (antimatter) at (151, 17)
@@ -142,29 +142,30 @@ impl MekScreen for SPSScreen {
             );
         }
         if inside(mouse, [7.0, 79.0, 162.0, 10.0]) {
-            let tip = format!("Progress: {}%", data(10));
+            let tip = host::translate("gui.mekanism.progress", &[format!("{}%", data(10))]);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
-        // Security tab at (176, 6, 26, 18)
+        // Security tab at (176, 34, 26, 18) - Java GuiSecurityTab defaults to y = 34
         if let Some(sec_idx) = self.security_idx {
-            let sec_rect = [176.0, 6.0, 26.0, 18.0];
+            let sec_rect = [176.0, 34.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", sec_rect, TAB_SECURITY);
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
-            c.blit_sprite(icon_sprite, 176.0 + 4.0, 6.0, 18.0, 18.0);
+            c.blit_sprite(icon_sprite, 176.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -173,8 +174,8 @@ impl MekScreen for SPSScreen {
         match event {
             InputEvent::MousePressed(p) => {
                 let mouse = (p.x, p.y);
-                // Security tab
-                if self.security_idx.is_some() && inside(mouse, [176.0, 6.0, 26.0, 18.0]) {
+                // Security tab at y = 34
+                if self.security_idx.is_some() && inside(mouse, [176.0, 34.0, 26.0, 18.0]) {
                     if p.button == MouseButton::Right {
                         host::send_button(9101);
                     } else {
@@ -245,15 +246,55 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Status: Active")));
 
-        // Test click on security tab
+        // Test click on security tab at y = 34..52
         let click_sec = InputEvent::MousePressed(Pointer {
             x: 180.0,
-            y: 10.0,
+            y: 38.0,
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
         });
         assert!(screen.input(&click_sec));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 9100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_sps_gauge_tooltip_and_protected_security() {
+        let mut d = vec![0; 20];
+        // Empty input (0 / 2000)
+        d[0] = 0;
+        d[2] = 2000;
+        // Output filled (500 / 2000)
+        d[4] = 500;
+        d[6] = 2000;
+        // Security mode: 2 (trusted -> protected sprite) at index 15
+        d[15] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:sps_port".into(),
+            gui_width: 176.0,
+            gui_height: 182.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open sps");
+
+        // Hover over input gauge at (10, 20) -> should show empty
+        let frame_empty = Frame {
+            mouse_x: 10.0,
+            mouse_y: 20.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame_empty, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.empty"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
     }
 }

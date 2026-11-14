@@ -72,9 +72,9 @@ impl ThermalEvaporationControllerScreen {
         c.blit_sprite("mekanism:gauge/overlay/standard", inner[0], inner[1], inner[2], inner[3]);
         if inside(mouse, rect) {
             let tip = if amount == 0 {
-                format!("{label}: {}", host::translate("gui.mekanism.empty", &[]))
+                host::translate("gui.mekanism.empty", &[])
             } else {
-                format!("{label}: {amount} / {capacity} mB")
+                host::translate("generic.mekanism.stored.mb", &[label.to_string(), amount.to_string()])
             };
             c.tooltip(&[(&tip, WHITE)]);
         }
@@ -87,7 +87,7 @@ impl MekScreen for ThermalEvaporationControllerScreen {
         base_panel(c, 196.0, 166.0);
 
         // Title centered between gauges (x = 24 to 172)
-        title(c, "Thermal Evaporation Plant", 24.0, 148.0, 6.0);
+        title(c, &host::translate("block.mekanism.thermal_evaporation_controller", &[]), 24.0, 148.0, 6.0);
         inventory_label(c, 18.0, 74.0);
 
         // Input and Output Gauges
@@ -164,29 +164,30 @@ impl MekScreen for ThermalEvaporationControllerScreen {
         c.blit_sprite("mekanism:tab/heat_info_k", heat_rect[0], heat_rect[1], heat_rect[2], heat_rect[3]);
         c.area(7005, heat_rect, AreaKind::Tab, true, "Heat");
         if inside(mouse, heat_rect) {
-            let tip = format!("Dissipated: {}.{}{} K/t", data(12), data(13), data(14));
+            let tip = host::translate("gui.mekanism.dissipated", &[format!("{}.{}{} K", data(12), data(13), data(14))]);
             c.tooltip(&[(&tip, WHITE)]);
         }
 
-        // Security tab at (196, 6, 26, 18)
+        // Security tab at (196, 34, 26, 18) - Java GuiSecurityTab defaults to y = 34
         if let Some(sec_idx) = self.security_idx {
-            let sec_rect = [196.0, 6.0, 26.0, 18.0];
+            let sec_rect = [196.0, 34.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", sec_rect, TAB_SECURITY);
             let sec_mode = (data(sec_idx).max(0) as usize) % 3;
             let icon_sprite = match sec_mode {
                 1 => "mekanism:security/private",
-                2 => "mekanism:security/trusted",
+                2 => "mekanism:security/protected",
                 _ => "mekanism:security/public",
             };
-            c.blit_sprite(icon_sprite, 196.0 + 4.0, 6.0, 18.0, 18.0);
+            c.blit_sprite(icon_sprite, 196.0 + 4.0, 34.0, 18.0, 18.0);
             c.area(9100, sec_rect, AreaKind::Tab, true, "Security");
             if inside(mouse, sec_rect) {
-                let text = match sec_mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_key = match sec_mode {
+                    1 => "security.mekanism.private",
+                    2 => "security.mekanism.trusted",
+                    _ => "security.mekanism.public",
                 };
-                c.tooltip(&[(text, WHITE)]);
+                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                c.tooltip(&[(&text, WHITE)]);
             }
         }
     }
@@ -200,8 +201,8 @@ impl MekScreen for ThermalEvaporationControllerScreen {
                     host::play_click();
                     return true;
                 }
-                // Security tab
-                if self.security_idx.is_some() && inside(mouse, [196.0, 6.0, 26.0, 18.0]) {
+                // Security tab at y = 34
+                if self.security_idx.is_some() && inside(mouse, [196.0, 34.0, 26.0, 18.0]) {
                     if p.button == MouseButton::Right {
                         host::send_button(9101);
                     } else {
@@ -276,15 +277,56 @@ mod tests {
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Formed")));
 
-        // Test click on security tab
+        // Test click on security tab at y = 34..52
         let click_sec = InputEvent::MousePressed(Pointer {
             x: 200.0,
-            y: 10.0,
+            y: 38.0,
             button: MouseButton::Left,
             modifiers: Modifiers::default(),
         });
         assert!(screen.input(&click_sec));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 9100".to_string(), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_evaporation_controller_empty_gauge_and_protected_security() {
+        let mut d = vec![0; 20];
+        // Input: 0 (empty)
+        d[0] = 0;
+        d[2] = 64000;
+        // Security mode: 2 (trusted -> protected) at index 15
+        d[15] = 2;
+
+        host::set_menu(host::Menu {
+            data: d,
+            strings: vec![],
+            ..Default::default()
+        });
+
+        let info = OpenInfo {
+            menu: "mekanism:thermal_evaporation_controller".into(),
+            gui_width: 196.0,
+            gui_height: 166.0,
+            touch: false,
+        };
+        let (mut screen, _) = open(&info).expect("open screen");
+
+        let frame = Frame {
+            mouse_x: 10.0,
+            mouse_y: 20.0,
+            partial_tick: 0.0,
+            time_ms: 1000,
+        };
+        let mut canvas = Canvas::new();
+        screen.render(&frame, &mut canvas);
+        let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
+
+        // Empty gauge tooltip
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.empty"))));
+        // Protected security sprite
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
+        // Title translation key
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "block.mekanism.thermal_evaporation_controller")));
     }
 }

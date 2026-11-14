@@ -160,38 +160,44 @@ impl QIOItemViewer {
 
         // Sort type button (41 by 12)
         let sort_mode = data(3).clamp(0, 3) as usize;
-        let sort_names = ["Name", "Count", "Mod", "Registry"];
-        let sort_display = sort_names[sort_mode];
+        let (sort_name_key, sort_desc_key) = match sort_mode {
+            1 => ("qio.mekanism.sort_count", "qio.mekanism.sort_count_desc"),
+            2 => ("qio.mekanism.sort_mod", "qio.mekanism.sort_mod_desc"),
+            3 => ("qio.mekanism.sort_registry_name", "qio.mekanism.sort_registry_name.desc"),
+            _ => ("qio.mekanism.sort_name", "qio.mekanism.sort_name_desc"),
+        };
+        let sort_display = host::translate(sort_name_key, &[]);
+        let sort_tip = host::translate(sort_desc_key, &[]);
         button(
             c,
             SORT_TYPE,
             [sort_x, sort_y, 41.0, 12.0],
-            sort_display,
+            &sort_display,
             true,
             mouse,
-            Some("Sort by name, size, mod or registry name"),
+            Some(&sort_tip),
         );
 
         // Sort direction button (12 by 12 at (157, 116))
         let ascending = data(4) != 0;
         let dir_rect = [157.0, sort_y, 12.0, 12.0];
         let dir_hovered = inside(mouse, dir_rect);
-        let dir_sprite = if dir_hovered {
-            "mekanism:button_focus"
-        } else {
-            "mekanism:button"
-        };
-        c.blit_sprite(dir_sprite, dir_rect[0], dir_rect[1], dir_rect[2], dir_rect[3]);
+        inner_screen(c, dir_rect);
         let icon_sprite = if ascending {
             "mekanism:button/arrow_up"
         } else {
             "mekanism:button/arrow_down"
         };
-        c.blit_sprite(icon_sprite, dir_rect[0], dir_rect[1], dir_rect[2], dir_rect[3]);
-        let dir_tip = if ascending { "Ascending" } else { "Descending" };
-        c.area(SORT_DIRECTION, dir_rect, AreaKind::Button, true, dir_tip);
+        c.blit_sprite(icon_sprite, dir_rect[0] + 3.0, dir_rect[1] + 3.0, 6.0, 6.0);
+        let dir_tip_key = if ascending {
+            "qio.mekanism.sort_ascending_desc"
+        } else {
+            "qio.mekanism.sort_descending_desc"
+        };
+        let dir_tip = host::translate(dir_tip_key, &[]);
+        c.area(SORT_DIRECTION, dir_rect, AreaKind::Button, true, &dir_tip);
         if dir_hovered {
-            c.tooltip(&[(dir_tip, WHITE)]);
+            c.tooltip(&[(&dir_tip, WHITE)]);
         }
 
         // 6. Inventory label at (8, 118)
@@ -347,5 +353,26 @@ mod tests {
         assert!(viewer.input_viewer(&click_empty));
         let sent3 = host::take_sent();
         assert_eq!(sent3, vec![format!("grid {} 1 shift", u32::MAX), "click".to_string()]);
+    }
+
+    #[test]
+    fn test_qio_item_viewer_sort_labels_and_tooltips() {
+        host::set_menu(host::Menu {
+            data: vec![1, 0, 0, 1, 0], // sort = 1 (Count), ascending = 0 (Descending)
+            strings: vec!["Freq".into()],
+            ..Default::default()
+        });
+
+        let mut viewer = QIOItemViewer::new(178.0, 211.0);
+        let mut canvas = Canvas::new();
+        // Mouse over direction button at (158, 118)
+        viewer.render_viewer(&mut canvas, (158.0, 118.0));
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+
+        // Verify translated count label rendered
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "qio.mekanism.sort_count")));
+        // Verify tooltip for sort direction descending
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "qio.mekanism.sort_descending_desc"))));
     }
 }
