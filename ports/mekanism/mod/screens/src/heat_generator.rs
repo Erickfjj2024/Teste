@@ -85,7 +85,7 @@ impl MekScreen for HeatGenerator {
         }
 
         // Title and inventory label
-        title(c, &host::translate("block.mekanismgenerators.heat_generator", &[]), 0.0, 176.0, 6.0);
+        title(c, &host::translate("block.mekanism.heat_generator", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 72.0);
 
         // Chrome (tabs and modals)

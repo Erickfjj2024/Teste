@@ -75,7 +75,7 @@ impl MekScreen for GasGenerator {
         }
 
         // Title and inventory label
-        title(c, &host::translate("block.mekanismgenerators.gas_burning_generator", &[]), 0.0, 176.0, 6.0);
+        title(c, &host::translate("block.mekanism.gas_burning_generator", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 72.0);
 
         // Burn rate label beside inventory

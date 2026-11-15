@@ -59,7 +59,7 @@ impl MekScreen for ModuleTweaker {
         base_panel(c, 266.0, 186.0);
 
         // Title at y = 4
-        title(c, &host::translate("gui.mekanism.module_tweaker", &[]), 24.0, 266.0 - 24.0, 4.0);
+        title(c, &host::translate("module.mekanism.module_tweaker", &[]), 24.0, 266.0 - 24.0, 4.0);
 
         // 14 Gear Slots
         let picked_slot = data(0);

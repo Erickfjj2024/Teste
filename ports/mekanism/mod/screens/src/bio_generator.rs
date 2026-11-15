@@ -79,7 +79,7 @@ impl MekScreen for BioGenerator {
         c.text(&producing_str, 52.0, 47.0, GREEN, 0, 0.85);
 
         // Title and inventory label
-        title(c, &host::translate("block.mekanismgenerators.bio_generator", &[]), 0.0, 176.0, 6.0);
+        title(c, &host::translate("block.mekanism.bio_generator", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 72.0);
 
         // Chrome (tabs and modals)

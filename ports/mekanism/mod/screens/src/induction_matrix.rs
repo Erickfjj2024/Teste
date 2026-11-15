@@ -132,7 +132,7 @@ impl MekScreen for InductionMatrixScreen {
                     2 => "security.mekanism.trusted",
                     _ => "security.mekanism.public",
                 };
-                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                let text = host::translate("tooltip.mekanism.security", &[host::translate(mode_key, &[])]);
                 c.tooltip(&[(&text, WHITE)]);
             }
         }

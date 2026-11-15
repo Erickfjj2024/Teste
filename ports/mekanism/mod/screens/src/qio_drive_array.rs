@@ -144,7 +144,7 @@ impl MekScreen for QIODriveArray {
                 2 => "security.mekanism.trusted",
                 _ => "security.mekanism.public",
             };
-            let sec_tip = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+            let sec_tip = host::translate("tooltip.mekanism.security", &[host::translate(mode_key, &[])]);
             c.tooltip(&[(&sec_tip, WHITE)]);
         }
 
@@ -308,7 +308,7 @@ mod tests {
         screen.render(&frame_sec, &mut canvas);
         let decoded = horizon_mod_sdk::screen::format::decode(&canvas.finish()).expect("decode");
 
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.security"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "tooltip.mekanism.security"))));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:security/protected")));
 
         // Digital bars base width 50, height 8 at x=26 and x=98

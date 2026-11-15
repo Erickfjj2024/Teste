@@ -281,7 +281,7 @@ impl MekScreen for FusionReactorControllerScreen {
 
         // Main controller screen
         base_panel(c, 186.0, 166.0);
-        title(c, &host::translate("block.mekanismgenerators.fusion_reactor_controller", &[]), 0.0, 186.0, 5.0);
+        title(c, &host::translate("block.mekanism.fusion_reactor_controller", &[]), 0.0, 186.0, 5.0);
         inventory_label(c, 13.0, 72.0);
 
         // Formed label at (13, 16)
@@ -356,7 +356,7 @@ impl MekScreen for FusionReactorControllerScreen {
                     2 => "security.mekanism.trusted",
                     _ => "security.mekanism.public",
                 };
-                let text = host::translate("gui.mekanism.security", &[host::translate(mode_key, &[])]);
+                let text = host::translate("tooltip.mekanism.security", &[host::translate(mode_key, &[])]);
                 c.tooltip(&[(&text, WHITE)]);
             }
         }

@@ -84,9 +84,9 @@ impl MekScreen for SolarGenerator {
 
         // Title and inventory label
         let title_key = if self.menu == "mekanism:advanced_solar_generator" {
-            "block.mekanismgenerators.advanced_solar_generator"
+            "block.mekanism.advanced_solar_generator"
         } else {
-            "block.mekanismgenerators.solar_generator"
+            "block.mekanism.solar_generator"
         };
         title(c, &host::translate(title_key, &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 72.0);

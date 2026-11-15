@@ -122,18 +122,18 @@ impl MekScreen for SecurityDesk {
         }
 
         // Subheading "Trusted Players" at (74, 57)
-        let trusted_sub = host::translate("gui.mekanism.security.trusted_players", &[]);
+        let trusted_sub = host::translate("security.mekanism.trusted_players", &[]);
         c.text(&trusted_sub, 74.0, 57.0, SUBHEADING, TEXT_CENTER, 0.85);
 
         // Text field "Add:" at (35, 68, 99, 11)
-        let add_label = host::translate("gui.mekanism.security.add", &[]);
+        let add_label = host::translate("security.mekanism.add", &[]);
         c.text(&add_label, 33.0, 69.0, TITLE, TEXT_RIGHT, 1.0);
         inner_screen(c, [35.0, 68.0, 99.0, 11.0]);
         c.field(NAME_BOX, [36.0, 69.0, 97.0, 9.0], 16, FieldFilter::Any, "", 1, WHITE);
 
         // Remove button at (13, 81, 122, 20)
         let can_remove = is_owner && selected_row >= 0;
-        let remove_label = host::translate("gui.mekanism.remove", &[]);
+        let remove_label = host::translate("button.mekanism.remove", &[]);
         button(
             c,
             REMOVE,

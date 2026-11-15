@@ -71,7 +71,7 @@ impl MekScreen for PortableTeleporter {
 
         // Teleport button at (42, 147, 92, 20)
         let ready = data(1) == 4 && data(0) != 0;
-        let label = host::translate("gui.mekanism.teleport", &[]);
+        let label = host::translate("button.mekanism.teleport", &[]);
         let teleport_rect = [42.0, 147.0, 92.0, 20.0];
         crate::elements::button(c, BUTTON_TELEPORT, teleport_rect, &label, ready, mouse, Some(&label));
     }
