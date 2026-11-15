@@ -4149,6 +4149,21 @@ def vanilla_members(cat, mat):
     elif cat == 'dyes' and mat in ('white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray',
                                     'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'):
         v = [f'minecraft:{mat}_dye']
+    # the convention tags of plain vanilla items some recipes ask for (the game does not define them: with none, those recipes cannot be crafted)
+    elif cat == 'sands':
+        v = ['minecraft:sand', 'minecraft:red_sand']
+    elif cat == 'slimeballs':
+        v = ['minecraft:slime_ball']
+    elif cat == 'ender_pearls':
+        v = ['minecraft:ender_pearl']
+    elif cat == 'nether_stars':
+        v = ['minecraft:nether_star']
+    elif cat == 'glass_panes':
+        v = ['minecraft:glass_pane'] + [f'minecraft:{c}_stained_glass_pane' for c in ('white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black')]
+    elif cat == 'chests' and mat == 'wooden':
+        v = ['minecraft:chest', 'minecraft:trapped_chest']
+    elif cat == 'barrels' and mat == 'wooden':
+        v = ['minecraft:barrel']
     elif cat == 'cobblestones' and mat in ('normal', 'deepslate'):
         v = {'normal': ['minecraft:cobblestone'], 'deepslate': ['minecraft:cobbled_deepslate']}[mat]
     elif cat == 'crops' and mat == 'wheat':

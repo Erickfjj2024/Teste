@@ -7,7 +7,7 @@
 ## Fases / Phases
 | # | O que comprova / What it proves | Como / How | Estado / State |
 |---|---|---|---|
-| P1 | **Todas as 887 receitas de crafting** (843 shaped + 44 shapeless) se montam na grade e dão o item e a quantidade certos, com ingredientes do menu criativo | `tools/survival/crafts.py`: para cada receita do `.hmod` (`data/mekanism/recipe`), `give` dos ingredientes (tags resolvidas), mesa de crafting, `click-slot` na grade (100+), lê o resultado (200), pega, compara com a receita | a fazer |
+| P1 | **Todas as 887 receitas de crafting** (843 shaped + 44 shapeless) se montam na grade e dão o item e a quantidade certos, com ingredientes do menu criativo | `tools/survival/crafts.py`: para cada receita do `.hmod` (`data/mekanism/recipe`), `give` dos ingredientes (tags resolvidas), mesa de crafting, `click-slot` na grade (100+), lê o resultado (200), pega, compara com a receita | em andamento: conferência estática das 887 feita (itens/resultados/padrões ok); 7 tags `c:` que o jogo não define (64 receitas) corrigidas no conversor e confirmadas no jogo; resto por `~/wa-bridge/crafts.py` |
 | P2 | **Energia**: primeiro gerador (aquecimento/solar/bio), cabos, uma máquina de 1ª tier trabalhando (Enrichment, Crusher, Smelter) | construção por script + receitas reais; confere a barra de energia, o progresso e a saída | a fazer |
 | P3 | **Processamento**: minério → poeira → sujeira → clump → cristal ... (as cadeias de 1x a 5x), fábricas, infusão | por máquina, com os itens produzidos pelas máquinas anteriores (nada de `give` de itens intermediários) | a fazer |
 | P4 | **Materiais dos reatores**: aço, osmium, ligas, bobinas, vidro do reator, tanques, cabos e tubos | craftados em P1, usados aqui | a fazer |
