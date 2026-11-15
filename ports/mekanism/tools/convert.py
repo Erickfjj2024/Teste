@@ -2247,8 +2247,8 @@ def boiler_valve_menu(m):
     widgets += [
         {'type': 'sprite', 'texture': tab_heat_info, 'x': -26, 'y': 109, 'w': 26, 'h': 26},
         {'type': 'button', 'x': -26, 'y': 109, 'w': 26, 'h': 26, 'tooltip': 'Dissipated: {26}.{27}{28} K/t'}]
-    return {'slots': 1, 'data_slots': 29, 'results': [],
-            'screen': {'texture': texture, 'own_labels': True, 'slots': [None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
+    return {'slots': 2, 'data_slots': 29, 'results': [],
+            'screen': {'texture': texture, 'own_labels': True, 'slots': [None, None], 'width': width, 'height': height, 'inventory_x': inv_x, 'inventory_y': 84,
                        'widgets': widgets}}
 
 def turbine_valve_menu(m):
