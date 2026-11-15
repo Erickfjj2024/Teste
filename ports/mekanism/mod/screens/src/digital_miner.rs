@@ -75,7 +75,7 @@ impl MekScreen for DigitalMiner {
         c.text(search_label, 10.0, 32.0, GREEN, 0, 0.85);
         c.text(&to_mine_str, 10.0, 42.0, GREEN, 0, 0.85);
 
-        // Digital switches at (19, 56) and (57, 56)
+        // Digital switches at (19, 56), (38, 56) and (57, 56)
         let eject_on = data(8) == 1;
         let eject_rect = [19.0, 56.0, 16.0, 16.0];
         let eject_sprite = if eject_on { "mekanism:button_focus" } else { "mekanism:button" };
@@ -83,7 +83,16 @@ impl MekScreen for DigitalMiner {
         c.blit("mekanism:gui/switch/eject", 22.0, 59.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0);
         c.area(7807, eject_rect, AreaKind::Button, true, "Auto eject");
         if inside(mouse, eject_rect) {
-            c.tooltip(&[("Auto eject", WHITE)]);
+            c.tooltip(&[(&host::translate("gui.mekanism.auto_eject", &[]), WHITE)]);
+        }
+
+        // NÃO FEITO: auto pull no servidor/menu_data (o port não suporta auto pull no servidor)
+        let pull_rect = [38.0, 56.0, 16.0, 16.0];
+        c.blit_sprite("mekanism:button", pull_rect[0], pull_rect[1], pull_rect[2], pull_rect[3]);
+        c.blit("mekanism:gui/switch/input", 41.0, 59.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0);
+        c.area(7809, pull_rect, AreaKind::Button, false, "Auto pull");
+        if inside(mouse, pull_rect) {
+            c.tooltip(&[(&host::translate("gui.mekanism.auto_pull", &[]), WHITE)]);
         }
 
         let silk_on = data(9) == 1;
@@ -93,18 +102,18 @@ impl MekScreen for DigitalMiner {
         c.blit("mekanism:gui/switch/silk", 60.0, 59.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0);
         c.area(7808, silk_rect, AreaKind::Button, true, "Silk touch");
         if inside(mouse, silk_rect) {
-            c.tooltip(&[("Silk touch", WHITE)]);
+            c.tooltip(&[(&host::translate("gui.mekanism.miner.silk", &[]), WHITE)]);
         }
 
-        // Power bar at (157, 39, 47 high)
+        // Power bar at (157, 39, 47 high) with base at (157, 39, 6, 49)
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
-        c.blit_sprite("mekanism:bar/base", 156.0, 38.0, 6.0, 49.0);
+        c.blit_sprite("mekanism:bar/base", 157.0, 39.0, 6.0, 49.0);
         let filled_h = (47.0 * fraction.clamp(0.0, 1.0)).floor();
         if filled_h > 0.0 {
-            c.blit("mekanism:gui/bar/vertical_power", 157.0, 39.0 + 47.0 - filled_h, 0.0, 47.0 - filled_h, 4.0, filled_h, 4.0, 47.0);
+            c.blit("mekanism:gui/bar/vertical_power", 158.0, 40.0 + 47.0 - filled_h, 0.0, 47.0 - filled_h, 4.0, filled_h, 4.0, 47.0);
         }
-        if inside(mouse, [156.0, 38.0, 6.0, 49.0]) {
+        if inside(mouse, [157.0, 39.0, 6.0, 49.0]) {
             c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
         }
 
@@ -112,13 +121,17 @@ impl MekScreen for DigitalMiner {
         let start_active = status == 0 || status == 4;
         let stop_active = status == 1 || status == 2;
         let config_active = status == 0;
-        button(c, 7800, [87.0, 19.0, 61.0, 18.0], "Start", start_active, mouse, None);
-        button(c, 7801, [87.0, 36.0, 61.0, 18.0], "Stop", stop_active, mouse, None);
-        button(c, 7802, [87.0, 53.0, 61.0, 18.0], "Config", config_active, mouse, None);
-        button(c, 7803, [87.0, 70.0, 61.0, 18.0], "Reset", true, mouse, None);
+        let start_text = host::translate("gui.mekanism.start", &[]);
+        let stop_text = host::translate("gui.mekanism.stop", &[]);
+        let config_text = host::translate("gui.mekanism.config", &[]);
+        let reset_text = host::translate("gui.mekanism.reset", &[]);
+        button(c, 7800, [87.0, 19.0, 61.0, 18.0], if start_text.is_empty() { "Start" } else { &start_text }, start_active, mouse, None);
+        button(c, 7801, [87.0, 36.0, 61.0, 18.0], if stop_text.is_empty() { "Stop" } else { &stop_text }, stop_active, mouse, None);
+        button(c, 7802, [87.0, 53.0, 61.0, 18.0], if config_text.is_empty() { "Config" } else { &config_text }, config_active, mouse, None);
+        button(c, 7803, [87.0, 70.0, 61.0, 18.0], if reset_text.is_empty() { "Reset" } else { &reset_text }, true, mouse, None);
 
         // Title and inventory label
-        title(c, &host::translate("block.mekanism.digital_miner", &[]), 0.0, 176.0, 5.0);
+        title(c, &host::translate("block.mekanism.digital_miner", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 148.0);
 
         // Chrome (tabs and modals)
@@ -209,6 +222,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "To mine: 42")));
+
+        // Hover power bar at (158, 42)
+        let hover_frame = Frame { mouse_x: 158.0, mouse_y: 42.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 10000 / 40000 FE")))));
 
         // Click Start button at (90, 25)
         let click_event = InputEvent::MousePressed(Pointer {

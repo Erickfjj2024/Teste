@@ -49,33 +49,51 @@ impl MekScreen for LogisticalSorter {
 
         // Left inner screen at (9, 17, 85, 140)
         inner_screen(c, [9.0, 17.0, 85.0, 140.0]);
-        let filters_str = format!("Filters: {}", data(2));
+        let filters_trans = host::translate("filter.mekanism.filter.count", &[data(2).to_string()]);
+        let filters_str = if filters_trans.is_empty() { format!("Filters: {}", data(2)) } else { filters_trans };
         c.text(&filters_str, 12.0, 21.0, GREEN, 0, 0.80);
 
-        c.text("Single Item", 11.0, 36.0, GREEN, 0, 0.80);
+        let single_title = host::translate("logistical_sorter.mekanism.single_item", &[]);
+        c.text(if single_title.is_empty() { "Single Item" } else { &single_title }, 11.0, 36.0, GREEN, 0, 0.80);
         let single_on = data(1) == 1;
         c.text(if single_on { "On" } else { "Off" }, 23.0, 49.0, if single_on { GREEN } else { 0xFFFF_5555 }, 0, 0.80);
 
-        c.text("Round Robin", 11.0, 66.0, GREEN, 0, 0.80);
+        let rr_title = host::translate("logistical_sorter.mekanism.round_robin", &[]);
+        c.text(if rr_title.is_empty() { "Round Robin" } else { &rr_title }, 11.0, 66.0, GREEN, 0, 0.80);
         c.text("Off", 23.0, 79.0, 0xFF80_8080, 0, 0.80);
 
-        c.text("Auto Eject", 11.0, 96.0, GREEN, 0, 0.80);
+        let eject_title = host::translate("logistical_sorter.mekanism.auto_eject", &[]);
+        c.text(if eject_title.is_empty() { "Auto Eject" } else { &eject_title }, 11.0, 96.0, GREEN, 0, 0.80);
         let eject_on = data(0) == 1;
         c.text(if eject_on { "On" } else { "Off" }, 23.0, 109.0, if eject_on { GREEN } else { 0xFFFF_5555 }, 0, 0.80);
 
-        c.text("Default", 11.0, 126.0, GREEN, 0, 0.80);
+        let def_title = host::translate("logistical_sorter.mekanism.default", &[]);
+        c.text(if def_title.is_empty() { "Default" } else { &def_title }, 11.0, 126.0, GREEN, 0, 0.80);
 
-        // Toggle buttons: single item at (12, 46, 14, 14), auto eject at (12, 106, 14, 14)
+        // Toggle buttons: single item at (12, 46, 14, 14), round robin at (12, 76, 14, 14), auto eject at (12, 106, 14, 14)
         c.blit_sprite("mekanism:button", 12.0, 46.0, 14.0, 14.0);
+        c.blit("mekanism:gui/button/single", 12.0, 46.0, 0.0, 0.0, 14.0, 14.0, 14.0, 14.0);
         c.area(7401, [12.0, 46.0, 14.0, 14.0], AreaKind::Button, true, "Single Item");
         if inside(mouse, [12.0, 46.0, 14.0, 14.0]) {
-            c.tooltip(&[("Single item: sends one item at a time", WHITE)]);
+            let tip = host::translate("logistical_sorter.mekanism.single_item.description", &[]);
+            c.tooltip(&[(if tip.is_empty() { "Single item: sends one item at a time" } else { &tip }, WHITE)]);
+        }
+
+        // NÃO FEITO: round robin toggle no servidor/menu_data (o port não tem round robin ativo no servidor)
+        c.blit_sprite("mekanism:button", 12.0, 76.0, 14.0, 14.0);
+        c.blit("mekanism:gui/button/round_robin", 12.0, 76.0, 0.0, 0.0, 14.0, 14.0, 14.0, 14.0);
+        c.area(7403, [12.0, 76.0, 14.0, 14.0], AreaKind::Button, true, "Round Robin");
+        if inside(mouse, [12.0, 76.0, 14.0, 14.0]) {
+            let tip = host::translate("logistical_sorter.mekanism.round_robin.description", &[]);
+            c.tooltip(&[(if tip.is_empty() { "Cycles between all connected inventories when sending items." } else { &tip }, WHITE)]);
         }
 
         c.blit_sprite("mekanism:button", 12.0, 106.0, 14.0, 14.0);
+        c.blit("mekanism:gui/button/auto_eject", 12.0, 106.0, 0.0, 0.0, 14.0, 14.0, 14.0, 14.0);
         c.area(7402, [12.0, 106.0, 14.0, 14.0], AreaKind::Button, true, "Auto Eject");
         if inside(mouse, [12.0, 106.0, 14.0, 14.0]) {
-            c.tooltip(&[("Auto eject: automatically extracts items", WHITE)]);
+            let tip = host::translate("logistical_sorter.mekanism.auto_eject.description", &[]);
+            c.tooltip(&[(if tip.is_empty() { "Auto eject: automatically extracts items" } else { &tip }, WHITE)]);
         }
 
         // Filter holder at (95, 17, 158, 118)
@@ -100,7 +118,7 @@ impl MekScreen for LogisticalSorter {
         button(c, 7404, [200.0, 136.0, 52.0, 20.0], "Delete", self.selected_row.is_some(), mouse, None);
 
         // Title and inventory label (inv at x=58, y=172)
-        title(c, &host::translate("block.mekanism.logistical_sorter", &[]), 0.0, 276.0, 5.0);
+        title(c, &host::translate("block.mekanism.logistical_sorter", &[]), 0.0, 276.0, 6.0);
         c.draw_string(&host::translate("container.inventory", &[]), 58.0, 160.0, TITLE, false);
 
         // Chrome (security tab at x=276)
@@ -116,6 +134,11 @@ impl MekScreen for LogisticalSorter {
                 let mouse = (p.x, p.y);
                 if inside(mouse, [12.0, 46.0, 14.0, 14.0]) {
                     host::send_button(7401);
+                    host::play_click();
+                    return true;
+                }
+                if inside(mouse, [12.0, 76.0, 14.0, 14.0]) {
+                    host::send_button(7403);
                     host::play_click();
                     return true;
                 }
@@ -191,7 +214,8 @@ mod tests {
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Filters: 2")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("filter.mekanism.filter.count") || text.contains("Filters: 2"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Blit { texture, .. } if texture == "mekanism:gui/button/round_robin")));
 
         // Click Single Item button at (14, 48)
         let click_event = InputEvent::MousePressed(Pointer {
@@ -203,5 +227,16 @@ mod tests {
         assert!(screen.input(&click_event));
         let sent = host::take_sent();
         assert_eq!(sent, vec!["button 7401".to_string(), "click".to_string()]);
+
+        // Click Round Robin button at (14, 78)
+        let click_event_rr = InputEvent::MousePressed(Pointer {
+            x: 14.0,
+            y: 78.0,
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+        });
+        assert!(screen.input(&click_event_rr));
+        let sent_rr = host::take_sent();
+        assert_eq!(sent_rr, vec!["button 7403".to_string(), "click".to_string()]);
     }
 }

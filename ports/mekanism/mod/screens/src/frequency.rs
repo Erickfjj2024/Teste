@@ -3,7 +3,7 @@
 //! of the mod: strings 0 to 2 are the three lines, then `LIST_MAX` public rows and `LIST_MAX` private rows; the click ids are `base + row` (public), `base + 16 + row` (private), `base + 32` (delete)
 //! and the name boxes' fields `base + 33` (public) and `base + 34` (private).
 use crate::elements::{GREEN, TITLE, WHITE, data, element_holder, inner_screen, inside, string};
-use horizon_mod_sdk::screen::{AreaKind, Canvas, FieldFilter, host};
+use horizon_mod_sdk::screen::{AreaKind, Canvas, FieldFilter, TEXT_RIGHT, host};
 
 pub const LIST_MAX: usize = 16;
 
@@ -33,16 +33,24 @@ impl Selector {
     pub fn render(&self, c: &mut Canvas, mouse: (f32, f32)) {
         let (x, y) = (self.x, self.y);
         // The three security buttons: the chosen one is the inactive one.
-        for (k, (icon, label, bx)) in [("public", "Public", 0.0), ("trusted", "Trusted", 42.0), ("private", "Private", 84.0)].into_iter().enumerate() {
+        for (k, (icon, key, bx)) in [
+            ("public", "security.mekanism.public.mode", 0.0),
+            ("trusted", "security.mekanism.trusted.mode", 42.0),
+            ("private", "security.mekanism.private.mode", 84.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let active = (k == 0 && self.security != 0) || (k == 2 && self.security != 1) && k != 1;
             let rect = [x + bx, y, 38.0, 20.0];
             let hovered = active && inside(mouse, rect);
             let sprite = if !active { "mekanism:button_inactive" } else if hovered { "mekanism:button_focus" } else { "mekanism:button" };
             c.blit_sprite(sprite, rect[0], rect[1], rect[2], rect[3]);
             c.blit(&format!("mekanism:gui/button/{icon}"), rect[0] - 1.0, rect[1] + 2.0, 0.0, 0.0, 40.0, 16.0, 40.0, 16.0);
-            c.area(100 + k as i32, rect, AreaKind::Button, active, label);
+            let label = host::translate(key, &[]);
+            c.area(100 + k as i32, rect, AreaKind::Button, active, &label);
             if hovered {
-                c.tooltip(&[(label, WHITE)]);
+                c.tooltip(&[(&label, WHITE)]);
             }
         }
         // The list (122 by 42, 10 pixel rows).
@@ -59,7 +67,9 @@ impl Selector {
         for k in 0..3 {
             c.text(&string(self.first_string + k), x, y + 67.0 + 10.0 * k as f32, TITLE, 0, 0.85);
         }
-        // The name box (98 by 11 at 23, 99) and Delete (60 by 18 at 62, 113).
+        // "Set:" label and the name box (98 by 11 at 23, 99) and Delete (60 by 18 at 62, 113).
+        let set_label = host::translate("gui.mekanism.set", &[]);
+        c.text(&set_label, x + 20.0, y + 100.0, TITLE, TEXT_RIGHT, 1.0);
         inner_screen(c, [x + 23.0, y + 99.0, 98.0, 11.0]);
         let field = self.base + if private { 34 } else { 33 };
         c.field(field, [x + 24.0, y + 100.0, 96.0, 9.0], 16, FieldFilter::Any, "", 1, WHITE);
@@ -105,5 +115,53 @@ impl Selector {
             return true;
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use horizon_mod_sdk::screen::format::Command;
+
+    #[test]
+    fn frequency_selector_renders_and_handles_input() {
+        host::set_menu(host::Menu {
+            data: vec![1, 0], // public_count = 1, private_count = 0
+            strings: vec![
+                "PublicFreq".into(),
+                "OwnerName".into(),
+                "Public".into(),
+                "PublicFreq (OwnerName)".into(),
+            ],
+            ..Default::default()
+        });
+
+        let mut selector = Selector::new(27.0, 14.0, 8100, 0, 1, 0);
+        let mut canvas = Canvas::new();
+        selector.render(&mut canvas, (0.0, 0.0));
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        let commands = decoded.commands;
+
+        // Verify "Set:" label is drawn
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Set:" || text == "gui.mekanism.set")));
+        // Verify delete button is drawn
+        assert!(commands.iter().any(|cmd| matches!(cmd, Command::Area { id: 8132, .. })));
+
+        // Test clicking public row 0 (27 + 1, 14 + 23)
+        assert!(selector.press((28.0 + 5.0, 37.0 + 5.0)));
+        let sent = host::take_sent();
+        assert_eq!(sent, vec!["button 8100".to_string(), "click".to_string()]);
+
+        // Test clicking private button at (27 + 84, 14)
+        assert!(selector.press((27.0 + 84.0 + 5.0, 14.0 + 5.0)));
+        assert_eq!(selector.security, 1);
+        let sent2 = host::take_sent();
+        assert_eq!(sent2, vec!["click".to_string()]);
+
+        // Test submitting name in box
+        assert!(selector.submitted(8134, "MyPrivateFreq"));
+        let sent3 = host::take_sent();
+        assert_eq!(sent3, vec![r#"text 8134 "MyPrivateFreq""#.to_string()]);
     }
 }

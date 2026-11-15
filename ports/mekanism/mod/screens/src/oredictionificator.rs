@@ -69,6 +69,11 @@ impl MekScreen for Oredictionificator {
             }
         }
 
+        // Scroll bar at (213, 17, 14, 90)
+        // NÃO FEITO: janela modal GuiOredictionificatorFilter e busca de tags no SDK/servidor (o port usa campo de texto inline)
+        element_holder(c, [213.0, 17.0, 14.0, 90.0]);
+        c.blit("mekanism:gui/scroll_bar", 214.0, 18.0, 12.0, 0.0, 12.0, 15.0, 24.0, 15.0);
+
         // New filter holder at (9, 85, 204, 22) and textfield
         element_holder(c, [9.0, 85.0, 204.0, 22.0]);
         c.text("New filter: type a tag (e.g. c:ores/iron) and enter", 14.0, 75.0, 0xFF80_8080, 0, 0.75);
@@ -170,6 +175,7 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "c:ores/copper")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Blit { texture, .. } if texture == "mekanism:gui/scroll_bar")));
 
         // Submit new filter field
         let field_event = InputEvent::FieldSubmitted(FieldText { id: 7790, text: "c:ores/tin".into() });

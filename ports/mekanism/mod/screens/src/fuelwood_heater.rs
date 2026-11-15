@@ -48,8 +48,8 @@ impl MekScreen for FuelwoodHeater {
 
         // Inner screen at (48, 23, 80, 28)
         inner_screen(c, [48.0, 23.0, 80.0, 28.0]);
-        let temp_str = format!("Temperature: {} K", data(0));
-        let fuel_str = format!("Fuel: {}", data(1));
+        let temp_str = host::translate("temperature.mekanism.short", &[format!("{}K", data(0))]);
+        let fuel_str = host::translate("gui.mekanism.fuel", &[data(1).to_string()]);
         c.text(&temp_str, 52.0, 27.0, GREEN, 0, 0.85);
         c.text(&fuel_str, 52.0, 37.0, GREEN, 0, 0.85);
 
@@ -72,13 +72,15 @@ impl MekScreen for FuelwoodHeater {
         c.blit_sprite("mekanism:tab/heat_info_k", heat_tab_rect[0], heat_tab_rect[1], heat_tab_rect[2], heat_tab_rect[3]);
         c.area(-2, heat_tab_rect, AreaKind::Tab, true, "Heat");
         if inside(mouse, heat_tab_rect) {
-            let tip = format!("Temperature: {} K\nTransferred: {}/t\nDissipated: {}/t\nUnit: Kelvin", data(0), data(3), data(4));
-            c.tooltip(&[(&tip, WHITE)]);
+            let temp_line = host::translate("temperature.mekanism.short", &[format!("{}K", data(0))]);
+            let trans_line = host::translate("gui.mekanism.transferred_rate", &[format!("{}K", data(3))]);
+            let diss_line = host::translate("gui.mekanism.dissipated", &[format!("{}K", data(4))]);
+            c.tooltip(&[(&temp_line, WHITE), (&trans_line, WHITE), (&diss_line, WHITE)]);
         }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.fuelwood_heater", &[]), 0.0, 176.0, 6.0);
-        inventory_label(c, 8.0, 74.0);
+        inventory_label(c, 8.0, 72.0);
 
         // Chrome (security tab)
         self.chrome.render(c, mouse);
@@ -119,13 +121,15 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: -20.0, mouse_y: 115.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("Temperature: 400 K"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "temperature.mekanism.short")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanism.inventory" || text == "container.inventory")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t == "gui.mekanism.transferred_rate"))));
 
         // Click security tab at (176, 34)
         let click_event = InputEvent::MousePressed(Pointer {

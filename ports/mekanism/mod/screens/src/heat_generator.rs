@@ -56,6 +56,9 @@ impl MekScreen for HeatGenerator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Wide Fluid Gauge (Lava) at (55, 18, 66, 50)
         c.blit_sprite("mekanism:gauge/normal", 55.0, 18.0, 66.0, 50.0);
@@ -68,7 +71,7 @@ impl MekScreen for HeatGenerator {
         c.blit("mekanism:gui/gauge/overlay/wide", 56.0, 19.0, 0.0, 0.0, 64.0, 48.0, 64.0, 48.0);
         if inside(mouse, [55.0, 18.0, 66.0, 50.0]) {
             let tip = if lava_amount == 0 {
-                "Empty".to_string()
+                host::translate("gui.mekanism.empty", &[])
             } else {
                 format!("Lava: {} / {} mB", lava_amount, lava_cap)
             };
@@ -80,8 +83,10 @@ impl MekScreen for HeatGenerator {
         c.blit_sprite("mekanism:tab/heat_info_k", heat_tab_rect[0], heat_tab_rect[1], heat_tab_rect[2], heat_tab_rect[3]);
         c.area(-2, heat_tab_rect, AreaKind::Tab, true, "Heat");
         if inside(mouse, heat_tab_rect) {
-            let tip = format!("Temperature: {} K\nTransferred: {}/t\nDissipated: {}/t", data(6), data(7), data(8));
-            c.tooltip(&[(&tip, WHITE)]);
+            let temp_line = host::translate("temperature.mekanism.short", &[format!("{}K", data(6))]);
+            let trans_line = host::translate("gui.mekanism.transferred_rate", &[format!("{}K", data(7))]);
+            let diss_line = host::translate("gui.mekanism.dissipated", &[format!("{}K", data(8))]);
+            c.tooltip(&[(&temp_line, WHITE), (&trans_line, WHITE), (&diss_line, WHITE)]);
         }
 
         // Title and inventory label
@@ -130,13 +135,14 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:tab/heat_info_k")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 3000 / 28928 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

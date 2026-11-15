@@ -78,14 +78,11 @@ impl MekScreen for SecurityDesk {
         };
         c.blit_sprite(override_sprite, override_rect[0], override_rect[1], override_rect[2], override_rect[3]);
         c.blit("mekanism:gui/button/exclamation", 146.0, 59.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
-        let override_tip = if overridden {
-            "Security override: On"
-        } else {
-            "Security override: Off"
-        };
-        c.area(OVERRIDE, override_rect, AreaKind::Button, is_owner, override_tip);
+        let override_state = if overridden { "On".to_string() } else { "Off".to_string() };
+        let override_tip = host::translate("security.mekanism.override", &[override_state]);
+        c.area(OVERRIDE, override_rect, AreaKind::Button, is_owner, &override_tip);
         if override_hovered {
-            c.tooltip(&[(override_tip, WHITE)]);
+            c.tooltip(&[(&override_tip, WHITE)]);
         }
 
         // Security light indicator at (144, 77): green if overridden, red if not, yellow if not owner
@@ -121,17 +118,17 @@ impl MekScreen for SecurityDesk {
             );
         }
 
-        // Subheading "Trusted Players" at (74, 57)
+        // Subheading "Trusted Players" at (74, 57) (Java: MekanismLang.TRUSTED_PLAYERS)
         let trusted_sub = host::translate("security.mekanism.trusted_players", &[]);
         c.text(&trusted_sub, 74.0, 57.0, SUBHEADING, TEXT_CENTER, 0.85);
 
-        // Text field "Add:" at (35, 68, 99, 11)
+        // Text field "Add:" at (35, 68, 99, 11) (Java: MekanismLang.SECURITY_ADD)
         let add_label = host::translate("security.mekanism.add", &[]);
         c.text(&add_label, 33.0, 69.0, TITLE, TEXT_RIGHT, 1.0);
         inner_screen(c, [35.0, 68.0, 99.0, 11.0]);
         c.field(NAME_BOX, [36.0, 69.0, 97.0, 9.0], 16, FieldFilter::Any, "", 1, WHITE);
 
-        // Remove button at (13, 81, 122, 20)
+        // Remove button at (13, 81, 122, 20) (Java: MekanismLang.BUTTON_REMOVE)
         let can_remove = is_owner && selected_row >= 0;
         let remove_label = host::translate("button.mekanism.remove", &[]);
         button(
@@ -141,7 +138,7 @@ impl MekScreen for SecurityDesk {
             &remove_label,
             can_remove,
             mouse,
-            Some("Remove the selected player"),
+            Some(&remove_label),
         );
 
         // Security mode text at (13, 103)
@@ -153,10 +150,10 @@ impl MekScreen for SecurityDesk {
         c.text(mode_desc, 13.0, 103.0, TITLE, 0, 0.85);
 
         // Three mode buttons at (13, 113), (54, 113), and (95, 113), 40 by 16
-        for (k, (id, m_val, icon, tip)) in [
-            (MODE_PUBLIC, 0, "public", "Public"),
-            (MODE_PRIVATE, 1, "private", "Private"),
-            (MODE_TRUSTED, 2, "trusted", "Trusted"),
+        for (k, (id, m_val, icon, key)) in [
+            (MODE_PUBLIC, 0, "public", "security.mekanism.public.mode"),
+            (MODE_PRIVATE, 1, "private", "security.mekanism.private.mode"),
+            (MODE_TRUSTED, 2, "trusted", "security.mekanism.trusted.mode"),
         ]
         .into_iter()
         .enumerate()
@@ -184,9 +181,10 @@ impl MekScreen for SecurityDesk {
                 40.0,
                 16.0,
             );
-            c.area(id, rect, AreaKind::Button, active, tip);
+            let tip = host::translate(key, &[]);
+            c.area(id, rect, AreaKind::Button, active, &tip);
             if hovered {
-                c.tooltip(&[(tip, WHITE)]);
+                c.tooltip(&[(&tip, WHITE)]);
             }
         }
     }
@@ -296,6 +294,8 @@ mod tests {
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Alice")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Bob")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Security: Public")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Trusted Players" || text == "security.mekanism.trusted_players")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Add:" || text == "security.mekanism.add")));
 
         // Test click on Remove button (selection is row 0)
         let remove_click = InputEvent::MousePressed(Pointer {

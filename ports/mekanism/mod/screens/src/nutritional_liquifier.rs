@@ -72,7 +72,7 @@ impl MekScreen for NutritionalLiquifier {
         }
 
         // Down arrow at (159, 44)
-        c.blit_sprite("mekanism:arrow/down", 159.0, 44.0, 8.0, 8.0);
+        c.blit_sprite("mekanism:arrow/down", 159.0, 44.0, 8.0, 9.0);
 
         // Standard fluid gauge at (133, 13, 18, 60)
         c.blit_sprite("mekanism:gauge/normal", 133.0, 13.0, 18.0, 60.0);
@@ -88,18 +88,21 @@ impl MekScreen for NutritionalLiquifier {
             c.tooltip(&[(&tip, WHITE)]);
         }
 
-        // Horizontal power bar at (115, 75, 52, 4) with frame at (114, 74, 54, 6)
-        c.blit_sprite("mekanism:bar/base", 114.0, 74.0, 54.0, 6.0);
+        // Horizontal power bar at (115, 75, 52, 4) with frame at (115, 75, 54, 6)
+        c.blit_sprite("mekanism:bar/base", 115.0, 75.0, 54.0, 6.0);
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let p_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         let p_w = (52.0 * p_frac).floor();
         if p_w > 0.0 {
-            c.blit("mekanism:gui/bar/horizontal_power", 115.0, 75.0, 0.0, 0.0, p_w, 4.0, 52.0, 4.0);
+            c.blit("mekanism:gui/bar/horizontal_power", 116.0, 76.0, 0.0, 0.0, p_w, 4.0, 52.0, 4.0);
+        }
+        if inside(mouse, [115.0, 75.0, 54.0, 6.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
         }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.nutritional_liquifier", &[]), 0.0, 176.0, 6.0);
-        inventory_label(c, 8.0, 74.0);
+        inventory_label(c, 8.0, 72.0);
 
         // Chrome (tabs and modals: side config, transporter, upgrade, redstone, security)
         self.chrome.render(c, mouse);
@@ -144,6 +147,14 @@ mod tests {
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
+
+        // Hover power bar at (120, 76)
+        let hover_frame = Frame { mouse_x: 120.0, mouse_y: 76.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 40000 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

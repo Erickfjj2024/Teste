@@ -285,17 +285,18 @@ impl Overlay for SideConfigWindow {
         let is_ejecting = ((w1 >> 8) & 1) == 1;
 
         let eject_text = if !can_eject {
-            "Can't Eject"
+            host::translate("configuration.mekanism.no_eject", &[])
         } else if is_ejecting {
-            "Eject: On"
+            host::translate("gui.mekanism.eject", &["On".to_string()])
         } else {
-            "Eject: Off"
+            host::translate("gui.mekanism.eject", &["Off".to_string()])
         };
         // Centred text vertically in the 12px inner screen: y + 27
-        c.draw_string(eject_text, wx + 41.0, wy + 27.0, GREEN, false);
+        c.draw_string(&eject_text, wx + 41.0, wy + 27.0, GREEN, false);
         c.area(-1, screen_rect, AreaKind::Other, true, "Eject State");
         if inside(mouse, screen_rect) && !can_eject {
-            c.tooltip(&[("This machine cannot auto-eject this type", WHITE)]);
+            let tip = host::translate("configuration.mekanism.no_eject.tooltip", &[]);
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // 4. Auto-eject button at (136, 6, 14, 14)
@@ -310,9 +311,10 @@ impl Overlay for SideConfigWindow {
         };
         c.blit_sprite(eject_sprite, eject_rect[0], eject_rect[1], eject_rect[2], eject_rect[3]);
         c.blit_sprite("mekanism:button/auto_eject", eject_rect[0], eject_rect[1], eject_rect[2], eject_rect[3]);
-        c.area(2000 + ty as i32, eject_rect, AreaKind::Button, can_eject, "Auto-eject");
+        let auto_eject_label = host::translate("auto.mekanism.eject", &[]);
+        c.area(2000 + ty as i32, eject_rect, AreaKind::Button, can_eject, &auto_eject_label);
         if eject_hovered {
-            c.tooltip(&[("Auto-eject", WHITE)]);
+            c.tooltip(&[(&auto_eject_label, WHITE)]);
         }
 
         // 5. Clear sides button at (136, 95, 14, 14)
@@ -325,11 +327,13 @@ impl Overlay for SideConfigWindow {
         };
         c.blit_sprite(clear_sprite, clear_rect[0], clear_rect[1], clear_rect[2], clear_rect[3]);
         c.blit_sprite("mekanism:button/clear_sides", clear_rect[0], clear_rect[1], clear_rect[2], clear_rect[3]);
-        c.area(3000 + ty as i32 * 10, clear_rect, AreaKind::Button, true, "Clear sides");
+        let clear_label = host::translate("configuration.mekanism.side.clear", &[]);
+        c.area(3000 + ty as i32 * 10, clear_rect, AreaKind::Button, true, &clear_label);
         if clear_hovered {
+            let clear_all_label = host::translate("configuration.mekanism.side.clear.all", &[]);
             c.tooltip(&[
-                ("Clear sides", WHITE),
-                ("Click to cycle every side, right click to go back", SUBHEADING),
+                (&clear_label, WHITE),
+                (&clear_all_label, SUBHEADING),
             ]);
         }
 
@@ -366,8 +370,8 @@ impl Overlay for SideConfigWindow {
             }
         }
 
-        // 7. Subheading "Slots" at y = 120, centred
-        c.text("Slots", wx + WIDTH / 2.0, wy + 120.0, SUBHEADING, TEXT_CENTER, 1.0);
+        // 7. Subheading "Slots" at y = 120, centred (Java: MekanismLang.SLOTS)
+        c.text(&host::translate("gui.mekanism.slots", &[]), wx + WIDTH / 2.0, wy + 120.0, SUBHEADING, TEXT_CENTER, 1.0);
 
         // 8. Transmission tabs outside the window (4 on left, rest on right)
         for (i, &t) in self.transmissions.iter().enumerate() {
@@ -528,6 +532,7 @@ mod tests {
         let bytes = c.finish();
         let frame = format::decode(&bytes).expect("frame decoding should succeed");
         assert!(frame.commands.len() > 10, "Frame should contain background, title, buttons, tabs");
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, format::Command::Text { text, .. } if text == "Slots" || text == "gui.mekanism.slots")));
 
         // Verify that closing hides window render
         win.close();

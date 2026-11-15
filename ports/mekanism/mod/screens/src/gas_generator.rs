@@ -12,7 +12,7 @@
 use crate::chrome::{Chrome, ChromeSpec, EnergyTabSpec};
 use crate::elements::{base_panel, data, inside, inventory_label, pair, slot_frame, title, vertical_power_bar, TITLE, WHITE};
 use crate::{MekScreen, Opened};
-use horizon_mod_sdk::screen::{Canvas, Frame, InputEvent, OpenInfo, Setup, host};
+use horizon_mod_sdk::screen::{Canvas, Frame, InputEvent, OpenInfo, Setup, TEXT_RIGHT, host};
 
 pub struct GasGenerator {
     chrome: Chrome,
@@ -55,6 +55,9 @@ impl MekScreen for GasGenerator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Wide Chemical Gauge at (55, 18, 66, 50)
         c.blit_sprite("mekanism:gauge/normal", 55.0, 18.0, 66.0, 50.0);
@@ -67,7 +70,7 @@ impl MekScreen for GasGenerator {
         c.blit("mekanism:gui/gauge/overlay/wide", 56.0, 19.0, 0.0, 0.0, 64.0, 48.0, 64.0, 48.0);
         if inside(mouse, [55.0, 18.0, 66.0, 50.0]) {
             let tip = if gas_amount == 0 {
-                "Empty".to_string()
+                host::translate("gui.mekanism.empty", &[])
             } else {
                 format!("Gas: {} / {} mB", gas_amount, gas_cap)
             };
@@ -78,9 +81,9 @@ impl MekScreen for GasGenerator {
         title(c, &host::translate("block.mekanism.gas_burning_generator", &[]), 0.0, 176.0, 6.0);
         inventory_label(c, 8.0, 72.0);
 
-        // Burn rate label beside inventory
-        let burn_str = format!("Burn Rate: {} mB/t", data(6));
-        c.text(&burn_str, 90.0, 72.0, TITLE, 0, 1.0);
+        // Burn rate label beside inventory (right aligned, as renderInventoryTextAndOther)
+        let burn_str = host::translate("gui.mekanismgenerators.gas_burning_generator.burn_rate", &[data(6).to_string()]);
+        c.text(&burn_str, 170.0, 72.0, TITLE, TEXT_RIGHT, 1.0);
 
         // Chrome (tabs and modals)
         self.chrome.render(c, mouse);
@@ -124,13 +127,14 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("Burn Rate: 10 mB/t"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanismgenerators.gas_burning_generator.burn_rate")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 3392 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

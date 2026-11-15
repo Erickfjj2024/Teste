@@ -120,8 +120,8 @@ impl Overlay for TransporterWindow {
         // 1. Window background (shadow, panel base, close button at 6, 6)
         self.window.draw_background(c);
 
-        // 2. Window title: "Transporter Config" centred at y = 5
-        self.window.title = "Transporter Config".to_owned();
+        // 2. Window title: "Transporter Config" centred at y = 5 (Java: MekanismLang.TRANSPORTER_CONFIG)
+        self.window.title = host::translate("configuration.mekanism.transporter", &[]);
         self.window.draw_title(c, |t| (t.len() * 6) as f32, TITLE);
 
         // 3. Strict Input inner screen at (38, 15, 80, 12)
@@ -152,9 +152,10 @@ impl Overlay for TransporterWindow {
             strict_btn_rect[2],
             strict_btn_rect[3],
         );
-        c.area(STRICT, strict_btn_rect, AreaKind::Button, true, "Strict Input");
+        let strict_label = host::translate("configuration.mekanism.strict_input", &[]);
+        c.area(STRICT, strict_btn_rect, AreaKind::Button, true, &strict_label);
         if strict_hovered {
-            c.tooltip(&[("Strict Input", WHITE)]);
+            c.tooltip(&[(&strict_label, WHITE)]);
         }
 
         // 5. Output color slot frame at (111, 48, 18, 18)
@@ -181,10 +182,12 @@ impl Overlay for TransporterWindow {
         }
 
         // 7. Subheadings:
-        // - "Input" centred in 18..86 (width 68) at y = 105
-        c.text("Input", wx + 18.0 + 34.0, wy + 105.0, SUBHEADING, TEXT_CENTER, 1.0);
-        // - "Output" centred in 86..156 (width 70) at y = 68
-        c.text("Output", wx + 86.0 + 35.0, wy + 68.0, SUBHEADING, TEXT_CENTER, 1.0);
+        // - "Input" centred in 18..86 (width 68) at y = 105 (Java: MekanismLang.INPUT)
+        let input_label = host::translate("gui.mekanism.input", &[]);
+        c.text(&input_label, wx + 18.0 + 34.0, wy + 105.0, SUBHEADING, TEXT_CENTER, 1.0);
+        // - "Output" centred in 86..156 (width 70) at y = 68 (Java: MekanismLang.OUTPUT)
+        let output_label = host::translate("gui.mekanism.output", &[]);
+        c.text(&output_label, wx + 86.0 + 35.0, wy + 68.0, SUBHEADING, TEXT_CENTER, 1.0);
 
         // 8. Six input color side buttons:
         // NÃO FEITO: os seis botões de cor de entrada por lado do Java não existem no servidor
@@ -306,6 +309,8 @@ mod tests {
         let bytes = c.finish();
         let frame = format::decode(&bytes).expect("frame decoding should succeed");
         assert!(frame.commands.len() > 8, "Frame should contain background, title, strict screen, slot, color fill");
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, format::Command::Text { text, .. } if text == "Input" || text == "gui.mekanism.input")));
+        assert!(frame.commands.iter().any(|cmd| matches!(cmd, format::Command::Text { text, .. } if text == "Output" || text == "gui.mekanism.output")));
 
         // Verify closed window renders nothing
         win.close();

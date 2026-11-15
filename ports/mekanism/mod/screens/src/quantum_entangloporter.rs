@@ -81,9 +81,9 @@ impl MekScreen for QuantumEntangloporter {
             let kfe = if data(0) == 0 { 0 } else { pair(1, 2) };
             let storing_str = format!("{kfe} kFE");
             let storing = host::translate("gui.mekanism.storing", &[storing_str]);
-            let unit_str = "Forge Energy".to_string();
-            let unit = host::translate("gui.mekanism.unit", &[unit_str]);
-            hovered_tip = Some(vec![(storing, WHITE), (unit, WHITE)]);
+            let rate_str = "0 FE".to_string();
+            let rate = host::translate("matrix.mekanism.input_rate", &[rate_str]);
+            hovered_tip = Some(vec![(storing, WHITE), (rate, WHITE)]);
         }
 
         // Frequency selector at (27, 14)
@@ -163,6 +163,21 @@ mod tests {
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:slot/normal")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:tab/energy_info")));
         assert!(frame.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:inner_screen")));
+
+        // Hover energy tab at (-10, 145)
+        let mut c_hover = Canvas::new();
+        screen.render(
+            &Frame {
+                mouse_x: -10.0,
+                mouse_y: 145.0,
+                partial_tick: 0.0,
+                time_ms: 0,
+            },
+            &mut c_hover,
+        );
+        let bytes_h = c_hover.finish();
+        let frame_h = screen_format::decode(&bytes_h).expect("decode hover frame");
+        assert!(frame_h.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("gui.mekanism.storing") || t.contains("Storing")))));
     }
 
     #[test]

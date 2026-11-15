@@ -61,6 +61,9 @@ impl MekScreen for SolarGenerator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Sun state texture at (18, 35, 16, 16)
         let sun = data(6) == 1;
@@ -74,10 +77,10 @@ impl MekScreen for SolarGenerator {
 
         // Inner screen at (40, 23, 96, 40)
         inner_screen(c, [40.0, 23.0, 96.0, 40.0]);
-        let energy_str = format!("Energy: {} / {} FE", energy, capacity);
-        let producing_str = format!("Producing: {} FE/t", data(5));
+        let energy_str = format!("{} / {} FE", energy, capacity);
+        let producing_str = host::translate("gui.mekanismgenerators.producing.amount", &[format!("{} FE", data(5))]);
         let max_output_val = if self.menu == "mekanism:advanced_solar_generator" { 600 } else { 100 };
-        let output_str = format!("Output: {} FE/t", max_output_val);
+        let output_str = host::translate("gui.mekanismgenerators.output_rate.short", &[format!("{} FE", max_output_val)]);
         c.text(&energy_str, 44.0, 27.0, GREEN, 0, 0.85);
         c.text(&producing_str, 44.0, 37.0, GREEN, 0, 0.85);
         c.text(&output_str, 44.0, 47.0, GREEN, 0, 0.85);
@@ -132,13 +135,14 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 20.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("Producing: 50 FE/t"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanismgenerators.producing.amount")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 30464 FE")))));
 
         // Click on Redstone tab at (176, 137)
         let click_event = InputEvent::MousePressed(Pointer {

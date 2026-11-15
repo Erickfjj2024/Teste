@@ -50,7 +50,7 @@ impl MekScreen for FluidicPlenisher {
         slot_frame(c, 142.0, 34.0);
 
         // Down arrow at (32, 39)
-        c.blit_sprite("mekanism:arrow/down", 32.0, 39.0, 8.0, 8.0);
+        c.blit_sprite("mekanism:arrow/down", 32.0, 39.0, 8.0, 9.0);
 
         // Standard fluid gauge at (6, 13, 18, 60)
         c.blit_sprite("mekanism:gauge/normal", 6.0, 13.0, 18.0, 60.0);
@@ -79,6 +79,9 @@ impl MekScreen for FluidicPlenisher {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.fluidic_plenisher", &[]), 0.0, 176.0, 5.0);
@@ -129,6 +132,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Finished: Yes")));
+
+        // Hover power bar
+        let hover_frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 6000 / 40000 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

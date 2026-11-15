@@ -54,6 +54,9 @@ impl MekScreen for WindGenerator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Wind state icon at (18, 35, 16, 16)
         let active = data(0) == 1;
@@ -67,14 +70,15 @@ impl MekScreen for WindGenerator {
 
         // Inner screen at (48, 21, 80, 44)
         inner_screen(c, [48.0, 21.0, 80.0, 44.0]);
-        let energy_str = format!("Energy: {} / {} FE", energy, capacity);
-        let power_str = format!("Power: {} FE/t", data(5));
-        let output_str = "Output: 960 FE/t";
+        let energy_str = format!("{} / {} FE", energy, capacity);
+        let power_str = host::translate("gui.mekanismgenerators.power", &[format!("{} FE", data(5))]);
+        let output_str = host::translate("gui.mekanismgenerators.output_rate.short", &["960 FE".to_string()]);
         c.text(&energy_str, 52.0, 24.0, GREEN, 0, 0.85);
         c.text(&power_str, 52.0, 34.0, GREEN, 0, 0.85);
-        c.text(output_str, 52.0, 44.0, GREEN, 0, 0.85);
+        c.text(&output_str, 52.0, 44.0, GREEN, 0, 0.85);
         if !active {
-            c.text("Sky Blocked", 52.0, 54.0, 0xFFFF_5555, 0, 0.85);
+            let sky_blocked = host::translate("wind_generator.mekanismgenerators.sky_blocked", &[]);
+            c.text(&sky_blocked, 52.0, 54.0, 0xFFC9_071F, 0, 0.85);
         }
 
         // Title and inventory label
@@ -121,13 +125,14 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("Power: 120 FE/t"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanismgenerators.power")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 1000 / 3392 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

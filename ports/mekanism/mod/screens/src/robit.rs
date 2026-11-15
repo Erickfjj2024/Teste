@@ -79,15 +79,15 @@ impl MekScreen for Robit {
         // Side tab holder at (176, 6, 26, 106)
         c.blit_sprite("mekanism:holder_right", 176.0, 6.0, 26.0, 106.0);
 
-        // 5 side tabs at x = 179, y = 10 + 20 * k
+        // 5 side tabs at x = 179, y = 10 + 20 * k (Java: GuiRobit.java lines 31-45)
         let tabs = [
-            (RobitTab::Main, "mekanism:gui/button/main", "Robit"),
-            (RobitTab::Crafting, "mekanism:gui/button/crafting", "Crafting"),
-            (RobitTab::Inventory, "mekanism:gui/button/main", "Inventory"),
-            (RobitTab::Smelting, "mekanism:gui/button/smelting", "Smelting"),
-            (RobitTab::Repair, "mekanism:gui/button/repair", "Repair"),
+            (RobitTab::Main, "mekanism:gui/button/main", "robit.mekanism.robit"),
+            (RobitTab::Crafting, "mekanism:gui/button/crafting", "robit.mekanism.crafting"),
+            (RobitTab::Inventory, "mekanism:gui/button/inventory", "robit.mekanism.inventory"),
+            (RobitTab::Smelting, "mekanism:gui/button/smelting", "robit.mekanism.smelting"),
+            (RobitTab::Repair, "mekanism:gui/button/repair", "robit.mekanism.repair"),
         ];
-        for (k, (t, icon, label)) in tabs.into_iter().enumerate() {
+        for (k, (t, icon, key)) in tabs.into_iter().enumerate() {
             let y = 10.0 + 20.0 * k as f32;
             let is_cur = self.tab == t;
             let rect = [179.0, y, 18.0, 18.0];
@@ -101,9 +101,10 @@ impl MekScreen for Robit {
             };
             c.blit_sprite(sprite, rect[0], rect[1], rect[2], rect[3]);
             c.blit(icon, rect[0] + 1.0, rect[1] + 1.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
-            c.area(300 + k as i32, rect, AreaKind::Tab, !is_cur, label);
+            let label = host::translate(key, &[]);
+            c.area(300 + k as i32, rect, AreaKind::Tab, !is_cur, &label);
             if hovered {
-                c.tooltip(&[(label, WHITE)]);
+                c.tooltip(&[(&label, WHITE)]);
             }
         }
 
@@ -280,7 +281,7 @@ impl MekScreen for Robit {
 
 impl Robit {
     fn render_main(&self, c: &mut Canvas, mouse: (f32, f32)) {
-        title(c, "Robit", 0.0, 176.0, 6.0);
+        title(c, &host::translate("robit.mekanism.robit", &[]), 0.0, 176.0, 6.0);
 
         // Inner screen at (27, 16, 122, 56)
         inner_screen(c, [27.0, 16.0, 122.0, 56.0]);
@@ -305,11 +306,11 @@ impl Robit {
 
         // Action buttons
         let actions = [
-            (6.0, 16.0, BUTTON_GO_HOME, "mekanism:gui/button/home", "Go home"),
-            (6.0, 35.0, -1, "mekanism:gui/button/rename", "Rename"),
-            (6.0, 54.0, -1, "mekanism:gui/button/skin", "Skin"),
-            (152.0, 35.0, BUTTON_DROP_PICKUP, "mekanism:gui/button/drop", "Pick up items"),
-            (152.0, 54.0, BUTTON_FOLLOW, "mekanism:gui/button/follow", "Follow"),
+            (6.0, 16.0, BUTTON_GO_HOME, "mekanism:gui/button/home", host::translate("robit.mekanism.teleport", &[])),
+            (6.0, 35.0, -1, "mekanism:gui/button/rename", host::translate("robit.mekanism.rename", &[])),
+            (6.0, 54.0, -1, "mekanism:gui/button/skin", host::translate("robit.mekanism.skin.select", &[])),
+            (152.0, 35.0, BUTTON_DROP_PICKUP, "mekanism:gui/button/drop", host::translate("robit.mekanism.toggle_pickup", &[])),
+            (152.0, 54.0, BUTTON_FOLLOW, "mekanism:gui/button/follow", host::translate("robit.mekanism.toggle_follow", &[])),
         ];
         for (x, y, bid, icon, tip) in actions {
             let rect = [x, y, 18.0, 18.0];
@@ -321,16 +322,16 @@ impl Robit {
             };
             c.blit_sprite(sprite, rect[0], rect[1], rect[2], rect[3]);
             c.blit(icon, rect[0] + 1.0, rect[1] + 1.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
-            c.area(bid, rect, AreaKind::Button, true, tip);
+            c.area(bid, rect, AreaKind::Button, true, &tip);
             if hovered {
-                c.tooltip(&[(tip, WHITE)]);
+                c.tooltip(&[(&tip, WHITE)]);
             }
         }
     }
 
     fn render_crafting(&self, c: &mut Canvas) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Robit Crafting", 8.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.crafting", &[]), 8.0, 6.0, TITLE, 0, 1.0);
 
         // 3x3 grid slot frames at (30 + 18*c, 17 + 18*r)
         for r in 0..3 {
@@ -348,7 +349,7 @@ impl Robit {
 
     fn render_inventory(&self, c: &mut Canvas) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Robit Inventory", 8.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.inventory", &[]), 8.0, 6.0, TITLE, 0, 1.0);
 
         // 27 slot frames at (8 + 18*c, 18 + 18*r)
         for r in 0..3 {
@@ -360,7 +361,7 @@ impl Robit {
 
     fn render_smelting(&self, c: &mut Canvas) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Robit Smelting", 8.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.smelting", &[]), 8.0, 6.0, TITLE, 0, 1.0);
 
         // Input slot frame at (51, 35)
         c.blit_sprite("mekanism:slot/input", 50.0, 34.0, 18.0, 18.0);
@@ -378,7 +379,7 @@ impl Robit {
 
     fn render_repair(&self, c: &mut Canvas) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Robit Repair", 8.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.repair", &[]), 8.0, 6.0, TITLE, 0, 1.0);
 
         c.text("Name:", 8.0, 24.0, TITLE, 0, 0.9);
         inner_screen(c, [60.0, 21.0, 103.0, 12.0]);
@@ -396,7 +397,7 @@ impl Robit {
 
     fn render_rename(&self, c: &mut Canvas, mouse: (f32, f32)) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Rename the Robit", 24.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.rename", &[]), 24.0, 6.0, TITLE, 0, 1.0);
 
         // Back button at (6, 6, 12, 12)
         let back_rect = [6.0, 6.0, 12.0, 12.0];
@@ -420,7 +421,7 @@ impl Robit {
 
     fn render_skin(&self, c: &mut Canvas, mouse: (f32, f32)) {
         c.blit_sprite("mekanism:base", 0.0, 0.0, 176.0, 84.0);
-        c.text("Skin", 24.0, 6.0, TITLE, 0, 1.0);
+        c.text(&host::translate("robit.mekanism.skin.select", &[]), 24.0, 6.0, TITLE, 0, 1.0);
 
         // Back button at (6, 6, 12, 12)
         let back_rect = [6.0, 6.0, 12.0, 12.0];
@@ -546,6 +547,6 @@ mod tests {
         screen.render(&frame, &mut canvas2);
         let bytes2 = canvas2.finish();
         let decoded2 = horizon_mod_sdk::screen::format::decode(&bytes2).expect("decode canvas");
-        assert!(decoded2.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Robit Crafting")));
+        assert!(decoded2.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "robit.mekanism.crafting")));
     }
 }

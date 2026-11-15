@@ -53,23 +53,30 @@ impl MekScreen for PortableTeleporter {
             },
         );
 
-        // Title centered between (22, 152) at y = 4
-        title(c, &host::translate("item.mekanism.portable_teleporter", &[]), 22.0, 130.0, 4.0);
+        // Title centered between (24, 176) at y = 4 (Java: renderTitleTextWithOffset(status.getRelativeRight()))
+        title(c, &host::translate("item.mekanism.portable_teleporter", &[]), 24.0, 152.0, 4.0);
 
-        // Status text at (7, 7)
-        let (text, colour) = match data(1) {
-            0 => ("No frequency", 0xFFCD_0000),
-            1 => ("No frame", 0xFFCD_0000),
-            2 => ("No link", 0xFFCD_0000),
-            3 => ("No energy", 0xFFCD_0000),
-            _ => ("Ready", 0xFF00_AA00),
+        // `GuiTeleporterStatus` at (6, 6), 18 by 18: button background and status icon
+        let status = if data(0) == 0 {
+            ("no_frequency", "frequency.mekanism.none", 0xFFC9_071F)
+        } else {
+            match data(1) {
+                1 => ("no_frame", "teleporter.mekanism.no_frame", 0xFFC9_071F),
+                4 => ("ready", "teleporter.mekanism.ready", 0xFF59_C15F),
+                3 => ("needs_energy", "teleporter.mekanism.needs_energy", 0xFFC9_071F),
+                _ => ("no_link", "teleporter.mekanism.no_destination", 0xFFC9_071F),
+            }
         };
-        c.text(text, 7.0, 7.0, colour, 0, 0.8);
+        c.blit_sprite("mekanism:button", 6.0, 6.0, 18.0, 18.0);
+        c.blit(&format!("mekanism:gui/teleporter_{}", status.0), 6.0, 6.0, 0.0, 0.0, 18.0, 18.0, 18.0, 18.0);
+        if inside(mouse, [6.0, 6.0, 18.0, 18.0]) {
+            c.tooltip(&[(&host::translate(status.1, &[]), status.2)]);
+        }
 
         // Frequency Selector at (27, 14)
         self.selector.render(c, mouse);
 
-        // Teleport button at (42, 147, 92, 20)
+        // Teleport button at (42, 147, 92, 20) (Java: MekanismLang.BUTTON_TELEPORT)
         let ready = data(1) == 4 && data(0) != 0;
         let label = host::translate("button.mekanism.teleport", &[]);
         let teleport_rect = [42.0, 147.0, 92.0, 20.0];
@@ -148,7 +155,7 @@ mod tests {
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Ready")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Blit { texture, .. } if texture == "mekanism:gui/teleporter_ready")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Area { id, .. } if *id == BUTTON_TELEPORT)));
 
         // Test clicking the Teleport button

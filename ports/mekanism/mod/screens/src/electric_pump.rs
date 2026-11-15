@@ -50,7 +50,7 @@ impl MekScreen for ElectricPump {
         slot_frame(c, 142.0, 34.0);
 
         // Down arrow at (32, 39)
-        c.blit_sprite("mekanism:arrow/down", 32.0, 39.0, 8.0, 8.0);
+        c.blit_sprite("mekanism:arrow/down", 32.0, 39.0, 8.0, 9.0);
 
         // Standard fluid gauge at (6, 13, 18, 60)
         c.blit_sprite("mekanism:gauge/normal", 6.0, 13.0, 18.0, 60.0);
@@ -77,6 +77,9 @@ impl MekScreen for ElectricPump {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.electric_pump", &[]), 0.0, 176.0, 5.0);
@@ -120,13 +123,15 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:arrow/down")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Water: 2000 mB")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 40000 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

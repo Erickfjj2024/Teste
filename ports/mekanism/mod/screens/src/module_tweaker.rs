@@ -58,7 +58,7 @@ impl MekScreen for ModuleTweaker {
         let mouse = (frame.mouse_x, frame.mouse_y);
         base_panel(c, 266.0, 186.0);
 
-        // Title at y = 4
+        // Title at y = 4 (Java: MekanismLang.MODULE_TWEAKER)
         title(c, &host::translate("module.mekanism.module_tweaker", &[]), 24.0, 266.0 - 24.0, 4.0);
 
         // 14 Gear Slots
@@ -122,10 +122,11 @@ impl MekScreen for ModuleTweaker {
             }
         }
 
-        // Element holder and Options button at (30, 136, 120, 18)
+        // Element holder and Options button at (30, 136, 120, 18) (Java: MekanismLang.BUTTON_OPTIONS)
         element_holder(c, [30.0, 136.0, 120.0, 18.0]);
         let opt_rect = [31.0, 137.0, 118.0, 16.0];
-        crate::elements::button(c, -1, opt_rect, "Options", false, mouse, None);
+        let opt_label = host::translate("button.mekanism.options", &[]);
+        crate::elements::button(c, -1, opt_rect, &opt_label, false, mouse, None);
     }
 
     fn input(&mut self, event: &InputEvent) -> bool {
@@ -217,6 +218,8 @@ mod tests {
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Module Tweaker" || text == "module.mekanism.module_tweaker")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Options" || text == "button.mekanism.options")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Jetpack Unit (1/1)")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Enabled")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "On")));

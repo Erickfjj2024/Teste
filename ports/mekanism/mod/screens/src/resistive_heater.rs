@@ -54,12 +54,15 @@ impl MekScreen for ResistiveHeater {
         let (energy, capacity) = (pair(0, 1), pair(2, 3));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Inner screen at (48, 23, 80, 42)
         inner_screen(c, [48.0, 23.0, 80.0, 42.0]);
-        let temp_str = format!("Temperature: {} K", data(8));
+        let temp_str = host::translate("temperature.mekanism.short", &[format!("{}K", data(8))]);
         let usage_val = pair(4, 5);
-        let usage_str = format!("Usage: {} FE/t", usage_val);
+        let usage_str = host::translate("gui.mekanism.usage", &[format!("{} FE", usage_val)]);
         c.text(&temp_str, 52.0, 27.0, GREEN, 0, 0.85);
         c.text(&usage_str, 52.0, 37.0, GREEN, 0, 0.85);
 
@@ -71,8 +74,10 @@ impl MekScreen for ResistiveHeater {
         c.blit_sprite("mekanism:tab/heat_info_k", heat_tab_rect[0], heat_tab_rect[1], heat_tab_rect[2], heat_tab_rect[3]);
         c.area(-2, heat_tab_rect, AreaKind::Tab, true, "Heat");
         if inside(mouse, heat_tab_rect) {
-            let tip = format!("Temperature: {} K\nTransferred: {}/t\nDissipated: {}/t\nUnit: Kelvin", data(8), data(12), data(13));
-            c.tooltip(&[(&tip, WHITE)]);
+            let temp_line = host::translate("temperature.mekanism.short", &[format!("{}K", data(8))]);
+            let trans_line = host::translate("gui.mekanism.transferred_rate", &[format!("{}K", data(12))]);
+            let diss_line = host::translate("gui.mekanism.dissipated", &[format!("{}K", data(13))]);
+            c.tooltip(&[(&temp_line, WHITE), (&trans_line, WHITE), (&diss_line, WHITE)]);
         }
 
         // Title and inventory label
@@ -135,13 +140,15 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Field { id, .. } if *id == 7600)));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "temperature.mekanism.short")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 34464 FE")))));
 
         // Submit usage textfield
         let field_event = InputEvent::FieldSubmitted(FieldText { id: 7600, text: "250".into() });

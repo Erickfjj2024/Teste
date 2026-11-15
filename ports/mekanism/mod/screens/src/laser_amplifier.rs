@@ -80,20 +80,34 @@ impl MekScreen for LaserAmplifier {
         let mode = (data(10).max(0) as usize) % 3;
         let mode_rect = [176.0, 109.0, 26.0, 18.0];
         c.blit_sprite_tinted("mekanism:holder_right", mode_rect, 0xFFFF_FFFF);
-        let (icon, tip) = match mode {
-            1 => ("mekanism:gui/amplifier_entity", "Redstone Output: Entity Detection"),
-            2 => ("mekanism:gui/amplifier_contents", "Redstone Output: Energy Contents"),
-            _ => ("mekanism:gui/amplifier_off", "Redstone Output: Off"),
+        let icon = match mode {
+            1 => "mekanism:gui/amplifier_entity",
+            2 => "mekanism:gui/amplifier_contents",
+            _ => "mekanism:gui/amplifier_off",
         };
+        let mode_str = match mode {
+            1 => host::translate("laser_amplifier.mekanism.entity_detection", &[]),
+            2 => host::translate("laser_amplifier.mekanism.energy_contents", &[]),
+            _ => host::translate("gui.mekanism.off", &[]),
+        };
+        let tip = host::translate("laser_amplifier.mekanism.redstone_output", &[if mode_str.is_empty() {
+            match mode {
+                1 => "Entity Detection".to_string(),
+                2 => "Energy Contents".to_string(),
+                _ => "Off".to_string(),
+            }
+        } else {
+            mode_str
+        }]);
         c.blit(icon, 180.0, 109.0, 0.0, 0.0, 18.0, 18.0, 18.0, 18.0);
         c.area(7310, mode_rect, AreaKind::Tab, true, "Output Mode");
         if inside(mouse, mode_rect) {
-            c.tooltip(&[(tip, WHITE)]);
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // Title and inventory label
-        title(c, &host::translate("block.mekanism.laser_amplifier", &[]), 24.0, 152.0, 5.0);
-        inventory_label(c, 8.0, 73.0);
+        title(c, &host::translate("block.mekanism.laser_amplifier", &[]), 24.0, 152.0, 6.0);
+        inventory_label(c, 8.0, 72.0);
 
         // Chrome (tabs and modals)
         self.chrome.render(c, mouse);
@@ -172,6 +186,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Delay: 20")));
+
+        // Hover mode tab at (180, 115)
+        let hover_frame = Frame { mouse_x: 180.0, mouse_y: 115.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("laser_amplifier.mekanism.redstone_output") || t.contains("Redstone Output")))));
 
         // Submit delay field
         let field_event = InputEvent::FieldSubmitted(FieldText { id: 7302, text: "40".into() });

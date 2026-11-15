@@ -11,7 +11,7 @@
 //! 9 security mode. Strings: 0 chunk string ("Chunk: x, z").
 
 use crate::chrome::{Chrome, ChromeSpec, EnergyTabSpec};
-use crate::elements::{base_panel, data, inner_screen, inventory_label, pair, slot_frame, string, title, vertical_power_bar, GREEN};
+use crate::elements::{base_panel, data, inner_screen, inside, inventory_label, pair, slot_frame, string, title, vertical_power_bar, GREEN, WHITE};
 use crate::{MekScreen, Opened};
 use horizon_mod_sdk::screen::{Canvas, Frame, InputEvent, OpenInfo, Setup, host};
 
@@ -50,7 +50,13 @@ impl MekScreen for SeismicVibrator {
         // Inner screen at (16, 23, 112, 40)
         inner_screen(c, [16.0, 23.0, 112.0, 40.0]);
         let vibrating = data(0) == 1;
-        let status_text = if vibrating { "Vibrating" } else { "Idle" };
+        let vib_text = host::translate("gui.mekanism.vibrating", &[]);
+        let idle_text = host::translate("gui.mekanism.idle", &[]);
+        let status_text = if vibrating {
+            if vib_text.is_empty() { "Vibrating" } else { &vib_text }
+        } else {
+            if idle_text.is_empty() { "Idle" } else { &idle_text }
+        };
         let chunk_text = string(0);
         c.text(status_text, 20.0, 27.0, GREEN, 0, 0.85);
         c.text(if chunk_text.is_empty() { "Chunk: 0, 0" } else { &chunk_text }, 20.0, 37.0, GREEN, 0, 0.85);
@@ -59,10 +65,13 @@ impl MekScreen for SeismicVibrator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.seismic_vibrator", &[]), 0.0, 176.0, 6.0);
-        inventory_label(c, 8.0, 74.0);
+        inventory_label(c, 8.0, 72.0);
 
         // Chrome (tabs and modals)
         self.chrome.render(c, mouse);
@@ -112,6 +121,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Chunk: 3, -5")));
+
+        // Hover power bar at (165, 20)
+        let hover_frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 4000 / 50000 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

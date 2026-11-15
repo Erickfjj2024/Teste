@@ -304,9 +304,10 @@ impl Chrome {
             c.blit_sprite_tinted("mekanism:holder_left", r, colors::TAB_CONFIGURATION);
             let tint = if open { 0xFF80_8080 } else { WHITE };
             c.blit_sprite_tinted("mekanism:button/configuration", [-22.0, 6.0, 18.0, 18.0], tint);
-            c.area(-1, r, AreaKind::Tab, !open, "Side Config");
+            let label = host::translate("configuration.mekanism.side", &[]);
+            c.area(-1, r, AreaKind::Tab, !open, &label);
             if !is_any_window_open && inside(mouse, r) {
-                hovered_tooltip = Some(vec![("Side Config".to_string(), WHITE)]);
+                hovered_tooltip = Some(vec![(label, WHITE)]);
             }
         }
 
@@ -317,9 +318,10 @@ impl Chrome {
             c.blit_sprite_tinted("mekanism:holder_left", r, colors::TAB_TRANSPORTER);
             let tint = if open { 0xFF80_8080 } else { WHITE };
             c.blit_sprite_tinted("mekanism:button/transporter_config", [-22.0, 34.0, 18.0, 18.0], tint);
-            c.area(-1, r, AreaKind::Tab, !open, "Transporter Config");
+            let label = host::translate("configuration.mekanism.transporter", &[]);
+            c.area(-1, r, AreaKind::Tab, !open, &label);
             if !is_any_window_open && inside(mouse, r) {
-                hovered_tooltip = Some(vec![("Transporter Config".to_string(), WHITE)]);
+                hovered_tooltip = Some(vec![(label, WHITE)]);
             }
         }
 
@@ -337,7 +339,8 @@ impl Chrome {
                     _ => "Issue detected.",
                 };
                 if !is_any_window_open && inside(mouse, r) {
-                    hovered_tooltip = Some(vec![("Issues:".to_string(), 0xFFFFFF55), (warning_line.to_string(), WHITE)]);
+                    let header = host::translate("gui.mekanism.issues", &[]);
+                    hovered_tooltip = Some(vec![(header, 0xFFFFFF55), (warning_line.to_string(), WHITE)]);
                 }
             }
         }
@@ -398,9 +401,10 @@ impl Chrome {
             c.blit_sprite_tinted("mekanism:holder_right", r, colors::TAB_UPGRADE);
             let tint = if open { 0xFF80_8080 } else { WHITE };
             c.blit_sprite_tinted("mekanism:button/upgrade", [self.gui_width + 4.0, 6.0, 18.0, 18.0], tint);
-            c.area(-1, r, AreaKind::Tab, !open, "Upgrades");
+            let label = host::translate("gui.mekanism.upgrades", &[]);
+            c.area(-1, r, AreaKind::Tab, !open, &label);
             if !is_any_window_open && inside(mouse, r) {
-                hovered_tooltip = Some(vec![("Upgrades".to_string(), WHITE)]);
+                hovered_tooltip = Some(vec![(label, WHITE)]);
             }
         }
 
@@ -422,12 +426,13 @@ impl Chrome {
             c.blit_sprite(icon_sprite, self.gui_width + 4.0, y_sec, 18.0, 18.0);
             c.area(SECURITY_NEXT, r, AreaKind::Tab, true, "Security");
             if !is_any_window_open && inside(mouse, r) {
-                let text = match mode {
-                    1 => "Security: Private",
-                    2 => "Security: Trusted",
-                    _ => "Security: Public",
+                let mode_str = match mode {
+                    1 => host::translate("security.mekanism.private", &[]),
+                    2 => host::translate("security.mekanism.trusted", &[]),
+                    _ => host::translate("security.mekanism.public", &[]),
                 };
-                hovered_tooltip = Some(vec![(text.to_string(), WHITE)]);
+                let text = host::translate("tooltip.mekanism.security", &[mode_str]);
+                hovered_tooltip = Some(vec![(text, WHITE)]);
             }
         }
 
@@ -436,16 +441,17 @@ impl Chrome {
             let r = [self.gui_width, 137.0, 26.0, 18.0];
             c.blit_sprite_tinted("mekanism:holder_right", r, colors::TAB_REDSTONE_CONTROL);
             let mode = (elements::data(r_idx).max(0) as usize) % 4;
-            let (icon_sprite, mode_label) = match mode {
-                1 => ("mekanism:redstone_control/high", "Redstone Detection: NORMAL"),
-                2 => ("mekanism:redstone_control/low", "Redstone Detection: INVERTED"),
-                3 => ("mekanism:redstone_control/pulse", "Redstone Detection: PULSE"),
-                _ => ("mekanism:redstone_control/disabled", "Redstone Detection: IGNORED"),
+            let (icon_sprite, key) = match mode {
+                1 => ("mekanism:redstone_control/high", "redstone_control.mekanism.high"),
+                2 => ("mekanism:redstone_control/low", "redstone_control.mekanism.low"),
+                3 => ("mekanism:redstone_control/pulse", "redstone_control.mekanism.pulse"),
+                _ => ("mekanism:redstone_control/disabled", "redstone_control.mekanism.disabled"),
             };
+            let mode_label = host::translate(key, &[]);
             c.blit_sprite(icon_sprite, self.gui_width + 4.0, 137.0, 18.0, 18.0);
-            c.area(REDSTONE_NEXT, r, AreaKind::Tab, true, "Redstone");
+            c.area(REDSTONE_NEXT, r, AreaKind::Tab, true, &mode_label);
             if !is_any_window_open && inside(mouse, r) {
-                hovered_tooltip = Some(vec![(mode_label.to_string(), WHITE)]);
+                hovered_tooltip = Some(vec![(mode_label, WHITE)]);
             }
         }
 
@@ -560,13 +566,15 @@ impl Chrome {
                         c.text(&current_effect_str, wx + 116.0, wy + 34.0, GREEN, 0, 0.6);
                     }
                 } else {
-                    c.text("No selection.", wx + 116.0, wy + 20.0, GREEN, 0, 0.8);
+                    let no_sel = host::translate("gui.mekanism.upgrades.no_selection", &[]);
+                    c.text(&no_sel, wx + 116.0, wy + 20.0, GREEN, 0, 0.8);
                 }
 
                 // Uninstall Button at (wx + 115, wy + 54, 56, 12)
                 let uninstall_active = has_sel && sel_type.map(|k| elements::data(up.data_start + 5 + k) > 0).unwrap_or(false);
                 let ub_rect = [wx + 115.0, wy + 54.0, 56.0, 12.0];
                 let ub_hovered = inside(mouse, ub_rect);
+                let uninstall_text = host::translate("gui.mekanism.upgrade.uninstall", &[]);
                 if uninstall_active {
                     let k = sel_type.unwrap();
                     let btn_sprite = if ub_hovered {
@@ -575,21 +583,23 @@ impl Chrome {
                         "mekanism:button_digital"
                     };
                     c.blit_sprite(btn_sprite, ub_rect[0], ub_rect[1], ub_rect[2], ub_rect[3]);
-                    c.text("Uninstall", ub_rect[0] + 28.0, ub_rect[1] + 2.0, WHITE, TEXT_CENTER, 1.0);
-                    c.area(REMOVE_ONE + k as i32, ub_rect, AreaKind::Button, true, "Uninstall");
+                    c.text(&uninstall_text, ub_rect[0] + 28.0, ub_rect[1] + 2.0, WHITE, TEXT_CENTER, 1.0);
+                    c.area(REMOVE_ONE + k as i32, ub_rect, AreaKind::Button, true, &uninstall_text);
                     if ub_hovered {
-                        hovered_tooltip = Some(vec![("Uninstalls a single upgrade, hold shift to uninstall all.".to_string(), WHITE)]);
+                        let tip = host::translate("gui.mekanism.upgrade.uninstall.tooltip", &[]);
+                        hovered_tooltip = Some(vec![(tip, WHITE)]);
                     }
                 } else {
                     c.blit_sprite("mekanism:button_digital_inactive", ub_rect[0], ub_rect[1], ub_rect[2], ub_rect[3]);
-                    c.text("Uninstall", ub_rect[0] + 28.0, ub_rect[1] + 2.0, SUBHEADING, TEXT_CENTER, 1.0);
-                    c.area(-1, ub_rect, AreaKind::Button, false, "Uninstall");
+                    c.text(&uninstall_text, ub_rect[0] + 28.0, ub_rect[1] + 2.0, SUBHEADING, TEXT_CENTER, 1.0);
+                    c.area(-1, ub_rect, AreaKind::Button, false, &uninstall_text);
                 }
 
                 // Supported Upgrades bar at (wx + 6, wy + 68, 167, 14)
                 c.blit_sprite("mekanism:element_holder", wx + 6.0, wy + 68.0, 167.0, 14.0);
-                c.text("Supported:", wx + 9.0, wy + 71.0, TITLE, 0, 1.0);
-                let x0 = wx + 9.0 + host::text_width("Supported:") + 2.0;
+                let sup_label = host::translate("gui.mekanism.upgrades.supported", &[]);
+                c.text(&sup_label, wx + 9.0, wy + 71.0, TITLE, 0, 1.0);
+                let x0 = wx + 9.0 + host::text_width(&sup_label) + 2.0;
 
                 for k in 0..UPGRADE_TYPES.len() {
                     let ix = x0 + k as f32 * 12.0;

@@ -99,6 +99,9 @@ impl MekScreen for FormulaicAssemblicator {
         let (energy, capacity) = (pair(2, 3), pair(4, 5));
         let p_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         vertical_power_bar(c, 159.0, 15.0, p_frac);
+        if inside(mouse, [159.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Buttons
         let auto_mode = data(6) == 1;
@@ -107,12 +110,12 @@ impl MekScreen for FormulaicAssemblicator {
         let can_encode = data(13) == 1;
 
         // 1. Encode formula button at (7, 45, 14, 14), id 7900
-        let enc_act = can_encode;
+        let enc_act = !auto_mode && has_recipe && can_encode;
         c.blit_sprite(if enc_act { "mekanism:button" } else { "mekanism:button_inactive" }, 7.0, 45.0, 14.0, 14.0);
         c.blit("mekanism:gui/button/encode_formula", 7.0, 45.0, 0.0, 0.0, 14.0, 14.0, 14.0, 14.0);
         c.area(7900, [7.0, 45.0, 14.0, 14.0], AreaKind::Button, enc_act, "Encode Formula");
         if inside(mouse, [7.0, 45.0, 14.0, 14.0]) {
-            c.tooltip(&[("Encode Formula", WHITE)]);
+            c.tooltip(&[(&host::translate("assemblicator.mekanism.encode_formula", &[]), WHITE)]);
         }
 
         // 2. Stock control button at (26, 75, 16, 16), id 7901
@@ -121,8 +124,8 @@ impl MekScreen for FormulaicAssemblicator {
         c.blit("mekanism:gui/button/stock_control", 26.0, 75.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
         c.area(7901, [26.0, 75.0, 16.0, 16.0], AreaKind::Button, stock_act, "Stock Control");
         if inside(mouse, [26.0, 75.0, 16.0, 16.0]) {
-            let tip = if stock_ctrl { "Stock Control: On" } else { "Stock Control: Off" };
-            c.tooltip(&[(tip, WHITE)]);
+            let tip = host::translate("assemblicator.mekanism.stock_control", &[if stock_ctrl { "On".to_string() } else { "Off".to_string() }]);
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // 3. Fill/Empty button at (44, 75, 16, 16), id 7902
@@ -132,8 +135,12 @@ impl MekScreen for FormulaicAssemblicator {
         c.blit(fill_icon, 44.0, 75.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
         c.area(7902, [44.0, 75.0, 16.0, 16.0], AreaKind::Button, fill_act, "Fill/Empty");
         if inside(mouse, [44.0, 75.0, 16.0, 16.0]) {
-            let tip = if valid_formula { "Empty Grid" } else { "Fill Grid" };
-            c.tooltip(&[(tip, WHITE)]);
+            let tip = if valid_formula {
+                host::translate("assemblicator.mekanism.empty", &[])
+            } else {
+                host::translate("assemblicator.mekanism.fill", &[])
+            };
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // 4. Craft single at (71, 75, 16, 16), id 7903
@@ -142,7 +149,7 @@ impl MekScreen for FormulaicAssemblicator {
         c.blit("mekanism:gui/button/craft_single", 71.0, 75.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
         c.area(7903, [71.0, 75.0, 16.0, 16.0], AreaKind::Button, craft_act, "Craft Single Item");
         if inside(mouse, [71.0, 75.0, 16.0, 16.0]) {
-            c.tooltip(&[("Craft Single Item", WHITE)]);
+            c.tooltip(&[(&host::translate("assemblicator.mekanism.craft_single", &[]), WHITE)]);
         }
 
         // 5. Craft available at (89, 75, 16, 16), id 7904
@@ -150,7 +157,7 @@ impl MekScreen for FormulaicAssemblicator {
         c.blit("mekanism:gui/button/craft_available", 89.0, 75.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
         c.area(7904, [89.0, 75.0, 16.0, 16.0], AreaKind::Button, craft_act, "Craft Available Items");
         if inside(mouse, [89.0, 75.0, 16.0, 16.0]) {
-            c.tooltip(&[("Craft Available Items", WHITE)]);
+            c.tooltip(&[(&host::translate("assemblicator.mekanism.craft_available", &[]), WHITE)]);
         }
 
         // 6. Auto-mode toggle at (107, 75, 16, 16), id 7905
@@ -159,8 +166,8 @@ impl MekScreen for FormulaicAssemblicator {
         c.blit("mekanism:gui/button/auto_toggle", 107.0, 75.0, 0.0, 0.0, 16.0, 16.0, 16.0, 16.0);
         c.area(7905, [107.0, 75.0, 16.0, 16.0], AreaKind::Button, auto_act, "Auto Mode");
         if inside(mouse, [107.0, 75.0, 16.0, 16.0]) {
-            let tip = if auto_mode { "Auto-Mode: On" } else { "Auto-Mode: Off" };
-            c.tooltip(&[(tip, WHITE)]);
+            let tip = host::translate("assemblicator.mekanism.auto_mode_toggle", &[if auto_mode { "On".to_string() } else { "Off".to_string() }]);
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // Title and inventory label
@@ -183,7 +190,7 @@ impl MekScreen for FormulaicAssemblicator {
                 let has_recipe = data(9) == 1;
                 let can_encode = data(13) == 1;
 
-                if can_encode && inside(mouse, [7.0, 45.0, 14.0, 14.0]) {
+                if !auto_mode && has_recipe && can_encode && inside(mouse, [7.0, 45.0, 14.0, 14.0]) {
                     host::send_button(7900);
                     host::play_click();
                     return true;
@@ -256,6 +263,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Area { id, .. } if *id == 7902)));
+
+        // Hover power bar at (160, 20)
+        let hover_frame = Frame { mouse_x: 160.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 40000 FE")))));
 
         // Click Fill/Empty button at (45, 76)
         let click_event = InputEvent::MousePressed(Pointer {

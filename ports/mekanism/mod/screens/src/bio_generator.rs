@@ -56,24 +56,32 @@ impl MekScreen for BioGenerator {
         let (energy, capacity) = (pair(1, 2), pair(3, 4));
         let fraction = if capacity == 0 { 0.0 } else { energy as f32 / capacity as f32 };
         vertical_power_bar(c, 164.0, 15.0, fraction);
+        if inside(mouse, [164.0, 15.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Biofuel fluid bar at (7, 15)
         let (biofuel, bio_cap) = (pair(10, 11), pair(13, 14));
-        c.blit_sprite("mekanism:bar/base", 6.0, 14.0, 6.0, 54.0);
+        c.blit_sprite("mekanism:bar/base", 7.0, 15.0, 6.0, 54.0);
         let bio_frac = if bio_cap == 0 { 0.0 } else { (biofuel as f32 / bio_cap as f32).clamp(0.0, 1.0) };
         let bio_filled = (52.0 * bio_frac).floor();
         if bio_filled > 0.0 {
-            c.fill(7.0, 15.0 + 52.0 - bio_filled, 4.0, bio_filled, 0xFF3C_FE9A);
+            c.fill(8.0, 16.0 + 52.0 - bio_filled, 4.0, bio_filled, 0xFF3C_FE9A);
         }
-        if inside(mouse, [6.0, 14.0, 6.0, 54.0]) {
-            c.tooltip(&[(&format!("BioFuel: {} / {} mB", biofuel, bio_cap), WHITE)]);
+        if inside(mouse, [7.0, 15.0, 6.0, 54.0]) {
+            let tip = if biofuel == 0 {
+                host::translate("gui.mekanism.empty", &[])
+            } else {
+                format!("BioFuel: {} / {} mB", biofuel, bio_cap)
+            };
+            c.tooltip(&[(&tip, WHITE)]);
         }
 
         // Inner screen at (48, 23, 80, 40)
         inner_screen(c, [48.0, 23.0, 80.0, 40.0]);
-        let energy_str = format!("Energy: {} FE", energy);
-        let bio_str = format!("BioFuel: {} mB", biofuel);
-        let producing_str = format!("Producing: {} FE/t", data(5));
+        let energy_str = format!("{} FE", energy);
+        let bio_str = host::translate("gui.mekanismgenerators.bio_generator.bio_fuel", &[biofuel.to_string()]);
+        let producing_str = host::translate("gui.mekanismgenerators.output_rate.short", &[format!("{} FE", data(5))]);
         c.text(&energy_str, 52.0, 27.0, GREEN, 0, 0.85);
         c.text(&bio_str, 52.0, 37.0, GREEN, 0, 0.85);
         c.text(&producing_str, 52.0, 47.0, GREEN, 0, 0.85);
@@ -103,7 +111,7 @@ mod tests {
             data: vec![
                 1,       // 0: active
                 2000, 0, // 1, 2: energy
-                160000, 0,// 3, 4: capacity
+                28928, 2,// 3, 4: capacity (160000 = 28928 + 2 * 65536)
                 350,     // 5: producing
                 0, 0, 0, 0,// 6..9
                 5000, 0, 0,// 10..12: tank
@@ -123,13 +131,14 @@ mod tests {
         assert_eq!(setup.width, 176);
         assert_eq!(setup.height, 166);
 
-        let frame = Frame { mouse_x: 10.0, mouse_y: 10.0, partial_tick: 0.0, time_ms: 1000 };
+        let frame = Frame { mouse_x: 165.0, mouse_y: 20.0, partial_tick: 0.0, time_ms: 1000 };
         let mut canvas = Canvas::new();
         screen.render(&frame, &mut canvas);
         let bytes = canvas.finish();
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
-        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text.contains("BioFuel: 5000 mB"))));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "gui.mekanismgenerators.bio_generator.bio_fuel")));
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines } if lines.iter().any(|(t, _)| t.contains("Energy: 2000 / 160000 FE")))));
 
         // Click redstone tab
         let click_event = InputEvent::MousePressed(Pointer {

@@ -11,7 +11,7 @@
 //! 9 energy usage per tick, 10 installed module count, 11 security mode. Strings: installed module names.
 
 use crate::chrome::{Chrome, ChromeSpec, EnergyTabSpec};
-use crate::elements::{base_panel, data, element_holder, inside, inventory_label, pair, slot_frame, string, title, vertical_power_bar, TITLE, WHITE};
+use crate::elements::{base_panel, button, data, element_holder, inside, inventory_label, pair, slot_frame, string, title, vertical_power_bar, TITLE, WHITE};
 use crate::{MekScreen, Opened};
 use horizon_mod_sdk::screen::{AreaKind, Canvas, Frame, InputEvent, MouseButton, OpenInfo, Setup, host};
 
@@ -60,6 +60,14 @@ impl MekScreen for ModificationStation {
             c.area(7800 + i as i32, row_rect, AreaKind::Row, true, "Remove module");
         }
 
+        // Remove button at (28, 96, 120, 17)
+        let rem_act = self.selected_row.is_some();
+        let rem_label = host::translate("button.mekanism.remove", &[]);
+        button(c, 7830, [28.0, 96.0, 120.0, 17.0], if rem_label.is_empty() { "Remove" } else { &rem_label }, rem_act, mouse, None);
+        if inside(mouse, [28.0, 96.0, 120.0, 17.0]) {
+            c.tooltip(&[(&host::translate("gui.mekanism.modification.remove.tooltip", &[]), WHITE)]);
+        }
+
         // Slots
         slot_frame(c, 34.0, 117.0); // Module slot
         c.blit_sprite("mekanism:slot/overlay/module", 34.0, 117.0, 18.0, 18.0);
@@ -83,6 +91,9 @@ impl MekScreen for ModificationStation {
         let (energy, capacity) = (pair(2, 3), pair(4, 5));
         let p_frac = if capacity == 0 { 0.0 } else { (energy as f32 / capacity as f32).clamp(0.0, 1.0) };
         vertical_power_bar(c, 156.0, 40.0, p_frac);
+        if inside(mouse, [156.0, 40.0, 6.0, 54.0]) {
+            c.tooltip(&[(&format!("Energy: {} / {} FE", energy, capacity), WHITE)]);
+        }
 
         // Title and inventory label
         title(c, &host::translate("block.mekanism.modification_station", &[]), 24.0, 152.0, 6.0);
@@ -98,6 +109,14 @@ impl MekScreen for ModificationStation {
         }
         if let InputEvent::MousePressed(p) = event {
             if p.button == MouseButton::Left {
+                if inside((p.x, p.y), [28.0, 96.0, 120.0, 17.0]) {
+                    if let Some(i) = self.selected_row {
+                        let id = if p.modifiers.shift { 7820 + i as i32 } else { 7800 + i as i32 };
+                        host::send_button(id);
+                        host::play_click();
+                        return true;
+                    }
+                }
                 let mod_count = (data(10).max(0) as usize).min(6);
                 for i in 0..mod_count {
                     let row_rect = [28.0, 21.0 + 12.0 * i as f32, 118.0, 12.0];
@@ -151,6 +170,14 @@ mod tests {
         let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Sprite { sprite, .. } if sprite == "mekanism:base")));
         assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Text { text, .. } if text == "Solar Recharging Unit")));
+
+        // Hover power bar at (157, 45)
+        let hover_frame = Frame { mouse_x: 157.0, mouse_y: 45.0, partial_tick: 0.0, time_ms: 1000 };
+        let mut canvas = Canvas::new();
+        screen.render(&hover_frame, &mut canvas);
+        let bytes = canvas.finish();
+        let decoded = horizon_mod_sdk::screen::format::decode(&bytes).expect("decode canvas");
+        assert!(decoded.commands.iter().any(|cmd| matches!(cmd, Command::Tooltip { lines, .. } if lines.iter().any(|(t, _)| t.contains("Energy: 5000 / 40000 FE")))));
 
         // Click on first module row at (30, 25)
         let click_event = InputEvent::MousePressed(Pointer {
