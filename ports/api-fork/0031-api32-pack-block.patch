@@ -1,0 +1,579 @@
+From b07715d48dd25a06a0b0eaf18c008d7575b7c2e1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 16:31:15 +0000
+Subject: [PATCH 1/2] API 32: world.pack-block and unpack-block (the cardboard
+ box keeps a block with its block entity)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  2 +
+ crates/horizon-client/src/game/block_items.rs |  2 +-
+ crates/horizon-client/src/game/mods.rs        |  2 +
+ crates/horizon-client/src/game/server_mods.rs | 76 +++++++++++++++++++
+ .../examples/block-use/src/lib.rs             |  6 ++
+ .../examples/block-use/tests/block_use.toml   | 12 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 15 ++++
+ crates/horizon-mods/src/api_level.rs          |  6 +-
+ crates/horizon-mods/src/runtime.rs            | 22 ++++++
+ crates/horizon-mods/src/testing.rs            | 19 +++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  2 +
+ 12 files changed, 163 insertions(+), 5 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 0791bb56a..3eaef614c 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -279,6 +279,8 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+                 format!("teleported a player to {} {} {} in {dimension}", pos[0], pos[1], pos[2])
+             }
+             Output::SpawnParticles { particle, count, .. } => format!("{count} {particle} particle(s)"),
++            Output::PackBlock { pos, .. } => format!("packed the block at {pos:?}"),
++            Output::UnpackBlock { pos, .. } => format!("unpacked a block at {pos:?}"),
+             Output::TellOverlay { text, .. } => format!("action bar: {text}"),
+             Output::PlayerBody { change, .. } => format!("body: {change:?}"),
+             Output::SetFood { food, saturation, .. } => format!("set food to {food} and saturation to {saturation}"),
+diff --git a/crates/horizon-client/src/game/block_items.rs b/crates/horizon-client/src/game/block_items.rs
+index 687d19ddd..c3210b09d 100644
+--- a/crates/horizon-client/src/game/block_items.rs
++++ b/crates/horizon-client/src/game/block_items.rs
+@@ -34,7 +34,7 @@ fn clone_item<'a>(name: &str, block_item: &'a str) -> &'a str {
+ 
+ impl Game<'_> {
+     /// The block entity at `key` as vanilla saves it, with its custom name.
+-    fn saved_block_entity(&self, key: (i32, i32, i32)) -> Option<Tag> {
++    pub(in crate::game) fn saved_block_entity(&self, key: (i32, i32, i32)) -> Option<Tag> {
+         let entity = self.world.block_entities.get(&key)?;
+         let block = &self
+             .res
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index a10655a04..2c314f821 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -872,6 +872,8 @@ impl Game<'_> {
+                 | Output::SetMotion { .. }
+                 | Output::SetFood { .. }
+                 | Output::TellOverlay { .. }
++                | Output::PackBlock { .. }
++                | Output::UnpackBlock { .. }
+                 | Output::PlayerBody { .. }
+                 | Output::SetAllowFlight { .. }
+                 | Output::PlaySound { .. }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 23ed9137e..63e19e04f 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -928,6 +928,72 @@ mod run {
+                 self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+             }
+         }
++        /// A mod's `world.pack-block` (FORK-23 of the cardboard box): the block at `pos`, with its block entity, kept in the mod's block
++        /// entity at `into` (under `captured`) and taken away without a drop or a spill. False when it cannot.
++        pub(in crate::game) fn native_pack_block(&mut self, pos: [i32; 3], into: [i32; 3]) -> bool {
++            use horizon_world::nbt::{Compound, Tag};
++            let (key, into_key) = ((pos[0], pos[1], pos[2]), (into[0], into[1], into[2]));
++            let state = self.world.block(pos[0], pos[1], pos[2]);
++            let name = self.res.facts().get(state).name.clone();
++            let air = matches!(&*name, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air");
++            let holds = match self.world.block_entities.get(&into_key) {
++                Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.nbt.get(&Self::jname("captured")).is_some(),
++                _ => return false,
++            };
++            if air || holds || key == into_key {
++                return false;
++            }
++            let mut captured = Compound::default();
++            captured.insert(Self::jname("state"), Tag::String(state_string(self.pack.assets.registry, state).as_str().into()));
++            if let Some(entity) = self.saved_block_entity(key) {
++                captured.insert(Self::jname("entity"), entity);
++            }
++            // Taken away as `removeBlockEntity` then `removeBlock`: no drop, no spill.
++            self.world.block_entities.remove(&key);
++            self.world.block_names.remove(&key);
++            let _ = self.place_state(pos, BlockStateId(0), false);
++            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&into_key) {
++                m.nbt.insert(Self::jname("captured"), Tag::Compound(captured));
++                self.world.modified.insert((into[0] >> 4, into[2] >> 4));
++            }
++            true
++        }
++        /// A mod's `world.unpack-block`: what the box at `box_pos` holds, put back at `pos`. False when it holds nothing.
++        pub(in crate::game) fn native_unpack_block(&mut self, box_pos: [i32; 3], pos: [i32; 3]) -> bool {
++            use horizon_world::nbt::Tag;
++            let box_key = (box_pos[0], box_pos[1], box_pos[2]);
++            let captured = match self.world.block_entities.get(&box_key) {
++                Some(horizon_client_render::containers::BlockEntity::Mod(m)) => match m.nbt.get(&Self::jname("captured")) {
++                    Some(Tag::Compound(c)) => c.clone(),
++                    _ => return false,
++                },
++                _ => return false,
++            };
++            let Some(Tag::String(text)) = captured.get(&Self::jname("state")) else { return false };
++            let Ok(state) = crate::game::render_control::parse_state(self.pack.assets.registry, &text.to_string_lossy()) else {
++                return false;
++            };
++            let key = (pos[0], pos[1], pos[2]);
++            let _ = self.place_state(pos, state, false);
++            if let Some(Tag::Compound(entity)) = captured.get(&Self::jname("entity")) {
++                let mut tag = entity.clone();
++                tag.insert(Self::jname("x"), Tag::Int(pos[0]));
++                tag.insert(Self::jname("y"), Tag::Int(pos[1]));
++                tag.insert(Self::jname("z"), Tag::Int(pos[2]));
++                let tag = Tag::Compound(tag);
++                if let Some((_, entity)) = horizon_client::save::decode_block_entity(&tag) {
++                    if let Some(name) = horizon_client::save::text(tag.get("CustomName")) {
++                        self.world.block_names.insert(key, name);
++                    }
++                    self.world.block_entities.insert(key, entity);
++                }
++            }
++            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&box_key) {
++                m.nbt.remove(&Self::jname("captured"));
++            }
++            self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
++            true
++        }
+         /// A mod's `world.set-item-eject`: whether the entity pushes its output items out.
+         pub(in crate::game) fn native_set_item_eject(&mut self, pos: [i32; 3], on: bool) {
+             let key = (pos[0], pos[1], pos[2]);
+@@ -2131,6 +2197,16 @@ mod run {
+                     };
+                     self.tell_server_player(host, &player, line);
+                 }
++                Output::PackBlock { name, dimension, pos, into } => {
++                    if dimension != self.dim.id() || !self.native_pack_block(pos, into) {
++                        log::debug!("Horizon: mod {name} could not pack the block at {pos:?}");
++                    }
++                }
++                Output::UnpackBlock { name, dimension, box_pos, pos } => {
++                    if dimension != self.dim.id() || !self.native_unpack_block(box_pos, pos) {
++                        log::debug!("Horizon: mod {name} could not unpack into {pos:?}");
++                    }
++                }
+                 Output::TellOverlay { name: _, player, text } => {
+                     self.tell_server_player_as(host, &player, Text::literal(text), true);
+                 }
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 650e33e0e..7de12aa5d 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -22,6 +22,12 @@ impl ServerMod for Gate {
+         if pos.y == 71 {
+             let _ = world::spawn_particles(&player.dimension, "minecraft:dust", f64::from(pos.x) + 0.5, f64::from(pos.y) + 0.5, f64::from(pos.z) + 0.5, 0.3, 0.3, 0.3, 0.0, 8, Some(0x5555FF), 1.0, 40.0);
+         }
++        // FORK-23 (cardboard box): the gate at y 72 packs the block beside it into itself; the one at y 73 puts it back where it stands.
++        if pos.y == 72 {
++            let _ = world::pack_block(&player.dimension, pos.x + 1, pos.y, pos.z, pos.x, pos.y, pos.z);
++        } else if pos.y == 73 {
++            let _ = world::unpack_block(&player.dimension, pos.x, 72, pos.z, pos.x + 1, pos.y, pos.z);
++        }
+         match stack {
+             Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
+             None if !sneaking => BlockUse::Consume,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 11c605587..1d81921b8 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -40,3 +40,15 @@ expect.redirects = ["blockuse:bound 0 1"]
+ blocks = [{ x = 30, y = 65, z = 0, state = "minecraft:air" }]
+ place-mod-block = { pos = [30, 64, 0], state = "blockuse:machine" }
+ expect.can-place = true
++
++[[step]]
++# The cardboard box: a chest beside the gate at y 72 is packed into it (gone from the world, nothing dropped)...
++blocks = [{ x = 41, y = 72, z = 0, state = "minecraft:chest[facing=north]" }]
++use-block = { pos = [40, 72, 0] }
++expect.blocks = [{ x = 41, y = 72, z = 0, state = "minecraft:air" }]
++
++[[step]]
++# ...and put back beside the other gate, as it was.
++blocks = [{ x = 41, y = 73, z = 0, state = "minecraft:air" }]
++use-block = { pos = [40, 73, 0] }
++expect.blocks = [{ x = 41, y = 73, z = 0, state = "minecraft:chest[facing=north]" }]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index f96cfa1c7..7c62abb50 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -789,6 +789,21 @@ interface %world {
+     /// was. Nothing happens for air, liquids and unbreakable blocks.
+     /// Once, after this call returns; at most 64 a call. API 23.
+     mine-block: func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>;
++    /// Packs the block at `x y z`, whatever it is (its state and its block
++    /// entity as the game saves it: slots, energy, a custom name, a mod's
++    /// bytes), into the block entity of the mod at `into-x into-y into-z`
++    /// (Mekanism's cardboard box), and takes it away without a drop or a
++    /// spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it
++    /// with its own data, so an item of the box that keeps its data
++    /// (`keep-data`) carries it. Nothing happens (an error) for air, a block
++    /// the game cannot take away, or when `into` is not a block entity of a
++    /// mod, or already holds one. Once, after this call returns. API 32.
++    pack-block: func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32) -> result<_, string>;
++    /// Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the
++    /// block's state and its block entity as they were packed, replacing
++    /// whatever is there; the box is empty again. Once, after this call
++    /// returns. An error for a box that holds nothing or a position not loaded. API 32.
++    unpack-block: func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>;
+     /// Turns on or off the block entity pushing items out: every 10 ticks, from
+     /// the slots of the kind's `outputs` that a face reaches, into the
+     /// container beside that face (a chest, a hopper, another machine), as
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 61cf3a978..440f5d9af 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 31;
++pub const LEVEL: u32 = 32;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 100] = [
++pub const FUNCTIONS: [(&str, u32); 102] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -105,6 +105,8 @@ pub const FUNCTIONS: [(&str, u32); 100] = [
+     ("player-control.get-state", 29),
+     ("recipe-types.item-tags", 30),
+     ("players.tell-overlay", 31),
++    ("world.pack-block", 32),
++    ("world.unpack-block", 32),
+     ("player-control.set-air", 31),
+     ("player-control.reduce-effect", 31),
+     ("player-control.reset-fall-distance", 31),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index be54f36c3..4e8c5f08f 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -436,6 +436,10 @@ pub enum Output {
+         scale: f32,
+         max_distance: f32,
+     },
++    /// `world.pack-block`: the block at `pos` into the mod's block entity at `into`.
++    PackBlock { name: String, dimension: String, pos: [i32; 3], into: [i32; 3] },
++    /// `world.unpack-block`: what the box at `box_pos` holds, back at `pos`.
++    UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
+     /// `world.set-capabilities-enabled`: which of a block entity's capabilities the outside can use.
+     SetCapabilitiesEnabled {
+         name: String,
+@@ -2467,6 +2471,24 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+     #[allow(clippy::too_many_arguments)]
++    fn pack_block(&mut self, dimension: String, x: i32, y: i32, z: i32, into_x: i32, into_y: i32, into_z: i32) -> Result<(), String> {
++        let made = self.out.iter().filter(|o| matches!(o, Output::PackBlock { .. } | Output::UnpackBlock { .. })).count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} packs a call"));
++        }
++        self.out.push(Output::PackBlock { name: self.name.clone(), dimension, pos: [x, y, z], into: [into_x, into_y, into_z] });
++        Ok(())
++    }
++    #[allow(clippy::too_many_arguments)]
++    fn unpack_block(&mut self, dimension: String, box_x: i32, box_y: i32, box_z: i32, x: i32, y: i32, z: i32) -> Result<(), String> {
++        let made = self.out.iter().filter(|o| matches!(o, Output::PackBlock { .. } | Output::UnpackBlock { .. })).count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} packs a call"));
++        }
++        self.out.push(Output::UnpackBlock { name: self.name.clone(), dimension, box_pos: [box_x, box_y, box_z], pos: [x, y, z] });
++        Ok(())
++    }
++    #[allow(clippy::too_many_arguments)]
+     fn set_capabilities_enabled(
+         &mut self,
+         dimension: String,
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index c265532fd..597252dd3 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -69,6 +69,8 @@ pub struct TestGame {
+     pub hit_damage_result: Option<f32>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
++    /// The blocks packed into boxes (`world.pack-block`), by the box's position.
++    pub packed: std::collections::BTreeMap<(i32, i32, i32), String>,
+     /// The crafting recipes and stack sizes a script gave.
+     pub crafts: Vec<CraftSet>,
+     pub stack_sizes: std::collections::BTreeMap<String, u32>,
+@@ -260,6 +262,7 @@ impl TestGame {
+             damage_result: None,
+             hit_damage_result: None,
+             can_place_result: None,
++            packed: Default::default(),
+             crafts: Vec::new(),
+             stack_sizes: Default::default(),
+         };
+@@ -1742,6 +1745,22 @@ impl Step {
+                 }
+             }
+         }
++        // A block packed goes into its box (the scripts keep its state), and comes out at the place it is unpacked.
++        for o in &out {
++            match o {
++                Output::PackBlock { dimension, pos, into, .. } if dimension == "minecraft:overworld" => {
++                    if let Some(state) = game.world.insert((pos[0], pos[1], pos[2]), "minecraft:air".to_owned()) {
++                        game.packed.insert((into[0], into[1], into[2]), state);
++                    }
++                }
++                Output::UnpackBlock { dimension, box_pos, pos, .. } if dimension == "minecraft:overworld" => {
++                    if let Some(state) = game.packed.remove(&(box_pos[0], box_pos[1], box_pos[2])) {
++                        game.world.insert((pos[0], pos[1], pos[2]), state);
++                    }
++                }
++                _ => {}
++            }
++        }
+         // A block mined is gone (its drops are not simulated).
+         for o in &out {
+             if let Output::MineBlock { dimension, pos, .. } = o
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 0b83e674a..6ae296f11 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 31);
++    assert_eq!(LEVEL, 32);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 5948053db..0956597be 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -738,6 +738,8 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
+ | `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
+ | `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
++| `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. Once, after this call returns. API 32. |
++| `unpack-block` | `func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>` | Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the block's state and its block entity as they were packed, replacing whatever is there; the box is empty again. Once, after this call returns. An error for a box that holds nothing or a position not loaded. API 32. |
+ | `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
+ | `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
+ 
+-- 
+2.43.0
+
+
+From dc5466adbce435113c26da9dbaff966afd84694e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 16:34:21 +0000
+Subject: [PATCH 2/2] API 32: pack-block takes a replacement (the box in the
+ packed block's own place)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game/server_mods.rs | 50 ++++++++++++++-----
+ .../examples/block-use/src/lib.rs             |  5 +-
+ .../examples/block-use/tests/block_use.toml   |  6 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  8 ++-
+ crates/horizon-mods/src/runtime.rs            | 11 ++--
+ crates/horizon-mods/src/testing.rs            |  5 +-
+ docs/api/mods-reference.md                    |  2 +-
+ 7 files changed, 66 insertions(+), 21 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 63e19e04f..b59520bf6 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -930,17 +930,34 @@ mod run {
+         }
+         /// A mod's `world.pack-block` (FORK-23 of the cardboard box): the block at `pos`, with its block entity, kept in the mod's block
+         /// entity at `into` (under `captured`) and taken away without a drop or a spill. False when it cannot.
+-        pub(in crate::game) fn native_pack_block(&mut self, pos: [i32; 3], into: [i32; 3]) -> bool {
++        pub(in crate::game) fn native_pack_block(&mut self, pos: [i32; 3], into: [i32; 3], replacement: Option<&str>) -> bool {
+             use horizon_world::nbt::{Compound, Tag};
+             let (key, into_key) = ((pos[0], pos[1], pos[2]), (into[0], into[1], into[2]));
+             let state = self.world.block(pos[0], pos[1], pos[2]);
+             let name = self.res.facts().get(state).name.clone();
+             let air = matches!(&*name, "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air");
+-            let holds = match self.world.block_entities.get(&into_key) {
+-                Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.nbt.get(&Self::jname("captured")).is_some(),
+-                _ => return false,
++            // The box may be the replacement itself, at the packed block's own place.
++            let in_place = key == into_key;
++            let replacement_state = match replacement {
++                Some(text) => match crate::game::render_control::parse_state(self.pack.assets.registry, text) {
++                    Ok(s) => Some(s),
++                    Err(_) => return false,
++                },
++                None => None,
+             };
+-            if air || holds || key == into_key {
++            if in_place && replacement_state.is_none() {
++                return false;
++            }
++            if !in_place {
++                let holds = match self.world.block_entities.get(&into_key) {
++                    Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.nbt.get(&Self::jname("captured")).is_some(),
++                    _ => return false,
++                };
++                if holds {
++                    return false;
++                }
++            }
++            if air {
+                 return false;
+             }
+             let mut captured = Compound::default();
+@@ -951,12 +968,21 @@ mod run {
+             // Taken away as `removeBlockEntity` then `removeBlock`: no drop, no spill.
+             self.world.block_entities.remove(&key);
+             self.world.block_names.remove(&key);
+-            let _ = self.place_state(pos, BlockStateId(0), false);
+-            if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&into_key) {
+-                m.nbt.insert(Self::jname("captured"), Tag::Compound(captured));
+-                self.world.modified.insert((into[0] >> 4, into[2] >> 4));
++            let _ = self.place_state(pos, replacement_state.unwrap_or(BlockStateId(0)), false);
++            if let Some(state) = replacement_state {
++                let name = self.res.facts().get(state).name.clone();
++                if let Some(entity) = self.new_block_entity(&name) {
++                    self.world.block_entities.insert(key, entity);
++                }
++            }
++            match self.world.block_entities.get_mut(&into_key) {
++                Some(horizon_client_render::containers::BlockEntity::Mod(m)) => {
++                    m.nbt.insert(Self::jname("captured"), Tag::Compound(captured));
++                    self.world.modified.insert((into[0] >> 4, into[2] >> 4));
++                    true
++                }
++                _ => false,
+             }
+-            true
+         }
+         /// A mod's `world.unpack-block`: what the box at `box_pos` holds, put back at `pos`. False when it holds nothing.
+         pub(in crate::game) fn native_unpack_block(&mut self, box_pos: [i32; 3], pos: [i32; 3]) -> bool {
+@@ -2197,8 +2223,8 @@ mod run {
+                     };
+                     self.tell_server_player(host, &player, line);
+                 }
+-                Output::PackBlock { name, dimension, pos, into } => {
+-                    if dimension != self.dim.id() || !self.native_pack_block(pos, into) {
++                Output::PackBlock { name, dimension, pos, into, replacement } => {
++                    if dimension != self.dim.id() || !self.native_pack_block(pos, into, replacement.as_deref()) {
+                         log::debug!("Horizon: mod {name} could not pack the block at {pos:?}");
+                     }
+                 }
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 7de12aa5d..bc6eb66d6 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -24,7 +24,10 @@ impl ServerMod for Gate {
+         }
+         // FORK-23 (cardboard box): the gate at y 72 packs the block beside it into itself; the one at y 73 puts it back where it stands.
+         if pos.y == 72 {
+-            let _ = world::pack_block(&player.dimension, pos.x + 1, pos.y, pos.z, pos.x, pos.y, pos.z);
++            let _ = world::pack_block(&player.dimension, pos.x + 1, pos.y, pos.z, pos.x, pos.y, pos.z, None);
++            // (In place: the box takes the packed block's own place with `Some("blockuse:box")` and `into` the same position.)
++        } else if pos.y == 74 {
++            let _ = world::pack_block(&player.dimension, pos.x + 1, pos.y, pos.z, pos.x + 1, pos.y, pos.z, Some("blockuse:box"));
+         } else if pos.y == 73 {
+             let _ = world::unpack_block(&player.dimension, pos.x, 72, pos.z, pos.x + 1, pos.y, pos.z);
+         }
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 1d81921b8..9b7a72894 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -52,3 +52,9 @@ expect.blocks = [{ x = 41, y = 72, z = 0, state = "minecraft:air" }]
+ blocks = [{ x = 41, y = 73, z = 0, state = "minecraft:air" }]
+ use-block = { pos = [40, 73, 0] }
+ expect.blocks = [{ x = 41, y = 73, z = 0, state = "minecraft:chest[facing=north]" }]
++
++[[step]]
++# In place, as the real box does: the box takes the place of the block it packs.
++blocks = [{ x = 51, y = 74, z = 0, state = "minecraft:chest[facing=north]" }]
++use-block = { pos = [50, 74, 0] }
++expect.blocks = [{ x = 51, y = 74, z = 0, state = "blockuse:box" }]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 7c62abb50..64b076656 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -797,8 +797,12 @@ interface %world {
+     /// with its own data, so an item of the box that keeps its data
+     /// (`keep-data`) carries it. Nothing happens (an error) for air, a block
+     /// the game cannot take away, or when `into` is not a block entity of a
+-    /// mod, or already holds one. Once, after this call returns. API 32.
+-    pack-block: func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32) -> result<_, string>;
++    /// mod, or already holds one. `replacement` is the state (`mymod:box`) put
++    /// where the block was, as Mekanism's box takes the place of what it packs;
++    /// `into` may then be the same position (the replacement's own block
++    /// entity keeps it), or none leaves air there. Once, after this call
++    /// returns. API 32.
++    pack-block: func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32, replacement: option<string>) -> result<_, string>;
+     /// Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the
+     /// block's state and its block entity as they were packed, replacing
+     /// whatever is there; the box is empty again. Once, after this call
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 4e8c5f08f..ad9f8a36d 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -437,7 +437,7 @@ pub enum Output {
+         max_distance: f32,
+     },
+     /// `world.pack-block`: the block at `pos` into the mod's block entity at `into`.
+-    PackBlock { name: String, dimension: String, pos: [i32; 3], into: [i32; 3] },
++    PackBlock { name: String, dimension: String, pos: [i32; 3], into: [i32; 3], replacement: Option<String> },
+     /// `world.unpack-block`: what the box at `box_pos` holds, back at `pos`.
+     UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
+     /// `world.set-capabilities-enabled`: which of a block entity's capabilities the outside can use.
+@@ -2471,12 +2471,17 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+     #[allow(clippy::too_many_arguments)]
+-    fn pack_block(&mut self, dimension: String, x: i32, y: i32, z: i32, into_x: i32, into_y: i32, into_z: i32) -> Result<(), String> {
++    fn pack_block(&mut self, dimension: String, x: i32, y: i32, z: i32, into_x: i32, into_y: i32, into_z: i32, replacement: Option<String>) -> Result<(), String> {
++        if let Some(r) = &replacement
++            && !kind_ok(r.split('[').next().unwrap_or(""))
++        {
++            return Err("a replacement is a block state, mymod:box".into());
++        }
+         let made = self.out.iter().filter(|o| matches!(o, Output::PackBlock { .. } | Output::UnpackBlock { .. })).count();
+         if made >= BLOCKS_PER_CALL {
+             return Err(format!("at most {BLOCKS_PER_CALL} packs a call"));
+         }
+-        self.out.push(Output::PackBlock { name: self.name.clone(), dimension, pos: [x, y, z], into: [into_x, into_y, into_z] });
++        self.out.push(Output::PackBlock { name: self.name.clone(), dimension, pos: [x, y, z], into: [into_x, into_y, into_z], replacement });
+         Ok(())
+     }
+     #[allow(clippy::too_many_arguments)]
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 597252dd3..cf9917014 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1748,8 +1748,9 @@ impl Step {
+         // A block packed goes into its box (the scripts keep its state), and comes out at the place it is unpacked.
+         for o in &out {
+             match o {
+-                Output::PackBlock { dimension, pos, into, .. } if dimension == "minecraft:overworld" => {
+-                    if let Some(state) = game.world.insert((pos[0], pos[1], pos[2]), "minecraft:air".to_owned()) {
++                Output::PackBlock { dimension, pos, into, replacement, .. } if dimension == "minecraft:overworld" => {
++                    let put = replacement.clone().unwrap_or_else(|| "minecraft:air".to_owned());
++                    if let Some(state) = game.world.insert((pos[0], pos[1], pos[2]), put) {
+                         game.packed.insert((into[0], into[1], into[2]), state);
+                     }
+                 }
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 0956597be..67a1b314a 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -738,7 +738,7 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
+ | `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
+ | `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
+-| `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. Once, after this call returns. API 32. |
++| `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32, replacement: option<string>) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. `replacement` is the state (`mymod:box`) put where the block was, as Mekanism's box takes the place of what it packs; `into` may then be the same position (the replacement's own block entity keeps it), or none leaves air there. Once, after this call returns. API 32. |
+ | `unpack-block` | `func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>` | Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the block's state and its block entity as they were packed, replacing whatever is there; the box is empty again. Once, after this call returns. An error for a box that holds nothing or a position not loaded. API 32. |
+ | `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
+ | `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
+-- 
+2.43.0
+

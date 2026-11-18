@@ -1,0 +1,717 @@
+From 38dd89e5ca96410681460410b0a176af958b7bf4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 15:46:12 +0000
+Subject: [PATCH] Mod entities drawn in bones with vanilla's walk animation
+ (FORK-10 5d)
+
+An entity kind's bones are item models placed at their pivots, one
+item_display each; a bone with walk swings by vanilla's limb swing
+(WalkAnimationState) as the entity moves, sent as an eased transformation.
+Skins can swap a bone's model.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/mod_entities.rs   |  79 +++++++++-
+ .../assets/robits/items/robit_body.json       |   1 +
+ .../assets/robits/items/robit_leg.json        |   1 +
+ .../assets/robits/items/robit_red_leg.json    |   1 +
+ .../assets/robits/models/item/robit_body.json |   1 +
+ .../assets/robits/models/item/robit_leg.json  |   1 +
+ .../robits/models/item/robit_red_leg.json     |   1 +
+ .../robits/horizon/entity_kind/robit.json     |  46 +++++-
+ .../examples/entity-kinds/src/lib.rs          |   3 +
+ .../examples/entity-kinds/tests/robits.toml   |   5 +
+ crates/horizon-mods/src/content.rs            |  96 ++++++++++++
+ crates/horizon-mods/src/entity_state.rs       | 141 +++++++++++++++++-
+ crates/horizon-mods/src/testing.rs            |  28 ++++
+ 13 files changed, 395 insertions(+), 9 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_body.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_leg.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_red_leg.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_body.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_leg.json
+ create mode 100644 crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_red_leg.json
+
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+index 4e8b69e48..3314327ac 100644
+--- a/crates/horizon-client/src/game/mod_entities.rs
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -4,7 +4,10 @@
+ use super::Game;
+ use horizon_mods::{
+     content::EntityKind,
+-    entity_state::{CARRIER_TAG, FILE, ModEntityState, WALK_FACTOR, Walk, apply, carrier_snbt, decode, encode, follow, hitbox_snbt, needs_path},
++    entity_state::{
++        CARRIER_TAG, FILE, ModEntityState, WALK_FACTOR, Walk, apply, bone_angle, bone_display, bone_snbt, carrier_snbt, decode, encode, follow,
++        hitbox_snbt, needs_path,
++    },
+ };
+ use std::{collections::HashMap, sync::OnceLock};
+ 
+@@ -73,8 +76,7 @@ impl Game<'_> {
+             .list
+             .iter()
+             .filter(|e| e.id == id && e.dimension == dimension)
+-            .flat_map(|e| [e.carrier, e.hitbox])
+-            .flatten()
++            .flat_map(|e| [e.carrier, e.hitbox].into_iter().flatten().chain(e.bone_carriers.iter().copied()))
+             .collect();
+         for c in carriers {
+             self.others.retain(|o| o.id != c);
+@@ -95,6 +97,7 @@ impl Game<'_> {
+         };
+         let dim = self.dim.id().to_owned();
+         let mut list = std::mem::take(&mut self.mod_entities.list);
++        let before: Vec<[f64; 3]> = list.iter().map(|e| e.pos).collect();
+         {
+             let w = self.mob_world_base(&[]);
+             // A cell's collision top for walking: 0 where it walks through (air, water, an open door, a plant).
+@@ -161,6 +164,12 @@ impl Game<'_> {
+                 }
+             }
+         }
++        // FORK-10 5d: the walk animation follows how far each moved across this tick (still ones ease back to rest).
++        for (e, from) in list.iter_mut().zip(before) {
++            if e.dimension == dim {
++                e.walk_anim.tick((e.pos[0] - from[0]).hypot(e.pos[2] - from[2]));
++            }
++        }
+         self.mod_entities.list = list;
+     }
+ 
+@@ -217,6 +226,16 @@ impl Game<'_> {
+             } else if let Some(h) = e.hitbox {
+                 let _ = self.native_move_entity(&dim, h, e.pos, e.yaw, 0.0);
+             }
++            // FORK-10 5d: a kind with bones shows one display a bone, turned with the walk.
++            if !kind.bones.is_empty() {
++                if let Some(c) = e.carrier {
++                    self.others.retain(|o| o.id != c);
++                    self.persist.raw.remove(&c);
++                    self.mod_entities.list[i].carrier = None;
++                }
++                self.sync_mod_entity_bones(i, kind, &dim);
++                continue;
++            }
+             if alive && current {
+                 if let Some(c) = e.carrier {
+                     let _ = self.native_move_entity(&dim, c, e.pos, e.yaw, 0.0);
+@@ -234,6 +253,57 @@ impl Game<'_> {
+         }
+     }
+ 
++    /// The bones of mod entity `i` (FORK-10 5d): one `item_display` a bone, made again when the skin or the name changes or one is
++    /// gone, moved with the entity, and each swinging bone turned to its walk angle (eased over a tick, sent when it moved half a
++    /// degree or more).
++    fn sync_mod_entity_bones(&mut self, i: usize, kind: &EntityKind, dim: &str) {
++        let e = self.mod_entities.list[i].clone();
++        let alive = e.bone_carriers.len() == kind.bones.len() && e.bone_carriers.iter().all(|c| self.others.iter().any(|o| o.id == *c));
++        let current = Some((e.skin.clone(), e.name.clone())) == e.shown;
++        if !(alive && current) {
++            for c in &e.bone_carriers {
++                self.others.retain(|o| o.id != *c);
++                self.persist.raw.remove(c);
++            }
++            let mut made = Vec::new();
++            for b in 0..kind.bones.len() {
++                let Some(text) = bone_snbt(kind, &e.skin, b, e.name.as_deref()) else { continue };
++                let Ok((horizon_world::nbt::Tag::Compound(compound), _)) = horizon_world::nbt::parse_snbt(&text) else { continue };
++                if let Some(id) = self.native_summon(dim, "minecraft:item_display", e.pos, compound) {
++                    let _ = self.native_move_entity(dim, id, e.pos, e.yaw, 0.0);
++                    made.push(id);
++                }
++            }
++            let entry = &mut self.mod_entities.list[i];
++            entry.shown = (made.len() == kind.bones.len()).then(|| (e.skin.clone(), e.name.clone()));
++            entry.bone_angles = vec![0.0; made.len()];
++            entry.bone_carriers = made;
++            return;
++        }
++        let mut angles = e.bone_angles.clone();
++        angles.resize(kind.bones.len(), 0.0);
++        for (b, (bone, &id)) in kind.bones.iter().zip(&e.bone_carriers).enumerate() {
++            let _ = self.native_move_entity(dim, id, e.pos, e.yaw, 0.0);
++            let Some(walk) = &bone.walk else { continue };
++            let angle = bone_angle(walk, e.walk_anim);
++            if (angle - angles[b]).abs() < 0.5 {
++                continue;
++            }
++            let (translation, left_rotation) = bone_display(bone, angle);
++            let display = super::native_entities::NativeDisplay {
++                translation,
++                left_rotation,
++                interpolation: 1,
++                teleport: 2,
++                ..Default::default()
++            };
++            if self.native_set_display(dim, id, &display) {
++                angles[b] = angle;
++            }
++        }
++        self.mod_entities.list[i].bone_angles = angles;
++    }
++
+     /// Takes `amount` of health from the mod entity `id`: whether it died of it.
+     pub(super) fn damage_mod_entity(&mut self, id: u32, amount: f32) -> bool {
+         let Some(e) = self.mod_entities.list.iter_mut().find(|e| e.id == id) else {
+@@ -295,7 +365,8 @@ impl Game<'_> {
+                 continue;
+             };
+             if apply(&mut self.mod_entities.list[i], kind, &u) {
+-                self.mod_entities.list.remove(i);
++                // Its displays and its box go with it.
++                self.native_remove_mod_entity(&u.dimension, u.id);
+             } else if u.menu_text.is_some() {
+                 self.send_mod_entity_menu_text(u.id);
+             }
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_body.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_body.json
+new file mode 100644
+index 000000000..8202a21c3
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_body.json
+@@ -0,0 +1 @@
++{"model": {"type": "minecraft:model", "model": "robits:item/robit_body"}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_leg.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_leg.json
+new file mode 100644
+index 000000000..109b85c38
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_leg.json
+@@ -0,0 +1 @@
++{"model": {"type": "minecraft:model", "model": "robits:item/robit_leg"}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_red_leg.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_red_leg.json
+new file mode 100644
+index 000000000..70c64df3b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/items/robit_red_leg.json
+@@ -0,0 +1 @@
++{"model": {"type": "minecraft:model", "model": "robits:item/robit_red_leg"}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_body.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_body.json
+new file mode 100644
+index 000000000..f0ed55ee3
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_body.json
+@@ -0,0 +1 @@
++{"parent": "minecraft:block/cube_all", "textures": {"all": "minecraft:block/iron_block"}, "display": {"fixed": {"scale": [0.6, 0.4, 0.6]}}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_leg.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_leg.json
+new file mode 100644
+index 000000000..37c1ededa
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_leg.json
+@@ -0,0 +1 @@
++{"parent": "minecraft:block/cube_all", "textures": {"all": "minecraft:block/iron_block"}, "display": {"fixed": {"scale": [0.15, 0.3, 0.15]}}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_red_leg.json b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_red_leg.json
+new file mode 100644
+index 000000000..b268c59c7
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/assets/robits/models/item/robit_red_leg.json
+@@ -0,0 +1 @@
++{"parent": "minecraft:block/cube_all", "textures": {"all": "minecraft:block/redstone_block"}, "display": {"fixed": {"scale": [0.15, 0.3, 0.15]}}}
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+index 617a4b10b..9b824e3d3 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/data/robits/horizon/entity_kind/robit.json
+@@ -12,9 +12,51 @@
+     {
+       "id": "red",
+       "texture": "robits:entity/robit_red",
+-      "model": "robits:robit_red"
++      "model": "robits:robit_red",
++      "bones": {
++        "leg_left": "robits:robit_red_leg",
++        "leg_right": "robits:robit_red_leg"
++      }
+     }
+   ],
+   "container_slots": 30,
+-  "menu": "robits:robit"
++  "menu": "robits:robit",
++  "bones": [
++    {
++      "id": "body",
++      "model": "robits:robit_body",
++      "pivot": [
++        0,
++        0.45,
++        0
++      ]
++    },
++    {
++      "id": "leg_left",
++      "model": "robits:robit_leg",
++      "pivot": [
++        0.15,
++        0.15,
++        0
++      ],
++      "walk": {
++        "axis": "x",
++        "degrees": 40
++      }
++    },
++    {
++      "id": "leg_right",
++      "model": "robits:robit_leg",
++      "pivot": [
++        -0.15,
++        0.15,
++        0
++      ],
++      "walk": {
++        "axis": "x",
++        "degrees": 40,
++        "phase": 180
++      }
++    }
++  ]
+ }
+\ No newline at end of file
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+index 096b7eee9..4c21eb753 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -2,6 +2,9 @@
+ //! `robits:spawn` (a position as three little-endian whole numbers) spawns one; each tick the mod counts in its saved bytes and its
+ //! energy, takes the red skin from the second tick, walks a block east from the first, is named Bolt on the third, and removes the robit on the sixth.
+ //!
++//! FORK-10 5d: the kind's `bones` draw it as a body and two legs (`assets/robits/items/robit_body.json`, `robit_leg.json`) that
++//! swing opposite while it walks; the red skin has red legs.
++//!
+ //! FORK-10 5b: the kind's `menu` (`data/robits/horizon/menu/robit.json`) is the Robit's screen with tabs: main (energy, Follow, Pick
+ //! up, Go home, a name box), inventory (slots 0-26), furnace (27 energy, 28 input, 29 output), crafting (virtual 30-38, result 39)
+ //! and repair (virtual 40-41, result 42). Follow toggles a flag kept in the second saved byte and shown in the menu's data and
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+index 09b0c77ac..27353e1fa 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -19,16 +19,21 @@ expect.mod-entity-used = false
+ # One tick: the mod counted once, gave it energy and a goal a block east; it walked a first step (0.25 speed * 2.158 = 0.5395 a tick).
+ ticks = 1
+ expect.mod-entities = ["1001 robits:robit 4.040 70.000 4.500 energy=10 data=[1] skin=default name=-"]
++# FORK-10 5d: its legs swing opposite with the step (vanilla's walk animation: speed 0.4 after one step, 40 degrees at full speed).
++expect.mod-entity-bones = ["1001 leg_left=15.4,leg_right=-15.4"]
+ 
+ [[step]]
+ # The second tick takes the red skin and arrives at the goal, which ends the walk.
+ ticks = 1
+ expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=20 data=[2] skin=red name=-"]
++expect.mod-entity-bones = ["1001 leg_left=19.7,leg_right=-19.7"]
+ 
+ [[step]]
+ # The third names it Bolt; it stays where it arrived.
+ ticks = 1
+ expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
++# Standing still, the swing eases back toward rest (speed 0.384: 40 * cos(1.424 * 0.6662) * 0.384).
++expect.mod-entity-bones = ["1001 leg_left=9.0,leg_right=-9.0"]
+ 
+ [[step]]
+ # FORK-10 f: coal lies a few tenths from the robit; in a tick the mod finds it with items-in-box, takes it with take-dropped-item
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index e69cecc4f..09142e920 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -313,6 +313,45 @@ pub struct EntityKind {
+     /// virtual (a crafting grid, an anvil's), held only while the menu is open. None opens the container as a chest.
+     #[serde(default)]
+     pub menu: Option<String>,
++    /// Its model in parts (FORK-10 5d): each bone is drawn by its own item model, turned about the model's centre and placed at its
++    /// `pivot`, and a bone with `walk` swings while it walks. None draws the skin's one model whole.
++    #[serde(default)]
++    pub bones: Vec<EntityBone>,
++}
++
++/// One part of an entity kind's model (FORK-10 5d).
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct EntityBone {
++    pub id: String,
++    /// The item model that draws it (`<mod>:<name>`, as `minecraft:item_model` names one), turned about its centre.
++    pub model: String,
++    /// Where its centre sits, in blocks from the entity's feet: x to its left, y up, z forward (before the entity's turn).
++    pub pivot: [f32; 3],
++    /// How it swings while the entity walks; none keeps it still.
++    #[serde(default)]
++    pub walk: Option<BoneWalk>,
++}
++
++/// A bone's swing while walking: vanilla's limb swing (`cos(walk position * 0.6662 + phase) * walk speed`), `degrees` at full speed
++/// about `axis`.
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct BoneWalk {
++    pub axis: BoneAxis,
++    pub degrees: f32,
++    /// Degrees of the cycle it is ahead: 180 for the other leg.
++    #[serde(default)]
++    pub phase: f32,
++}
++
++/// The axis a bone turns about.
++#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum BoneAxis {
++    X,
++    Y,
++    Z,
+ }
+ 
+ fn default_kind_health() -> f32 {
+@@ -335,6 +374,9 @@ pub struct EntitySkin {
+     /// A model of the mod's own (`assets/<ns>/horizon/entity_model/<name>.json`), the kind's default when unset.
+     #[serde(default)]
+     pub model: Option<String>,
++    /// For a kind with bones: the item model of each bone this skin draws differently (bone id to model).
++    #[serde(default)]
++    pub bones: BTreeMap<String, String>,
+ }
+ 
+ impl EntityKind {
+@@ -367,6 +409,31 @@ impl EntityKind {
+         if self.container_slots > 256 {
+             return Err(format!("{name}: container_slots is 256 at most"));
+         }
++        let model_ok = |t: &str| t.split_once(':').is_some_and(|(n, p)| !n.is_empty() && !p.is_empty() && !t.contains(".."));
++        if self.bones.len() > 16 {
++            return Err(format!("{name}: 16 bones at most"));
++        }
++        for (i, b) in self.bones.iter().enumerate() {
++            if b.id.is_empty() || b.id.len() > 64 || self.bones[..i].iter().any(|o| o.id == b.id) {
++                return Err(format!("{name}: bone ids are 1 to 64 bytes and not repeated"));
++            }
++            if !model_ok(&b.model) {
++                return Err(format!("{name}: bone {}: the model is <mod id>:<path>", b.id));
++            }
++            if !b.pivot.iter().all(|v| v.is_finite() && v.abs() <= 16.0) {
++                return Err(format!("{name}: bone {}: the pivot is within 16 blocks", b.id));
++            }
++            if b.walk.as_ref().is_some_and(|w| !(w.degrees.is_finite() && (0.0..=180.0).contains(&w.degrees) && w.phase.is_finite())) {
++                return Err(format!("{name}: bone {}: walk degrees are 0 to 180", b.id));
++            }
++        }
++        for s in &self.skins {
++            for (bone, model) in &s.bones {
++                if !self.bones.iter().any(|b| &b.id == bone) || !model_ok(model) {
++                    return Err(format!("{name}: skin {}: bone {bone} is not a bone of the kind, or its model is not <mod id>:<path>", s.id));
++                }
++            }
++        }
+         Ok(())
+     }
+ }
+@@ -2233,6 +2300,35 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn an_entity_kind_has_bones_that_swing_and_skins_that_change_them() {
++        let good = br#"{"width":0.6,"height":0.65,"skins":[{"id":"a","texture":"ruby:a"},{"id":"gold","texture":"ruby:g","bones":{"leg_left":"ruby:gold_leg"}}],
++            "bones":[{"id":"body","model":"ruby:body","pivot":[0,0.4,0]},
++                     {"id":"leg_left","model":"ruby:leg","pivot":[0.15,0.15,0],"walk":{"axis":"x","degrees":40}},
++                     {"id":"leg_right","model":"ruby:leg","pivot":[-0.15,0.15,0],"walk":{"axis":"x","degrees":40,"phase":180}}]}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/entity_kind/robit.json", good)];
++        let k = &hmod("bones-ok", MANIFEST_TEXT, files).unwrap().entity_kinds[0];
++        assert_eq!(k.bones.len(), 3);
++        assert_eq!(k.bones[2].walk.as_ref().map(|w| (w.axis, w.degrees, w.phase)), Some((BoneAxis::X, 40.0, 180.0)));
++        assert_eq!(k.skins[1].bones.get("leg_left").map(String::as_str), Some("ruby:gold_leg"));
++        let skin = r#""skins":[{"id":"a","texture":"ruby:a"}]"#;
++        for (case, bones, why) in [
++            ("bones-twice", r#"[{"id":"b","model":"ruby:b","pivot":[0,0,0]},{"id":"b","model":"ruby:c","pivot":[0,0,0]}]"#, "not repeated"),
++            ("bones-model", r#"[{"id":"b","model":"b","pivot":[0,0,0]}]"#, "the model is <mod id>:<path>"),
++            ("bones-far", r#"[{"id":"b","model":"ruby:b","pivot":[0,20,0]}]"#, "within 16 blocks"),
++            ("bones-swing", r#"[{"id":"b","model":"ruby:b","pivot":[0,0,0],"walk":{"axis":"x","degrees":200}}]"#, "0 to 180"),
++            ("bones-axis", r#"[{"id":"b","model":"ruby:b","pivot":[0,0,0],"walk":{"axis":"w","degrees":20}}]"#, "unknown variant"),
++        ] {
++            let file = format!(r#"{{"width":1,"height":1,{skin},"bones":{bones}}}"#);
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/entity_kind/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++        let file = br#"{"width":1,"height":1,"skins":[{"id":"a","texture":"ruby:a","bones":{"tail":"ruby:t"}}],"bones":[{"id":"b","model":"ruby:b","pivot":[0,0,0]}]}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/entity_kind/a.json", file)];
++        assert!(hmod("bones-skin", MANIFEST_TEXT, files).unwrap_err().contains("bone tail is not a bone of the kind"));
++    }
++
+     #[test]
+     fn an_entity_kind_names_a_menu_of_its_mod_with_room_for_its_container() {
+         let menu = br#"{"slots": 40, "data_slots": 2, "results": [39]}"#;
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index 336e51121..880fb0d26 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -2,7 +2,10 @@
+ //! (`data/<id>/horizon/entity_kind/*.json`, [`crate::content::EntityKind`]), kept with a state of the mod's own (saved bytes, container
+ //! slots, energy, skin, name) that outlives the world's save. What a save looks like and how a mod's update applies are here, with
+ //! tests; the game's part (spawning, ticking, saving to the world's folder) is `game/mod_entities.rs`.
+-use crate::{ModEntityUpdate, ModItemStack, content::EntityKind};
++use crate::{
++    ModEntityUpdate, ModItemStack,
++    content::{BoneAxis, BoneWalk, EntityBone, EntityKind},
++};
+ use serde_json::{Value, json};
+ 
+ /// Where the saved entities are, inside the world's folder.
+@@ -41,6 +44,10 @@ pub struct ModEntityState {
+     pub path: Vec<[f64; 3]>,
+     pub path_goal: Option<[f64; 3]>,
+     pub path_age: u32,
++    /// Its walk animation (FORK-10 5d), the entities that draw its bones and the angle each was last turned to; not saved.
++    pub walk_anim: WalkAnim,
++    pub bone_carriers: Vec<u32>,
++    pub bone_angles: Vec<f32>,
+     /// Steps in a row it could not make along its path: a new path is found after each, and at 3 it stops.
+     pub stuck: u8,
+     /// The data slots and strings of its menu, as the mod last set them (FORK-10 5b); not saved.
+@@ -86,6 +93,9 @@ impl ModEntityState {
+             path_goal: None,
+             path_age: 0,
+             stuck: 0,
++            walk_anim: WalkAnim::default(),
++            bone_carriers: Vec::new(),
++            bone_angles: Vec::new(),
+             menu_data: Vec::new(),
+             menu_text: Vec::new(),
+         }
+@@ -151,6 +161,9 @@ pub fn decode(text: &str) -> Vec<ModEntityState> {
+                 path_goal: None,
+                 path_age: 0,
+                 stuck: 0,
++                walk_anim: WalkAnim::default(),
++                bone_carriers: Vec::new(),
++                bone_angles: Vec::new(),
+                 menu_data: Vec::new(),
+                 menu_text: Vec::new(),
+                 items: r["items"]
+@@ -204,6 +217,60 @@ pub enum Walk {
+     Blocked,
+ }
+ 
++/// Vanilla's `WalkAnimationState`: how far the limbs have swung (`position`) and how fast they swing now (`speed`, 0 to 1).
++#[derive(Clone, Copy, Debug, Default, PartialEq)]
++pub struct WalkAnim {
++    pub position: f32,
++    pub speed: f32,
++}
++
++impl WalkAnim {
++    /// One tick after moving `moved` blocks across (`LivingEntity.updateWalkAnimation` then `WalkAnimationState.update`): the speed
++    /// eases 0.4 of the way to `min(moved * 4, 1)`, and the position goes on by the speed.
++    pub fn tick(&mut self, moved: f64) {
++        let target = (moved as f32 * 4.0).min(1.0);
++        self.speed += (target - self.speed) * 0.4;
++        self.position += self.speed;
++    }
++}
++
++/// The angle (degrees) a bone with `walk` is turned to now: vanilla's limb swing, `cos(position * 0.6662 + phase) * speed` of its
++/// `degrees`.
++pub fn bone_angle(walk: &BoneWalk, anim: WalkAnim) -> f32 {
++    walk.degrees * (anim.position * 0.6662 + walk.phase.to_radians()).cos() * anim.speed.min(1.0)
++}
++
++/// What a bone's display shows turned `degrees` about its axis: the translation (its pivot) and the left rotation (a quaternion
++/// `x, y, z, w`), the model turning about its centre.
++pub fn bone_display(bone: &EntityBone, degrees: f32) -> ([f32; 3], [f32; 4]) {
++    let half = degrees.to_radians() / 2.0;
++    let (sin, cos) = (half.sin(), half.cos());
++    let axis = bone.walk.as_ref().map_or(BoneAxis::X, |w| w.axis);
++    let rotation = match axis {
++        BoneAxis::X => [sin, 0.0, 0.0, cos],
++        BoneAxis::Y => [0.0, sin, 0.0, cos],
++        BoneAxis::Z => [0.0, 0.0, sin, cos],
++    };
++    (bone.pivot, rotation)
++}
++
++/// The compound (SNBT) of the `item_display` that draws bone `index` of `kind` with `skin`: the bone's item model (the skin's own for
++/// it, if it has one) at the bone's pivot, still; the first bone carries the `name`.
++pub fn bone_snbt(kind: &EntityKind, skin: &str, index: usize, name: Option<&str>) -> Option<String> {
++    let bone = kind.bones.get(index)?;
++    let model = kind.skins.iter().find(|s| s.id == skin).and_then(|s| s.bones.get(&bone.id)).unwrap_or(&bone.model);
++    let [x, y, z] = bone.pivot;
++    let name = name.filter(|_| index == 0).map_or_else(String::new, |n| {
++        let json = serde_json::to_string(&json!({ "text": n })).unwrap_or_default();
++        format!(",CustomName:'{}',CustomNameVisible:1b", json.replace('\\', "\\\\").replace('\'', "\\'"))
++    });
++    Some(format!(
++        "{{item:{{id:\"minecraft:stick\",count:1,components:{{\"minecraft:item_model\":\"{model}\"}}}},teleport_duration:2,\
++         transformation:{{translation:[{x}f,{y}f,{z}f],left_rotation:[0f,0f,0f,1f],scale:[1f,1f,1f],right_rotation:[0f,0f,0f,1f]}},\
++         Tags:[\"{CARRIER_TAG}\"]{name}}}"
++    ))
++}
++
+ /// One tick of walking from `pos` toward `goal` (x and z; the ground decides y) by `step` blocks over ground, with `height` blocks of
+ /// room above its feet. `top(x, y, z)` is how high the collision of a block cell reaches, 0 to 1.5 of the cell (0 for a cell it walks
+ /// through: air, water, an open door; 0.5 a slab, 1 a full block or a stair, 1.5 a fence or a wall). It goes up a surface at most a block
+@@ -430,12 +497,13 @@ mod tests {
+             speed: 0.3,
+             persistent: true,
+             skins: vec![
+-                EntitySkin { id: "default".into(), texture: "robits:entity/robit".into(), model: None },
+-                EntitySkin { id: "red".into(), texture: "robits:entity/red".into(), model: None },
++                EntitySkin { id: "default".into(), texture: "robits:entity/robit".into(), model: None, bones: Default::default() },
++                EntitySkin { id: "red".into(), texture: "robits:entity/red".into(), model: None, bones: [("leg_left".to_owned(), "robits:red_leg".to_owned())].into() },
+             ],
+             container_slots: 3,
+             fire_immune: false,
+             menu: None,
++            bones: Vec::new(),
+         }
+     }
+ 
+@@ -585,6 +653,73 @@ mod tests {
+         assert!(needs_path([9.0, 64.0, 5.0], Some([5.0, 64.0, 5.0]), 10));
+     }
+ 
++    fn legs() -> Vec<EntityBone> {
++        let leg = |id: &str, x: f32, phase: f32| EntityBone {
++            id: id.into(),
++            model: "robits:leg".into(),
++            pivot: [x, 0.15, 0.0],
++            walk: Some(BoneWalk { axis: BoneAxis::X, degrees: 40.0, phase }),
++        };
++        vec![
++            EntityBone { id: "body".into(), model: "robits:body".into(), pivot: [0.0, 0.4, 0.0], walk: None },
++            leg("leg_left", 0.15, 0.0),
++            leg("leg_right", -0.15, 180.0),
++        ]
++    }
++
++    #[test]
++    fn the_walk_animation_eases_in_and_out_as_vanillas_does() {
++        let mut a = WalkAnim::default();
++        // Walking 0.25 a tick or more is full speed (target 1): the speed goes 0.4, 0.64, 0.784...
++        a.tick(0.3);
++        assert_eq!((a.speed, a.position), (0.4, 0.4));
++        a.tick(0.3);
++        assert!((a.speed - 0.64).abs() < 1e-6 && (a.position - 1.04).abs() < 1e-6, "{a:?}");
++        // Slow walking aims lower (0.1 a tick is 0.4), and standing still eases back toward 0 while the position stops gaining.
++        let mut slow = WalkAnim::default();
++        slow.tick(0.1);
++        assert!((slow.speed - 0.16).abs() < 1e-6);
++        for _ in 0..30 {
++            a.tick(0.0);
++        }
++        assert!(a.speed < 1e-5, "{a:?}");
++    }
++
++    #[test]
++    fn the_legs_swing_opposite_and_stand_still_when_it_stops() {
++        let bones = legs();
++        let (left, right) = (bones[1].walk.clone().unwrap(), bones[2].walk.clone().unwrap());
++        // At position 0 and full speed: the left leg is at +40, the right one (half a cycle on) at -40.
++        let full = WalkAnim { position: 0.0, speed: 1.0 };
++        assert!((bone_angle(&left, full) - 40.0).abs() < 1e-4);
++        assert!((bone_angle(&right, full) + 40.0).abs() < 1e-4);
++        // A quarter cycle later (cos = 0) both legs pass the middle; at half speed the swing is half.
++        let quarter = WalkAnim { position: std::f32::consts::FRAC_PI_2 / 0.6662, speed: 1.0 };
++        assert!(bone_angle(&left, quarter).abs() < 1e-3);
++        assert!((bone_angle(&left, WalkAnim { position: 0.0, speed: 0.5 }) - 20.0).abs() < 1e-4);
++        assert_eq!(bone_angle(&left, WalkAnim { position: 3.0, speed: 0.0 }), 0.0);
++        // The display: the leg at its pivot, turned 90 degrees about x (a quaternion of sin and cos of 45).
++        let (at, q) = bone_display(&bones[1], 90.0);
++        assert_eq!(at, [0.15, 0.15, 0.0]);
++        let h = std::f32::consts::FRAC_1_SQRT_2;
++        assert!((q[0] - h).abs() < 1e-6 && q[1] == 0.0 && q[2] == 0.0 && (q[3] - h).abs() < 1e-6, "{q:?}");
++    }
++
++    #[test]
++    fn each_bone_is_a_display_of_its_model_with_the_skins_own_and_the_name_on_the_first() {
++        let mut k = kind();
++        k.bones = legs();
++        assert_eq!(
++            bone_snbt(&k, "default", 0, Some("Bolt")).unwrap(),
++            r#"{item:{id:"minecraft:stick",count:1,components:{"minecraft:item_model":"robits:body"}},teleport_duration:2,transformation:{translation:[0f,0.4f,0f],left_rotation:[0f,0f,0f,1f],scale:[1f,1f,1f],right_rotation:[0f,0f,0f,1f]},Tags:["horizon_mod_entity"],CustomName:'{"text":"Bolt"}',CustomNameVisible:1b}"#
++        );
++        // The red skin draws its own left leg; the name stays on the first bone.
++        let left = bone_snbt(&k, "red", 1, Some("Bolt")).unwrap();
++        assert!(left.contains(r#""minecraft:item_model":"robits:red_leg""#) && !left.contains("CustomName"), "{left}");
++        assert!(bone_snbt(&k, "red", 2, None).unwrap().contains(r#""robits:leg""#));
++        assert_eq!(bone_snbt(&k, "red", 3, None), None);
++    }
++
+     #[test]
+     fn walking_goes_over_flat_ground_climbs_a_block_drops_and_stops_at_a_wall() {
+         // A floor at y 63: cells at y 63 and below are solid; y 64 and above is air, but for the scene's own blocks.
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index bf004ebb0..d9e4dfa64 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -83,6 +83,8 @@ pub struct TestGame {
+     pub entity_menus: std::collections::BTreeSet<u32>,
+     pub entity_menu_text: std::collections::BTreeMap<u32, Vec<String>>,
+     pub menu_returned: Vec<String>,
++    /// Each mod entity's walk animation (FORK-10 5d).
++    pub walk_anims: std::collections::BTreeMap<u32, crate::entity_state::WalkAnim>,
+     next_mod_entity: u32,
+     /// The items lying in the world of the script (FORK-10 f).
+     pub dropped: Vec<DroppedSet>,
+@@ -326,6 +328,7 @@ impl TestGame {
+             entity_menus: std::collections::BTreeSet::new(),
+             entity_menu_text: std::collections::BTreeMap::new(),
+             menu_returned: Vec::new(),
++            walk_anims: std::collections::BTreeMap::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
+             dropped: Vec::new(),
+@@ -528,6 +531,7 @@ impl TestGame {
+         // search (FORK-10 5c) needs its block tables, which a script does not have.
+         let world = self.world.clone();
+         let solid = |x: i32, y: i32, z: i32| if world.get(&(x, y, z)).is_some_and(|s| !s.starts_with("minecraft:air")) { 1.0 } else { 0.0 };
++        let before: Vec<(u32, [f64; 3])> = self.mod_entities.iter().map(|e| (e.id, [e.x, e.y, e.z])).collect();
+         for e in &mut self.mod_entities {
+             let Some((goal, mult)) = self.entity_goals.get(&e.id).copied() else { continue };
+             let Some(kind) = self.entity_kinds.iter().find(|k| k.id == e.kind) else { continue };
+@@ -539,6 +543,11 @@ impl TestGame {
+                 self.entity_goals.remove(&e.id);
+             }
+         }
++        // The walk animation follows how far each moved across, as the game's does.
++        for e in &self.mod_entities {
++            let from = before.iter().find(|(id, _)| *id == e.id).map_or([e.x, e.y, e.z], |(_, p)| *p);
++            self.walk_anims.entry(e.id).or_default().tick((e.x - from[0]).hypot(e.z - from[2]));
++        }
+     }
+     /// Makes and drops block entities to match `world`, then runs
+     /// `block-entities-tick` and keeps the bytes the mod returns.
+@@ -1646,6 +1655,8 @@ pub struct Expect {
+     entity_menu: Option<Vec<String>>,
+     /// Server mods (FORK-10 5b): the menu data and strings of the mod's entities that have any, as `"id data=[v,..] text=a|b"`.
+     mod_entity_menu: Option<Vec<String>>,
++    /// Server mods (FORK-10 5d): the angles of the swinging bones of the mod's entities, as `"id bone=degrees,..."` (one decimal).
++    mod_entity_bones: Option<Vec<String>>,
+     /// Server mods (FORK-10 5b): what the entity menus closed so far handed back to the player, as `"item*count"`.
+     entity_menu_returned: Option<Vec<String>>,
+     /// Server mods: every `open-radial-menu`, as `"Name: id=label,id=label current n"`.
+@@ -2778,6 +2789,23 @@ impl Step {
+                 .collect();
+             same("mod-entity-menu", want, &got)?;
+         }
++        if let Some(want) = &e.mod_entity_bones {
++            let got: Vec<String> = game
++                .mod_entities
++                .iter()
++                .filter_map(|m| {
++                    let kind = game.entity_kinds.iter().find(|k| k.id == m.kind)?;
++                    let anim = game.walk_anims.get(&m.id).copied().unwrap_or_default();
++                    let bones: Vec<String> = kind
++                        .bones
++                        .iter()
++                        .filter_map(|b| Some(format!("{}={:.1}", b.id, crate::entity_state::bone_angle(b.walk.as_ref()?, anim))))
++                        .collect();
++                    (!bones.is_empty()).then(|| format!("{} {}", m.id, bones.join(",")))
++                })
++                .collect();
++            same("mod-entity-bones", want, &got)?;
++        }
+         if let Some(want) = &e.entity_menu_returned {
+             same("entity-menu-returned", want, &game.menu_returned)?;
+         }
+-- 
+2.43.0
+

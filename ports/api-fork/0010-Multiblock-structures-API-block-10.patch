@@ -1,0 +1,856 @@
+From e02def7c23b9dcf879adb61aeba02ab2264410a9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 23:14:24 +0000
+Subject: [PATCH] Multiblock structures for WASM block entities (API block 10)
+
+multiblock-spec groups; touching blocks of a group are structure candidates
+(horizon_mods::multiblock, 4 tests); the mod is told when they change and
+answers with updates for member blocks; multiblock-demo example.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/mods.rs        |   3 +
+ crates/horizon-client/src/game/server_mods.rs |  41 +++++
+ .../examples/cable-demo/src/lib.rs            |   1 +
+ .../examples/energy-demo/src/lib.rs           |   1 +
+ .../examples/item-charger/src/lib.rs          |   1 +
+ .../examples/menu-demo/src/lib.rs             |   1 +
+ .../examples/multiblock-demo/Cargo.toml       |  16 ++
+ .../examples/multiblock-demo/horizon-mod.toml |   8 +
+ .../examples/multiblock-demo/src/lib.rs       |  60 +++++++
+ .../examples/multiblock-demo/tests/cube.toml  |  32 ++++
+ .../examples/recipe-crusher/src/lib.rs        |   1 +
+ .../examples/tank-demo/src/lib.rs             |   1 +
+ crates/horizon-mod-sdk/src/lib.rs             |  25 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  31 ++++
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/multiblock.rs         | 159 ++++++++++++++++++
+ crates/horizon-mods/src/runtime.rs            |  82 ++++++++-
+ crates/horizon-mods/src/testing.rs            |  22 ++-
+ docs/api/mods-reference.md                    |  27 +++
+ 21 files changed, 518 insertions(+), 4 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/multiblock-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/multiblock-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
+ create mode 100644 crates/horizon-mods/src/multiblock.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 31512c9..84373d5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2741,6 +2741,13 @@ dependencies = [
+  "pxfm",
+ ]
+ 
++[[package]]
++name = "multiblock-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "multiversion_no_op"
+ version = "1.0.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index a5080f0..1279896 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,6 +48,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/menu-demo",
+     "crates/horizon-mod-sdk/examples/net-echo",
+     "crates/horizon-mod-sdk/examples/cable-demo",
++    "crates/horizon-mod-sdk/examples/multiblock-demo",
+     "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 9fa84b8..86fb67a 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -99,6 +99,9 @@ pub(super) struct ModsState {
+     /// Extras that are official mods now, being installed.
+     #[cfg(feature = "mods")]
+     pub(super) moved: super::moved_extras::MovedState,
++    /// The multiblock structures last told to the mods.
++    #[cfg(feature = "mods")]
++    pub(super) multiblock_seen: horizon_mods::multiblock::Seen,
+     /// The mods' generation the block entity containers were last made for.
+     #[cfg(feature = "mods")]
+     pub(super) container_generation: Option<u64>,
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index ad21779..aa1af3e 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -291,6 +291,7 @@ mod run {
+             self.mods.mods.set_snapshot(snapshot);
+             self.lend_recipe_types();
+             let entities = self.collect_mod_entities();
++            let structures = self.changed_structures();
+             // Menu buttons pressed this tick get their entity as it is now,
+             // before the levels' chunks are lent out.
+             let kinds = self.mods.mods.block_entity_kinds();
+@@ -375,6 +376,10 @@ mod run {
+                 }
+             }
+             self.mods.mods.server_tick(self.ticks);
++            let dim_id = self.dim.id();
++            for (group, found) in &structures {
++                menu_updates.extend(self.mods.mods.multiblock_changed(dim_id, group, found));
++            }
+             let updates = if entities.is_empty() {
+                 Vec::new()
+             } else {
+@@ -774,6 +779,42 @@ mod run {
+                 .collect()
+         }
+ 
++        /// The multiblock groups whose structure candidates in this level
++        /// changed since the mods were last told, with all their structures.
++        fn changed_structures(
++            &mut self,
++        ) -> Vec<(String, Vec<horizon_mods::multiblock::Structure>)> {
++            use horizon_mods::multiblock::{Member, structures};
++            let groups = self.mods.mods.multiblock_groups();
++            if groups.is_empty() {
++                return Vec::new();
++            }
++            let registry = self.pack.assets.registry;
++            let dim = self.dim.id();
++            let mut found: Vec<([i32; 3], String)> = Vec::new();
++            for (pos, e) in self.world.block_entities.iter_mut() {
++                if let horizon_client_render::containers::BlockEntity::Mod(m) = e {
++                    found.push(([pos.0, pos.1, pos.2], m.id.clone()));
++                }
++            }
++            let mut out = Vec::new();
++            for (group, blocks) in groups {
++                let members: Vec<Member> = found
++                    .iter()
++                    .filter(|(_, id)| blocks.contains(id))
++                    .map(|(p, _)| Member {
++                        pos: *p,
++                        state: state_string(registry, self.world.block(p[0], p[1], p[2])),
++                    })
++                    .collect();
++                let now = structures(&members);
++                if self.mods.multiblock_seen.changed(dim, &group, &now) {
++                    out.push((group, now));
++                }
++            }
++            out
++        }
++
+         /// The block entity at `p` as a server mod sees it (`need_ticks`: only
+         /// if its kind ticks); none unless it is a mod's of a registered kind.
+         fn snapshot_entity(
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
+index bfc17e7..7542d25 100644
+--- a/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
+@@ -20,6 +20,7 @@ fn kind(block: &str, ticks: bool) -> BlockEntityKind {
+         tanks: Vec::new(),
+         keep_data: false,
+         transmitter: None,
++        multiblock: None,
+     }
+ }
+ fn tank(side: FlowSide) -> TankSpec {
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+index 80100f0..7da77ab 100644
+--- a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -18,6 +18,7 @@ fn kind(block: &str, ticks: bool, energy: EnergySpec) -> BlockEntityKind {
+         tanks: Vec::new(),
+         keep_data: false,
+         transmitter: None,
++        multiblock: None,
+     }
+ }
+ 
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+index 3769a5f..e8a05c1 100644
+--- a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+@@ -19,6 +19,7 @@ impl ServerMod for Charger {
+             tanks: Vec::new(),
+             keep_data: true,
+             transmitter: None,
++            multiblock: None,
+         };
+         Ok((Charger, Registration::new().block_entity_kind(kind)))
+     }
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+index f1f968f..8dc3161 100644
+--- a/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+@@ -36,6 +36,7 @@ impl ServerMod for Grinder {
+             tanks: Vec::new(),
+             keep_data: false,
+             transmitter: None,
++            multiblock: None,
+         };
+         Ok((Grinder, Registration::new().block_entity_kind(kind)))
+     }
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/multiblock-demo/Cargo.toml
+new file mode 100644
+index 0000000..ae029d2
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "multiblock-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: blocks that form a multiblock when eight make a 2x2x2 cube"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/multiblock-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..ca61f30
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "mbdemo"
++name = "Multiblock Demo"
++version = "0.1.0"
++description = "Test mod for multiblocks: mbdemo:casing blocks that touch are a structure, valid when eight make a solid 2x2x2 cube."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
+new file mode 100644
+index 0000000..887cad0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/src/lib.rs
+@@ -0,0 +1,60 @@
++//! Multiblock Demo: the smallest user of multiblocks. `mbdemo:casing` blocks
++//! that touch are a candidate; it is a real structure when it is a solid 2x2x2
++//! cube of eight. Every member keeps `[valid, members]` in its data, which is
++//! where a real mod keeps the structure's shared state.
++use horizon_mod_sdk::server::{
++    BlockEntityKind, BlockEntityUpdate, Registration, ServerMod, Structure,
++};
++use horizon_mod_sdk::server::MultiblockSpec;
++
++struct Demo;
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        let kind = BlockEntityKind {
++            block: "mbdemo:casing".into(),
++            ticks: false,
++            container: None,
++            energy: None,
++            tanks: Vec::new(),
++            keep_data: false,
++            transmitter: None,
++            multiblock: Some(MultiblockSpec {
++                group: "mbdemo:cube".into(),
++            }),
++        };
++        Ok((Demo, Registration::new().block_entity_kind(kind)))
++    }
++    fn multiblock_changed(
++        &mut self,
++        _group: &str,
++        dimension: &str,
++        structures: Vec<Structure>,
++    ) -> Vec<BlockEntityUpdate> {
++        let mut out = Vec::new();
++        for s in structures {
++            let size = |a: i32, b: i32| b - a + 1;
++            let valid = s.members.len() == 8
++                && size(s.min.x, s.max.x) == 2
++                && size(s.min.y, s.max.y) == 2
++                && size(s.min.z, s.max.z) == 2;
++            for m in &s.members {
++                out.push(BlockEntityUpdate {
++                    dimension: dimension.to_owned(),
++                    pos: m.pos,
++                    data: vec![u8::from(valid), s.members.len() as u8],
++                    items: None,
++                    energy: None,
++                    energy_faces: None,
++                    tanks: None,
++                    tank_faces: None,
++                    menu_data: None,
++                    transmitter_faces: None,
++                });
++            }
++        }
++        out
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml b/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
+new file mode 100644
+index 0000000..76acd2a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/multiblock-demo/tests/cube.toml
+@@ -0,0 +1,32 @@
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "mbdemo:casing" },
++    { x = 1, y = 64, z = 0, state = "mbdemo:casing" },
++    { x = 0, y = 65, z = 0, state = "mbdemo:casing" },
++    { x = 1, y = 65, z = 0, state = "mbdemo:casing" },
++    { x = 0, y = 64, z = 1, state = "mbdemo:casing" },
++    { x = 1, y = 64, z = 1, state = "mbdemo:casing" },
++    { x = 0, y = 65, z = 1, state = "mbdemo:casing" },
++]
++ticks = 1
++# Seven blocks: a candidate, not a cube.
++expect.block-entities = [{ x = 0, y = 64, z = 0, data = [0, 7] }, { x = 0, y = 65, z = 1, data = [0, 7] }]
++
++[[step]]
++blocks = [{ x = 1, y = 65, z = 1, state = "mbdemo:casing" }]
++ticks = 1
++# The eighth makes it a cube; every member knows.
++expect.block-entities = [{ x = 0, y = 64, z = 0, data = [1, 8] }, { x = 1, y = 65, z = 1, data = [1, 8] }]
++
++[[step]]
++blocks = [{ x = 5, y = 64, z = 5, state = "mbdemo:casing" }]
++ticks = 1
++# A lone block is its own candidate; the cube is unchanged and not told again.
++expect.block-entities = [{ x = 5, y = 64, z = 5, data = [0, 1] }, { x = 0, y = 64, z = 0, data = [1, 8] }]
++
++[[step]]
++blocks = [{ x = 1, y = 64, z = 0, state = "minecraft:air" }]
++ticks = 1
++# One taken out: seven left, no longer valid.
++expect.block-entities = [{ x = 0, y = 64, z = 0, data = [0, 7] }]
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+index 28a0ba8..7cabcc4 100644
+--- a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+@@ -62,6 +62,7 @@ impl ServerMod for Crusher {
+             tanks: Vec::new(),
+             keep_data: true,
+             transmitter: None,
++            multiblock: None,
+         };
+         Ok((Crusher { by_input: None }, Registration::new().block_entity_kind(kind)))
+     }
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+index 8cc36ae..fa31124 100644
+--- a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -18,6 +18,7 @@ fn kind(block: &str, ticks: bool, tank: TankSpec) -> BlockEntityKind {
+         tanks: vec![tank],
+         keep_data: false,
+         transmitter: None,
++        multiblock: None,
+     }
+ }
+ fn spec(kind: &str, side: FlowSide) -> TankSpec {
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 3758963..c0a12d7 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -207,7 +207,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -244,6 +244,16 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// The structure candidates of a multiblock `group` in `dimension` changed
++        /// (all of them now); returns what to change in member blocks.
++        fn multiblock_changed(
++            &mut self,
++            _group: &str,
++            _dimension: &str,
++            _structures: Vec<Structure>,
++        ) -> Vec<BlockEntityUpdate> {
++            Vec::new()
++        }
+         /// What `player`'s client half sent on `channel`, when
+         /// [`Registration::on_net`] is set. The bytes are the player's own.
+         fn net_message(&mut self, _player: &Player, _channel: &str, _data: &[u8]) {}
+@@ -328,6 +338,7 @@ pub mod server {
+                 tanks: Vec::new(),
+                 keep_data: false,
+                 transmitter: None,
++                multiblock: None,
+             });
+             self
+         }
+@@ -351,6 +362,7 @@ pub mod server {
+                 tanks: Vec::new(),
+                 keep_data: false,
+                 transmitter: None,
++                multiblock: None,
+             });
+             self
+         }
+@@ -510,7 +522,7 @@ macro_rules! export_server_mod {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+                 Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, Player, Registration,
+-                ServerMod,
++                ServerMod, Structure,
+             };
+             ::std::thread_local! {
+                 static STATE: RefCell<Option<$t>> = const { RefCell::new(None) };
+@@ -558,6 +570,15 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn multiblock_changed(
++                    group: String,
++                    dimension: String,
++                    structures: Vec<Structure>,
++                ) -> Vec<BlockEntityUpdate> {
++                    let mut out = Vec::new();
++                    with(|m| out = m.multiblock_changed(&group, &dimension, structures));
++                    out
++                }
+                 fn net_message(player: Player, channel: String, data: Vec<u8>) {
+                     with(|m| m.net_message(&player, &channel, &data))
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 5e09d18..01720ba 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -897,6 +897,31 @@ interface server-events {
+         keep-data: bool,
+         /// The block is a cable or a pipe (see `transmitter-spec`). None: not.
+         transmitter: option<transmitter-spec>,
++        /// The block is a part of a multiblock structure (see `multiblock-spec`).
++        multiblock: option<multiblock-spec>,
++    }
++    /// A block of a multiblock group. The loaded blocks of one group that
++    /// touch through faces make a structure candidate; the game tells the
++    /// mod (`multiblock-changed`) whenever the candidates of a group in a
++    /// dimension change: a block placed, broken or turned into another state.
++    /// The mod decides whether a candidate is a real structure (a cuboid of
++    /// the right size, with the right blocks, an empty inside it checks with
++    /// `world.get-block`) and keeps the structure's shared state in the data,
++    /// slots, energy and tanks of the member blocks it chooses.
++    record multiblock-spec {
++        /// The group's name (`mymod:turbine`); the mod's own.
++        group: string,
++    }
++    record multiblock-member {
++        pos: block-pos,
++        state: string,
++    }
++    /// Touching blocks of a group: the members in position order and the
++    /// least and greatest corner of the box around them.
++    record structure {
++        members: list<multiblock-member>,
++        min: block-pos,
++        max: block-pos,
+     }
+     /// What a transmitter block carries.
+     variant transmitter-medium {
+@@ -1064,6 +1089,12 @@ interface server-events {
+     /// What `player`'s client half sent on `channel` (the mod's own), when
+     /// `registration.net` is set. The bytes are the player's own: check them.
+     net-message: func(player: player, channel: string, data: list<u8>);
++    /// The structure candidates of `group` in `dimension` changed (they are
++    /// all of them, in the order of their least corner, empty when none is
++    /// left). Called at the end of the tick, with the world lent, before the
++    /// tick's transfers. Returns what to change in member blocks: updates
++    /// for other blocks are dropped.
++    multiblock-changed: func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>;
+ }
+ 
+ /// A client mod: runs in the player's game.
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index f8728be..6db3f43 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -13,6 +13,8 @@ pub mod energy;
+ #[cfg(feature = "runtime")]
+ pub mod flow;
+ #[cfg(feature = "runtime")]
++pub mod multiblock;
++#[cfg(feature = "runtime")]
+ pub mod network;
+ pub mod content;
+ #[cfg(feature = "index")]
+diff --git a/crates/horizon-mods/src/multiblock.rs b/crates/horizon-mods/src/multiblock.rs
+new file mode 100644
+index 0000000..71ce28b
+--- /dev/null
++++ b/crates/horizon-mods/src/multiblock.rs
+@@ -0,0 +1,159 @@
++//! Multiblock structures (API block 10): the blocks of one group that touch
++//! through faces form a structure candidate, and a mod decides whether it is a
++//! turbine, a tank or nothing. Pure, like the other tables: the game and the
++//! test harness collect the members and call the mod when the structures change.
++use std::collections::{BTreeMap, HashMap, HashSet};
++
++/// One block of a group, with its state (`mymod:casing[facing=north]`).
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Member {
++    pub pos: [i32; 3],
++    pub state: String,
++}
++
++/// Blocks of a group that touch: their members in position order, and the
++/// least and greatest corner of the box around them.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Structure {
++    pub members: Vec<Member>,
++    pub min: [i32; 3],
++    pub max: [i32; 3],
++}
++
++const FACES: [[i32; 3]; 6] = [
++    [0, -1, 0],
++    [0, 1, 0],
++    [0, 0, -1],
++    [0, 0, 1],
++    [-1, 0, 0],
++    [1, 0, 0],
++];
++
++/// The structures of `members` (one group in one dimension), ordered by their
++/// least corner.
++pub fn structures(members: &[Member]) -> Vec<Structure> {
++    let by_pos: HashMap<[i32; 3], &Member> = members.iter().map(|m| (m.pos, m)).collect();
++    let mut positions: Vec<[i32; 3]> = by_pos.keys().copied().collect();
++    positions.sort();
++    let mut seen: HashSet<[i32; 3]> = HashSet::new();
++    let mut out = Vec::new();
++    for start in positions {
++        if !seen.insert(start) {
++            continue;
++        }
++        let mut found = vec![start];
++        let mut next = 0;
++        while next < found.len() {
++            let p = found[next];
++            next += 1;
++            for d in FACES {
++                let q = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
++                if by_pos.contains_key(&q) && seen.insert(q) {
++                    found.push(q);
++                }
++            }
++        }
++        found.sort();
++        let mut min = found[0];
++        let mut max = found[0];
++        for p in &found {
++            for i in 0..3 {
++                min[i] = min[i].min(p[i]);
++                max[i] = max[i].max(p[i]);
++            }
++        }
++        out.push(Structure {
++            members: found.iter().map(|p| by_pos[p].clone()).collect(),
++            min,
++            max,
++        });
++    }
++    out.sort_by_key(|s| s.min);
++    out
++}
++
++/// What the game remembers of the last structures it told a mod about, by
++/// (dimension, group), to tell it again only when they change.
++#[derive(Debug, Default)]
++pub struct Seen(BTreeMap<(String, String), Vec<Structure>>);
++
++impl Seen {
++    /// Whether `now` differs from what was told for this dimension and group
++    /// (the first call with none counts as unchanged); remembers `now`.
++    pub fn changed(&mut self, dimension: &str, group: &str, now: &[Structure]) -> bool {
++        let key = (dimension.to_owned(), group.to_owned());
++        let was = self.0.get(&key).map_or(&[][..], Vec::as_slice);
++        let changed = was != now;
++        if changed {
++            if now.is_empty() {
++                self.0.remove(&key);
++            } else {
++                self.0.insert(key, now.to_vec());
++            }
++        }
++        changed
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn m(x: i32, y: i32, z: i32) -> Member {
++        Member {
++            pos: [x, y, z],
++            state: "mymod:casing".into(),
++        }
++    }
++    /// A hollow 3x3x3 shell, as a turbine's casing would be.
++    fn shell() -> Vec<Member> {
++        let mut v = Vec::new();
++        for x in 0..3 {
++            for y in 0..3 {
++                for z in 0..3 {
++                    if !(x == 1 && y == 1 && z == 1) {
++                        v.push(m(x, y, z));
++                    }
++                }
++            }
++        }
++        v
++    }
++    #[test]
++    fn a_hollow_cuboid_is_one_structure_with_its_box() {
++        let s = structures(&shell());
++        assert_eq!(s.len(), 1);
++        assert_eq!((s[0].min, s[0].max, s[0].members.len()), ([0, 0, 0], [2, 2, 2], 26));
++    }
++    #[test]
++    fn blocks_that_do_not_touch_are_apart_and_diagonals_do_not_join() {
++        let s = structures(&[m(0, 0, 0), m(1, 0, 0), m(5, 0, 0), m(6, 1, 0), m(2, 1, 1)]);
++        let boxes: Vec<_> = s.iter().map(|s| (s.min, s.members.len())).collect();
++        assert_eq!(boxes, [([0, 0, 0], 2), ([2, 1, 1], 1), ([5, 0, 0], 1), ([6, 1, 0], 1)]);
++    }
++    #[test]
++    fn taking_a_block_out_splits_and_seen_tells_once() {
++        let mut seen = Seen::default();
++        let mut all = vec![m(0, 0, 0), m(1, 0, 0), m(2, 0, 0)];
++        let now = structures(&all);
++        assert!(seen.changed("d", "g", &now));
++        assert!(!seen.changed("d", "g", &now));
++        all.remove(1);
++        let now = structures(&all);
++        assert_eq!(now.len(), 2);
++        assert!(seen.changed("d", "g", &now));
++        // Another dimension or group is its own.
++        assert!(seen.changed("e", "g", &now));
++        // Everything gone is a change, once.
++        assert!(seen.changed("d", "g", &[]));
++        assert!(!seen.changed("d", "g", &[]));
++    }
++    #[test]
++    fn a_changed_state_is_a_change() {
++        let mut seen = Seen::default();
++        let mut a = vec![m(0, 0, 0)];
++        assert!(seen.changed("d", "g", &structures(&a)));
++        a[0].state = "mymod:valve".into();
++        assert!(seen.changed("d", "g", &structures(&a)));
++    }
++}
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 2ebed59..92e637b 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -1070,6 +1070,86 @@ impl Mods {
+             && update.menu_data.as_ref().is_none_or(|s| s.len() <= 256))
+         .then_some(update)
+     }
++    /// The multiblock groups running server mods registered, with the block
++    /// ids of each group.
++    pub fn multiblock_groups(&self) -> Vec<(String, Vec<String>)> {
++        let mut out: Vec<(String, Vec<String>)> = Vec::new();
++        for k in self
++            .entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .flat_map(|r| r.block_entities.iter())
++        {
++            let Some(spec) = &k.multiblock else { continue };
++            match out.iter_mut().find(|(g, _)| *g == spec.group) {
++                Some((_, blocks)) => blocks.push(k.block.clone()),
++                None => out.push((spec.group.clone(), vec![k.block.clone()])),
++            }
++        }
++        out
++    }
++    /// The structure candidates of `group` in `dimension` changed: the mod
++    /// that registered the group gets them all, and answers with updates,
++    /// kept for member blocks only.
++    pub fn multiblock_changed(
++        &mut self,
++        dimension: &str,
++        group: &str,
++        structures: &[crate::multiblock::Structure],
++    ) -> Vec<BlockEntityUpdate> {
++        let Some(owner) = self.entries.iter().position(|e| {
++            e.run
++                .as_ref()
++                .and_then(|r| r.hooks.server())
++                .is_some_and(|r| {
++                    r.block_entities
++                        .iter()
++                        .any(|k| k.multiblock.as_ref().is_some_and(|m| m.group == group))
++                })
++        }) else {
++            return Vec::new();
++        };
++        let pos = |p: [i32; 3]| BlockPos { x: p[0], y: p[1], z: p[2] };
++        let list: Vec<ModStructure> = structures
++            .iter()
++            .map(|s| ModStructure {
++                members: s
++                    .members
++                    .iter()
++                    .map(|m| MultiblockMember {
++                        pos: pos(m.pos),
++                        state: m.state.clone(),
++                    })
++                    .collect(),
++                min: pos(s.min),
++                max: pos(s.max),
++            })
++            .collect();
++        let updates = self
++            .call(owner, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_multiblock_changed(&mut run.store, group, dimension, &list),
++                Hooks::Client(..) => Ok(Vec::new()),
++            })
++            .unwrap_or_default();
++        let members: std::collections::HashSet<[i32; 3]> = structures
++            .iter()
++            .flat_map(|s| s.members.iter().map(|m| m.pos))
++            .collect();
++        updates
++            .into_iter()
++            .filter(|u| {
++                u.dimension == dimension
++                    && members.contains(&[u.pos.x, u.pos.y, u.pos.z])
++                    && u.data.len() <= BLOCK_ENTITY_BYTES
++                    && u.items.as_ref().is_none_or(|s| s.len() <= 256)
++                    && u.tanks.as_ref().is_none_or(|s| s.len() <= 16)
++                    && u.menu_data.as_ref().is_none_or(|s| s.len() <= 256)
++            })
++            .take(BLOCK_ENTITIES_PER_CALL)
++            .collect()
++    }
+     /// What `player`'s client half sent on `channel` (`<mod id>:<name>`): the
+     /// server mod of that id hears it, if it asked for `net`.
+     pub fn net_message(&mut self, player: &ServerPlayer, channel: &str, data: &[u8]) {
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index d01939c..192ec33 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -52,6 +52,8 @@ pub struct TestGame {
+     pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
+     /// The faces each transmitter connects through, by position.
+     pub block_transmitters: std::collections::BTreeMap<(i32, i32, i32), [bool; 6]>,
++    /// The structures last told to the mod, by dimension and group.
++    multiblock_seen: crate::multiblock::Seen,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -175,6 +177,7 @@ impl TestGame {
+             block_tanks: Default::default(),
+             block_menu_data: Default::default(),
+             block_transmitters: Default::default(),
++            multiblock_seen: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -351,7 +354,24 @@ impl TestGame {
+                     .map_or_else(Vec::new, |e| e.1.to_vec()),
+             });
+         }
+-        for u in self.mods.block_entities_tick(self.tick, &list) {
++        let mut updates = self.mods.block_entities_tick(self.tick, &list);
++        for (group, blocks) in self.mods.multiblock_groups() {
++            let members: Vec<crate::multiblock::Member> = self
++                .world
++                .iter()
++                .filter(|(_, s)| blocks.iter().any(|b| s.split('[').next() == Some(b.as_str())))
++                .map(|(&(x, y, z), s)| crate::multiblock::Member {
++                    pos: [x, y, z],
++                    state: s.clone(),
++                })
++                .collect();
++            let found = crate::multiblock::structures(&members);
++            if self.multiblock_seen.changed("minecraft:overworld", &group, &found) {
++                self.snapshot();
++                updates.extend(self.mods.multiblock_changed("minecraft:overworld", &group, &found));
++            }
++        }
++        for u in updates {
+             let key = (u.pos.x, u.pos.y, u.pos.z);
+             self.block_entities.insert(key, u.data);
+             if let (Some(spec), Some(entry)) = (
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 173f652..b73989e 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -846,6 +846,31 @@ An argument's value, parsed as its kind says.
+ | `player` | `player` |  |
+ | `block-pos` | `block-pos` |  |
+ 
++### record `multiblock-spec`
++
++A block of a multiblock group. The loaded blocks of one group that touch through faces make a structure candidate; the game tells the mod (`multiblock-changed`) whenever the candidates of a group in a dimension change: a block placed, broken or turned into another state. The mod decides whether a candidate is a real structure (a cuboid of the right size, with the right blocks, an empty inside it checks with `world.get-block`) and keeps the structure's shared state in the data, slots, energy and tanks of the member blocks it chooses.
++
++| Field | Type | |
++| --- | --- | --- |
++| `group` | `string` | The group's name (`mymod:turbine`); the mod's own. |
++
++### record `multiblock-member`
++
++| Field | Type | |
++| --- | --- | --- |
++| `pos` | `block-pos` |  |
++| `state` | `string` |  |
++
++### record `structure`
++
++Touching blocks of a group: the members in position order and the least and greatest corner of the box around them.
++
++| Field | Type | |
++| --- | --- | --- |
++| `members` | `list<multiblock-member>` |  |
++| `min` | `block-pos` |  |
++| `max` | `block-pos` |  |
++
+ ### variant `transmitter-medium`
+ 
+ What a transmitter block carries.
+@@ -929,6 +954,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `tanks` | `list<tank-spec>` | Tanks for fluids and chemicals, moved between neighbouring blocks by the game (see `tank-spec`). |
+ | `keep-data` | `bool` | The block keeps its entity's data in the item it drops: breaking it gives an item that carries the saved bytes, slots, energy and tanks, and placing that item gives them back (a machine that keeps its contents when picked up). The slots are then not spilled. |
+ | `transmitter` | `option<transmitter-spec>` | The block is a cable or a pipe (see `transmitter-spec`). None: not. |
++| `multiblock` | `option<multiblock-spec>` | The block is a part of a multiblock structure (see `multiblock-spec`). |
+ 
+ ### record `registration`
+ 
+@@ -1000,3 +1026,4 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
++| `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+-- 
+2.43.0
+

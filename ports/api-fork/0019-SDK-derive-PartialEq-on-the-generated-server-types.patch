@@ -1,0 +1,27 @@
+From d033b688579ed753e8ef943ea7d9a314fecf657b Mon Sep 17 00:00:00 2001
+From: x <a@b>
+Date: Tue, 10 Nov 2026 03:16:06 +0000
+Subject: [PATCH] SDK: derive PartialEq on the generated server types
+
+Mods compare item stacks and slot arrays; wit-bindgen derives only Clone and Debug by default.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ crates/horizon-mod-sdk/src/lib.rs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index c6970f5d1..06e1d6279 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -200,6 +200,7 @@ pub mod server {
+         pub_export_macro: true,
+         export_macro_name: "__export_horizon_server_mod",
+         default_bindings_module: "horizon_mod_sdk::server",
++        additional_derives: [PartialEq],
+         with: {
+             "horizon:mods/log@0.1.0": crate::log,
+             "horizon:mods/storage@0.1.0": crate::storage,
+-- 
+2.53.0
+

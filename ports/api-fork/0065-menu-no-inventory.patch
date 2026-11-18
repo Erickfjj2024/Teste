@@ -1,0 +1,357 @@
+From 645f146fb14636c42867e6ec83398ebcf1fdfeef Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 01:30:13 +0000
+Subject: [PATCH] Menus with no player inventory and no slots
+
+A menu type's screen takes "hide_inventory": true: the player's 36
+inventory slots are not drawn or offered on the client and are hidden on
+the server (no click, no shift-click target), the panel is width by height,
+the Inventory label goes. "slots": 0 is accepted for menus of buttons and
+text alone; item and entity menus with 0 slots tick and press as others,
+items empty. Example item-menu-demo gains imenu:reader.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client-render/src/containers.rs   | 13 +++++++++
+ crates/horizon-client/src/game.rs             |  4 +++
+ .../horizon-client/src/game/menu_screens.rs   |  1 +
+ crates/horizon-client/src/game/mods.rs        |  3 +++
+ .../horizon-client/src/game/native_hooks.rs   | 14 +++++++---
+ crates/horizon-client/src/lan/containers.rs   |  8 +++++-
+ crates/horizon-client/src/lan/menu.rs         | 23 ++++++++++++++++
+ .../data/imenu/horizon/menu/reader.json       | 16 +++++++++++
+ .../examples/item-menu-demo/src/lib.rs        | 12 +++++++++
+ .../item-menu-demo/tests/dictionary.toml      | 19 +++++++++++++
+ crates/horizon-mods/src/content.rs            | 27 +++++++++++++++----
+ 11 files changed, 131 insertions(+), 9 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/reader.json
+
+diff --git a/crates/horizon-client-render/src/containers.rs b/crates/horizon-client-render/src/containers.rs
+index 513ff4e4c..64526f8cd 100644
+--- a/crates/horizon-client-render/src/containers.rs
++++ b/crates/horizon-client-render/src/containers.rs
+@@ -28,6 +28,19 @@ static MOD_MENU_TYPES: std::sync::OnceLock<Vec<ModMenuType>> = std::sync::OnceLo
+ type MenuAccepts = std::collections::HashMap<String, Vec<(usize, Vec<String>)>>;
+ static MOD_MENU_ACCEPTS: std::sync::OnceLock<MenuAccepts> = std::sync::OnceLock::new();
+ 
++/// The mod menu types whose screen has no player inventory (`"hide_inventory": true`), by id.
++static MOD_MENU_NO_INVENTORY: std::sync::OnceLock<std::collections::HashSet<String>> = std::sync::OnceLock::new();
++
++/// Registers the mod menu types with no player inventory (once per process).
++pub fn register_mod_menu_no_inventory(ids: std::collections::HashSet<String>) -> bool {
++    MOD_MENU_NO_INVENTORY.set(ids).is_ok()
++}
++
++/// Whether menu type `id`'s screen hides the player's inventory: its 36 slots are neither drawn nor clicked.
++pub fn mod_menu_hides_inventory(id: &str) -> bool {
++    MOD_MENU_NO_INVENTORY.get().is_some_and(|s| s.contains(id))
++}
++
+ /// Registers the slots of mod menu types that take only some items (once per process).
+ pub fn register_mod_menu_accepts(accepts: MenuAccepts) -> bool {
+     MOD_MENU_ACCEPTS.set(accepts).is_ok()
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 472aa1788..6ddd85d3d 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -8488,6 +8488,10 @@ impl Game<'_> {
+         }
+         let mut v: Vec<usize> = (0..36).collect();
+         if let Some(shown) = self.native_screen_slots() {
++            // A screen with no player inventory (`hide_inventory`) shows its own slots alone.
++            if self.native_screen_hides_inventory() {
++                v.clear();
++            }
+             v.extend(shown);
+             // A window open on the screen covers the slots under it.
+             v.retain(|i| !self.window_covers_slot(*i));
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 173d79fbc..9bf888d33 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -184,6 +184,7 @@ impl Game<'_> {
+                 .collect(),
+             inventory_y: def.inventory_y as f32,
+             inventory_x: def.inventory_x as f32,
++            hide_inventory: def.hide_inventory,
+             own_labels: def.own_labels,
+             armor: armor_of(block),
+         })
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 00f8f561c..d4028dc14 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -464,6 +464,9 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+             .map(|m| (m.id.clone(), m.accepts.iter().map(|a| (usize::from(a.slot), a.items.clone())).collect()))
+             .collect(),
+     );
++    let _ = containers::register_mod_menu_no_inventory(
++        menus.iter().filter(|m| m.screen.as_ref().is_some_and(|s| s.hide_inventory)).map(|m| m.id.clone()).collect(),
++    );
+     let set = containers::register_mod_menu_types(menus.iter().map(|m| {
+         let results = m.results.iter().map(|&r| usize::from(r)).collect();
+         (m.id.clone(), m.slots.into(), m.data_slots.into(), results, m.armor.as_ref().map_or(0, horizon_mods::content::ArmorSlots::count))
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 7f8bed87d..dc513c414 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -809,6 +809,8 @@ pub struct NativeScreen {
+     pub height: f32,
+     pub slots: Vec<Option<[f32; 2]>>,
+     pub inventory_y: f32,
++    /// The player's inventory is not on the screen (`hide_inventory`): its slots are neither drawn nor clicked.
++    pub hide_inventory: bool,
+     /// The inventory's left column (vanilla's is 8).
+     pub inventory_x: f32,
+     /// The mod draws the title and the "Inventory" label itself
+@@ -4328,6 +4330,10 @@ impl Game<'_> {
+             .count();
+         Some(shown + s.screen.armor.len())
+     }
++    /// Whether the open mod screen leaves the player's inventory out (`hide_inventory`).
++    pub(super) fn native_screen_hides_inventory(&self) -> bool {
++        self.shown_native_screen().is_some_and(|s| s.screen.hide_inventory)
++    }
+     /// The first row of the player's inventory on the open mod screen.
+     pub(super) fn native_screen_inventory_y(&self) -> Option<f32> {
+         self.shown_native_screen().map(|s| s.screen.inventory_y)
+@@ -4389,9 +4395,11 @@ impl Game<'_> {
+         if let Some(title) = self.remote_menu_title() {
+             batch.text_styled(atlas, &title, ox + 8.0, oy + 6.0, grey, false);
+         }
+-        let inventory = self.translate("container.inventory", "Inventory");
+-        let label_y = oy + s.screen.inventory_y - 11.0;
+-        batch.text(atlas, &inventory, ox + 8.0, label_y, grey, false);
++        if !s.screen.hide_inventory {
++            let inventory = self.translate("container.inventory", "Inventory");
++            let label_y = oy + s.screen.inventory_y - 11.0;
++            batch.text(atlas, &inventory, ox + 8.0, label_y, grey, false);
++        }
+         true
+     }
+     /// The tick of the mod block entity at `pos`.
+diff --git a/crates/horizon-client/src/lan/containers.rs b/crates/horizon-client/src/lan/containers.rs
+index 549e452c0..680c5a5aa 100644
+--- a/crates/horizon-client/src/lan/containers.rs
++++ b/crates/horizon-client/src/lan/containers.rs
+@@ -253,6 +253,9 @@ impl Hub {
+             title,
+         }));
+         let mod_type = crate::containers::mod_menu_type(menu_kind);
++        // A screen with no player inventory (`hide_inventory`): its 36 slots after the container's take no click.
++        let no_inventory = mod_type.is_some() && crate::containers::mod_menu_hides_inventory(menu_kind);
++        let inventory_slots: Vec<usize> = if no_inventory { (items.len()..items.len() + 36).collect() } else { Vec::new() };
+         g.menu = Some(Menu {
+             window,
+             kind,
+@@ -263,7 +266,7 @@ impl Hub {
+             sent: Vec::new(),
+             drag: None,
+             sent_data: Vec::new(),
+-            hidden: Vec::new(),
++            hidden: inventory_slots,
+             results: mod_type.map_or_else(Vec::new, |t| t.results.clone()),
+             equip: mod_type.map_or(0, |t| t.armor),
+             accepts: crate::containers::mod_menu_accepts(menu_kind),
+@@ -281,7 +284,10 @@ impl Hub {
+             .find(|g| g.conn == conn)
+             .and_then(|g| g.menu.as_mut())
+         {
++            // The player's inventory slots a `hide_inventory` screen left out stay out.
++            let inventory: Vec<usize> = m.hidden.iter().copied().filter(|&i| i >= m.size).collect();
+             m.hidden = hidden;
++            m.hidden.extend(inventory);
+         }
+     }
+ 
+diff --git a/crates/horizon-client/src/lan/menu.rs b/crates/horizon-client/src/lan/menu.rs
+index 18a6c2469..6e35b1498 100644
+--- a/crates/horizon-client/src/lan/menu.rs
++++ b/crates/horizon-client/src/lan/menu.rs
+@@ -944,6 +944,29 @@ mod tests {
+         assert_eq!(contents(&view.get(2)), []);
+     }
+ 
++    /// A menu whose screen hides the player's inventory (`hide_inventory`): its 36 slots are hidden, so a click on one does
++    /// nothing and a shift-click from the container has nowhere to go.
++    #[test]
++    fn a_menu_without_the_inventory_never_reaches_it() {
++        let Some(rules) = rules() else {
++            return;
++        };
++        let mut g = guest();
++        g.inventory[0] = Some(ItemStack::new("minecraft:stick", 3));
++        let mut machine = vec![Some(ItemStack::new("minecraft:stone", 5))];
++        let hidden: Vec<usize> = (1..37).collect();
++        let mut drag = None;
++        let mut view = View { guest: &mut g, container: Some(&mut machine), shulker: false, hidden: &hidden, results: &[], equip: 0, accepts: &[] };
++        // The hotbar's first slot is menu slot 1 + 27: a click on it takes nothing.
++        click(&mut view, &mut drag, 28, 0, input::PICKUP, &rules);
++        assert_eq!(view.guest.carried, None);
++        assert_eq!(view.guest.inventory[0].as_ref().map(|s| s.count), Some(3));
++        // A shift-click on the stone keeps it where it is.
++        click(&mut view, &mut drag, 0, 0, input::QUICK_MOVE, &rules);
++        assert_eq!(view.get(0).map(|s| s.count), Some(5));
++        assert!(view.guest.inventory.iter().skip(1).all(Option::is_none));
++    }
++
+     /// A mod container saved with more items than its menu has slots: the
+     /// menu reads and writes only its count, the rest stay saved.
+     #[test]
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/reader.json b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/reader.json
+new file mode 100644
+index 000000000..c394323fe
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/reader.json
+@@ -0,0 +1,16 @@
++{
++  "slots": 0,
++  "data_slots": 1,
++  "screen": {
++    "width": 120,
++    "height": 60,
++    "hide_inventory": true,
++    "own_labels": true,
++    "slots": [],
++    "widgets": [
++      {"type": "text", "x": 8, "y": 6, "text_data": 0},
++      {"type": "text", "x": 8, "y": 20, "text": "reads: {0}"},
++      {"type": "button", "x": 8, "y": 36, "w": 50, "h": 14, "id": 1, "tooltip": "Read again"}
++    ]
++  }
++}
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+index ced3ccf6b..7ece3227a 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+@@ -18,6 +18,10 @@ impl ServerMod for Demo {
+     }
+     fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
+         match channel {
++            // A menu of text and a button alone (no slots, no inventory): what the Seismic Reader shows.
++            "imenu:open_reader" => {
++                let _ = players::open_item_menu(&player.id, u32::from(data.first().copied().unwrap_or(0)), "imenu:reader");
++            }
+             "imenu:open" => {
+                 let _ = players::open_item_menu(&player.id, u32::from(data.first().copied().unwrap_or(0)), "imenu:dictionary");
+             }
+@@ -35,6 +39,11 @@ impl ServerMod for Demo {
+         }
+     }
+     fn item_menu_tick(&mut self, _player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
++        if menu.menu == "imenu:reader" {
++            // Its data slot counts the ticks it has been open (the mod's own count, kept in the menu's data).
++            let reads = menu.menu_data.first().copied().unwrap_or(0) + 1;
++            return Some(ItemMenuUpdate { menu_data: Some(vec![reads]), menu_text: Some(vec![format!("{} slot(s)", menu.items.len())]), ..update() });
++        }
+         let input = menu.items.first().cloned().flatten();
+         let made = input.as_ref().filter(|s| s.item == "minecraft:oak_log").map(|_| ItemStack {
+             item: "minecraft:oak_planks".into(),
+@@ -53,6 +62,9 @@ impl ServerMod for Demo {
+         Some(u)
+     }
+     fn item_menu_button(&mut self, _player: &Player, menu: ItemMenu, id: i32) -> Option<ItemMenuUpdate> {
++        if menu.menu == "imenu:reader" {
++            return (id == 1).then(|| ItemMenuUpdate { menu_data: Some(vec![0]), ..update() });
++        }
+         let mut u = update();
+         match id {
+             1 => {
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+index 956e6ff9f..61b5cc71e 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+@@ -44,3 +44,22 @@ item-menu-set = [{ slot = 0, stack = "minecraft:stick*3" }]
+ item-menu-button = 2
+ expect.item-menus = []
+ expect.entity-menu-returned = ["minecraft:stick*3"]
++
++[[step]]
++# A menu of buttons and text alone (round 4, "slots": 0 and "hide_inventory"): it opens with no slots, and its tick and button
++# are called as any other's, `items` empty.
++net = { channel = "imenu:open_reader", data = [0] }
++expect.item-menu-open = ["Alex 0 imenu:reader"]
++expect.item-menus = ["Alex 0 imenu:reader - data=[] text="]
++
++[[step]]
++ticks = 2
++expect.item-menus = ["Alex 0 imenu:reader - data=[2] text=0 slot(s)"]
++
++[[step]]
++item-menu-button = 1
++expect.item-menus = ["Alex 0 imenu:reader - data=[0] text=0 slot(s)"]
++
++[[step]]
++close-item-menu = true
++expect.item-menus = []
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index e20ba91c7..ef2f79600 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -459,7 +459,7 @@ pub struct MenuType {
+     /// `<mod id>:<path>`.
+     #[serde(skip)]
+     pub id: String,
+-    /// 1 to [`MAX_MENU_SLOTS`].
++    /// 0 to [`MAX_MENU_SLOTS`]: a menu of buttons and text alone has none (the Portable Teleporter's, the Seismic Reader's).
+     pub slots: u16,
+     /// 0 to [`MAX_MENU_SLOTS`].
+     #[serde(default)]
+@@ -558,6 +558,10 @@ pub struct MenuScreen {
+     /// The screen draws its title and its "Inventory" label itself (as `text` widgets): the game leaves its own out.
+     #[serde(default)]
+     pub own_labels: bool,
++    /// The player's inventory is not on the screen: its slots are neither drawn nor clicked, and the panel is `width` by `height`
++    /// alone (a menu of buttons and text, the Portable Teleporter's).
++    #[serde(default)]
++    pub hide_inventory: bool,
+     /// Where each container slot is (its item's top left); `null` hides the
+     /// slot, and so do slots past the list.
+     pub slots: Vec<Option<[i32; 2]>>,
+@@ -1817,9 +1821,9 @@ impl Content {
+         for (menu, name) in menus {
+             let file: MenuType =
+                 serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
+-            if !(1..=MAX_MENU_SLOTS).contains(&file.slots) || file.data_slots > MAX_MENU_SLOTS {
++            if file.slots > MAX_MENU_SLOTS || file.data_slots > MAX_MENU_SLOTS {
+                 return Err(format!(
+-                    "{name}: slots is 1 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
++                    "{name}: slots is 0 to {MAX_MENU_SLOTS}, data_slots 0 to {MAX_MENU_SLOTS}"
+                 ));
+             }
+             if file.accepts.iter().any(|a| a.slot >= file.slots || a.items.is_empty() || a.items.len() > 64) {
+@@ -2280,8 +2284,7 @@ capabilities = ["registries"]
+             [("ruby:bag", 4, 0, vec![]), ("ruby:press", 9, 2, vec![7, 8])]
+         );
+         for (case, file, why) in [
+-            ("menu-empty", r#"{"slots": 0}"#, "slots is 1 to 256"),
+-            ("menu-large", r#"{"slots": 257}"#, "slots is 1 to 256"),
++            ("menu-large", r#"{"slots": 257}"#, "slots is 0 to 256"),
+             (
+                 "menu-data",
+                 r#"{"slots": 1, "data_slots": 257}"#,
+@@ -2379,6 +2382,20 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn a_menu_of_buttons_alone_has_no_slots_and_hides_the_inventory() {
++        let file = br#"{"slots": 0, "data_slots": 2, "screen": {"width": 176, "height": 120, "hide_inventory": true, "slots": [],
++            "widgets": [{"type": "button", "x": 8, "y": 20, "w": 50, "h": 14, "id": 1}]}}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/menu/teleporter.json", file)];
++        let content = hmod("menu-none", MANIFEST_TEXT, files).unwrap();
++        let m = &content.menu_types[0];
++        assert_eq!((m.slots, m.data_slots), (0, 2));
++        assert!(m.screen.as_ref().is_some_and(|s| s.hide_inventory && s.height == 120));
++        // A menu of slots keeps the inventory unless it says so.
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/menu/bag.json", br#"{"slots": 1, "screen": {"slots": [[8, 8]]}}"#)];
++        assert!(!hmod("menu-inventory", MANIFEST_TEXT, files).unwrap().menu_types[0].screen.as_ref().unwrap().hide_inventory);
++    }
++
+     #[test]
+     fn a_screen_takes_lists_and_text_fields_and_refuses_bad_ones() {
+         let good = br##"{"slots": 1, "data_slots": 2, "screen": {"slots": [null], "widgets": [
+-- 
+2.43.0
+

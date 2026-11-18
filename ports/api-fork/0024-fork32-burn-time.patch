@@ -1,0 +1,294 @@
+From a7ca24d675a353a3578c84d9109c729251fd5fca Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 12:21:47 +0000
+Subject: [PATCH] FORK-32: recipe-types.burn-time (API 27): the ticks an item
+ burns in a furnace, from the game's fuel registry
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 +++++++
+ Cargo.toml                                    |  1 +
+ crates/horizon-client/src/game/server_mods.rs |  9 ++++++++
+ .../examples/fuel-demo/Cargo.toml             | 16 ++++++++++++++
+ .../examples/fuel-demo/horizon-mod.toml       |  9 ++++++++
+ .../examples/fuel-demo/src/lib.rs             | 21 +++++++++++++++++++
+ .../examples/fuel-demo/tests/fuel.toml        | 11 ++++++++++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  6 ++++++
+ crates/horizon-mods/src/api_level.rs          |  5 +++--
+ crates/horizon-mods/src/recipe_types.rs       |  3 +++
+ crates/horizon-mods/src/runtime.rs            |  4 ++++
+ crates/horizon-mods/src/testing.rs            |  4 ++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 ++--
+ docs/api/mods-reference.md                    |  1 +
+ 14 files changed, 97 insertions(+), 4 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/fuel-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/fuel-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/fuel-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/fuel-demo/tests/fuel.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 2cd3b760a..26f072b0a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1333,6 +1333,13 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "fuel-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "futures"
+ version = "0.3.34"
+diff --git a/Cargo.toml b/Cargo.toml
+index a5bbc8e9c..df442d04c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -42,6 +42,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-counter",
+     "crates/horizon-mod-sdk/examples/block-use",
+     "crates/horizon-mod-sdk/examples/damage-mods",
++    "crates/horizon-mod-sdk/examples/fuel-demo",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index b7377d31e..1d4fb8798 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -1063,6 +1063,15 @@ mod run {
+                     .collect(),
+                 tags: items.item_tag_order.clone(),
+                 items: items.items.keys().map(|k| k.to_string()).collect(),
++                burn_times: items
++                    .items
++                    .keys()
++                    .filter_map(|k| {
++                        let stack = horizon_client::items::ItemStack::new(k, 1);
++                        let ticks = self.res.providers().burn_time(items, &stack, false);
++                        (ticks > 0).then(|| (k.to_string(), ticks as u32))
++                    })
++                    .collect(),
+                 cooking: self
+                     .recipes()
+                     .cooking
+diff --git a/crates/horizon-mod-sdk/examples/fuel-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/fuel-demo/Cargo.toml
+new file mode 100644
+index 000000000..7f3b03bd8
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/fuel-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "fuel-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: asking the game for the burn time of items"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/fuel-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/fuel-demo/horizon-mod.toml
+new file mode 100644
+index 000000000..c0a492b7c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/fuel-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "fueldemo"
++name = "Fuel Demo"
++version = "0.1.0"
++description = "Test mod for the game's fuel registry: using fueldemo:probe tells the player how long coal and a stick burn."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "recipe-types"]
++experimental = ["recipe-types"]
+diff --git a/crates/horizon-mod-sdk/examples/fuel-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/fuel-demo/src/lib.rs
+new file mode 100644
+index 000000000..a7b1e3936
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/fuel-demo/src/lib.rs
+@@ -0,0 +1,21 @@
++//! Fuel Demo (FORK-32): `recipe_types::burn_time` answers from the game's own fuel registry. Using `fueldemo:probe` tells the player
++//! how many ticks coal and a stick burn, and whether dirt does.
++use horizon_mod_sdk::server::{BlockPos, ItemStack, Player, Registration, ServerMod, players, recipe_types};
++
++struct Demo;
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Demo, Registration::new().on_items()))
++    }
++    fn item_used(&mut self, player: &Player, stack: ItemStack, _pos: Option<BlockPos>) -> bool {
++        if stack.item != "fueldemo:probe" {
++            return false;
++        }
++        let ticks = |item: &str| recipe_types::burn_time(item).map_or("none".to_owned(), |t| t.to_string());
++        let _ = players::tell(&player.id, &format!("coal {} stick {} dirt {}", ticks("minecraft:coal"), ticks("minecraft:stick"), ticks("minecraft:dirt")));
++        true
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/fuel-demo/tests/fuel.toml b/crates/horizon-mod-sdk/examples/fuel-demo/tests/fuel.toml
+new file mode 100644
+index 000000000..41ebd68a8
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/fuel-demo/tests/fuel.toml
+@@ -0,0 +1,11 @@
++items = ["minecraft:coal", "minecraft:stick", "minecraft:dirt"]
++
++[burn-times]
++"minecraft:coal" = 1600
++"minecraft:stick" = 100
++
++[[step]]
++join = "Alex"
++use-item = { stack = "fueldemo:probe*1" }
++expect.claimed = true
++expect.told = ["Alex: coal 1600 stick 100 dirt none"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 80cc5cbfa..f2f992b98 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -885,6 +885,12 @@ interface recipe-types {
+     /// `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game
+     /// doesn't know are left out.
+     ingredient-items: func(ingredient: string) -> list<string>;
++    /// How many ticks `item` burns in a furnace, from the game's fuel
++    /// registry (`FuelValues`: the `furnace_fuels` data map, data packs and
++    /// the content mods' own, as a furnace reads them); none for an item that
++    /// does not burn or is not known. (A smoker or blast furnace burns it
++    /// the same ticks; those cook twice as fast.) API 27.
++    burn-time: func(item: string) -> option<u32>;
+ }
+ 
+ /// Capability `net`, server mods only (manifest `api = "0.3"`, experimental):
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 20c9d7195..9f5e69dd7 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 26;
++pub const LEVEL: u32 = 27;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 87] = [
++pub const FUNCTIONS: [(&str, u32); 88] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -98,6 +98,7 @@ pub const FUNCTIONS: [(&str, u32); 87] = [
+     ("world.mine-block", 23),
+     ("world.set-capabilities-enabled", 24),
+     ("world.spawn-particles", 26),
++    ("recipe-types.burn-time", 27),
+     ("player-items.compare-and-set-slot", 25),
+     ("player-control.set-motion", 25),
+     ("player-control.set-allow-flight", 25),
+diff --git a/crates/horizon-mods/src/recipe_types.rs b/crates/horizon-mods/src/recipe_types.rs
+index c5f4b38d1..b92844dc4 100644
+--- a/crates/horizon-mods/src/recipe_types.rs
++++ b/crates/horizon-mods/src/recipe_types.rs
+@@ -18,6 +18,8 @@ pub struct RecipeData {
+     pub items: HashSet<String>,
+     /// The cooking recipes of the game's own kinds, in the game's order.
+     pub cooking: Vec<Cooking>,
++    /// Item to the ticks it burns in a furnace (only the items that burn).
++    pub burn_times: HashMap<String, u32>,
+ }
+ 
+ /// One cooking recipe (`smelting`, `blasting`...).
+@@ -137,6 +139,7 @@ mod tests {
+                 ("c:empty".into(), vec![]),
+             ]),
+             cooking: Vec::new(),
++            burn_times: HashMap::new(),
+             items: ["minecraft:redstone", "minecraft:stone", "mymod:redstone_dust"]
+                 .iter()
+                 .map(|s| s.to_string())
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 265ebea0a..f74dc92a7 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -2913,6 +2913,10 @@ impl recipe_types::Host for State {
+                 .collect()
+         })
+     }
++    fn burn_time(&mut self, item: String) -> Option<u32> {
++        let slot = self.recipe_data.lock().ok()?;
++        slot.as_ref()?.burn_times.get(&item).copied().filter(|t| *t > 0)
++    }
+     fn cooking_recipes(&mut self, kind: String) -> Vec<recipe_types::CookingRecipe> {
+         let Ok(slot) = self.recipe_data.lock() else {
+             return Vec::new();
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 39ff2a7e5..207598f18 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -784,6 +784,9 @@ pub struct Script {
+     pub tags: std::collections::BTreeMap<String, Vec<String>>,
+     #[serde(default)]
+     pub items: Vec<String>,
++    /// The ticks items burn in a furnace (`[burn_times]`, `"minecraft:coal" = 1600`).
++    #[serde(default)]
++    pub burn_times: std::collections::BTreeMap<String, u32>,
+     #[serde(default, rename = "step")]
+     pub steps: Vec<Step>,
+ }
+@@ -1276,6 +1279,7 @@ impl Script {
+                 .collect();
+             data.tags = self.tags.clone().into_iter().collect();
+             data.items = self.items.iter().cloned().collect();
++            data.burn_times = self.burn_times.iter().map(|(k, v)| (k.clone(), *v)).collect();
+             game.mods.set_recipe_data(std::sync::Arc::new(data));
+         }
+         for (i, step) in self.steps.iter().enumerate() {
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 2bfa909ce..d73c1a015 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 26);
++    assert_eq!(LEVEL, 27);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index ef577ecb5..323a9730d 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -798,6 +798,7 @@ A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `ca
+ | `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
+ | `cooking-recipes` | `func(kind: string) -> list<cooking-recipe>` | The cooking recipes of a kind (`smelting`, `blasting`...), in the game's order. |
+ | `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
++| `burn-time` | `func(item: string) -> option<u32>` | How many ticks `item` burns in a furnace, from the game's fuel registry (`FuelValues`: the `furnace_fuels` data map, data packs and the content mods' own, as a furnace reads them); none for an item that does not burn or is not known. (A smoker or blast furnace burns it the same ticks; those cook twice as fast.) API 27. |
+ 
+ ## `net`
+ 
+-- 
+2.43.0
+

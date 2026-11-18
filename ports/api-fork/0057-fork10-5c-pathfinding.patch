@@ -1,0 +1,682 @@
+From 598d911012457599d0f17c2db4083375ff269a60 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 15:37:44 +0000
+Subject: [PATCH] Mod entities walk vanilla's found paths (FORK-10 5c)
+
+path-to now runs vanilla's ground path search (the mobs' PathFinder with the
+walk node evaluator: walls, open and closed doors, water, fences, drops) and
+the entity follows the waypoints, stepping onto slabs and stairs by their
+collision height. A moving goal gets a new path at most every 10 ticks;
+nothing reachable or three blocked steps in a row stop it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/mod_entities.rs   |  95 ++++++---
+ crates/horizon-client/src/mobs/nav.rs         | 190 +++++++++++++++---
+ crates/horizon-mod-sdk/wit/horizon.wit        |   8 +-
+ crates/horizon-mods/src/entity_state.rs       | 183 +++++++++++++++--
+ crates/horizon-mods/src/testing.rs            |   5 +-
+ docs/api/mods-reference.md                    |   2 +-
+ 6 files changed, 405 insertions(+), 78 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+index 4fe9240a3..4e8b69e48 100644
+--- a/crates/horizon-client/src/game/mod_entities.rs
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -4,7 +4,7 @@
+ use super::Game;
+ use horizon_mods::{
+     content::EntityKind,
+-    entity_state::{CARRIER_TAG, FILE, ModEntityState, WALK_FACTOR, Walk, apply, carrier_snbt, decode, encode, hitbox_snbt, walk},
++    entity_state::{CARRIER_TAG, FILE, ModEntityState, WALK_FACTOR, Walk, apply, carrier_snbt, decode, encode, follow, hitbox_snbt, needs_path},
+ };
+ use std::{collections::HashMap, sync::OnceLock};
+ 
+@@ -85,38 +85,83 @@ impl Game<'_> {
+         self.mod_entities.list.len() != before
+     }
+ 
+-    /// One tick of walking for the entities of the level in place that have a goal (FORK-10 c): `walk` over the loaded blocks, at the
+-    /// kind's `speed` times the goal's multiplier; arriving or being blocked ends the goal.
++    /// One tick of walking for the entities of the level in place that have a goal (FORK-10 c, 5c): a path found by vanilla's search
++    /// (`mod_entity_path`) followed waypoint by waypoint (`follow`), at the kind's `speed` times the goal's multiplier; arriving ends
++    /// the goal, and so do nothing reachable and three blocked steps in a row.
+     pub(super) fn walk_mod_entities(&mut self) {
++        use horizon_client::mobs::path::PathType;
+         let Some(kinds) = MOD_KINDS.get() else {
+             return;
+         };
+         let dim = self.dim.id().to_owned();
+-        for i in 0..self.mod_entities.list.len() {
+-            let e = &self.mod_entities.list[i];
+-            let (Some((goal, mult)), true) = (e.goal, e.dimension == dim) else {
+-                continue;
+-            };
+-            let Some(kind) = kinds.get(&e.kind) else {
+-                continue;
++        let mut list = std::mem::take(&mut self.mod_entities.list);
++        {
++            let w = self.mob_world_base(&[]);
++            // A cell's collision top for walking: 0 where it walks through (air, water, an open door, a plant).
++            let top = |x: i32, y: i32, z: i32| {
++                let st = w.data.state(w.world.block(x, y, z));
++                if matches!(st.path, PathType::Open | PathType::DoorOpen | PathType::Water | PathType::Lava) {
++                    0.0
++                } else {
++                    f64::from(st.top)
++                }
+             };
+-            let (mut pos, mut yaw) = (e.pos, e.yaw);
+-            // A chunk that is not loaded stops it where it is (its blocks read as air).
+-            if !self.world.chunks.contains_key(&((pos[0].floor() as i32) >> 4, (pos[2].floor() as i32) >> 4)) {
+-                continue;
+-            }
+-            let facts = self.res.facts();
+-            let world = &self.world;
+-            let solid = |x: i32, y: i32, z: i32| facts.get(world.block(x, y, z)).full_collision;
+-            let step = f64::from(kind.speed) * f64::from(mult) * WALK_FACTOR;
+-            let result = walk(&mut pos, &mut yaw, goal, step, f64::from(kind.height), &solid);
+-            let e = &mut self.mod_entities.list[i];
+-            e.pos = pos;
+-            e.yaw = yaw;
+-            if result != Walk::Moving {
+-                e.goal = None;
++            for e in &mut list {
++                let (Some((goal, mult)), true) = (e.goal, e.dimension == dim) else {
++                    continue;
++                };
++                let Some(kind) = kinds.get(&e.kind) else {
++                    continue;
++                };
++                // A chunk that is not loaded stops it where it is (its blocks read as air).
++                if !self.world.chunks.contains_key(&((e.pos[0].floor() as i32) >> 4, (e.pos[2].floor() as i32) >> 4)) {
++                    continue;
++                }
++                // FORK-10 5c: vanilla's path search (`GroundPathNavigation`) for a new goal, at most every 10 ticks for a moving one;
++                // nothing reachable stops it, as a mob's failed `moveTo` does.
++                if needs_path(goal, e.path_goal, e.path_age) {
++                    let from = horizon_core::geometry::Vec3::new(e.pos[0], e.pos[1], e.pos[2]);
++                    match horizon_client::mobs::nav::mod_entity_path(&w, from, kind.width, kind.height, goal) {
++                        Some(path) => {
++                            e.path = path;
++                            e.path_goal = Some(goal);
++                            e.path_age = 0;
++                        }
++                        None => {
++                            e.goal = None;
++                            e.path.clear();
++                            e.path_goal = None;
++                            continue;
++                        }
++                    }
++                }
++                e.path_age = e.path_age.saturating_add(1);
++                let step = f64::from(kind.speed) * f64::from(mult) * WALK_FACTOR;
++                let (mut pos, mut yaw) = (e.pos, e.yaw);
++                let result = follow(&mut pos, &mut yaw, &mut e.path, step, f64::from(kind.width), f64::from(kind.height), &top);
++                e.pos = pos;
++                e.yaw = yaw;
++                match result {
++                    Walk::Moving => e.stuck = 0,
++                    Walk::Arrived => {
++                        e.goal = None;
++                        e.path_goal = None;
++                        e.stuck = 0;
++                    }
++                    // A step it cannot make: a new path next tick, and after 3 in a row it gives up (vanilla's stuck check).
++                    Walk::Blocked => {
++                        e.stuck += 1;
++                        e.path.clear();
++                        e.path_goal = None;
++                        if e.stuck >= 3 {
++                            e.goal = None;
++                            e.stuck = 0;
++                        }
++                    }
++                }
+             }
+         }
++        self.mod_entities.list = list;
+     }
+ 
+     /// Makes each entity of the level in place stand for itself on the clients (FORK-10 b): an `item_display` of the skin's model (see
+diff --git a/crates/horizon-client/src/mobs/nav.rs b/crates/horizon-client/src/mobs/nav.rs
+index 0837959a9..d6292d4ad 100644
+--- a/crates/horizon-client/src/mobs/nav.rs
++++ b/crates/horizon-client/src/mobs/nav.rs
+@@ -212,31 +212,8 @@ impl Mob {
+         }
+     }
+     /// GroundPathNavigation.findSurfacePosition.
+-    fn surface_position(&self, w: &MobWorld, mut p: [i32; 3]) -> [i32; 3] {
+-        let air = |p: [i32; 3]| w.facts.is_air(w.world.block(p[0], p[1], p[2]));
+-        let solid = |p: [i32; 3]| w.solid(p[0], p[1], p[2]);
+-        if air(p) {
+-            let mut q = [p[0], p[1] - 1, p[2]];
+-            while q[1] >= w.world.bottom_y() && air(q) {
+-                q[1] -= 1;
+-            }
+-            if q[1] >= w.world.bottom_y() {
+-                return [q[0], q[1] + 1, q[2]];
+-            }
+-            q[1] = p[1] + 1;
+-            while q[1] <= 319 && air(q) {
+-                q[1] += 1;
+-            }
+-            p = q;
+-        }
+-        if !solid(p) {
+-            return p;
+-        }
+-        let mut q = [p[0], p[1] + 1, p[2]];
+-        while q[1] <= 319 && solid(q) {
+-            q[1] += 1;
+-        }
+-        q
++    fn surface_position(&self, w: &MobWorld, p: [i32; 3]) -> [i32; 3] {
++        surface_position(w, p)
+     }
+     pub(super) fn create_path_raw(
+         &mut self,
+@@ -663,6 +640,73 @@ impl Mob {
+     }
+ }
+ 
++/// GroundPathNavigation.findSurfacePosition: the ground surface at or above `p`.
++fn surface_position(w: &MobWorld, mut p: [i32; 3]) -> [i32; 3] {
++    let air = |p: [i32; 3]| w.facts.is_air(w.world.block(p[0], p[1], p[2]));
++    let solid = |p: [i32; 3]| w.solid(p[0], p[1], p[2]);
++    if air(p) {
++        let mut q = [p[0], p[1] - 1, p[2]];
++        while q[1] >= w.world.bottom_y() && air(q) {
++            q[1] -= 1;
++        }
++        if q[1] >= w.world.bottom_y() {
++            return [q[0], q[1] + 1, q[2]];
++        }
++        q[1] = p[1] + 1;
++        while q[1] <= 319 && air(q) {
++            q[1] += 1;
++        }
++        p = q;
++    }
++    if !solid(p) {
++        return p;
++    }
++    let mut q = [p[0], p[1] + 1, p[2]];
++    while q[1] <= 319 && solid(q) {
++        q[1] += 1;
++    }
++    q
++}
++
++/// The walking path of a mod's own entity (FORK-10 5c, the Robit) of `width` by `height` from `from` to `goal`: vanilla's
++/// `GroundPathNavigation.createPath` with a ground mob's defaults (a step of 0.6, falls of 3, doors it cannot open but can pass
++/// when open, no floating, vanilla's maluses), the goal brought to the ground surface as `findSurfacePosition` does, a follow
++/// range of 16 blocks or the distance and 8 more, up to 64. The waypoints are where its feet go (`Path.getEntityPosAtNode`); a
++/// path that ends short of the goal (the nearest reachable point) is still a path, as in vanilla; none when nothing is reachable.
++pub fn mod_entity_path(w: &MobWorld, from: Vec3, width: f32, height: f32, goal: [f64; 3]) -> Option<Vec<[f64; 3]>> {
++    let target = [goal[0].floor() as i32, goal[1].floor() as i32, goal[2].floor() as i32];
++    if !w.world.loaded(target[0], target[2]) || from.y < f64::from(w.world.bottom_y()) {
++        return None;
++    }
++    let target = surface_position(w, target);
++    let distance = ((from.x - goal[0]).powi(2) + (from.y - goal[1]).powi(2) + (from.z - goal[2]).powi(2)).sqrt() as f32;
++    let range = (distance + 8.0).clamp(16.0, 64.0);
++    let mob = PathMob {
++        position: from,
++        width,
++        height,
++        on_ground: true,
++        in_water: false,
++        max_up_step: 0.6,
++        max_fall_distance: 3,
++        malus: [None; super::path::PATH_TYPES],
++        can_float: false,
++        can_open_doors: false,
++        can_pass_doors: true,
++        can_walk_over_fences: false,
++        stands_on_lava: false,
++    };
++    let path = Finder::new(w, &mob, Evaluator::Walk).find(&[target], range, 1, (range * 16.0) as i32)?;
++    Some(
++        (0..path.nodes.len())
++            .map(|i| {
++                let p = path.entity_pos_at(i, width);
++                [p.x, p.y, p.z]
++            })
++            .collect(),
++    )
++}
++
+ #[cfg(test)]
+ mod recompute_tests {
+     use super::*;
+@@ -745,3 +789,99 @@ mod tests {
+         ));
+     }
+ }
++
++#[cfg(test)]
++mod mod_entity_path_tests {
++    use super::*;
++
++    /// FORK-10 5c: a mod entity's path goes round a wall through its gap, passes an open door and not a closed one.
++    #[test]
++    fn a_mod_entity_path_goes_round_a_wall_and_through_an_open_door_only() {
++        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local/horizon-client").join(horizon_core::VANILLA_VERSION);
++        if !root.join("entity-types.json").exists() || !root.join("movement-properties.nbt").exists() {
++            return;
++        }
++        let assets = crate::assets::Assets::load(&root).unwrap();
++        let render = assets.reload(&root).unwrap();
++        let registry = assets.registry;
++        let facts = crate::blocks::BlockFacts::load(&root, registry).unwrap();
++        let motion = crate::motion::MotionResources::load(&root, &assets).unwrap();
++        let data = crate::mobs::MobData::load(&root, &facts);
++        let biomes = crate::biome::Biomes::load(&root).unwrap();
++        let items = crate::items::Items::load(&root, registry, &facts, &horizon_world::loot::PackOverlay::NONE).unwrap();
++        let collision = crate::collisions::load(&root, registry).unwrap();
++        let mut world = crate::world::World::test_scene(&assets, &render, 3).unwrap();
++        let stone = registry.default_state("minecraft:stone").unwrap();
++        let air = registry.default_state("minecraft:air").unwrap();
++        let door = |half: &str, open: bool| {
++            let mut s = registry.state(registry.default_state("minecraft:oak_door").unwrap()).unwrap().clone();
++            s.properties.insert("half".into(), half.into());
++            s.properties.insert("open".into(), open.to_string());
++            s.properties.insert("facing".into(), "east".into());
++            registry.id(&s).unwrap()
++        };
++        // The scene's ground tops out at y 3 (it stands at y 4). A wall two high at x 25, from z -6 to 6, with a gap at z 4.
++        let floor_y = (0..20).rev().find(|&y| facts.get(world.block(22, y, 0)).full_collision).unwrap();
++        let feet = floor_y + 1;
++        let wall = |world: &mut crate::world::World, gap: [horizon_world::registry::BlockStateId; 2]| {
++            for z in -6..=6 {
++                for (k, y) in [feet, feet + 1].into_iter().enumerate() {
++                    world.set(25, y, z, if z == 4 { gap[k] } else { stone }).unwrap();
++                }
++            }
++        };
++        let lid_openers = std::collections::HashMap::new();
++        let find = |world: &crate::world::World| {
++            let w = MobWorld {
++                teams: Default::default(),
++                world,
++                registry,
++                facts: &facts,
++                fluid_tables: &motion.fluids,
++                movement: &motion.blocks,
++                collision: &collision,
++                data: &data,
++                player: None,
++                nearest_player: None,
++                others: &[],
++                leash_boats: &[],
++                others_grid: None,
++                others_index: None,
++                daylight: true,
++                monsters_burn: false,
++                game_time: 1000,
++                day_time: 1000,
++                raining: false,
++                thundering: false,
++                nether: false,
++                block_tags: &items.block_tags,
++                biomes: &biomes,
++                mob_griefing: true,
++                universal_anger: false,
++                mob_drops: true,
++                max_entity_cramming: 24,
++                difficulty: super::super::spawning::LocalDifficulty::new(2, 1000, 0, 0.0),
++                end: false,
++                world_seed: 0,
++                sea_level: 63,
++                items: Some(&items),
++                lid_openers: &lid_openers,
++                mod_effects: None,
++            };
++            mod_entity_path(&w, Vec3::new(22.5, f64::from(feet), 0.5), 0.6, 0.65, [28.5, f64::from(feet), 0.5])
++        };
++        let past = |path: &[[f64; 3]]| path.last().is_some_and(|p| p[0] > 26.0);
++        // An open gap: the path reaches the far side, through the gap (a waypoint at z 4).
++        wall(&mut world, [air, air]);
++        let path = find(&world).expect("a path");
++        assert!(past(&path), "{path:?}");
++        assert!(path.iter().any(|p| p[0] == 25.5 && p[2] == 4.5), "through the gap: {path:?}");
++        // A closed door in the gap: it cannot open doors, so the path ends on its own side, as near as it gets.
++        wall(&mut world, [door("lower", false), door("upper", false)]);
++        assert!(find(&world).is_none_or(|p| !past(&p)));
++        // An open door: through it.
++        wall(&mut world, [door("lower", true), door("upper", true)]);
++        let path = find(&world).expect("a path");
++        assert!(past(&path), "{path:?}");
++    }
++}
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index a29cb8f13..ed9482f82 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1607,9 +1607,11 @@ interface server-events {
+         name: option<option<string>>,
+         /// Moves it at once (as `/tp` does).
+         teleport: option<tuple<f64, f64, f64>>,
+-        /// Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). It walks
+-        /// there each tick over the ground, climbing a block and dropping up to 3, and stops when it arrives or a wall is in its way;
+-        /// `some` of a new goal replaces the old, and a teleport clears it. The path is a straight line, not a search.
++        /// Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). The
++        /// way is vanilla's path search for a ground mob (FORK-10 5c, `GroundPathNavigation`: round walls, through open doors and not
++        /// closed ones, over water and away from lava and fences, up a block and down at most 3, up to 64 blocks); it walks it waypoint
++        /// by waypoint and stops when it arrives, when nothing is reachable, or after 3 blocked steps in a row. A goal that keeps moving
++        /// (an owner it follows) gets a new path at most every 10 ticks; a teleport or a stop clears it.
+         path-to: option<tuple<f64, f64, f64, f32>>,
+         /// Stops walking.
+         stop: bool,
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index 653de4b62..336e51121 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -36,6 +36,13 @@ pub struct ModEntityState {
+     /// Ticks of fire left, and ticks before an environmental hurt (lava, fire) can land again; not saved.
+     pub burning: i32,
+     pub hurt_cooldown: u8,
++    /// The path it follows to its goal (the waypoints its feet go to), the goal it was found for and its age in ticks (FORK-10 5c);
++    /// not saved.
++    pub path: Vec<[f64; 3]>,
++    pub path_goal: Option<[f64; 3]>,
++    pub path_age: u32,
++    /// Steps in a row it could not make along its path: a new path is found after each, and at 3 it stops.
++    pub stuck: u8,
+     /// The data slots and strings of its menu, as the mod last set them (FORK-10 5b); not saved.
+     pub menu_data: Vec<i32>,
+     pub menu_text: Vec<String>,
+@@ -75,6 +82,10 @@ impl ModEntityState {
+             fall_distance: 0.0,
+             burning: 0,
+             hurt_cooldown: 0,
++            path: Vec::new(),
++            path_goal: None,
++            path_age: 0,
++            stuck: 0,
+             menu_data: Vec::new(),
+             menu_text: Vec::new(),
+         }
+@@ -136,6 +147,10 @@ pub fn decode(text: &str) -> Vec<ModEntityState> {
+                 fall_distance: 0.0,
+                 burning: 0,
+                 hurt_cooldown: 0,
++                path: Vec::new(),
++                path_goal: None,
++                path_age: 0,
++                stuck: 0,
+                 menu_data: Vec::new(),
+                 menu_text: Vec::new(),
+                 items: r["items"]
+@@ -189,10 +204,13 @@ pub enum Walk {
+     Blocked,
+ }
+ 
+-/// One tick of walking from `pos` toward `goal` (x and z; the ground decides y) by `step` blocks over ground: it climbs one block, drops up
+-/// to 3, and needs `height` blocks of room above its feet. `solid(x, y, z)` says whether a block cell stops it. It turns toward where
+-/// it goes (`yaw` in degrees, 0 facing south). Straight steering, not a path search.
+-pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height: f64, solid: &dyn Fn(i32, i32, i32) -> bool) -> Walk {
++/// One tick of walking from `pos` toward `goal` (x and z; the ground decides y) by `step` blocks over ground, with `height` blocks of
++/// room above its feet. `top(x, y, z)` is how high the collision of a block cell reaches, 0 to 1.5 of the cell (0 for a cell it walks
++/// through: air, water, an open door; 0.5 a slab, 1 a full block or a stair, 1.5 a fence or a wall). It goes up a surface at most a block
++/// over its feet (a slab, a stair, a block), drops up to 3 (else it stays on its level and the game's gravity takes it), and turns
++/// toward where it goes (`yaw` in degrees, 0 facing south).
++pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height: f64, top: &dyn Fn(i32, i32, i32) -> f64) -> Walk {
++    const EPS: f64 = 1.0e-6;
+     let (dx, dz) = (goal[0] - pos[0], goal[2] - pos[2]);
+     let dist = dx.hypot(dz);
+     if dist < 0.1 {
+@@ -203,28 +221,79 @@ pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height
+     let go = step.min(dist);
+     let (nx, nz) = (pos[0] + dx / dist * go, pos[2] + dz / dist * go);
+     let (cx, cz) = (nx.floor() as i32, nz.floor() as i32);
+-    let rooms = height.ceil().max(1.0) as i32;
+-    let free = |y: i32| (0..rooms).all(|k| !solid(cx, y + k, cz));
+-    let feet = pos[1].floor() as i32;
+-    let new_y = if free(feet) {
+-        // Open ahead: drops while there is no floor, up to 3 blocks (else it stays on its level and falls back by the game's own gravity).
+-        let mut y = feet;
+-        while y > feet - 3 && !solid(cx, y - 1, cz) {
++    let feet = pos[1];
++    let fy = (feet + EPS).floor() as i32;
++    // The surface it would stand on in the new column: what is at its feet and the cell over them, or the floor under.
++    let surface = if top(cx, fy, cz) > 0.0 || top(cx, fy + 1, cz) > 0.0 {
++        let over = top(cx, fy + 1, cz);
++        if over > 0.0 { f64::from(fy + 1) + over } else { f64::from(fy) + top(cx, fy, cz) }
++    } else {
++        let mut y = fy;
++        while y > fy - 3 && top(cx, y - 1, cz) <= 0.0 {
+             y -= 1;
+         }
+-        if !solid(cx, y - 1, cz) { feet } else { y }
+-    } else if free(feet + 1) {
+-        feet + 1
+-    } else {
+-        return Walk::Blocked;
++        if top(cx, y - 1, cz) > 0.0 { f64::from(y - 1) + top(cx, y - 1, cz) } else { feet }
+     };
++    if surface - feet > 1.0 + EPS {
++        return Walk::Blocked;
++    }
++    // Room for its height over the surface.
++    let first = (surface - EPS).ceil() as i32;
++    let last = (surface + height - EPS).floor() as i32;
++    if (first..=last).any(|y| top(cx, y, cz) > 0.0) {
++        return Walk::Blocked;
++    }
+     pos[0] = nx;
+     pos[2] = nz;
+-    pos[1] = f64::from(new_y);
++    pos[1] = surface;
+     *yaw = (-dx.atan2(dz).to_degrees()) as f32;
+     if go >= dist { Walk::Arrived } else { Walk::Moving }
+ }
+ 
++/// How close (blocks, across) an entity of `width` gets to a waypoint before it takes the next (`PathNavigation.maxDistanceToWaypoint`).
++pub fn waypoint_reach(width: f64) -> f64 {
++    if width > 0.75 { width / 2.0 } else { 0.75 - width / 2.0 }
++}
++
++/// One tick along a found path (FORK-10 5c, `PathNavigation.followThePath`): the waypoints it is near (within [`waypoint_reach`]
++/// across and a block up or down) are passed, then it walks toward the next by `step` (see [`walk`]). Arrived when none is left;
++/// blocked when a step cannot be made (the game finds a new path or stops it).
++pub fn follow(
++    pos: &mut [f64; 3],
++    yaw: &mut f32,
++    path: &mut Vec<[f64; 3]>,
++    step: f64,
++    width: f64,
++    height: f64,
++    top: &dyn Fn(i32, i32, i32) -> f64,
++) -> Walk {
++    let reach = waypoint_reach(width);
++    let near = |pos: &[f64; 3], w: &[f64; 3]| (w[0] - pos[0]).hypot(w[2] - pos[2]) < reach && (w[1] - pos[1]).abs() < 1.0;
++    while path.first().is_some_and(|w| near(pos, w)) {
++        path.remove(0);
++    }
++    let Some(&next) = path.first() else {
++        return Walk::Arrived;
++    };
++    match walk(pos, yaw, next, step, height, top) {
++        Walk::Blocked => Walk::Blocked,
++        Walk::Arrived => {
++            path.remove(0);
++            if path.is_empty() { Walk::Arrived } else { Walk::Moving }
++        }
++        Walk::Moving => Walk::Moving,
++    }
++}
++
++/// Whether an entity walking to `goal` needs a new path: none was made for it, or the goal moved more than a block from the one the
++/// path was made for and the path is at least 10 ticks old (`FollowOwnerGoal`'s recalculation every 10 ticks).
++pub fn needs_path(goal: [f64; 3], made_for: Option<[f64; 3]>, age: u32) -> bool {
++    match made_for {
++        None => true,
++        Some(g) => age >= 10 && (0..3).map(|i| (g[i] - goal[i]).powi(2)).sum::<f64>() > 1.0,
++    }
++}
++
+ /// One tick of falling for an entity at `y` whose next cell below holds a floor at `floor_top` (the top of the highest blocking cell under
+ /// it, none for nothing within reach): vanilla's living gravity (0.08 a tick, 0.98 drag), landing on the floor. Returns the new y, the
+ /// new downward speed, the distance fallen this tick, and whether it landed.
+@@ -293,6 +362,8 @@ pub fn apply(e: &mut ModEntityState, kind: &EntityKind, u: &ModEntityUpdate) ->
+     if let Some((x, y, z)) = u.teleport {
+         e.pos = [x, y, z];
+         e.goal = None;
++        e.path.clear();
++        e.path_goal = None;
+     }
+     if let Some((x, y, z, speed)) = u.path_to
+         && [x, y, z].iter().all(|v| v.is_finite())
+@@ -302,6 +373,8 @@ pub fn apply(e: &mut ModEntityState, kind: &EntityKind, u: &ModEntityUpdate) ->
+     }
+     if u.stop {
+         e.goal = None;
++        e.path.clear();
++        e.path_goal = None;
+     }
+     if let Some(h) = u.health.filter(|h| h.is_finite() && *h > 0.0) {
+         e.health = h.min(kind.max_health);
+@@ -446,6 +519,72 @@ mod tests {
+         );
+     }
+ 
++    /// A cell's collision top from a solid-or-not answer.
++    fn full(solid: impl Fn(i32, i32, i32) -> bool) -> impl Fn(i32, i32, i32) -> f64 {
++        move |x, y, z| if solid(x, y, z) { 1.0 } else { 0.0 }
++    }
++
++    #[test]
++    fn walking_goes_up_slabs_and_stairs_but_not_over_a_fence() {
++        // A floor at y 63, a slab (0.5) at x 2 and a full block at x 3, both at y 64: it steps up half, then the other half.
++        let stairs = |x: i32, y: i32, _: i32| match (x, y) {
++            (_, ..=63) => 1.0,
++            (2, 64) => 0.5,
++            (3.., 64) => 1.0,
++            _ => 0.0,
++        };
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        walk(&mut pos, &mut yaw, [6.5, 64.0, 0.5], 0.2, 0.65, &stairs);
++        assert_eq!(pos[1], 64.5, "onto the slab");
++        while pos[0] < 3.0 {
++            walk(&mut pos, &mut yaw, [6.5, 64.0, 0.5], 0.2, 0.65, &stairs);
++        }
++        assert_eq!(pos[1], 65.0, "onto the block");
++        // A fence (1.5) is more than a block over its feet: it stops.
++        let fence = |x: i32, y: i32, _: i32| match (x, y) {
++            (_, ..=63) => 1.0,
++            (2, 64) => 1.5,
++            _ => 0.0,
++        };
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        assert_eq!(walk(&mut pos, &mut yaw, [6.5, 64.0, 0.5], 0.2, 0.65, &fence), Walk::Blocked);
++    }
++
++    #[test]
++    fn following_a_path_passes_its_waypoints_in_turn_and_stops_when_blocked() {
++        let floor = full(|_, y, _| y <= 63);
++        // Round a corner: east 3 blocks, then south 2 (the waypoints a path search gives, at the cells' middles).
++        let mut path = vec![[0.5, 64.0, 0.5], [1.5, 64.0, 0.5], [2.5, 64.0, 0.5], [3.5, 64.0, 0.5], [3.5, 64.0, 1.5], [3.5, 64.0, 2.5]];
++        let (mut pos, mut yaw) = ([0.5, 64.0, 0.5], 0.0f32);
++        let mut ticks = 0;
++        while follow(&mut pos, &mut yaw, &mut path, 0.3, 0.6, 0.65, &floor) == Walk::Moving {
++            ticks += 1;
++            // It goes east along the row first and turns south only near the corner (the reach of a 0.6 wide entity is 0.45).
++            assert!(pos[2] < 0.6 || pos[0] > 3.0, "it cut the corner at {pos:?}");
++            assert!(ticks < 100);
++        }
++        // As in vanilla, the last waypoint is passed too once it is within reach: it stops within 0.45 of it.
++        assert!((pos[0] - 3.5).hypot(pos[2] - 2.5) < 0.45 && pos[1] == 64.0, "{pos:?}");
++        assert!(path.is_empty());
++        assert!(yaw.abs() < 45.0, "it faces south at the end, {yaw}");
++        // A wall where the path goes: blocked, and the path is kept for the game to find a new one.
++        let wall = full(|x, y, _| y <= 63 || x == 2 && y <= 65);
++        let mut path = vec![[1.5, 64.0, 0.5], [2.5, 64.0, 0.5]];
++        let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
++        assert_eq!(follow(&mut pos, &mut yaw, &mut path, 0.3, 0.6, 0.65, &wall), Walk::Blocked);
++        assert_eq!(path, [[2.5, 64.0, 0.5]]);
++        assert_eq!(waypoint_reach(1.4), 0.7);
++    }
++
++    #[test]
++    fn a_new_path_is_found_for_a_new_goal_at_most_every_10_ticks() {
++        assert!(needs_path([5.0, 64.0, 5.0], None, 0), "none yet");
++        assert!(!needs_path([5.0, 64.0, 5.0], Some([5.0, 64.0, 5.0]), 50), "the same goal");
++        assert!(!needs_path([5.5, 64.0, 5.5], Some([5.0, 64.0, 5.0]), 50), "a goal less than a block away");
++        assert!(!needs_path([9.0, 64.0, 5.0], Some([5.0, 64.0, 5.0]), 9), "too soon");
++        assert!(needs_path([9.0, 64.0, 5.0], Some([5.0, 64.0, 5.0]), 10));
++    }
++
+     #[test]
+     fn walking_goes_over_flat_ground_climbs_a_block_drops_and_stops_at_a_wall() {
+         // A floor at y 63: cells at y 63 and below are solid; y 64 and above is air, but for the scene's own blocks.
+@@ -453,7 +592,7 @@ mod tests {
+         let (mut pos, mut yaw) = ([0.5, 64.0, 0.5], 0.0f32);
+         // 10 blocks east at 0.5 a tick: arrives on the 20th step, facing east (-90).
+         let mut steps = 0;
+-        while walk(&mut pos, &mut yaw, [10.5, 64.0, 0.5], 0.5, 0.65, &floor) == Walk::Moving {
++        while walk(&mut pos, &mut yaw, [10.5, 64.0, 0.5], 0.5, 0.65, &full(floor)) == Walk::Moving {
+             steps += 1;
+         }
+         assert_eq!((steps, pos), (19, [10.5, 64.0, 0.5]));
+@@ -461,19 +600,19 @@ mod tests {
+         // A step up of one block: the cell at x 2 is raised to y 64.
+         let step_up = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && y == 64);
+         let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
+-        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &step_up);
++        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &full(step_up));
+         assert_eq!(pos[1], 65.0, "it climbs onto the block");
+         // A wall two blocks high stops it, and so does a ceiling that leaves too little room for its height.
+         let wall = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && (64..=65).contains(&y));
+         let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
+-        assert_eq!(walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &wall), Walk::Blocked);
++        assert_eq!(walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &full(wall)), Walk::Blocked);
+         assert_eq!(pos, [1.9, 64.0, 0.5]);
+         let low = |x: i32, y: i32, _: i32| y <= 63 || (x == 2 && y == 65);
+-        assert_eq!(walk(&mut [1.9, 64.0, 0.5], &mut yaw, [5.5, 64.0, 0.5], 0.5, 1.8, &low), Walk::Blocked);
++        assert_eq!(walk(&mut [1.9, 64.0, 0.5], &mut yaw, [5.5, 64.0, 0.5], 0.5, 1.8, &full(low)), Walk::Blocked);
+         // A drop of one block: the floor ends at x 2 (the cell below is air down to 62).
+         let pit = |x: i32, y: i32, _: i32| y <= 62 || (x != 2 && y == 63);
+         let (mut pos, mut yaw) = ([1.9, 64.0, 0.5], 0.0f32);
+-        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &pit);
++        walk(&mut pos, &mut yaw, [5.5, 64.0, 0.5], 0.5, 0.65, &full(pit));
+         assert_eq!(pos[1], 63.0, "it drops into the pit");
+     }
+ 
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index f8ffc1c31..bf004ebb0 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -524,9 +524,10 @@ impl TestGame {
+         for u in self.mods.entities_tick(self.tick, &list) {
+             self.apply_entity_update(u);
+         }
+-        // Walking, over the script's blocks (a cell with a block that is not air stops it), as the game does.
++        // Walking, over the script's blocks (a cell with a block that is not air stops it), in a straight line: the game's path
++        // search (FORK-10 5c) needs its block tables, which a script does not have.
+         let world = self.world.clone();
+-        let solid = |x: i32, y: i32, z: i32| world.get(&(x, y, z)).is_some_and(|s| !s.starts_with("minecraft:air"));
++        let solid = |x: i32, y: i32, z: i32| if world.get(&(x, y, z)).is_some_and(|s| !s.starts_with("minecraft:air")) { 1.0 } else { 0.0 };
+         for e in &mut self.mod_entities {
+             let Some((goal, mult)) = self.entity_goals.get(&e.id).copied() else { continue };
+             let Some(kind) = self.entity_kinds.iter().find(|k| k.id == e.kind) else { continue };
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 7bb6a5ba0..a6c32a449 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -1333,7 +1333,7 @@ What the mod makes of an entity in a tick; a none leaves that as it is.
+ | `skin` | `option<string>` | A skin id of the kind; an unknown one is ignored. |
+ | `name` | `option<option<string>>` | `some(none)` takes the name away. |
+ | `teleport` | `option<tuple<f64, f64, f64>>` | Moves it at once (as `/tp` does). |
+-| `path-to` | `option<tuple<f64, f64, f64, f32>>` | Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). It walks there each tick over the ground, climbing a block and dropping up to 3, and stops when it arrives or a wall is in its way; `some` of a new goal replaces the old, and a teleport clears it. The path is a straight line, not a search. |
++| `path-to` | `option<tuple<f64, f64, f64, f32>>` | Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). The way is vanilla's path search for a ground mob (FORK-10 5c, `GroundPathNavigation`: round walls, through open doors and not closed ones, over water and away from lava and fences, up a block and down at most 3, up to 64 blocks); it walks it waypoint by waypoint and stops when it arrives, when nothing is reachable, or after 3 blocked steps in a row. A goal that keeps moving (an owner it follows) gets a new path at most every 10 ticks; a teleport or a stop clears it. |
+ | `stop` | `bool` | Stops walking. |
+ | `health` | `option<f32>` | Its health after the call (above 0, cut to the kind's maximum); none leaves it. |
+ | `remove` | `bool` | Takes it out of the world with no death and no drops. |
+-- 
+2.43.0
+

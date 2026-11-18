@@ -1,0 +1,1499 @@
+# The crusher, the enrichment chamber and the energized smelter run on recipes from the mod's data
+# and the game's cooking recipes, with energy from a creative cube, and show when they work.
+
+items = ["minecraft:iron_ore", "minecraft:iron_ingot", "mekanism:dust_iron", "mekanism:enriched_iron", "minecraft:stone", "minecraft:oak_log", "minecraft:oak_planks", "mekanism:sawdust", "minecraft:flint", "minecraft:cobblestone", "minecraft:gravel", "minecraft:copper_ingot", "minecraft:redstone", "mekanism:alloy_infused", "minecraft:coal", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian", "mekanism:crystal_gold", "minecraft:water_bucket", "minecraft:bucket", "mekanism:bio_fuel", "mekanism:block_bio_fuel", "minecraft:coal_block", "minecraft:lava_bucket", "mekanism:upgrade_speed", "mekanism:upgrade_chemical", "mekanism:dust_sulfur", "minecraft:red_dye", "minecraft:white_wool", "minecraft:red_wool", "mekanism:brine_bucket"]
+
+[[recipe]]
+id = "mekanism:crushing/iron"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[recipe]]
+id = "mekanism:enriching/iron"
+json = '''{"type":"mekanism:enriching","input":{"count":1,"ingredient":"mekanism:dust_iron"},"output":{"count":1,"id":"mekanism:enriched_iron"}}'''
+
+[[recipe]]
+id = "mekanism:sawing/oak"
+json = '''{"type":"mekanism:sawing","input":{"count":1,"ingredient":"minecraft:oak_log"},"main_output":{"count":6,"id":"minecraft:oak_planks"},"secondary_chance":1.0,"secondary_output":{"id":"mekanism:sawdust"}}'''
+
+[[recipe]]
+id = "mekanism:combining/gravel"
+json = '''{"type":"mekanism:combining","main_input":{"count":1,"ingredient":"minecraft:flint"},"extra_input":{"count":1,"ingredient":"minecraft:cobblestone"},"output":{"id":"minecraft:gravel"}}'''
+
+[[recipe]]
+id = "mekanism:metallurgic_infusing/alloy/infused"
+json = '''{"type":"mekanism:metallurgic_infusing","chemical_input":{"amount":10,"ingredient":"#mekanism:redstone"},"experience":0.2,"item_input":{"count":1,"ingredient":"minecraft:copper_ingot"},"output":{"id":"mekanism:alloy_infused"},"per_tick_usage":false}'''
+
+[[recipe]]
+id = "mekanism:chemical_conversion/redstone/from_dust"
+json = '''{"type":"mekanism:chemical_conversion","group":"mekanism:redstone","input":{"count":1,"ingredient":"minecraft:redstone"},"output":{"amount":10,"id":"mekanism:redstone"}}'''
+
+[[recipe]]
+id = "mekanism:oxidizing/carbon/from_coal"
+json = '''{"type":"mekanism:oxidizing","input":{"count":1,"ingredient":"minecraft:coal"},"output":{"amount":10,"id":"mekanism:carbon"}}'''
+
+[[recipe]]
+id = "mekanism:compressing/refined_obsidian"
+json = '''{"type":"mekanism:compressing","chemical_input":{"amount":1,"ingredient":"mekanism:osmium"},"item_input":{"count":1,"ingredient":"mekanism:dust_refined_obsidian"},"output":{"id":"mekanism:ingot_refined_obsidian"},"per_tick_usage":true}'''
+
+[[recipe]]
+id = "mekanism:crystallizing/gold"
+json = '''{"type":"mekanism:crystallizing","input":{"amount":200,"ingredient":"mekanism:clean_gold"},"output":{"id":"mekanism:crystal_gold"}}'''
+
+[[recipe]]
+id = "mekanism:separating/water"
+json = '''{"type":"mekanism:separating","input":{"amount":2,"ingredient":"#minecraft:water"},"output":{"left":{"amount":2,"id":"mekanism:hydrogen"},"right":{"amount":1,"id":"mekanism:oxygen"}}}'''
+
+[[recipe]]
+id = "mekanism:chemical_infusing/hydrogen_chloride"
+json = '''{"type":"mekanism:chemical_infusing","left_input":{"amount":1,"ingredient":"mekanism:hydrogen"},"output":{"amount":1,"id":"mekanism:hydrogen_chloride"},"right_input":{"amount":1,"ingredient":"mekanism:chlorine"}}'''
+
+[[recipe]]
+id = "mekanism:rotary/water_vapor"
+json = '''{"type":"mekanism:rotary","chemical_input":{"amount":1,"ingredient":"mekanism:water_vapor"},"chemical_output":{"amount":1,"id":"mekanism:water_vapor"},"fluid_input":{"amount":1,"ingredient":"#minecraft:water"},"fluid_output":{"amount":1,"id":"minecraft:water"}}'''
+
+[[recipe]]
+id = "mekanism:reaction/coals"
+json = '''{"type":"mekanism:reaction","chemical_input":{"amount":100,"ingredient":"mekanism:oxygen"},"duration":100,"fluid_input":{"amount":100,"ingredient":"#minecraft:water"},"item_input":{"count":1,"ingredient":"minecraft:coal"},"output":{"chemical":{"amount":100,"id":"mekanism:hydrogen"},"item":{"id":"mekanism:dust_sulfur"}}}'''
+
+[[recipe]]
+id = "mekanism:pigment_extracting/red"
+json = '''{"type":"mekanism:pigment_extracting","input":{"count":1,"ingredient":"minecraft:red_dye"},"output":{"amount":192,"id":"mekanism:red"}}'''
+
+[[recipe]]
+id = "mekanism:painting/red_wool"
+json = '''{"type":"mekanism:painting","chemical_input":{"amount":256,"ingredient":"mekanism:red"},"item_input":{"count":1,"ingredient":"minecraft:white_wool"},"output":{"id":"minecraft:red_wool"},"per_tick_usage":false}'''
+
+[[recipe]]
+id = "mekanism:pigment_mixing/dark_red"
+json = '''{"type":"mekanism:pigment_mixing","left_input":{"amount":1,"ingredient":"mekanism:gray"},"right_input":{"amount":2,"ingredient":"mekanism:red"},"output":{"amount":3,"id":"mekanism:dark_red"}}'''
+
+[[recipe]]
+id = "mekanism:washing/gold"
+json = '''{"type":"mekanism:washing","chemical_input":{"amount":1,"ingredient":"mekanism:dirty_gold"},"fluid_input":{"amount":5,"ingredient":"#minecraft:water"},"output":{"amount":1,"id":"mekanism:clean_gold"}}'''
+
+[[cooking]]
+inputs = ["minecraft:iron_ore"]
+output = "minecraft:iron_ingot"
+
+[[step]]
+join = "Alex"
+# The cube faces north: its front outputs (Mekanism's default), its other sides only take.
+blocks = [
+    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=false]" },
+    { x = 3, y = 64, z = 0, state = "mekanism:energized_smelter[facing=north,lit=false]" },
+]
+set-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", ""] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", ""] },
+]
+ticks = 1
+# One tick in: the cube fills itself and feeds the crusher in front of it.
+expect.block-items = [{ x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", "", ""] }]
+
+[[step]]
+ticks = 220
+# 200 ticks later, the first ingot is a dust; the smelter, with no cable to the cube, never started.
+expect.block-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", "", ""] },
+    { x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", "", ""] },
+]
+expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=true]" }]
+
+[[step]]
+# Two cables beside the cube: its east side only takes energy, so the smelter gets none.
+blocks = [
+    { x = 1, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
+    { x = 2, y = 64, z = 0, state = "mekanism:basic_universal_cable" },
+]
+ticks = 205
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["minecraft:iron_ore*1", "", "", "", ""] }]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
+
+[[step]]
+# As the original's configurator does: its mode key opens a radial menu of the modes (items, fluids, chemicals, energy,
+# heat, empty, rotate, wrench), items to start with; here sneaking in the air opens it, since the Android client has no
+# mode key. The choice comes back on mekanism:radial and sets the held configurator's mode. A plain click on a side only
+# tells what it is; sneaking, the click bumps the side to the next type. The harness records the mod's set-slot but does
+# not apply it, so the next steps give the inventory as the client would hold it once the mode was written.
+as = "Alex"
+inventory = ["mekanism:configurator*1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 3
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 0"]
+
+[[step]]
+as = "Alex"
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 49] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Fluids)"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 50] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 51] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Energy)"]
+
+[[step]]
+# The player looks west at the cube's east face from beside it (sneaking) and uses the configurator on it: that side,
+# an input, becomes an output, and the cables feed the smelter.
+as = "Alex"
+player = { x = 1.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 205
+expect.told = ["Alex: Energy behavior bumped to: Output (Blue)"]
+expect.blocks = [{ x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" }]
+expect.block-items = [{ x = 3, y = 64, z = 0, slots = ["", "minecraft:iron_ingot*1", "", "", ""] }]
+
+[[step]]
+# Not sneaking, a click only tells the side's behaviour and changes nothing.
+as = "Alex"
+motion = { sneaking = false }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Current Energy behavior: Output (Blue)"]
+
+[[step]]
+# A new combiner has Mekanism's default side configuration (items: input at the front, left, top, right output, charge slot
+# at the back, extra input at the bottom; energy in everywhere), shown to its screen as nibbles in data slots 6 to 9.
+blocks = [{ x = 30, y = 64, z = 0, state = "mekanism:combiner[facing=north,lit=false]" }]
+ticks = 2
+# Then the Transporter Config tab (40bd32a): eject colour 0 (none) and strict input 0 at slots 32 and 33.
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 145, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
+
+[[step]]
+# A press on the bottom side's button (id 1050) takes it from extra to the next type, none; the eject toggle (2000) turns
+# eject on.
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 1050 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 1, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
+
+[[step]]
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 2000 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 4369, 17, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
+
+[[step]]
+# The energy clear button (3010): every side the same, so the next type (none); the items clear button (3000): mixed
+# sides go to none.
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 3010 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 33809, 257, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
+
+[[step]]
+as = "Alex"
+press = { x = 30, y = 64, z = 0, id = 3000 }
+ticks = 1
+expect.block-menu-data = [{ x = 30, y = 64, z = 0, data = [0, 0, 0, 16000, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16000, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0] }]
+
+[[step]]
+# The use in the air that comes with a click on a machine (the client sends both) must not change the tool's mode:
+# sneaking, a click on the cube is followed at once by one in the air, and the tool stays on energy.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+as = "Alex"
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.told = ["Alex: Energy behavior bumped to: Input/Output (Purple)"]
+
+[[step]]
+# A while later, sneaking in the air does change the mode (energy to heat), as before.
+as = "Alex"
+ticks = 10
+use-item = { stack = "mekanism:configurator*1" }
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 3"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 52] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# The energy cube's screen: a basic cube far from the rest, a redstone dust in its discharge slot turns into 10000 energy
+# (the recipe of energy_conversion) one a tick, the stack shrinking by one each.
+blocks = [{ x = 60, y = 64, z = 0, state = "mekanism:basic_energy_cube" }]
+set-items = [{ x = 60, y = 64, z = 0, slots = ["minecraft:redstone*3", ""] }]
+ticks = 1
+expect.block-items = [{ x = 60, y = 64, z = 0, slots = ["minecraft:redstone*2", ""] }]
+
+[[step]]
+# A press on the window's button for the cube's left side (1000 + 1 * 100 + 1 * 10): the cube applies it on its next tick.
+as = "Alex"
+press = { x = 60, y = 64, z = 0, id = 1110 }
+ticks = 2
+
+[[step]]
+# The metallurgic infuser: the redstone in its infusion slot turns into infusion type in its tank, ten for each dust
+# (the recipes of chemical_conversion), one dust a tick, up to a bucket. Its recipes come a little after the start.
+blocks = [
+    { x = 80, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 80, y = 64, z = -1, state = "mekanism:metallurgic_infuser[facing=north,lit=false]" },
+]
+set-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "minecraft:redstone*3"] }]
+ticks = 25
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["", "", "", "", "", ""] }]
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*30"] }]
+
+[[step]]
+# 200 ticks after a copper ingot is put in, it and ten of the infusion type have made an infused alloy (the recipe of
+# metallurgic_infusing), and the tank keeps what is left.
+set-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*2", "", ""] }]
+ticks = 205
+expect.block-items = [{ x = 80, y = 64, z = -1, slots = ["minecraft:copper_ingot*1", "mekanism:alloy_infused*1", "", "", "", ""] }]
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = ["mekanism:redstone*20"] }]
+
+[[step]]
+# The dump button (4000) empties the tank.
+as = "Alex"
+press = { x = 80, y = 64, z = -1, id = 4000 }
+ticks = 1
+expect.block-tanks = [{ x = 80, y = 64, z = -1, tanks = [""] }]
+
+[[step]]
+# The chemical oxidizer turns a coal in its input slot into ten of carbon in its tank in 100 ticks (its recipes come a
+# little after the start).
+blocks = [
+    { x = 100, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 100, y = 64, z = -1, state = "mekanism:chemical_oxidizer[facing=north,lit=false]" },
+]
+ticks = 25
+set-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*2", ""] }]
+
+[[step]]
+ticks = 110
+expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:coal*1", "", "", "", ""] }]
+expect.block-tanks = [{ x = 100, y = 64, z = -1, tanks = ["mekanism:carbon*10"] }]
+
+[[step]]
+# The osmium compressor uses one of osmium a tick for the 200 ticks of a refined obsidian ingot.
+blocks = [
+    { x = 120, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 120, y = 64, z = -1, state = "mekanism:osmium_compressor[facing=north,lit=false]" },
+]
+ticks = 1
+
+[[step]]
+set-items = [{ x = 120, y = 64, z = -1, slots = ["mekanism:dust_refined_obsidian*1", "", ""] }]
+set-tanks = [{ x = 120, y = 64, z = -1, tanks = ["mekanism:osmium*210"] }]
+ticks = 25
+
+[[step]]
+ticks = 190
+expect.block-items = [{ x = 120, y = 64, z = -1, slots = ["", "mekanism:ingot_refined_obsidian*1", "", "", "", ""] }]
+expect.block-tanks = [{ x = 120, y = 64, z = -1, tanks = ["mekanism:osmium*10"] }]
+
+[[step]]
+# The chemical crystallizer makes a gold crystal of 200 of clean gold slurry in 200 ticks.
+blocks = [
+    { x = 140, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 140, y = 64, z = -1, state = "mekanism:chemical_crystallizer[facing=north,lit=false]" },
+]
+ticks = 1
+
+[[step]]
+set-tanks = [{ x = 140, y = 64, z = -1, tanks = ["mekanism:clean_gold*450"] }]
+ticks = 230
+
+[[step]]
+ticks = 5
+expect.block-items = [{ x = 140, y = 64, z = -1, slots = ["", "mekanism:crystal_gold*1", "", "", ""] }]
+expect.block-tanks = [{ x = 140, y = 64, z = -1, tanks = ["mekanism:clean_gold*250"] }]
+
+[[step]]
+# A fluid tank beside an electrolytic separator: a bucket of water put in the tank's input slot fills it (the empty bucket
+# comes out in the output slot), the tank gives its water to the separator beside it and the separator splits it into
+# hydrogen and oxygen.
+blocks = [
+    { x = 200, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 200, y = 64, z = 0, state = "mekanism:electrolytic_separator[facing=north,lit=false]" },
+    { x = 201, y = 64, z = 0, state = "mekanism:basic_fluid_tank[lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 201, y = 64, z = 0, slots = ["minecraft:water_bucket*1", ""] }]
+ticks = 2
+expect.block-items = [{ x = 201, y = 64, z = 0, slots = ["", "minecraft:bucket*1"] }]
+
+[[step]]
+ticks = 40
+expect.block-tanks = [
+    { x = 201, y = 64, z = 0, tanks = [""] },
+    { x = 200, y = 64, z = 0, tanks = ["minecraft:water*918", "mekanism:hydrogen*82", "mekanism:oxygen*41"] },
+]
+
+[[step]]
+# The chemical infuser makes hydrogen chloride of a hydrogen and a chlorine a tick, from its left and right tanks.
+blocks = [
+    { x = 220, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 220, y = 64, z = 0, state = "mekanism:chemical_infuser[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 220, y = 64, z = 0, tanks = ["mekanism:hydrogen*50", "mekanism:chlorine*30", ""] }]
+ticks = 10
+expect.block-tanks = [{ x = 220, y = 64, z = 0, tanks = ["mekanism:hydrogen*40", "mekanism:chlorine*20", "mekanism:hydrogen_chloride*10"] }]
+
+[[step]]
+# The chemical washer makes a clean slurry of a dirty one and five of water for each.
+blocks = [
+    { x = 240, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 240, y = 64, z = 0, state = "mekanism:chemical_washer[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 240, y = 64, z = 0, tanks = ["minecraft:water*100", "mekanism:dirty_gold*10", ""] }]
+ticks = 4
+expect.block-tanks = [{ x = 240, y = 64, z = 0, tanks = ["minecraft:water*80", "mekanism:dirty_gold*6", "mekanism:clean_gold*4"] }]
+
+[[step]]
+# A chemical tank takes the washer's slurry... a creative one never empties: what is put in it refills it.
+blocks = [{ x = 260, y = 64, z = 0, state = "mekanism:creative_chemical_tank[facing=north,lit=false]" }]
+ticks = 2
+
+[[step]]
+set-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*5"] }]
+ticks = 3
+expect.block-tanks = [{ x = 260, y = 64, z = 0, tanks = ["mekanism:oxygen*1000000000000"] }]
+
+[[step]]
+# The rotary condensentrator turns the water vapor of its gas tank into water (a mode that condensentrates), and after the
+# mode button (5200) turns water back into vapor.
+blocks = [
+    { x = 280, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 280, y = 64, z = 0, state = "mekanism:rotary_condensentrator[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-tanks = [{ x = 280, y = 64, z = 0, tanks = ["", "mekanism:water_vapor*50"] }]
+ticks = 10
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*10", "mekanism:water_vapor*40"] }]
+
+[[step]]
+press = { x = 280, y = 64, z = 0, id = 5200 }
+ticks = 5
+# (the button is pressed after the ticks: they condensentrate five more)
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*15", "mekanism:water_vapor*35"] }]
+
+[[step]]
+ticks = 5
+expect.block-tanks = [{ x = 280, y = 64, z = 0, tanks = ["minecraft:water*10", "mekanism:water_vapor*40"] }]
+
+[[step]]
+# The generators: a bio-generator turns bio fuel items into bioethanol and burns a mB a tick; the heat generator turns a
+# coal block into lava and burns 100 mB a tick; the solar generator sees the sun (noon, clear, nothing above); the
+# gas-burning generator burns ten mB of hydrogen a tick from a full tank.
+blocks = [
+    { x = 300, y = 64, z = 0, state = "mekanism:bio_generator[facing=north,lit=false]" },
+    { x = 310, y = 64, z = 0, state = "mekanism:heat_generator[facing=north,lit=false]" },
+    { x = 320, y = 64, z = 0, state = "mekanism:solar_generator[lit=false]" },
+    { x = 330, y = 64, z = 0, state = "mekanism:gas_burning_generator[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [
+    { x = 300, y = 64, z = 0, slots = ["mekanism:bio_fuel*2", ""] },
+    { x = 310, y = 64, z = 0, slots = ["minecraft:coal_block*1", ""] },
+]
+set-tanks = [{ x = 330, y = 64, z = 0, tanks = ["mekanism:hydrogen*1000"] }]
+ticks = 2
+expect.block-items = [
+    { x = 300, y = 64, z = 0, slots = ["", "", "", ""] },
+    { x = 310, y = 64, z = 0, slots = ["", "", "", ""] },
+]
+expect.block-tanks = [
+    { x = 300, y = 64, z = 0, tanks = ["mekanismgenerators:bioethanol*398"] },
+    { x = 310, y = 64, z = 0, tanks = ["minecraft:lava*780"] },
+    { x = 330, y = 64, z = 0, tanks = ["mekanism:hydrogen*970"] },
+]
+expect.blocks = [
+    { x = 300, y = 64, z = 0, state = "mekanism:bio_generator[facing=north,lit=true]" },
+    { x = 310, y = 64, z = 0, state = "mekanism:heat_generator[facing=north,lit=true]" },
+    { x = 320, y = 64, z = 0, state = "mekanism:solar_generator[lit=true]" },
+    { x = 330, y = 64, z = 0, state = "mekanism:gas_burning_generator[facing=north,lit=true]" },
+]
+
+[[step]]
+# Redstone control: a crusher set to "normal" (the tab, button 6000) waits for a signal, and works once there is one.
+blocks = [
+    { x = 340, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 340, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+press = { x = 340, y = 64, z = 0, id = 6000 }
+ticks = 1
+
+[[step]]
+set-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", ""] }]
+ticks = 230
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "", "", ""] }]
+
+[[step]]
+power = [{ x = 340, y = 64, z = 0, level = 15 }]
+ticks = 230
+expect.block-items = [{ x = 340, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", "", ""] }]
+
+[[step]]
+# Upgrades: two speed upgrades put in a crusher's upgrade slot (the third) install after a second and cut a 200 tick recipe to
+# 112 (200 * 10^(-2/8)); a chemical upgrade is not taken by a crusher and stays where it is.
+blocks = [
+    { x = 350, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 350, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 350, y = 64, z = 0, slots = ["minecraft:iron_ingot*1", "", "mekanism:upgrade_speed*2", ""] }]
+ticks = 130
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "mekanism:dust_iron*1", "", "", ""] }]
+
+[[step]]
+set-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", ""] }]
+ticks = 40
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "mekanism:upgrade_chemical*1", "", ""] }]
+
+[[step]]
+# The window's remove button for speed (6100): one upgrade comes out into the output slot.
+set-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", ""] }]
+press = { x = 350, y = 64, z = 0, id = 6100 }
+ticks = 2
+
+[[step]]
+ticks = 2
+expect.block-items = [{ x = 350, y = 64, z = 0, slots = ["", "", "", "mekanism:upgrade_speed*1", ""] }]
+
+[[step]]
+# The pressurized reaction chamber: a coal, a hundred of water and a hundred of oxygen make sulfur and a hundred of hydrogen in 100 ticks.
+blocks = [
+    { x = 360, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 360, y = 64, z = 0, state = "mekanism:pressurized_reaction_chamber[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [{ x = 360, y = 64, z = 0, slots = ["minecraft:coal*1", "", "", "", ""] }]
+set-tanks = [{ x = 360, y = 64, z = 0, tanks = ["minecraft:water*100", "mekanism:oxygen*100", ""] }]
+ticks = 110
+expect.block-items = [{ x = 360, y = 64, z = 0, slots = ["", "mekanism:dust_sulfur*1", "", "", ""] }]
+expect.block-tanks = [{ x = 360, y = 64, z = 0, tanks = ["", "", "mekanism:hydrogen*100"] }]
+
+[[step]]
+# The pigment machines: the extractor makes red of a dye (100 ticks), the painting machine paints a wool with it (200 ticks),
+# and the mixer makes dark red of a gray and two reds a tick.
+blocks = [
+    { x = 370, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 370, y = 64, z = 0, state = "mekanism:pigment_extractor[facing=north,lit=false]" },
+    { x = 380, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 380, y = 64, z = 0, state = "mekanism:painting_machine[facing=north,lit=false]" },
+    { x = 390, y = 64, z = 1, state = "mekanism:creative_energy_cube" },
+    { x = 390, y = 64, z = 0, state = "mekanism:pigment_mixer[facing=north,lit=false]" },
+]
+ticks = 25
+
+[[step]]
+set-items = [
+    { x = 370, y = 64, z = 0, slots = ["minecraft:red_dye*1", "", "", ""] },
+    { x = 380, y = 64, z = 0, slots = ["minecraft:white_wool*1", "", "", "", ""] },
+]
+set-tanks = [
+    { x = 380, y = 64, z = 0, tanks = ["mekanism:red*256"] },
+    { x = 390, y = 64, z = 0, tanks = ["mekanism:gray*10", "mekanism:red*20", ""] },
+]
+ticks = 3
+expect.block-tanks = [{ x = 390, y = 64, z = 0, tanks = ["mekanism:gray*7", "mekanism:red*14", "mekanism:dark_red*9"] }]
+
+[[step]]
+ticks = 210
+expect.block-tanks = [
+    { x = 370, y = 64, z = 0, tanks = ["mekanism:red*192"] },
+    { x = 380, y = 64, z = 0, tanks = [""] },
+]
+expect.block-items = [
+    { x = 370, y = 64, z = 0, slots = ["", "", "", "", ""] },
+    { x = 380, y = 64, z = 0, slots = ["", "minecraft:red_wool*1", "", "", "", ""] },
+]
+
+[[step]]
+# A bucket of brine empties into a fluid tank (the empty bucket comes out), and an empty bucket is filled from it.
+blocks = [{ x = 400, y = 64, z = 0, state = "mekanism:basic_fluid_tank[lit=false]" }]
+ticks = 5
+
+[[step]]
+set-items = [{ x = 400, y = 64, z = 0, slots = ["mekanism:brine_bucket*1", ""] }]
+ticks = 3
+expect.block-tanks = [{ x = 400, y = 64, z = 0, tanks = ["mekanism:brine*1000"] }]
+expect.block-items = [{ x = 400, y = 64, z = 0, slots = ["", "minecraft:bucket*1"] }]
+
+[[step]]
+# A whole stack of hydrogen buckets in a fluid tank: one a tick empties, the empty buckets stack in the output slot (16 at most).
+blocks = [{ x = 410, y = 64, z = 0, state = "mekanism:basic_fluid_tank[lit=false]" }]
+ticks = 5
+
+[[step]]
+set-items = [{ x = 410, y = 64, z = 0, slots = ["mekanism:hydrogen_bucket*64", ""] }]
+ticks = 40
+expect.block-tanks = [{ x = 410, y = 64, z = 0, tanks = ["mekanism:hydrogen*16000"] }]
+expect.block-items = [{ x = 410, y = 64, z = 0, slots = ["mekanism:hydrogen_bucket*48", "minecraft:bucket*16"] }]
+
+[[step]]
+# Salt: in a new chunk with a dirt floor under water, the first disk (centre 967, 967, radius 2) turns the dirt to salt.
+blocks = [
+    { x = 960, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 960, state = "minecraft:water" },
+    { x = 960, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 961, state = "minecraft:water" },
+    { x = 960, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 962, state = "minecraft:water" },
+    { x = 960, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 963, state = "minecraft:water" },
+    { x = 960, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 964, state = "minecraft:water" },
+    { x = 960, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 965, state = "minecraft:water" },
+    { x = 960, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 966, state = "minecraft:water" },
+    { x = 960, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 967, state = "minecraft:water" },
+    { x = 960, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 968, state = "minecraft:water" },
+    { x = 960, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 969, state = "minecraft:water" },
+    { x = 960, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 970, state = "minecraft:water" },
+    { x = 960, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 971, state = "minecraft:water" },
+    { x = 960, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 972, state = "minecraft:water" },
+    { x = 960, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 973, state = "minecraft:water" },
+    { x = 960, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 974, state = "minecraft:water" },
+    { x = 960, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 960, y = 41, z = 975, state = "minecraft:water" },
+    { x = 961, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 960, state = "minecraft:water" },
+    { x = 961, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 961, state = "minecraft:water" },
+    { x = 961, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 962, state = "minecraft:water" },
+    { x = 961, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 963, state = "minecraft:water" },
+    { x = 961, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 964, state = "minecraft:water" },
+    { x = 961, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 965, state = "minecraft:water" },
+    { x = 961, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 966, state = "minecraft:water" },
+    { x = 961, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 967, state = "minecraft:water" },
+    { x = 961, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 968, state = "minecraft:water" },
+    { x = 961, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 969, state = "minecraft:water" },
+    { x = 961, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 970, state = "minecraft:water" },
+    { x = 961, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 971, state = "minecraft:water" },
+    { x = 961, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 972, state = "minecraft:water" },
+    { x = 961, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 973, state = "minecraft:water" },
+    { x = 961, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 974, state = "minecraft:water" },
+    { x = 961, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 961, y = 41, z = 975, state = "minecraft:water" },
+    { x = 962, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 960, state = "minecraft:water" },
+    { x = 962, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 961, state = "minecraft:water" },
+    { x = 962, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 962, state = "minecraft:water" },
+    { x = 962, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 963, state = "minecraft:water" },
+    { x = 962, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 964, state = "minecraft:water" },
+    { x = 962, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 965, state = "minecraft:water" },
+    { x = 962, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 966, state = "minecraft:water" },
+    { x = 962, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 967, state = "minecraft:water" },
+    { x = 962, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 968, state = "minecraft:water" },
+    { x = 962, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 969, state = "minecraft:water" },
+    { x = 962, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 970, state = "minecraft:water" },
+    { x = 962, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 971, state = "minecraft:water" },
+    { x = 962, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 972, state = "minecraft:water" },
+    { x = 962, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 973, state = "minecraft:water" },
+    { x = 962, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 974, state = "minecraft:water" },
+    { x = 962, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 962, y = 41, z = 975, state = "minecraft:water" },
+    { x = 963, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 960, state = "minecraft:water" },
+    { x = 963, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 961, state = "minecraft:water" },
+    { x = 963, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 962, state = "minecraft:water" },
+    { x = 963, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 963, state = "minecraft:water" },
+    { x = 963, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 964, state = "minecraft:water" },
+    { x = 963, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 965, state = "minecraft:water" },
+    { x = 963, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 966, state = "minecraft:water" },
+    { x = 963, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 967, state = "minecraft:water" },
+    { x = 963, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 968, state = "minecraft:water" },
+    { x = 963, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 969, state = "minecraft:water" },
+    { x = 963, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 970, state = "minecraft:water" },
+    { x = 963, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 971, state = "minecraft:water" },
+    { x = 963, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 972, state = "minecraft:water" },
+    { x = 963, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 973, state = "minecraft:water" },
+    { x = 963, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 974, state = "minecraft:water" },
+    { x = 963, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 963, y = 41, z = 975, state = "minecraft:water" },
+    { x = 964, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 960, state = "minecraft:water" },
+    { x = 964, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 961, state = "minecraft:water" },
+    { x = 964, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 962, state = "minecraft:water" },
+    { x = 964, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 963, state = "minecraft:water" },
+    { x = 964, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 964, state = "minecraft:water" },
+    { x = 964, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 965, state = "minecraft:water" },
+    { x = 964, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 966, state = "minecraft:water" },
+    { x = 964, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 967, state = "minecraft:water" },
+    { x = 964, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 968, state = "minecraft:water" },
+    { x = 964, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 969, state = "minecraft:water" },
+    { x = 964, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 970, state = "minecraft:water" },
+    { x = 964, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 971, state = "minecraft:water" },
+    { x = 964, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 972, state = "minecraft:water" },
+    { x = 964, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 973, state = "minecraft:water" },
+    { x = 964, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 974, state = "minecraft:water" },
+    { x = 964, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 964, y = 41, z = 975, state = "minecraft:water" },
+    { x = 965, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 960, state = "minecraft:water" },
+    { x = 965, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 961, state = "minecraft:water" },
+    { x = 965, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 962, state = "minecraft:water" },
+    { x = 965, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 963, state = "minecraft:water" },
+    { x = 965, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 964, state = "minecraft:water" },
+    { x = 965, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 965, state = "minecraft:water" },
+    { x = 965, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 966, state = "minecraft:water" },
+    { x = 965, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 967, state = "minecraft:water" },
+    { x = 965, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 968, state = "minecraft:water" },
+    { x = 965, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 969, state = "minecraft:water" },
+    { x = 965, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 970, state = "minecraft:water" },
+    { x = 965, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 971, state = "minecraft:water" },
+    { x = 965, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 972, state = "minecraft:water" },
+    { x = 965, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 973, state = "minecraft:water" },
+    { x = 965, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 974, state = "minecraft:water" },
+    { x = 965, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 965, y = 41, z = 975, state = "minecraft:water" },
+    { x = 966, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 960, state = "minecraft:water" },
+    { x = 966, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 961, state = "minecraft:water" },
+    { x = 966, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 962, state = "minecraft:water" },
+    { x = 966, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 963, state = "minecraft:water" },
+    { x = 966, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 964, state = "minecraft:water" },
+    { x = 966, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 965, state = "minecraft:water" },
+    { x = 966, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 966, state = "minecraft:water" },
+    { x = 966, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 967, state = "minecraft:water" },
+    { x = 966, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 968, state = "minecraft:water" },
+    { x = 966, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 969, state = "minecraft:water" },
+    { x = 966, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 970, state = "minecraft:water" },
+    { x = 966, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 971, state = "minecraft:water" },
+    { x = 966, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 972, state = "minecraft:water" },
+    { x = 966, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 973, state = "minecraft:water" },
+    { x = 966, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 974, state = "minecraft:water" },
+    { x = 966, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 966, y = 41, z = 975, state = "minecraft:water" },
+    { x = 967, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 960, state = "minecraft:water" },
+    { x = 967, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 961, state = "minecraft:water" },
+    { x = 967, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 962, state = "minecraft:water" },
+    { x = 967, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 963, state = "minecraft:water" },
+    { x = 967, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 964, state = "minecraft:water" },
+    { x = 967, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 965, state = "minecraft:water" },
+    { x = 967, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 966, state = "minecraft:water" },
+    { x = 967, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 967, state = "minecraft:water" },
+    { x = 967, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 968, state = "minecraft:water" },
+    { x = 967, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 969, state = "minecraft:water" },
+    { x = 967, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 970, state = "minecraft:water" },
+    { x = 967, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 971, state = "minecraft:water" },
+    { x = 967, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 972, state = "minecraft:water" },
+    { x = 967, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 973, state = "minecraft:water" },
+    { x = 967, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 974, state = "minecraft:water" },
+    { x = 967, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 967, y = 41, z = 975, state = "minecraft:water" },
+    { x = 968, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 960, state = "minecraft:water" },
+    { x = 968, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 961, state = "minecraft:water" },
+    { x = 968, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 962, state = "minecraft:water" },
+    { x = 968, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 963, state = "minecraft:water" },
+    { x = 968, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 964, state = "minecraft:water" },
+    { x = 968, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 965, state = "minecraft:water" },
+    { x = 968, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 966, state = "minecraft:water" },
+    { x = 968, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 967, state = "minecraft:water" },
+    { x = 968, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 968, state = "minecraft:water" },
+    { x = 968, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 969, state = "minecraft:water" },
+    { x = 968, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 970, state = "minecraft:water" },
+    { x = 968, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 971, state = "minecraft:water" },
+    { x = 968, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 972, state = "minecraft:water" },
+    { x = 968, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 973, state = "minecraft:water" },
+    { x = 968, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 974, state = "minecraft:water" },
+    { x = 968, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 968, y = 41, z = 975, state = "minecraft:water" },
+    { x = 969, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 960, state = "minecraft:water" },
+    { x = 969, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 961, state = "minecraft:water" },
+    { x = 969, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 962, state = "minecraft:water" },
+    { x = 969, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 963, state = "minecraft:water" },
+    { x = 969, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 964, state = "minecraft:water" },
+    { x = 969, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 965, state = "minecraft:water" },
+    { x = 969, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 966, state = "minecraft:water" },
+    { x = 969, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 967, state = "minecraft:water" },
+    { x = 969, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 968, state = "minecraft:water" },
+    { x = 969, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 969, state = "minecraft:water" },
+    { x = 969, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 970, state = "minecraft:water" },
+    { x = 969, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 971, state = "minecraft:water" },
+    { x = 969, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 972, state = "minecraft:water" },
+    { x = 969, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 973, state = "minecraft:water" },
+    { x = 969, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 974, state = "minecraft:water" },
+    { x = 969, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 969, y = 41, z = 975, state = "minecraft:water" },
+    { x = 970, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 960, state = "minecraft:water" },
+    { x = 970, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 961, state = "minecraft:water" },
+    { x = 970, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 962, state = "minecraft:water" },
+    { x = 970, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 963, state = "minecraft:water" },
+    { x = 970, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 964, state = "minecraft:water" },
+    { x = 970, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 965, state = "minecraft:water" },
+    { x = 970, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 966, state = "minecraft:water" },
+    { x = 970, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 967, state = "minecraft:water" },
+    { x = 970, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 968, state = "minecraft:water" },
+    { x = 970, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 969, state = "minecraft:water" },
+    { x = 970, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 970, state = "minecraft:water" },
+    { x = 970, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 971, state = "minecraft:water" },
+    { x = 970, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 972, state = "minecraft:water" },
+    { x = 970, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 973, state = "minecraft:water" },
+    { x = 970, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 974, state = "minecraft:water" },
+    { x = 970, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 970, y = 41, z = 975, state = "minecraft:water" },
+    { x = 971, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 960, state = "minecraft:water" },
+    { x = 971, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 961, state = "minecraft:water" },
+    { x = 971, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 962, state = "minecraft:water" },
+    { x = 971, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 963, state = "minecraft:water" },
+    { x = 971, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 964, state = "minecraft:water" },
+    { x = 971, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 965, state = "minecraft:water" },
+    { x = 971, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 966, state = "minecraft:water" },
+    { x = 971, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 967, state = "minecraft:water" },
+    { x = 971, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 968, state = "minecraft:water" },
+    { x = 971, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 969, state = "minecraft:water" },
+    { x = 971, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 970, state = "minecraft:water" },
+    { x = 971, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 971, state = "minecraft:water" },
+    { x = 971, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 972, state = "minecraft:water" },
+    { x = 971, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 973, state = "minecraft:water" },
+    { x = 971, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 974, state = "minecraft:water" },
+    { x = 971, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 971, y = 41, z = 975, state = "minecraft:water" },
+    { x = 972, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 960, state = "minecraft:water" },
+    { x = 972, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 961, state = "minecraft:water" },
+    { x = 972, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 962, state = "minecraft:water" },
+    { x = 972, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 963, state = "minecraft:water" },
+    { x = 972, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 964, state = "minecraft:water" },
+    { x = 972, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 965, state = "minecraft:water" },
+    { x = 972, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 966, state = "minecraft:water" },
+    { x = 972, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 967, state = "minecraft:water" },
+    { x = 972, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 968, state = "minecraft:water" },
+    { x = 972, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 969, state = "minecraft:water" },
+    { x = 972, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 970, state = "minecraft:water" },
+    { x = 972, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 971, state = "minecraft:water" },
+    { x = 972, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 972, state = "minecraft:water" },
+    { x = 972, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 973, state = "minecraft:water" },
+    { x = 972, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 974, state = "minecraft:water" },
+    { x = 972, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 972, y = 41, z = 975, state = "minecraft:water" },
+    { x = 973, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 960, state = "minecraft:water" },
+    { x = 973, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 961, state = "minecraft:water" },
+    { x = 973, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 962, state = "minecraft:water" },
+    { x = 973, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 963, state = "minecraft:water" },
+    { x = 973, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 964, state = "minecraft:water" },
+    { x = 973, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 965, state = "minecraft:water" },
+    { x = 973, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 966, state = "minecraft:water" },
+    { x = 973, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 967, state = "minecraft:water" },
+    { x = 973, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 968, state = "minecraft:water" },
+    { x = 973, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 969, state = "minecraft:water" },
+    { x = 973, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 970, state = "minecraft:water" },
+    { x = 973, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 971, state = "minecraft:water" },
+    { x = 973, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 972, state = "minecraft:water" },
+    { x = 973, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 973, state = "minecraft:water" },
+    { x = 973, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 974, state = "minecraft:water" },
+    { x = 973, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 973, y = 41, z = 975, state = "minecraft:water" },
+    { x = 974, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 960, state = "minecraft:water" },
+    { x = 974, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 961, state = "minecraft:water" },
+    { x = 974, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 962, state = "minecraft:water" },
+    { x = 974, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 963, state = "minecraft:water" },
+    { x = 974, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 964, state = "minecraft:water" },
+    { x = 974, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 965, state = "minecraft:water" },
+    { x = 974, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 966, state = "minecraft:water" },
+    { x = 974, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 967, state = "minecraft:water" },
+    { x = 974, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 968, state = "minecraft:water" },
+    { x = 974, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 969, state = "minecraft:water" },
+    { x = 974, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 970, state = "minecraft:water" },
+    { x = 974, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 971, state = "minecraft:water" },
+    { x = 974, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 972, state = "minecraft:water" },
+    { x = 974, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 973, state = "minecraft:water" },
+    { x = 974, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 974, state = "minecraft:water" },
+    { x = 974, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 974, y = 41, z = 975, state = "minecraft:water" },
+    { x = 975, y = 40, z = 960, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 960, state = "minecraft:water" },
+    { x = 975, y = 40, z = 961, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 961, state = "minecraft:water" },
+    { x = 975, y = 40, z = 962, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 962, state = "minecraft:water" },
+    { x = 975, y = 40, z = 963, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 963, state = "minecraft:water" },
+    { x = 975, y = 40, z = 964, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 964, state = "minecraft:water" },
+    { x = 975, y = 40, z = 965, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 965, state = "minecraft:water" },
+    { x = 975, y = 40, z = 966, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 966, state = "minecraft:water" },
+    { x = 975, y = 40, z = 967, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 967, state = "minecraft:water" },
+    { x = 975, y = 40, z = 968, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 968, state = "minecraft:water" },
+    { x = 975, y = 40, z = 969, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 969, state = "minecraft:water" },
+    { x = 975, y = 40, z = 970, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 970, state = "minecraft:water" },
+    { x = 975, y = 40, z = 971, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 971, state = "minecraft:water" },
+    { x = 975, y = 40, z = 972, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 972, state = "minecraft:water" },
+    { x = 975, y = 40, z = 973, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 973, state = "minecraft:water" },
+    { x = 975, y = 40, z = 974, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 974, state = "minecraft:water" },
+    { x = 975, y = 40, z = 975, state = "minecraft:dirt" },
+    { x = 975, y = 41, z = 975, state = "minecraft:water" },
+]
+ticks = 1
+
+[[step]]
+chunk = { x = 60, z = 60, new = true }
+ticks = 2
+expect.blocks = [
+    { x = 967, y = 40, z = 967, state = "mekanism:block_salt" },
+    { x = 969, y = 40, z = 967, state = "mekanism:block_salt" },
+    { x = 960, y = 40, z = 960, state = "minecraft:dirt" },
+]
+
+[[step]]
+# The energy cubes of the other tiers hold their tier's energy: an elite cube takes redstone (10000 a dust) up to 64 million.
+blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]
+ticks = 5
+expect.blocks = [{ x = 420, y = 64, z = 0, state = "mekanism:elite_energy_cube" }]
+
+# --- The configurator's other modes (Alex's tool is on heat from the steps above) ---
+
+[[step]]
+# The crusher does not configure heat: the click is not claimed, so it falls through to the block (a plain click opens
+# its screen, as in the original) instead of vanishing into the tool. A fresh crusher holds two ingots for the empty
+# test below.
+blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" }]
+set-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", ""] }]
+ticks = 1
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["minecraft:iron_ingot*2", "", "", "", ""] }]
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = false
+
+[[step]]
+# Heat goes to empty.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 4"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 53] }
+ticks = 3
+expect.told = ["Alex: Configure State: Empty"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":5}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# Empty drops every non-empty item slot into the world and leaves the rest alone: each stack is summoned as a
+# `minecraft:item` at the block, and the slots are only cleared once the game says the drop exists (the old extra
+# slots trick destroyed the items instead: the game truncates them).
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+# The click is taken up on this tick: one summon for the crusher's two ingots (the first summon of the run, so
+# ticket 1), and the slots are still full — they only empty once the drop is confirmed, in the steps below.
+ticks = 2
+expect.entity-commands = ["summon minecraft:item 500.5 64.5 0.5 #1 {Item:{id:\"minecraft:iron_ingot\",Count:2b}}"]
+
+[[step]]
+# The game answers the ticket: the drop exists.
+spawned = { ticket = 1, id = 77 }
+ticks = 1
+
+[[step]]
+# Now the slots empty; a drop the game had refused would have stayed in the machine instead.
+ticks = 1
+expect.block-items = [{ x = 500, y = 64, z = 0, slots = ["", "", "", "", ""] }]
+
+[[step]]
+# Empty goes to rotate.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 5"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":5}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 54] }
+ticks = 3
+expect.told = ["Alex: Configure State: Rotate"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":6}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# Rotate turns the crusher to the face clicked (east, from beside it).
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=east,lit=false]" }]
+
+[[step]]
+# Sneaking, rotate turns it to the opposite face instead (west).
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=west,lit=false]" }]
+
+[[step]]
+# Rotate goes to wrench.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 6"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":6}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 55] }
+ticks = 3
+expect.told = ["Alex: Configure State: Wrench"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":7}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# The wrench without sneak turns the crusher one step clockwise (west to north).
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "mekanism:crusher[facing=north,lit=false]" }]
+
+[[step]]
+# Sneaking, the wrench takes the crusher apart.
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 501.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [500, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.blocks = [{ x = 500, y = 64, z = 0, state = "minecraft:air" }]
+
+[[step]]
+# Wrench goes to items, and the cycle is whole again.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 7"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":7}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 48] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Items)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":0}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# A generator has no side configuration: the click is not claimed, so a plain click opens its screen instead of
+# vanishing into the tool.
+blocks = [{ x = 510, y = 64, z = 0, state = "mekanism:heat_generator" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 511.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [510, 64, 0] }
+ticks = 1
+expect.claimed = false
+
+[[step]]
+# The energy cube configures item sides too: sneaking on its east face, with no item mode yet, takes it to input.
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 1.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [0, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Item behavior bumped to: Input (Dark Red)"]
+
+[[step]]
+# Items, fluids, chemicals, energy: the transmitter test needs energy.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 0"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":0}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 49] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Fluids)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 1"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":1}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 50] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Chemicals)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 2"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":2}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 51] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Energy)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+# A sneak click on a cable cycles the connection of the face clicked (normal to push).
+blocks = [{ x = 520, y = 64, z = 0, state = "mekanism:basic_universal_cable" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 521.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [520, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Connection type changed to: Push"]
+
+[[step]]
+# A plain click on a cable that is not a logistical transporter toggles whether it answers redstone.
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 521.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [520, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Redstone sensitivity turned: on"]
+
+[[step]]
+# A sneak click with the configurator on a bin toggles whether it ejects.
+blocks = [{ x = 530, y = 64, z = 0, state = "mekanism:basic_bin" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 531.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [530, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Bin auto-eject: on"]
+
+[[step]]
+# A sneak click on a pump resets its calculation even in a configurate mode the pump does not configure.
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 3"]
+
+[[step]]
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":3}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 52] }
+ticks = 3
+expect.told = ["Alex: Configure State: Configurate (Heat)"]
+
+[[step]]
+# The client holds the configurator with the mode written.
+as = "Alex"
+inventory = ['mekanism:configurator*1{"mekanism:configurator_mode":4}', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+ticks = 3
+
+[[step]]
+blocks = [{ x = 540, y = 64, z = 0, state = "mekanism:electric_pump" }]
+ticks = 1
+
+[[step]]
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 541.5, y = 62.88, z = 0.5, yaw = 90.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [540, 64, 0] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Reset Electric Pump calculation"]
+
+[[step]]
+# A configurator outside the hotbar: cycling its mode in the air must not write anywhere — the old code wrote a
+# configurator into slot 0 by default, destroying whatever was there and duplicating the tool. Alex's diamond sits
+# in slot 0 and the configurator in slot 9 (the main inventory, not the hotbar).
+as = "Alex"
+inventory = ["minecraft:diamond*1", "", "", "", "", "", "", "", "", "mekanism:configurator*1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+ticks = 1
+
+[[step]]
+# Heat goes to empty, as usual — but no set-slot is issued anywhere (the mode lives in the per-player cache for this
+# session, and is only written to the item when the configurator is in the hotbar).
+as = "Alex"
+motion = { sneaking = true }
+use-item = { stack = "mekanism:configurator*1" }
+ticks = 1
+expect.claimed = true
+expect.player-items = []
+expect.radial = ["Alex: configurator:0=Configurate (Items),configurator:1=Configurate (Fluids),configurator:2=Configurate (Chemicals),configurator:3=Configurate (Energy),configurator:4=Configurate (Heat),configurator:5=Empty,configurator:6=Rotate,configurator:7=Wrench current 4"]
+
+[[step]]
+# The choice of Empty finds no configurator in the hotbar: nothing is written and nothing is told.
+as = "Alex"
+net = { channel = "mekanism:radial", data = [99, 111, 110, 102, 105, 103, 117, 114, 97, 116, 111, 114, 58, 53] }
+ticks = 3
+expect.told = []
+expect.player-items = []

@@ -1,0 +1,707 @@
+From a567adfc3532c31283c287d9d705e91d4324321f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:15:42 +0000
+Subject: [PATCH] Data components and kept block data (API block 5)
+
+Custom components ride on stacks (round trip tested); a Components helper
+in the SDK reads and writes them; keep-data makes a block drop an item that
+carries its entity's data and restores it on placing; item-charger example.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/block_items.rs |  31 +++
+ .../horizon-client/src/game/native_hooks.rs   |  13 +-
+ crates/horizon-client/src/game/spill.rs       |  35 +++
+ crates/horizon-items/src/item_nbt.rs          |  31 +++
+ .../examples/energy-demo/src/lib.rs           |   1 +
+ .../examples/item-charger/Cargo.toml          |  16 ++
+ .../examples/item-charger/horizon-mod.toml    |   8 +
+ .../examples/item-charger/src/lib.rs          |  51 ++++
+ .../examples/item-charger/tests/charge.toml   |  12 +
+ .../examples/tank-demo/src/lib.rs             |   1 +
+ crates/horizon-mod-sdk/src/components.rs      | 246 ++++++++++++++++++
+ crates/horizon-mod-sdk/src/lib.rs             |   4 +
+ crates/horizon-mod-sdk/wit/horizon.wit        |   5 +
+ crates/horizon-mods/src/testing.rs            |  13 +-
+ docs/api/mods-reference.md                    |   1 +
+ 17 files changed, 470 insertions(+), 6 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/item-charger/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-charger/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/item-charger/tests/charge.toml
+ create mode 100644 crates/horizon-mod-sdk/src/components.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 2988b8e..f79191f 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2377,6 +2377,13 @@ dependencies = [
+  "once_cell",
+ ]
+ 
++[[package]]
++name = "item-charger"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "itertools"
+ version = "0.14.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index f5baafd..0d9ee3a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -43,6 +43,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
++    "crates/horizon-mod-sdk/examples/item-charger",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game/block_items.rs b/crates/horizon-client/src/game/block_items.rs
+index 718ef0e..687d19d 100644
+--- a/crates/horizon-client/src/game/block_items.rs
++++ b/crates/horizon-client/src/game/block_items.rs
+@@ -224,6 +224,37 @@ impl Game<'_> {
+     ) {
+         let key = (pos[0], pos[1], pos[2]);
+         self.pending.banner.remove(&pos);
++        // A server mod's block entity gets back the data its item carries
++        // (`keep-data`, API block 5): its bytes, energy, tanks and slots.
++        let state = self.world.block(pos[0], pos[1], pos[2]).0;
++        let slots = self
++            .world
++            .block_entities
++            .mod_container(state)
++            .map_or(0, |c| c.slots);
++        if let Some(BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&key) {
++            let data = stack
++                .data()
++                .and_then(|d| d.other(block_entity_item::BLOCK_ENTITY_DATA));
++            if let Some(Tag::Compound(data)) = data
++                && matches!(data.get(&JavaString::from("id")),
++                    Some(Tag::String(id)) if id.to_string_lossy() == m.id)
++            {
++                for (k, v) in data {
++                    match k.to_string_lossy().as_str() {
++                        "id" | "x" | "y" | "z" | "Items" => {}
++                        _ => {
++                            m.nbt.insert(k.clone(), v.clone());
++                        }
++                    }
++                }
++                if slots > 0 {
++                    m.items = save::decode_items(data.get(&JavaString::from("Items")), slots);
++                }
++                self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
++            }
++            return;
++        }
+         let Some(saved) = self.saved_block_entity(key) else {
+             return;
+         };
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 5b80217..96504c7 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1406,7 +1406,18 @@ impl Game<'_> {
+                 .iter()
+                 .any(|k| k.block == block)
+         {
+-            *entity = Some((block.to_owned(), Compound::default()));
++            let mut nbt = Compound::default();
++            // Breaking the block gives an item that carries this entity's data.
++            if self
++                .mods
++                .mods
++                .block_entity_kinds()
++                .iter()
++                .any(|k| k.block == block && k.keep_data)
++            {
++                nbt.insert("keep_data".into(), horizon_world::nbt::Tag::Byte(1));
++            }
++            *entity = Some((block.to_owned(), nbt));
+         }
+         let _ = (block, entity);
+     }
+diff --git a/crates/horizon-client/src/game/spill.rs b/crates/horizon-client/src/game/spill.rs
+index 958e54d..d31d8d2 100644
+--- a/crates/horizon-client/src/game/spill.rs
++++ b/crates/horizon-client/src/game/spill.rs
+@@ -52,6 +52,14 @@ impl Pending {
+             self.banner.insert(pos, banner.clone());
+             return;
+         }
++        // A server mod's block that keeps its entity's data in the item it
++        // drops (API block 5): the whole saved entity, as the item's
++        // `minecraft:block_entity_data`.
++        if let BlockEntity::Mod(_) = entity {
++            let saved = save::encode_block_entity((pos[0], pos[1], pos[2]), entity, block);
++            self.record_kept(pos, block, &saved);
++            return;
++        }
+         if let Some(name) = name {
+             self.names.insert(pos, (block.to_owned(), name));
+         }
+@@ -161,8 +169,34 @@ impl Pending {
+         }
+     }
+     /// Remember a decorated pot's sherds from its saved block entity.
++    /// A mod block entity's saved data `saved` (a compound with `keep_data`
++    /// set) as the component patch its dropped item takes.
++    fn record_kept(&mut self, pos: [i32; 3], block: &str, saved: &Tag) {
++        let Tag::Compound(map) = saved else { return };
++        if !map.contains_key(&JavaString::from("keep_data")) {
++            return;
++        }
++        let mut data = map.clone();
++        for key in ["x", "y", "z"] {
++            data.remove(&JavaString::from(key));
++        }
++        data.insert("id".into(), Tag::String(block.into()));
++        let mut patch = Compound::new();
++        patch.insert(
++            horizon_client::block_entity_item::BLOCK_ENTITY_DATA.into(),
++            Tag::Compound(data),
++        );
++        self.copied.insert(pos, (block.to_owned(), patch));
++    }
+     pub(super) fn record_saved(&mut self, pos: [i32; 3], tag: &horizon_world::nbt::Tag) {
+         use horizon_world::nbt::Tag;
++        if let Some(Tag::String(id)) = tag.get("id") {
++            let id = id.to_string_lossy();
++            if !id.starts_with("minecraft:") {
++                self.record_kept(pos, &id, tag);
++                return;
++            }
++        }
+         if tag.get("id") != Some(&Tag::String("minecraft:decorated_pot".into())) {
+             return;
+         }
+@@ -482,6 +516,7 @@ impl GameLevel<'_> {
+             // BaseContainerBlockEntity.preRemoveSideEffects: Containers.dropContents.
+             Some(BlockEntity::Mod(m))
+                 if !m.items.is_empty()
++                    && !m.nbt.contains_key(&JavaString::from("keep_data"))
+                     && self.world.block_entities.mod_container(old.0).is_some() =>
+             {
+                 PreRemove::Contents {
+diff --git a/crates/horizon-items/src/item_nbt.rs b/crates/horizon-items/src/item_nbt.rs
+index e010122..eb3d70d 100644
+--- a/crates/horizon-items/src/item_nbt.rs
++++ b/crates/horizon-items/src/item_nbt.rs
+@@ -60,3 +60,34 @@ pub fn decode_items(tag: Option<&Tag>, size: usize) -> Vec<Option<crate::items::
+     }
+     slots
+ }
++
++#[cfg(test)]
++mod mod_component_tests {
++    use super::*;
++    use horizon_world::nbt::parse_snbt;
++
++    /// A component of a mod's own (`mymod:energy`) rides on a stack through
++    /// NBT and back untouched, next to a vanilla one (API block 5).
++    #[test]
++    fn a_mod_component_round_trips() {
++        let (components, _) =
++            parse_snbt(r#"{"minecraft:damage":3,"mymod:energy":1500L,"mymod:config":{side:"left",on:1b}}"#)
++                .unwrap();
++        let tag = Tag::compound([
++            ("id", Tag::String("minecraft:stick".into())),
++            ("count", Tag::Int(2)),
++            ("components", components.clone()),
++        ]);
++        let stack = item_from_nbt(&tag).unwrap();
++        assert_eq!(stack.damage, 3);
++        let back = item_to_nbt(&stack);
++        let got = back.get("components").unwrap();
++        assert_eq!(got.get("mymod:energy"), components.get("mymod:energy"));
++        assert_eq!(got.get("mymod:config"), components.get("mymod:config"));
++        assert_eq!(got.get("minecraft:damage"), components.get("minecraft:damage"));
++        // And the slot list a container saves.
++        let slots = vec![Some(stack.clone()), None];
++        let list = encode_items(&slots);
++        assert_eq!(decode_items(Some(&list), 2)[0], Some(stack));
++    }
++}
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+index 98603b6..8bacf5e 100644
+--- a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -16,6 +16,7 @@ fn kind(block: &str, ticks: bool, energy: EnergySpec) -> BlockEntityKind {
+         container: None,
+         energy: Some(energy),
+         tanks: Vec::new(),
++        keep_data: false,
+     }
+ }
+ 
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/Cargo.toml b/crates/horizon-mod-sdk/examples/item-charger/Cargo.toml
+new file mode 100644
+index 0000000..8554d08
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-charger/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "item-charger"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a block that charges the item in its slot through a data component"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/horizon-mod.toml b/crates/horizon-mod-sdk/examples/item-charger/horizon-mod.toml
+new file mode 100644
+index 0000000..19f4a79
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-charger/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "itemcharger"
++name = "Item Charger"
++version = "0.1.0"
++description = "Test mod for data components: a block with one slot adds 10 to the itemcharger:energy component of the stack in it, up to 100."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+new file mode 100644
+index 0000000..d637186
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+@@ -0,0 +1,51 @@
++//! Item Charger: the smallest user of data components. `itemcharger:charger`
++//! has one slot; every tick the stack in it gains 10 of its
++//! `itemcharger:energy` component, up to 100, and keeps whatever other
++//! components it had. The block keeps its slot in the item it drops.
++use horizon_mod_sdk::components::Components;
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, ContainerSpec, Registration, ServerMod,
++};
++
++struct Charger;
++
++impl ServerMod for Charger {
++    fn init() -> Result<(Self, Registration), String> {
++        let kind = BlockEntityKind {
++            block: "itemcharger:charger".into(),
++            ticks: true,
++            container: Some(ContainerSpec::open(1)),
++            energy: None,
++            tanks: Vec::new(),
++            keep_data: true,
++        };
++        Ok((Charger, Registration::new().block_entity_kind(kind)))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        let mut out = Vec::new();
++        for e in entities {
++            let Some(Some(stack)) = e.items.first() else { continue };
++            let Some(mut c) = Components::parse(&stack.components) else { continue };
++            let have = c.get_long("itemcharger:energy").unwrap_or(0);
++            if have >= 100 {
++                continue;
++            }
++            c.set_long("itemcharger:energy", (have + 10).min(100));
++            let mut stack = stack.clone();
++            stack.components = c.to_snbt();
++            out.push(BlockEntityUpdate {
++                dimension: e.dimension,
++                pos: e.pos,
++                data: e.data,
++                items: Some(vec![Some(stack)]),
++                energy: None,
++                energy_faces: None,
++                tanks: None,
++                tank_faces: None,
++            });
++        }
++        out
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Charger);
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/tests/charge.toml b/crates/horizon-mod-sdk/examples/item-charger/tests/charge.toml
+new file mode 100644
+index 0000000..9b8931e
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-charger/tests/charge.toml
+@@ -0,0 +1,12 @@
++# The stack gains energy tick by tick, keeping its other components, and stops at 100.
++
++[[step]]
++join = "Alex"
++blocks = [{ x = 0, y = 64, z = 0, state = "itemcharger:charger" }]
++set-items = [{ x = 0, y = 64, z = 0, slots = ['minecraft:stick*1{"minecraft:damage":3}'] }]
++ticks = 1
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ['minecraft:stick*1{"minecraft:damage":3,"itemcharger:energy":10L}'] }]
++
++[[step]]
++ticks = 20
++expect.block-items = [{ x = 0, y = 64, z = 0, slots = ['minecraft:stick*1{"minecraft:damage":3,"itemcharger:energy":100L}'] }]
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+index 44c8819..91d85a0 100644
+--- a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -16,6 +16,7 @@ fn kind(block: &str, ticks: bool, tank: TankSpec) -> BlockEntityKind {
+         container: None,
+         energy: None,
+         tanks: vec![tank],
++        keep_data: false,
+     }
+ }
+ fn spec(kind: &str, side: FlowSide) -> TankSpec {
+diff --git a/crates/horizon-mod-sdk/src/components.rs b/crates/horizon-mod-sdk/src/components.rs
+new file mode 100644
+index 0000000..61c5965
+--- /dev/null
++++ b/crates/horizon-mod-sdk/src/components.rs
+@@ -0,0 +1,246 @@
++//! Data components of an item stack (`ItemStack::components` is their SNBT):
++//! reads and writes the top-level entries of that compound without touching
++//! the values you leave alone, so a mod can keep `mymod:energy` on a stack
++//! next to whatever else the game or another mod put there.
++//!
++//! ```
++//! use horizon_mod_sdk::components::Components;
++//! let mut c = Components::parse(r#"{"minecraft:damage":3,"mymod:energy":1500L}"#).unwrap();
++//! assert_eq!(c.get_long("mymod:energy"), Some(1500));
++//! c.set_long("mymod:energy", 1400);
++//! assert_eq!(c.get_long("minecraft:damage"), Some(3));
++//! assert_eq!(c.to_snbt(), r#"{"minecraft:damage":3,"mymod:energy":1400L}"#);
++//! ```
++
++/// The top-level entries of a components compound, each value as raw SNBT.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Components {
++    entries: Vec<(String, String)>,
++}
++
++impl Components {
++    /// No components.
++    pub fn new() -> Self {
++        Self::default()
++    }
++
++    /// Reads `{key:value,...}`; an empty text is no components. `None` when
++    /// the text is not a compound.
++    pub fn parse(snbt: &str) -> Option<Self> {
++        let s = snbt.trim();
++        if s.is_empty() {
++            return Some(Self::new());
++        }
++        let b = s.as_bytes();
++        if b.first() != Some(&b'{') || b.last() != Some(&b'}') {
++            return None;
++        }
++        let inner = &s[1..s.len() - 1];
++        let mut entries = Vec::new();
++        for part in split_top_level(inner, ',')? {
++            let part = part.trim();
++            if part.is_empty() {
++                continue;
++            }
++            let colon = find_key_end(part)?;
++            let key = unquote(part[..colon].trim());
++            let value = part[colon + 1..].trim().to_owned();
++            entries.push((key, value));
++        }
++        Some(Self { entries })
++    }
++
++    /// The compound as SNBT, keys quoted, in the order set.
++    pub fn to_snbt(&self) -> String {
++        if self.entries.is_empty() {
++            return String::new();
++        }
++        let parts: Vec<String> = self
++            .entries
++            .iter()
++            .map(|(k, v)| format!("\"{}\":{v}", k.replace('\\', "\\\\").replace('"', "\\\"")))
++            .collect();
++        format!("{{{}}}", parts.join(","))
++    }
++
++    /// The raw SNBT of a component.
++    pub fn get(&self, key: &str) -> Option<&str> {
++        self.entries
++            .iter()
++            .find(|(k, _)| k == key)
++            .map(|(_, v)| v.as_str())
++    }
++    pub fn get_long(&self, key: &str) -> Option<i64> {
++        let v = self.get(key)?;
++        let v = v.trim_end_matches(|c: char| matches!(c, 'L' | 'l' | 'b' | 'B' | 's' | 'S'));
++        v.parse().ok()
++    }
++    pub fn get_double(&self, key: &str) -> Option<f64> {
++        let v = self.get(key)?;
++        let v = v.trim_end_matches(|c: char| matches!(c, 'd' | 'D' | 'f' | 'F'));
++        v.parse().ok()
++    }
++    pub fn get_bool(&self, key: &str) -> Option<bool> {
++        match self.get(key)? {
++            "true" | "1b" => Some(true),
++            "false" | "0b" => Some(false),
++            _ => None,
++        }
++    }
++    pub fn get_string(&self, key: &str) -> Option<String> {
++        let v = self.get(key)?;
++        (v.starts_with('"') || v.starts_with('\'')).then(|| unquote(v))
++    }
++
++    /// Sets a component to raw SNBT (`"{side:\"left\"}"`).
++    pub fn set(&mut self, key: &str, snbt: &str) {
++        match self.entries.iter_mut().find(|(k, _)| k == key) {
++            Some(e) => e.1 = snbt.to_owned(),
++            None => self.entries.push((key.to_owned(), snbt.to_owned())),
++        }
++    }
++    pub fn set_long(&mut self, key: &str, v: i64) {
++        self.set(key, &format!("{v}L"));
++    }
++    pub fn set_double(&mut self, key: &str, v: f64) {
++        self.set(key, &format!("{v:?}d"));
++    }
++    pub fn set_bool(&mut self, key: &str, v: bool) {
++        self.set(key, if v { "1b" } else { "0b" });
++    }
++    pub fn set_string(&mut self, key: &str, v: &str) {
++        self.set(key, &format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\"")));
++    }
++    /// Removes a component; true when it was there.
++    pub fn remove(&mut self, key: &str) -> bool {
++        let before = self.entries.len();
++        self.entries.retain(|(k, _)| k != key);
++        before != self.entries.len()
++    }
++    pub fn is_empty(&self) -> bool {
++        self.entries.is_empty()
++    }
++}
++
++/// Splits at `sep` outside strings and brackets; `None` for unbalanced text.
++fn split_top_level(s: &str, sep: char) -> Option<Vec<&str>> {
++    let mut out = Vec::new();
++    let (mut depth, mut start) = (0i32, 0usize);
++    let mut quote: Option<char> = None;
++    let mut escaped = false;
++    for (i, c) in s.char_indices() {
++        if let Some(q) = quote {
++            if escaped {
++                escaped = false;
++            } else if c == '\\' {
++                escaped = true;
++            } else if c == q {
++                quote = None;
++            }
++            continue;
++        }
++        match c {
++            '"' | '\'' => quote = Some(c),
++            '{' | '[' => depth += 1,
++            '}' | ']' => depth -= 1,
++            c if c == sep && depth == 0 => {
++                out.push(&s[start..i]);
++                start = i + c.len_utf8();
++            }
++            _ => {}
++        }
++        if depth < 0 {
++            return None;
++        }
++    }
++    if depth != 0 || quote.is_some() {
++        return None;
++    }
++    out.push(&s[start..]);
++    Some(out)
++}
++
++/// The index of the `:` that ends the key of an entry.
++fn find_key_end(entry: &str) -> Option<usize> {
++    let mut quote: Option<char> = None;
++    let mut escaped = false;
++    for (i, c) in entry.char_indices() {
++        if let Some(q) = quote {
++            if escaped {
++                escaped = false;
++            } else if c == '\\' {
++                escaped = true;
++            } else if c == q {
++                quote = None;
++            }
++        } else if c == '"' || c == '\'' {
++            quote = Some(c);
++        } else if c == ':' {
++            return Some(i);
++        }
++    }
++    None
++}
++
++fn unquote(s: &str) -> String {
++    let s = s.trim();
++    let quoted = s.len() >= 2
++        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')));
++    if !quoted {
++        return s.to_owned();
++    }
++    let mut out = String::new();
++    let mut escaped = false;
++    for c in s[1..s.len() - 1].chars() {
++        if escaped {
++            out.push(c);
++            escaped = false;
++        } else if c == '\\' {
++            escaped = true;
++        } else {
++            out.push(c);
++        }
++    }
++    out
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn reads_and_writes_without_touching_the_rest() {
++        let mut c = Components::parse(
++            r#"{"minecraft:damage":3, "mymod:energy":1500L, "mymod:config":{side:"left,right",on:1b,list:[1,2]}}"#,
++        )
++        .unwrap();
++        assert_eq!(c.get_long("mymod:energy"), Some(1500));
++        assert_eq!(c.get_long("minecraft:damage"), Some(3));
++        assert_eq!(c.get("mymod:config"), Some(r#"{side:"left,right",on:1b,list:[1,2]}"#));
++        c.set_long("mymod:energy", 7);
++        c.set_bool("mymod:lit", true);
++        c.set_string("mymod:owner", "Al\"ex");
++        let again = Components::parse(&c.to_snbt()).unwrap();
++        assert_eq!(again, c);
++        assert_eq!(again.get_long("mymod:energy"), Some(7));
++        assert_eq!(again.get_bool("mymod:lit"), Some(true));
++        assert_eq!(again.get_string("mymod:owner").as_deref(), Some("Al\"ex"));
++        assert_eq!(again.get("mymod:config"), c.get("mymod:config"));
++    }
++
++    #[test]
++    fn empty_and_wrong_text() {
++        assert_eq!(Components::parse("").unwrap(), Components::new());
++        assert_eq!(Components::new().to_snbt(), "");
++        assert!(Components::parse("[1]").is_none());
++        assert!(Components::parse("{a:{}").is_none());
++    }
++
++    #[test]
++    fn removes() {
++        let mut c = Components::parse("{a:1,b:2}").unwrap();
++        assert!(c.remove("a"));
++        assert!(!c.remove("a"));
++        assert_eq!(c.to_snbt(), r#"{"b":2}"#);
++    }
++}
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 81dcc84..6c21f47 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -181,6 +181,8 @@ macro_rules! export_mod {
+ /// type implementing [`ServerMod`](server::ServerMod), exported with
+ /// [`export_server_mod!`]. It runs where the world is simulated, and reads
+ /// and messages the players with capability `players`.
++pub mod components;
++
+ pub mod server {
+     wit_bindgen::generate!({
+         path: "wit",
+@@ -295,6 +297,7 @@ pub mod server {
+                 container: None,
+                 energy: None,
+                 tanks: Vec::new(),
++                keep_data: false,
+             });
+             self
+         }
+@@ -316,6 +319,7 @@ pub mod server {
+                 container: Some(container),
+                 energy: None,
+                 tanks: Vec::new(),
++                keep_data: false,
+             });
+             self
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index b63c064..e9ee153 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -838,6 +838,11 @@ interface server-events {
+         /// Tanks for fluids and chemicals, moved between neighbouring blocks
+         /// by the game (see `tank-spec`).
+         tanks: list<tank-spec>,
++        /// The block keeps its entity's data in the item it drops: breaking
++        /// it gives an item that carries the saved bytes, slots, energy and
++        /// tanks, and placing that item gives them back (a machine that
++        /// keeps its contents when picked up). The slots are then not spilled.
++        keep-data: bool,
+     }
+     /// One tank of a block. A `kind` is a family of substances that mix with
+     /// nothing outside it (`fluid`, `gas`, `infusion`...: the mod's own
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 0d68bdb..d86b98d 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -631,17 +631,20 @@ fn parse_tank(text: &str) -> crate::Tank {
+     let (substance, amount) = split_tank(text);
+     crate::Tank { substance, amount }
+ }
++/// `"minecraft:stick*2"`, or with components `"minecraft:stick*2{\"mymod:energy\":50L}"`.
+ fn parse_stack(text: &str) -> Option<crate::ModItemStack> {
+-    let (item, count) = text.split_once('*')?;
++    let (item, rest) = text.split_once('*')?;
++    let split = rest.find('{').unwrap_or(rest.len());
+     Some(crate::ModItemStack {
+         item: item.into(),
+-        count: count.parse().ok()?,
+-        components: String::new(),
++        count: rest[..split].parse().ok()?,
++        components: rest[split..].to_owned(),
+     })
+ }
+ fn show_stack(s: &Option<crate::ModItemStack>) -> String {
+-    s.as_ref()
+-        .map_or(String::new(), |s| format!("{}*{}", s.item, s.count))
++    s.as_ref().map_or(String::new(), |s| {
++        format!("{}*{}{}", s.item, s.count, s.components)
++    })
+ }
+ 
+ /// The slots of a block entity a step sets or expects.
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 057e6e6..453101f 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -850,6 +850,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `container` | `option<container-spec>` | Item slots the block entity holds, as a vanilla container does (players, hoppers and droppers use them; a broken block drops them). None: no slots. |
+ | `energy` | `option<energy-spec>` | Stored energy, moved between neighbouring blocks by the game (see `energy-spec`). None: the block holds no energy. |
+ | `tanks` | `list<tank-spec>` | Tanks for fluids and chemicals, moved between neighbouring blocks by the game (see `tank-spec`). |
++| `keep-data` | `bool` | The block keeps its entity's data in the item it drops: breaking it gives an item that carries the saved bytes, slots, energy and tanks, and placing that item gives them back (a machine that keeps its contents when picked up). The slots are then not spilled. |
+ 
+ ### record `registration`
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,233 @@
+item,estado,nota
+mekanism/client/gui/GuiBoilerStats.java,FALTA?,
+mekanism/client/gui/GuiChemicalTank.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiConfigurableTile.java,FALTA?,
+mekanism/client/gui/GuiDimensionalStabilizer.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiDynamicTank.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiEnergyCube.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiFilterHolder.java,FALTA?,
+mekanism/client/gui/GuiFluidTank.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiInductionMatrix.java,FALTA?,
+mekanism/client/gui/GuiLaserAmplifier.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiLaserTractorBeam.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiLogisticalSorter.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiMatrixStats.java,FALTA?,
+mekanism/client/gui/GuiMekanism.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiMekanismTile.java,FALTA?,
+mekanism/client/gui/GuiModificationStation.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiModuleTweaker.java,FALTA?,
+mekanism/client/gui/GuiPersonalStorageTile.java,FALTA?,
+mekanism/client/gui/GuiQuantumEntangloporter.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiRadialSelector.java,FALTA?,
+mekanism/client/gui/GuiSPS.java,FALTA?,
+mekanism/client/gui/GuiSecurityDesk.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiTeleporter.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiThermalEvaporationController.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/GuiThermoelectricBoiler.java,FALTA?,
+mekanism/client/gui/GuiUtils.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/IGuiWrapper.java,FALTA?,
+mekanism/client/gui/VirtualSlotContainerScreen.java,FALTA?,
+mekanism/client/gui/element/GuiArrowSelection.java,FALTA?,
+mekanism/client/gui/element/GuiBigLight.java,FALTA?,
+mekanism/client/gui/element/GuiColorPickerSlot.java,FALTA?,
+mekanism/client/gui/element/GuiDigitalIconToggle.java,FALTA?,
+mekanism/client/gui/element/GuiDigitalSwitch.java,FALTA?,
+mekanism/client/gui/element/GuiDownArrow.java,FALTA?,
+mekanism/client/gui/element/GuiDropdown.java,FALTA?,
+mekanism/client/gui/element/GuiDumpButton.java,FALTA?,
+mekanism/client/gui/element/GuiElement.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/GuiElementHolder.java,FALTA?,
+mekanism/client/gui/element/GuiInnerScreen.java,FALTA?,
+mekanism/client/gui/element/GuiInsetElement.java,FALTA?,
+mekanism/client/gui/element/GuiRightArrow.java,FALTA?,
+mekanism/client/gui/element/GuiScalableElement.java,FALTA?,
+mekanism/client/gui/element/GuiScreenSwitch.java,FALTA?,
+mekanism/client/gui/element/GuiSecurityLight.java,FALTA?,
+mekanism/client/gui/element/GuiSideHolder.java,FALTA?,
+mekanism/client/gui/element/GuiSlider.java,FALTA?,
+mekanism/client/gui/element/GuiTextureOnlyElement.java,FALTA?,
+mekanism/client/gui/element/GuiTexturedElement.java,FALTA?,
+mekanism/client/gui/element/GuiUpArrow.java,FALTA?,
+mekanism/client/gui/element/bar/GuiBar.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/bar/GuiChemicalBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiDigitalBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiDynamicHorizontalRateBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiEmptyBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiFluidBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiHorizontalPowerBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiHorizontalRateBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiTankBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiVerticalPowerBar.java,FALTA?,
+mekanism/client/gui/element/bar/GuiVerticalRateBar.java,FALTA?,
+mekanism/client/gui/element/button/BasicColorButton.java,FALTA?,
+mekanism/client/gui/element/button/ColorButton.java,FALTA?,
+mekanism/client/gui/element/button/DigitalButton.java,FALTA?,
+mekanism/client/gui/element/button/FilterButton.java,FALTA?,
+mekanism/client/gui/element/button/FilterSelectButton.java,FALTA?,
+mekanism/client/gui/element/button/GuiCloseButton.java,FALTA?,
+mekanism/client/gui/element/button/GuiGasMode.java,FALTA?,
+mekanism/client/gui/element/button/GuiPinButton.java,FALTA?,
+mekanism/client/gui/element/button/MekanismButton.java,FALTA?,
+mekanism/client/gui/element/button/MekanismImageButton.java,FALTA?,
+mekanism/client/gui/element/button/MovableFilterButton.java,FALTA?,
+mekanism/client/gui/element/button/RadioButton.java,FALTA?,
+mekanism/client/gui/element/button/SideDataButton.java,FALTA?,
+mekanism/client/gui/element/button/ToggleButton.java,FALTA?,
+mekanism/client/gui/element/button/TooltipColorButton.java,FALTA?,
+mekanism/client/gui/element/button/TooltipToggleButton.java,FALTA?,
+mekanism/client/gui/element/button/TranslationButton.java,FALTA?,
+mekanism/client/gui/element/custom/GuiDictionaryTarget.java,FALTA?,
+mekanism/client/gui/element/custom/GuiEntityPreview.java,FALTA?,
+mekanism/client/gui/element/custom/GuiFrequencySelector.java,FALTA?,
+mekanism/client/gui/element/custom/GuiQIOCrystallizerScreen.java,FALTA?,
+mekanism/client/gui/element/custom/GuiQIOFrequencyDataScreen.java,FALTA?,
+mekanism/client/gui/element/custom/GuiResizeControls.java,FALTA?,
+mekanism/client/gui/element/custom/GuiSupportedUpgrades.java,FALTA?,
+mekanism/client/gui/element/custom/GuiTeleporterStatus.java,FALTA?,
+mekanism/client/gui/element/custom/module/BooleanToggle.java,FALTA?,
+mekanism/client/gui/element/custom/module/ColorSelection.java,FALTA?,
+mekanism/client/gui/element/custom/module/EnumToggle.java,FALTA?,
+mekanism/client/gui/element/custom/module/GuiModuleScreen.java,FALTA?,
+mekanism/client/gui/element/custom/module/MiniElement.java,FALTA?,
+mekanism/client/gui/element/gauge/GaugeInfo.java,FALTA?,
+mekanism/client/gui/element/gauge/GaugeOverlay.java,FALTA?,
+mekanism/client/gui/element/gauge/GaugeType.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiChemicalGauge.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiEnergyGauge.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiFluidGauge.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiGauge.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/gauge/GuiMergedTankGauge.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiNumberGauge.java,FALTA?,
+mekanism/client/gui/element/gauge/GuiTankGauge.java,FALTA?,
+mekanism/client/gui/element/graph/GuiDoubleGraph.java,FALTA?,
+mekanism/client/gui/element/graph/GuiGraph.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/graph/GuiLongGraph.java,FALTA?,
+mekanism/client/gui/element/progress/GuiFlame.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/progress/GuiProgress.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/progress/IProgressInfoHandler.java,FALTA?,
+mekanism/client/gui/element/progress/ProgressType.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiInstallableScrollList.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiModuleScrollList.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiRobitSkinSelectScroll.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiScrollBar.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiScrollList.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiScrollableElement.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiSlotScroll.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiTextScrollList.java,FALTA?,
+mekanism/client/gui/element/scroll/GuiUpgradeScrollList.java,FALTA?,
+mekanism/client/gui/element/slot/GuiSequencedSlotDisplay.java,FALTA?,
+mekanism/client/gui/element/slot/GuiSlot.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/slot/GuiVirtualSlot.java,FALTA?,
+mekanism/client/gui/element/slot/SlotType.java,FALTA?,
+mekanism/client/gui/element/tab/GuiAmplifierTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiBoilerTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiConfigTypeTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiContainerEditModeTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiEnergyTab.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/tab/GuiHeatTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiInsetToggleElement.java,FALTA?,
+mekanism/client/gui/element/tab/GuiMatrixTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiQIOFrequencyTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiRedstoneControlTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiSecurityTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiSortingTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiTabElementType.java,FALTA?,
+mekanism/client/gui/element/tab/GuiTargetDirectionTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiToggleClientConfigTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiVisualsTab.java,FALTA?,
+mekanism/client/gui/element/tab/GuiWarningTab.java,FALTA?,
+mekanism/client/gui/element/tab/TabType.java,FALTA?,
+mekanism/client/gui/element/tab/window/GuiCraftingWindowTab.java,FALTA?,
+mekanism/client/gui/element/tab/window/GuiSideConfigurationTab.java,FALTA?,
+mekanism/client/gui/element/tab/window/GuiTransporterConfigTab.java,FALTA?,
+mekanism/client/gui/element/tab/window/GuiUpgradeWindowTab.java,FALTA?,
+mekanism/client/gui/element/tab/window/GuiWindowCreatorTab.java,FALTA?,
+mekanism/client/gui/element/text/BackgroundType.java,FALTA?,
+mekanism/client/gui/element/text/ButtonType.java,FALTA?,
+mekanism/client/gui/element/text/GuiTextField.java,FALTA?,
+mekanism/client/gui/element/text/IconType.java,FALTA?,
+mekanism/client/gui/element/window/GuiColorWindow.java,FALTA?,
+mekanism/client/gui/element/window/GuiConfirmationDialog.java,FALTA?,
+mekanism/client/gui/element/window/GuiCraftingWindow.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/window/GuiMekaSuitHelmetOptions.java,FALTA?,
+mekanism/client/gui/element/window/GuiRobitRename.java,FALTA?,
+mekanism/client/gui/element/window/GuiRobitSkinSelect.java,FALTA?,
+mekanism/client/gui/element/window/GuiSideConfiguration.java,FALTA?,
+mekanism/client/gui/element/window/GuiTransporterConfig.java,FALTA?,
+mekanism/client/gui/element/window/GuiUpgradeWindow.java,FALTA?,
+mekanism/client/gui/element/window/GuiWindow.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/window/filter/GuiFilter.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/window/filter/GuiFilterHelper.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiFilterSelect.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiItemStackFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiModIDFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiOredictionificatorFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/GuiTagFilter.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/element/window/filter/GuiTextFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/miner/GuiMinerFilerSelect.java,FALTA?,
+mekanism/client/gui/element/window/filter/miner/GuiMinerFilterHelper.java,FALTA?,
+mekanism/client/gui/element/window/filter/miner/GuiMinerItemStackFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/miner/GuiMinerModIDFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/miner/GuiMinerTagFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/qio/GuiQIOFilterHelper.java,FALTA?,
+mekanism/client/gui/element/window/filter/qio/GuiQIOItemStackFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/qio/GuiQIOModIDFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/qio/GuiQIOTagFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/transporter/GuiSorterFilerSelect.java,FALTA?,
+mekanism/client/gui/element/window/filter/transporter/GuiSorterFilterHelper.java,FALTA?,
+mekanism/client/gui/element/window/filter/transporter/GuiSorterItemStackFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/transporter/GuiSorterModIDFilter.java,FALTA?,
+mekanism/client/gui/element/window/filter/transporter/GuiSorterTagFilter.java,FALTA?,
+mekanism/client/gui/item/GuiDictionary.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/item/GuiPersonalStorageItem.java,FALTA?,
+mekanism/client/gui/item/GuiPortableTeleporter.java,FALTA?,
+mekanism/client/gui/item/GuiSeismicReader.java,FALTA?,
+mekanism/client/gui/machine/GuiAdvancedElectricMachine.java,FALTA?,
+mekanism/client/gui/machine/GuiAntiprotonicNucleosynthesizer.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiChemicalCrystallizer.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiChemicalDissolutionChamber.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiChemicalInfuser.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiChemicalOxidizer.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiChemicalWasher.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiCombiner.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiDigitalMiner.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiDigitalMinerConfig.java,FALTA?,
+mekanism/client/gui/machine/GuiElectricMachine.java,FALTA?,
+mekanism/client/gui/machine/GuiElectricPump.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiElectrolyticSeparator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiFactory.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiFluidicPlenisher.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiFormulaicAssemblicator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiFuelwoodHeater.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiIsotopicCentrifuge.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiMetallurgicInfuser.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiNutritionalLiquifier.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiOredictionificator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiPRC.java,FALTA?,
+mekanism/client/gui/machine/GuiPaintingMachine.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiPigmentExtractor.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiPigmentMixer.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiPrecisionSawmill.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiResistiveHeater.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiRotaryCondensentrator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiSeismicVibrator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/machine/GuiSolarNeutronActivator.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/qio/GuiPortableQIODashboard.java,FALTA?,
+mekanism/client/gui/qio/GuiQIODashboard.java,FALTA?,
+mekanism/client/gui/qio/GuiQIODriveArray.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOExporter.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOFilerSelect.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOFilterHandler.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOImporter.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOItemFrequencySelect.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOItemViewer.java,FALTA?,
+mekanism/client/gui/qio/GuiQIORedstoneAdapter.java,FALTA?,
+mekanism/client/gui/qio/GuiQIOTileFrequencySelect.java,FALTA?,
+mekanism/client/gui/robit/GuiRobit.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/robit/GuiRobitCrafting.java,FALTA?,
+mekanism/client/gui/robit/GuiRobitInventory.java,FALTA?,
+mekanism/client/gui/robit/GuiRobitMain.java,FALTA?,
+mekanism/client/gui/robit/GuiRobitRepair.java,FALTA?,
+mekanism/client/gui/robit/GuiRobitSmelting.java,?,match heurístico por nome / name heuristic
+mekanism/client/gui/tooltip/MultiLineTooltip.java,FALTA?,
+mekanism/client/gui/tooltip/TooltipUtils.java,FALTA?,

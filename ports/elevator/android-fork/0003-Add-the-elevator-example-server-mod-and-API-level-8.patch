@@ -1,0 +1,2266 @@
+From f3806c320917b1ca07eea57254a4b5427f09a360 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 19:29:15 +0000
+Subject: [PATCH 3/3] Add the elevator example server mod and API level 8
+
+The elevator is a Rust port of ElevatorMod (MIT) as a WebAssembly server mod
+(api 0.3), with eight test scripts. API level 8 adds world.get-collision and
+the player-control interface (get-motion, teleport, take-xp, play-sound);
+cargo horizon-mod test understands motion, teleports, xp-taken and sounds.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   5 +
+ .../examples/elevator/Cargo.toml              |  16 +
+ .../examples/elevator/horizon-mod.toml        |   9 +
+ .../examples/elevator/src/lib.rs              | 290 +++++++
+ .../examples/elevator/src/logic.rs            | 679 +++++++++++++++
+ .../examples/elevator/tests/blocked.toml      |  31 +
+ .../examples/elevator/tests/config.toml       |  25 +
+ .../examples/elevator/tests/creative.toml     |  19 +
+ .../examples/elevator/tests/directional.toml  |  15 +
+ .../examples/elevator/tests/experience.toml   |  49 ++
+ .../elevator/tests/experience_levels.toml     |  23 +
+ .../examples/elevator/tests/same_color.toml   |  18 +
+ .../examples/elevator/tests/up_and_down.toml  |  35 +
+ crates/horizon-mod-sdk/src/lib.rs             |   3 +-
+ crates/horizon-mods/src/api_level.rs          |   9 +-
+ crates/horizon-mods/src/testing.rs            |   1 +
+ crates/horizon-mods/tests/sandbox.rs          |   6 +-
+ docs/api/mods-reference.md                    | 810 ++++++++++++++++++
+ 20 files changed, 2046 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/src/logic.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/creative.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/directional.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/experience_levels.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/same_color.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/elevator/tests/up_and_down.toml
+ create mode 100644 docs/api/mods-reference.md
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 82345ef..92470d2 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1097,6 +1097,13 @@ version = "1.19.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
+ 
++[[package]]
++name = "elevator"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "embedded-io"
+ version = "0.4.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 88e780b..6274ae4 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -38,6 +38,7 @@ members = [
+     "crates/horizon-shader-api",
+     "crates/horizon-release-sign",
+     "crates/horizon-mod-sdk/examples/coords-hud",
++    "crates/horizon-mod-sdk/examples/elevator",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 73d691e..03256c0 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -275,6 +275,11 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             } => {
+                 format!("set {} block(s) in {dimension}", blocks.len())
+             }
++            Output::Teleport { dimension, pos, .. } => {
++                format!("teleported a player to {} {} {} in {dimension}", pos[0], pos[1], pos[2])
++            }
++            Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
++            Output::PlaySound { sound, .. } => format!("played {sound}"),
+             Output::OpenScreen { .. } => "opened a screen".to_string(),
+             Output::CloseScreen { .. } => "closed its screen".to_string(),
+             Output::PlaceRecipe { book_id, all } => {
+diff --git a/crates/horizon-mod-sdk/examples/elevator/Cargo.toml b/crates/horizon-mod-sdk/examples/elevator/Cargo.toml
+new file mode 100644
+index 0000000..0c4e40b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "elevator"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: ElevatorMod's elevators (jump to go up, sneak to go down)"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+new file mode 100644
+index 0000000..48184d4
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "elevator"
++name = "Elevator"
++version = "0.1.0"
++description = "Jump on an elevator block to go up to the next one above, sneak to go down. Rust port of ElevatorMod (VsnGamer, MIT). Needs the Elevator blocks mod (elevatorid)."
++authors = ["VsnGamer (ElevatorMod, MIT)", "Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "world", "player-control", "storage"]
++experimental = ["player-control"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/src/lib.rs b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+new file mode 100644
+index 0000000..13efa31
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+@@ -0,0 +1,290 @@
++//! Elevator, a Horizon server mod (`docs/mods.md`, "Server mods"): a port of
++//! ElevatorMod (VsnGamer, MIT; see NOTICE). Jump on an elevator block to go
++//! up to the next one above it, sneak to go down.
++//!
++//! The rules (which block is the target, what the server checks, what the
++//! experience cost is, where the player lands) are in `logic.rs`, tested
++//! without the game. This file reads the world and the players through the
++//! mod API and carries out what the logic decided.
++//!
++//! The blocks come from the content mod `elevatorid` (`elevatorid:elevator_<colour>`).
++use std::collections::{BTreeMap, HashMap};
++
++use horizon_mod_sdk::server::{
++    Args, Player, Registration, ServerMod, GameMode, player_control, players, world,
++};
++use horizon_mod_sdk::storage;
++
++// The directional elevator's seat of the rules is the same file the PC mod builds from.
++#[allow(dead_code)]
++mod logic;
++
++use logic::{
++    BlockPos, Config, Dir, DyeColor, Elevator, Facing, Pitch, Player as Rider, Reject, World, Yaw,
++};
++
++/// The sound the Java mod plays on arrival (`elevatorid:teleport`, in the content mod).
++const TELEPORT_SOUND: &str = "elevatorid:teleport";
++/// The config keys `/elevator set` takes (ElevatorMod's `elevatorid-synced.toml`).
++const KEYS: [&str; 9] = [
++    "sameColor",
++    "range",
++    "activationRange",
++    "precisionTarget",
++    "mobSpawn",
++    "resetPitchNormal",
++    "resetPitchDirectional",
++    "useXP",
++    "XPPointsAmount",
++];
++
++struct Elevators {
++    config: Config,
++    /// The config as `key = value` lines, kept in `storage`.
++    lines: BTreeMap<String, String>,
++    /// What each player was doing the last tick: (sneaking, jumps).
++    seen: HashMap<String, (bool, u32)>,
++}
++
++/// The world's height by dimension: (lowest block, height).
++fn dimension_height(dimension: &str) -> (i32, i32) {
++    match dimension {
++        "minecraft:the_nether" | "minecraft:the_end" => (0, 256),
++        _ => (-64, 384),
++    }
++}
++
++/// The block state's name and its `key=value` properties.
++fn parse_state(state: &str) -> (&str, Vec<(&str, &str)>) {
++    let (name, rest) = state.split_once('[').unwrap_or((state, ""));
++    let props = rest
++        .trim_end_matches(']')
++        .split(',')
++        .filter_map(|p| p.split_once('='))
++        .collect();
++    (name, props)
++}
++
++fn facing_of(name: &str) -> Option<Facing> {
++    Some(match name {
++        "north" => Facing::North,
++        "south" => Facing::South,
++        "east" => Facing::East,
++        "west" => Facing::West,
++        _ => return None,
++    })
++}
++
++/// The world as one dimension's loaded chunks show it.
++struct Reader<'a> {
++    dimension: &'a str,
++}
++
++impl Reader<'_> {
++    fn boxes(&self, pos: BlockPos) -> Vec<world::CollisionBox> {
++        world::get_collision(self.dimension, pos.x, pos.y, pos.z).unwrap_or_default()
++    }
++}
++
++impl World for Reader<'_> {
++    fn elevator_at(&self, pos: BlockPos) -> Option<Elevator> {
++        let state = world::get_block(self.dimension, pos.x, pos.y, pos.z)?;
++        let (name, props) = parse_state(&state);
++        let color = DyeColor::from_block_name(name)?;
++        let prop = |key: &str| props.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
++        let top = self.boxes(pos).iter().map(|b| b.max_y).fold(0.0_f64, f64::max);
++        Some(Elevator {
++            color,
++            directional: prop("directional") == Some("true"),
++            facing: prop("facing").and_then(facing_of).unwrap_or(Facing::North),
++            support_height: if top > 0.0 { top } else { 1.0 },
++        })
++    }
++
++    fn is_suffocating(&self, pos: BlockPos) -> bool {
++        self.boxes(pos).iter().any(|b| {
++            b.max_x - b.min_x >= 0.999 && b.max_y - b.min_y >= 0.999 && b.max_z - b.min_z >= 0.999
++        })
++    }
++
++    fn in_build_height(&self, y: i32) -> bool {
++        let (min, height) = dimension_height(self.dimension);
++        y >= min && y < min + height
++    }
++
++    fn is_loaded(&self, pos: BlockPos) -> bool {
++        world::get_block(self.dimension, pos.x, pos.y, pos.z).is_some()
++    }
++}
++
++fn render(lines: &BTreeMap<String, String>) -> String {
++    let mut text = String::from("[General]\n");
++    for (k, v) in lines {
++        text.push_str(&format!("{k} = {v}\n"));
++    }
++    text
++}
++
++impl Elevators {
++    /// `/elevator set <key> <value>`: only when you are alone on the server.
++    fn set(&mut self, key: &str, value: &str) -> Result<String, String> {
++        if !KEYS.contains(&key) {
++            return Err(format!("Unknown setting {key}. Settings: {}", KEYS.join(", ")));
++        }
++        let boolean = matches!(
++            key,
++            "sameColor" | "precisionTarget" | "mobSpawn" | "resetPitchNormal" | "resetPitchDirectional"
++                | "useXP"
++        );
++        let ok = if boolean {
++            matches!(value, "true" | "false")
++        } else {
++            value.parse::<u32>().is_ok()
++        };
++        if !ok {
++            let want = if boolean { "true or false" } else { "a whole number" };
++            return Err(format!("{key} takes {want}"));
++        }
++        self.lines.insert(key.to_owned(), value.to_owned());
++        let text = render(&self.lines);
++        self.config = Config::from_toml(&text);
++        storage::set("config", text.as_bytes())?;
++        Ok(format!("{key} = {value}"))
++    }
++
++    fn show(&self) -> String {
++        let c = &self.config;
++        format!(
++            "sameColor={} range={} activationRange={} precisionTarget={} resetPitchNormal={} \
++             resetPitchDirectional={} useXP={} XPPointsAmount={}",
++            c.same_color,
++            c.range,
++            c.activation_range,
++            c.precision_target,
++            c.reset_pitch_normal,
++            c.reset_pitch_directional,
++            c.use_xp,
++            c.xp_points_amount
++        )
++    }
++
++    /// `ElevatorHandler.tryTeleport` and `TeleportPacket.handle` in one place:
++    /// finds the target, checks it as the server does, charges and moves the player.
++    fn ride(&self, p: &Player, motion: &player_control::Motion, dir: Dir) {
++        if p.health <= 0.0 || p.game_mode == GameMode::Spectator {
++            return;
++        }
++        let cfg = &self.config;
++        let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
++        let reader = Reader { dimension: &p.dimension };
++        let Some(from) = logic::origin_elevator(&reader, here, cfg) else {
++            return;
++        };
++        let Some(to) = logic::find_target(&reader, from, dir, cfg) else {
++            return;
++        };
++        let rider = Rider {
++            alive: true,
++            creative: p.game_mode == GameMode::Creative,
++            block_pos: here,
++            xp_progress_points: logic::xp_progress_points(motion.xp_level, motion.xp_progress),
++            xp_level: u32::try_from(motion.xp_level).unwrap_or(0),
++        };
++        if logic::validate(&reader, &rider, from, to, cfg).is_err() {
++            return;
++        }
++        let Some(target) = reader.elevator_at(to) else {
++            return;
++        };
++        // The experience check and charge: only with `useXP` on, and not in creative.
++        match logic::xp_cost(&rider, cfg) {
++            Ok(0) => {}
++            Ok(cost) => {
++                if player_control::take_xp(&p.id, cost).is_err() {
++                    return;
++                }
++            }
++            Err(Reject::MissingXp) => {
++                players::tell(&p.id, "You do not have enough XP to use elevators");
++                return;
++            }
++            Err(_) => return,
++        }
++        let dest = logic::destination(to, &target, p.x, p.z, cfg);
++        let yaw = match dest.yaw {
++            Yaw::Set(v) => Some(v),
++            Yaw::Keep => None,
++        };
++        let pitch = (dest.pitch == Pitch::Reset).then_some(0.0);
++        if player_control::teleport(&p.id, &p.dimension, dest.x, dest.y, dest.z, yaw, pitch).is_ok() {
++            player_control::play_sound(
++                &p.dimension,
++                TELEPORT_SOUND,
++                f64::from(to.x) + 0.5,
++                f64::from(to.y) + 0.5,
++                f64::from(to.z) + 0.5,
++                1.0,
++                1.0,
++            );
++        }
++    }
++}
++
++impl ServerMod for Elevators {
++    fn init() -> Result<(Self, Registration), String> {
++        let text = storage::get("config")
++            .and_then(|b| String::from_utf8(b).ok())
++            .unwrap_or_default();
++        let lines = text
++            .lines()
++            .filter_map(|l| l.split_once('='))
++            .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
++            .collect();
++        Ok((
++            Elevators {
++                config: Config::from_toml(&text),
++                lines,
++                seen: HashMap::new(),
++            },
++            Registration::new().on_tick().command("elevator"),
++        ))
++    }
++
++    fn tick(&mut self, _tick: u64) {
++        let online = players::online();
++        self.seen.retain(|id, _| online.iter().any(|p| p.id == *id));
++        for p in &online {
++            let Some(m) = player_control::get_motion(&p.id) else {
++                continue;
++            };
++            let Some(&(was_sneaking, was_jumps)) = self.seen.get(&p.id) else {
++                self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
++                continue;
++            };
++            self.seen.insert(p.id.clone(), (m.sneaking, m.jumps));
++            // As in ElevatorHandler: the sneak key first, then the jump key.
++            if m.sneaking && !was_sneaking {
++                self.ride(p, &m, Dir::Down);
++            }
++            if m.jumps > was_jumps {
++                self.ride(p, &m, Dir::Up);
++            }
++        }
++    }
++
++    fn command(&mut self, _player: &Player, _name: &str, args: &Args) -> Result<Option<String>, String> {
++        let mut words = args.text().split_whitespace();
++        match (words.next(), words.next(), words.next()) {
++            (None | Some("show"), _, _) => Ok(Some(self.show())),
++            (Some("set"), Some(key), Some(value)) => {
++                if players::online().len() > 1 {
++                    return Err("Settings can only be changed when you are alone on the server".into());
++                }
++                self.set(key, value).map(Some)
++            }
++            _ => Err("Use /elevator show, or /elevator set <setting> <value>".into()),
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Elevators);
+diff --git a/crates/horizon-mod-sdk/examples/elevator/src/logic.rs b/crates/horizon-mod-sdk/examples/elevator/src/logic.rs
+new file mode 100644
+index 0000000..405303c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/src/logic.rs
+@@ -0,0 +1,679 @@
++//! Port em Rust da lógica do ElevatorMod (VsnGamer, MIT).
++//!
++//! Original: <https://github.com/VsnGamer/ElevatorMod>. Veja `NOTICE.md` e `LICENSE-ElevatorMod`.
++//!
++//! Este crate só tem a lógica pura, sem depender do jogo: o jogo (Horizon) fornece o mundo
++//! pelo trait [`World`] e aplica o resultado. A integração com o Horizon fica em outra camada.
++
++/// Posição de bloco.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub struct BlockPos {
++    pub x: i32,
++    pub y: i32,
++    pub z: i32,
++}
++
++impl BlockPos {
++    pub const fn new(x: i32, y: i32, z: i32) -> Self {
++        Self { x, y, z }
++    }
++    pub fn above(self) -> Self {
++        Self { y: self.y + 1, ..self }
++    }
++    pub fn below(self) -> Self {
++        Self { y: self.y - 1, ..self }
++    }
++    pub fn with_y(self, y: i32) -> Self {
++        Self { y, ..self }
++    }
++    /// Distância de Manhattan.
++    pub fn dist_manhattan(self, o: Self) -> u32 {
++        self.x.abs_diff(o.x) + self.y.abs_diff(o.y) + self.z.abs_diff(o.z)
++    }
++}
++
++/// As 16 cores de elevador.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub enum DyeColor {
++    White, Orange, Magenta, LightBlue, Yellow, Lime, Pink, Gray,
++    LightGray, Cyan, Purple, Blue, Brown, Green, Red, Black,
++}
++
++impl DyeColor {
++    /// Id do bloco do elevador de cada cor: `elevatorid:elevator_<cor>`.
++    pub const BLOCK_PREFIX: &'static str = "elevatorid:elevator_";
++
++    /// A cor de um bloco `elevatorid:elevator_<cor>`, ou `None` se não for um elevador.
++    pub fn from_block_name(name: &str) -> Option<Self> {
++        Some(match name.strip_prefix(Self::BLOCK_PREFIX)? {
++            "white" => Self::White,
++            "orange" => Self::Orange,
++            "magenta" => Self::Magenta,
++            "light_blue" => Self::LightBlue,
++            "yellow" => Self::Yellow,
++            "lime" => Self::Lime,
++            "pink" => Self::Pink,
++            "gray" => Self::Gray,
++            "light_gray" => Self::LightGray,
++            "cyan" => Self::Cyan,
++            "purple" => Self::Purple,
++            "blue" => Self::Blue,
++            "brown" => Self::Brown,
++            "green" => Self::Green,
++            "red" => Self::Red,
++            "black" => Self::Black,
++            _ => return None,
++        })
++    }
++}
++
++/// Direção em que o jogador fica virado em elevadores direcionais.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Facing {
++    North,
++    South,
++    East,
++    West,
++}
++
++impl Facing {
++    /// Rotação horizontal (yaw) em graus, como `Direction.toYRot()`.
++    pub fn to_yaw(self) -> f32 {
++        match self {
++            Facing::South => 0.0,
++            Facing::West => 90.0,
++            Facing::North => 180.0,
++            Facing::East => 270.0,
++        }
++    }
++}
++
++/// O que o jogo diz sobre um elevador colocado no mundo.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Elevator {
++    pub color: DyeColor,
++    pub directional: bool,
++    pub facing: Facing,
++    /// Altura máxima da forma de suporte do bloco (0.0 a 1.0), para posicionar o jogador em cima.
++    pub support_height: f64,
++}
++
++/// O mundo, visto pelo mod.
++pub trait World {
++    /// O elevador em `pos`, se aquele bloco for um elevador.
++    fn elevator_at(&self, pos: BlockPos) -> Option<Elevator>;
++    /// O bloco em `pos` sufoca quem estiver dentro dele (bloco sólido)?
++    fn is_suffocating(&self, pos: BlockPos) -> bool;
++    /// `y` está dentro da altura de construção do mundo?
++    fn in_build_height(&self, y: i32) -> bool;
++    /// O chunk de `pos` está carregado?
++    fn is_loaded(&self, pos: BlockPos) -> bool;
++}
++
++/// Configuração, com os mesmos nomes e padrões do original (`elevatorid-synced.toml`).
++#[derive(Clone, Debug, PartialEq)]
++pub struct Config {
++    pub same_color: bool,
++    pub range: u32,
++    pub activation_range: u32,
++    pub precision_target: bool,
++    pub mob_spawn: bool,
++    pub reset_pitch_normal: bool,
++    pub reset_pitch_directional: bool,
++    pub use_xp: bool,
++    pub xp_points_amount: u32,
++}
++
++impl Default for Config {
++    fn default() -> Self {
++        Self {
++            same_color: false,
++            range: 384,
++            activation_range: 6,
++            precision_target: true,
++            mob_spawn: false,
++            reset_pitch_normal: false,
++            reset_pitch_directional: true,
++            use_xp: false,
++            xp_points_amount: 1,
++        }
++    }
++}
++
++impl Config {
++    /// Limita os valores aos intervalos do original: range 3..=4064, activationRange 1..=64, XP >= 1.
++    pub fn clamped(mut self) -> Self {
++        self.range = self.range.clamp(3, 4064);
++        self.activation_range = self.activation_range.clamp(1, 64);
++        self.xp_points_amount = self.xp_points_amount.max(1);
++        self
++    }
++}
++
++impl Config {
++    /// Lê o arquivo `config/elevatorid-synced.toml` do ElevatorMod: linhas `chave = valor` (as
++    /// seções e os comentários `#` são ignorados). Chaves ausentes ou inválidas ficam no padrão e
++    /// os valores são limitados aos intervalos do original.
++    pub fn from_toml(text: &str) -> Self {
++        let mut cfg = Self::default();
++        for line in text.lines() {
++            let line = line.trim();
++            if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
++                continue;
++            }
++            let Some((key, value)) = line.split_once('=') else { continue };
++            let (key, value) = (key.trim(), value.split('#').next().unwrap_or("").trim());
++            let flag = || value.parse::<bool>().ok();
++            let number = || value.parse::<u32>().ok();
++            match key {
++                "sameColor" => cfg.same_color = flag().unwrap_or(cfg.same_color),
++                "range" => cfg.range = number().unwrap_or(cfg.range),
++                "activationRange" => cfg.activation_range = number().unwrap_or(cfg.activation_range),
++                "precisionTarget" => cfg.precision_target = flag().unwrap_or(cfg.precision_target),
++                "mobSpawn" => cfg.mob_spawn = flag().unwrap_or(cfg.mob_spawn),
++                "resetPitchNormal" => cfg.reset_pitch_normal = flag().unwrap_or(cfg.reset_pitch_normal),
++                "resetPitchDirectional" => {
++                    cfg.reset_pitch_directional = flag().unwrap_or(cfg.reset_pitch_directional)
++                }
++                "useXP" => cfg.use_xp = flag().unwrap_or(cfg.use_xp),
++                "XPPointsAmount" => cfg.xp_points_amount = number().unwrap_or(cfg.xp_points_amount),
++                _ => {}
++            }
++        }
++        cfg.clamped()
++    }
++}
++
++/// XP necessário para passar do nível `level` para o próximo (`Player.getXpNeededForNextLevel`).
++pub fn xp_needed(level: i32) -> i32 {
++    if level >= 30 {
++        112 + (level - 30) * 9
++    } else if level >= 15 {
++        37 + (level - 15) * 5
++    } else {
++        7 + level * 2
++    }
++}
++
++/// `Math.round(float)` do Java: arredonda para cima nos meios (`floor(x + 0.5)`).
++pub fn java_round(x: f32) -> i32 {
++    (x + 0.5).floor() as i32
++}
++
++/// Pontos de XP já ganhos no nível atual, como o original calcula
++/// (`Math.round(experienceProgress * getXpNeededForNextLevel())`).
++pub fn xp_progress_points(level: i32, progress: f32) -> i64 {
++    i64::from(java_round(progress * xp_needed(level) as f32))
++}
++
++/// Canal da mensagem do cliente para o servidor (equivale ao `elevatorid:teleport_request`).
++pub const CHANNEL: &str = "elevator:teleport_request";
++
++/// Codifica o pedido de teleporte: seis inteiros de 32 bits (`from` e `to`), little-endian.
++pub fn encode_request(from: BlockPos, to: BlockPos) -> [u8; 24] {
++    let mut out = [0u8; 24];
++    for (i, v) in [from.x, from.y, from.z, to.x, to.y, to.z].into_iter().enumerate() {
++        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
++    }
++    out
++}
++
++/// Lê um pedido de teleporte; `None` se o tamanho não for o certo.
++pub fn decode_request(data: &[u8]) -> Option<(BlockPos, BlockPos)> {
++    if data.len() != 24 {
++        return None;
++    }
++    let n = |i: usize| i32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
++    Some((BlockPos::new(n(0), n(1), n(2)), BlockPos::new(n(3), n(4), n(5))))
++}
++
++/// Sentido do movimento.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Dir {
++    Up,
++    Down,
++}
++
++impl Dir {
++    fn step(self) -> i32 {
++        match self {
++            Dir::Up => 1,
++            Dir::Down => -1,
++        }
++    }
++}
++
++/// O elevador está num lugar válido? Precisa de um bloco não sólido acima.
++pub fn is_valid_pos(world: &dyn World, pos: BlockPos) -> bool {
++    !world.is_suffocating(pos.above())
++}
++
++/// Elevador de origem: o jogador (parte de baixo) está num elevador ou até `activation_range - 1`
++/// blocos acima dele. Devolve `None` se não houver, ou se o primeiro achado for inválido.
++pub fn origin_elevator(world: &dyn World, player: BlockPos, cfg: &Config) -> Option<BlockPos> {
++    let mut pos = player;
++    for _ in 0..cfg.activation_range {
++        if world.elevator_at(pos).is_some() {
++            return if is_valid_pos(world, pos) { Some(pos) } else { None };
++        }
++        pos = pos.below();
++    }
++    None
++}
++
++/// Busca (lado do cliente) o elevador de destino na mesma coluna, no sentido pedido.
++pub fn find_target(world: &dyn World, from: BlockPos, dir: Dir, cfg: &Config) -> Option<BlockPos> {
++    let from_elevator = world.elevator_at(from)?;
++    let mut to = from;
++    loop {
++        to = to.with_y(to.y + dir.step());
++        if !world.in_build_height(to.y) || to.y.abs_diff(from.y) > cfg.range {
++            return None;
++        }
++        if let Some(target) = world.elevator_at(to) {
++            if is_valid_pos(world, to)
++                && (!cfg.same_color || from_elevator.color == target.color)
++            {
++                return Some(to);
++            }
++        }
++    }
++}
++
++/// Estado do jogador que o servidor precisa para validar um teleporte.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Player {
++    pub alive: bool,
++    pub creative: bool,
++    pub block_pos: BlockPos,
++    /// Pontos de XP já ganhos no nível atual: `round(progresso * xp_para_o_próximo_nível)`.
++    pub xp_progress_points: i64,
++    pub xp_level: u32,
++}
++
++/// Motivo de recusa de um pedido de teleporte.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Reject {
++    PlayerDead,
++    NotLoaded,
++    TooFarFromOrigin,
++    NotSameColumn,
++    SameHeight,
++    NotElevators,
++    InvalidDestination,
++    ColorMismatch,
++    /// Falta XP; o jogo mostra a mensagem `elevatorid.message.missing_xp`.
++    MissingXp,
++}
++
++/// Valida o pedido como o servidor do original faz (`isBadTeleportPacket`).
++pub fn validate(
++    world: &dyn World,
++    player: &Player,
++    from: BlockPos,
++    to: BlockPos,
++    cfg: &Config,
++) -> Result<(), Reject> {
++    if !player.alive {
++        return Err(Reject::PlayerDead);
++    }
++    if !world.is_loaded(from) || !world.is_loaded(to) {
++        return Err(Reject::NotLoaded);
++    }
++    if player.block_pos.dist_manhattan(from) > cfg.activation_range {
++        return Err(Reject::TooFarFromOrigin);
++    }
++    if from.x != to.x || from.z != to.z {
++        return Err(Reject::NotSameColumn);
++    }
++    if from.y == to.y {
++        return Err(Reject::SameHeight);
++    }
++    let (Some(a), Some(b)) = (world.elevator_at(from), world.elevator_at(to)) else {
++        return Err(Reject::NotElevators);
++    };
++    if !is_valid_pos(world, to) {
++        return Err(Reject::InvalidDestination);
++    }
++    if cfg.same_color && a.color != b.color {
++        return Err(Reject::ColorMismatch);
++    }
++    Ok(())
++}
++
++/// Quanto de XP cobrar. `Ok(0)` se nada é cobrado; `Err(MissingXp)` se não há XP suficiente.
++pub fn xp_cost(player: &Player, cfg: &Config) -> Result<u32, Reject> {
++    if !cfg.use_xp || player.creative {
++        return Ok(0);
++    }
++    let cost = cfg.xp_points_amount;
++    if player.xp_progress_points - i64::from(cost) >= 0 || player.xp_level > 0 {
++        Ok(cost)
++    } else {
++        Err(Reject::MissingXp)
++    }
++}
++
++/// Como mexer na rotação horizontal do jogador.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum Yaw {
++    /// Mantém o yaw atual do jogador.
++    Keep,
++    /// Define o yaw.
++    Set(f32),
++}
++
++/// Como mexer na inclinação (pitch) do jogador.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Pitch {
++    Keep,
++    Reset,
++}
++
++/// Onde colocar o jogador.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Destination {
++    pub x: f64,
++    pub y: f64,
++    pub z: f64,
++    pub yaw: Yaw,
++    pub pitch: Pitch,
++    /// Depois do teleporte a velocidade é multiplicada por (1, 0, 1): zera a vertical.
++    pub zero_vertical_velocity: bool,
++}
++
++/// Calcula o destino. `player_x`/`player_z` valem quando `precision_target` está desligado.
++pub fn destination(
++    to: BlockPos,
++    target: &Elevator,
++    player_x: f64,
++    player_z: f64,
++    cfg: &Config,
++) -> Destination {
++    let (x, z) = if cfg.precision_target {
++        (f64::from(to.x) + 0.5, f64::from(to.z) + 0.5)
++    } else {
++        (player_x, player_z)
++    };
++    let y = f64::from(to.y) + target.support_height.max(0.0);
++    let reset_pitch = if target.directional {
++        cfg.reset_pitch_directional
++    } else {
++        cfg.reset_pitch_normal
++    };
++    Destination {
++        x,
++        y,
++        z,
++        yaw: if target.directional { Yaw::Set(target.facing.to_yaw()) } else { Yaw::Keep },
++        pitch: if reset_pitch { Pitch::Reset } else { Pitch::Keep },
++        zero_vertical_velocity: true,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::HashMap;
++
++    #[derive(Default)]
++    struct Fake {
++        elevators: HashMap<BlockPos, Elevator>,
++        solid: Vec<BlockPos>,
++        unloaded: Vec<BlockPos>,
++    }
++
++    fn elev(color: DyeColor) -> Elevator {
++        Elevator { color, directional: false, facing: Facing::South, support_height: 1.0 }
++    }
++
++    impl Fake {
++        fn put(&mut self, p: BlockPos, c: DyeColor) {
++            self.elevators.insert(p, elev(c));
++        }
++    }
++
++    impl World for Fake {
++        fn elevator_at(&self, p: BlockPos) -> Option<Elevator> {
++            self.elevators.get(&p).copied()
++        }
++        fn is_suffocating(&self, p: BlockPos) -> bool {
++            self.solid.contains(&p)
++        }
++        fn in_build_height(&self, y: i32) -> bool {
++            (-64..320).contains(&y)
++        }
++        fn is_loaded(&self, p: BlockPos) -> bool {
++            !self.unloaded.contains(&p)
++        }
++    }
++
++    fn player(at: BlockPos) -> Player {
++        Player { alive: true, creative: false, block_pos: at, xp_progress_points: 0, xp_level: 0 }
++    }
++
++    const A: BlockPos = BlockPos::new(0, 64, 0);
++    const B: BlockPos = BlockPos::new(0, 70, 0);
++
++    #[test]
++    fn defaults_match_original() {
++        let c = Config::default();
++        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (384, 6, 1));
++        assert!(!c.same_color && !c.use_xp && !c.mob_spawn);
++        assert!(c.precision_target && c.reset_pitch_directional && !c.reset_pitch_normal);
++    }
++
++    #[test]
++    fn config_is_clamped() {
++        let c = Config { range: 1, activation_range: 999, xp_points_amount: 0, ..Config::default() }.clamped();
++        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (3, 64, 1));
++        assert_eq!(Config { range: 9999, ..Config::default() }.clamped().range, 4064);
++    }
++
++    #[test]
++    fn jump_finds_elevator_above_and_sneak_finds_below() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(B, DyeColor::Red);
++        let c = Config::default();
++        assert_eq!(find_target(&w, A, Dir::Up, &c), Some(B));
++        assert_eq!(find_target(&w, B, Dir::Down, &c), Some(A));
++        assert_eq!(find_target(&w, B, Dir::Up, &c), None);
++    }
++
++    #[test]
++    fn skips_elevator_with_solid_block_above() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(A.with_y(66), DyeColor::White);
++        w.solid.push(A.with_y(67));
++        w.put(B, DyeColor::White);
++        assert_eq!(find_target(&w, A, Dir::Up, &Config::default()), Some(B));
++    }
++
++    #[test]
++    fn same_color_skips_other_colors() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(A.with_y(66), DyeColor::Red);
++        w.put(B, DyeColor::White);
++        let c = Config { same_color: true, ..Config::default() };
++        assert_eq!(find_target(&w, A, Dir::Up, &c), Some(B));
++        assert_eq!(find_target(&w, A, Dir::Up, &Config::default()), Some(A.with_y(66)));
++    }
++
++    #[test]
++    fn range_limits_the_search() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(B, DyeColor::White);
++        let c = Config { range: 5, ..Config::default() };
++        assert_eq!(find_target(&w, A, Dir::Up, &c), None);
++        let c = Config { range: 6, ..Config::default() };
++        assert_eq!(find_target(&w, A, Dir::Up, &c), Some(B));
++    }
++
++    #[test]
++    fn search_stops_at_build_height() {
++        let mut w = Fake::default();
++        let top = BlockPos::new(0, 319, 0);
++        w.put(top, DyeColor::White);
++        assert_eq!(find_target(&w, top, Dir::Up, &Config::default()), None);
++    }
++
++    #[test]
++    fn origin_is_found_up_to_activation_range_below() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        let c = Config::default();
++        assert_eq!(origin_elevator(&w, A, &c), Some(A));
++        assert_eq!(origin_elevator(&w, A.with_y(69), &c), Some(A)); // 5 acima, dentro do alcance 6
++        assert_eq!(origin_elevator(&w, A.with_y(70), &c), None); // 6 acima, fora
++    }
++
++    #[test]
++    fn origin_is_none_when_first_elevator_is_blocked() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.solid.push(A.above());
++        assert_eq!(origin_elevator(&w, A, &Config::default()), None);
++    }
++
++    #[test]
++    fn valid_request_passes() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(B, DyeColor::Blue);
++        assert_eq!(validate(&w, &player(A), A, B, &Config::default()), Ok(()));
++    }
++
++    #[test]
++    fn rejects_bad_requests() {
++        let mut w = Fake::default();
++        w.put(A, DyeColor::White);
++        w.put(B, DyeColor::Blue);
++        let c = Config::default();
++        let dead = Player { alive: false, ..player(A) };
++        assert_eq!(validate(&w, &dead, A, B, &c), Err(Reject::PlayerDead));
++        assert_eq!(validate(&w, &player(A.with_y(80)), A, B, &c), Err(Reject::TooFarFromOrigin));
++        assert_eq!(validate(&w, &player(A), A, BlockPos::new(1, 70, 0), &c), Err(Reject::NotSameColumn));
++        assert_eq!(validate(&w, &player(A), A, A, &c), Err(Reject::SameHeight));
++        assert_eq!(validate(&w, &player(A), A, B.with_y(75), &c), Err(Reject::NotElevators));
++        let cs = Config { same_color: true, ..c.clone() };
++        assert_eq!(validate(&w, &player(A), A, B, &cs), Err(Reject::ColorMismatch));
++        w.solid.push(B.above());
++        assert_eq!(validate(&w, &player(A), A, B, &c), Err(Reject::InvalidDestination));
++        w.solid.clear();
++        w.unloaded.push(B);
++        assert_eq!(validate(&w, &player(A), A, B, &c), Err(Reject::NotLoaded));
++    }
++
++    #[test]
++    fn xp_rules() {
++        let off = Config::default();
++        let on = Config { use_xp: true, xp_points_amount: 3, ..Config::default() };
++        let p = player(A);
++        assert_eq!(xp_cost(&p, &off), Ok(0));
++        assert_eq!(xp_cost(&p, &on), Err(Reject::MissingXp));
++        assert_eq!(xp_cost(&Player { xp_progress_points: 3, ..p }, &on), Ok(3));
++        assert_eq!(xp_cost(&Player { xp_progress_points: 2, ..p }, &on), Err(Reject::MissingXp));
++        assert_eq!(xp_cost(&Player { xp_level: 1, ..p }, &on), Ok(3));
++        assert_eq!(xp_cost(&Player { creative: true, ..p }, &on), Ok(0));
++    }
++
++    #[test]
++    fn destination_centers_and_stands_on_block() {
++        let t = elev(DyeColor::White);
++        let d = destination(B, &t, 0.9, 0.1, &Config::default());
++        assert_eq!((d.x, d.y, d.z), (0.5, 71.0, 0.5));
++        assert_eq!((d.yaw, d.pitch), (Yaw::Keep, Pitch::Keep));
++        assert!(d.zero_vertical_velocity);
++    }
++
++    #[test]
++    fn destination_keeps_player_xz_without_precision_target() {
++        let c = Config { precision_target: false, ..Config::default() };
++        let d = destination(B, &elev(DyeColor::White), 0.9, 0.1, &c);
++        assert_eq!((d.x, d.z), (0.9, 0.1));
++    }
++
++    #[test]
++    fn directional_sets_yaw_and_resets_pitch() {
++        let t = Elevator { directional: true, facing: Facing::West, ..elev(DyeColor::White) };
++        let d = destination(B, &t, 0.0, 0.0, &Config::default());
++        assert_eq!((d.yaw, d.pitch), (Yaw::Set(90.0), Pitch::Reset));
++        let c = Config { reset_pitch_directional: false, ..Config::default() };
++        assert_eq!(destination(B, &t, 0.0, 0.0, &c).pitch, Pitch::Keep);
++    }
++
++    #[test]
++    fn config_reads_the_original_toml() {
++        let toml = "[General]\n#Should elevators have the same color\nsameColor = true\nrange = 100\n\
++                    activationRange = 2\nuseXP = true # custo\nXPPointsAmount = 5\nprecisionTarget = false\n\
++                    resetPitchNormal = true\nbogus = 1\n";
++        let c = Config::from_toml(toml);
++        assert!(c.same_color && c.use_xp && c.reset_pitch_normal && !c.precision_target);
++        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (100, 2, 5));
++        assert!(c.reset_pitch_directional); // ausente: fica no padrão
++    }
++
++    #[test]
++    fn config_toml_values_are_clamped_and_bad_values_ignored() {
++        let c = Config::from_toml("range = 1\nactivationRange = 500\nXPPointsAmount = 0\nsameColor = maybe\n");
++        assert_eq!((c.range, c.activation_range, c.xp_points_amount), (3, 64, 1));
++        assert!(!c.same_color);
++        assert_eq!(Config::from_toml(""), Config::default());
++    }
++
++    #[test]
++    fn xp_needed_matches_minecraft() {
++        assert_eq!(xp_needed(0), 7);
++        assert_eq!(xp_needed(14), 35);
++        assert_eq!(xp_needed(15), 37);
++        assert_eq!(xp_needed(29), 107);
++        assert_eq!(xp_needed(30), 112);
++        assert_eq!(xp_needed(40), 202);
++    }
++
++    #[test]
++    fn java_round_rounds_halves_up() {
++        assert_eq!(java_round(3.5), 4);
++        assert_eq!(java_round(2.5), 3);
++        assert_eq!(java_round(2.4), 2);
++        assert_eq!(java_round(-0.5), 0);
++        assert_eq!(java_round(-1.5), -1);
++    }
++
++    #[test]
++    fn xp_progress_points_follow_the_original_formula() {
++        assert_eq!(xp_progress_points(0, 0.0), 0);
++        assert_eq!(xp_progress_points(0, 0.5), 4); // 0.5 * 7 = 3.5, Math.round dá 4
++        assert_eq!(xp_progress_points(10, 0.5), 14); // 0.5 * 27 = 13.5
++        assert_eq!(xp_progress_points(20, 0.25), 16); // 0.25 * 62 = 15.5
++    }
++
++    #[test]
++    fn requests_round_trip() {
++        let (a, b) = (BlockPos::new(-5, 64, 300), BlockPos::new(-5, -60, 300));
++        assert_eq!(decode_request(&encode_request(a, b)), Some((a, b)));
++        assert_eq!(decode_request(&[0; 23]), None);
++        assert_eq!(decode_request(&[0; 25]), None);
++    }
++
++    #[test]
++    fn block_names_map_to_colors() {
++        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_white"), Some(DyeColor::White));
++        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_light_blue"), Some(DyeColor::LightBlue));
++        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_light_gray"), Some(DyeColor::LightGray));
++        assert_eq!(DyeColor::from_block_name("elevatorid:elevator_rainbow"), None);
++        assert_eq!(DyeColor::from_block_name("minecraft:stone"), None);
++    }
++
++    #[test]
++    fn facing_yaws_match_minecraft() {
++        assert_eq!(Facing::South.to_yaw(), 0.0);
++        assert_eq!(Facing::West.to_yaw(), 90.0);
++        assert_eq!(Facing::North.to_yaw(), 180.0);
++        assert_eq!(Facing::East.to_yaw(), 270.0);
++    }
++}
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml b/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
+new file mode 100644
+index 0000000..058ca58
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
+@@ -0,0 +1,31 @@
++# An elevator with a solid block above it is skipped (isValidPos), and so is one with none.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 69, z = 0, state = "minecraft:stone" },
++]
++ticks = 1
++
++# The only elevator above has stone over it: nowhere to go.
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = []
++
++# A carpet above does not suffocate: the elevator works again.
++[[step]]
++blocks = [{ x = 0, y = 69, z = 0, state = "minecraft:white_carpet" }]
++motion = { jumps = 2 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++
++# Away from any elevator, a jump does nothing.
++[[step]]
++player = { x = 50.5, y = 64.0, z = 50.5 }
++motion = { jumps = 3 }
++ticks = 1
++expect.teleports = []
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/config.toml b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+new file mode 100644
+index 0000000..091139c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+@@ -0,0 +1,25 @@
++# /elevator shows the settings and sets them when you are alone.
++
++[[step]]
++join = "Alex"
++command = "elevator show"
++expect.feedback = "sameColor=false range=384 activationRange=6 precisionTarget=true resetPitchNormal=false resetPitchDirectional=true useXP=false XPPointsAmount=1"
++
++[[step]]
++command = "elevator set range 10"
++expect.feedback = "range = 10"
++
++[[step]]
++command = "elevator set bogus 1"
++expect.error = "Unknown setting bogus. Settings: sameColor, range, activationRange, precisionTarget, mobSpawn, resetPitchNormal, resetPitchDirectional, useXP, XPPointsAmount"
++
++[[step]]
++command = "elevator set useXP maybe"
++expect.error = "useXP takes true or false"
++
++# Not with company.
++[[step]]
++join = "Sam"
++as = "Alex"
++command = "elevator set range 20"
++expect.error = "Settings can only be changed when you are alone on the server"
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/creative.toml b/crates/horizon-mod-sdk/examples/elevator/tests/creative.toml
+new file mode 100644
+index 0000000..25b06d0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/creative.toml
+@@ -0,0 +1,19 @@
++# Creative players ride for free, whatever the cost.
++
++[[step]]
++join = "Alex"
++player = { game-mode = "creative" }
++motion = { jumps = 0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++]
++command = "elevator set useXP true"
++expect.feedback = "useXP = true"
++ticks = 1
++
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.xp-taken = []
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/directional.toml b/crates/horizon-mod-sdk/examples/elevator/tests/directional.toml
+new file mode 100644
+index 0000000..07e011c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/directional.toml
+@@ -0,0 +1,15 @@
++# A directional elevator turns the player to its facing and puts their pitch to 0.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_blue[directional=true,facing=east,show_arrow=true]" },
++]
++ticks = 1
++
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 270 0"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml b/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
+new file mode 100644
+index 0000000..4794dbe
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/experience.toml
+@@ -0,0 +1,49 @@
++# With useXP on, a ride costs XPPointsAmount points, as in the Java mod: the player needs
++# round(progress * XP of the level) - cost >= 0, or any level above 0.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0, xp-level = 0, xp-progress = 0.0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++]
++ticks = 1
++
++[[step]]
++command = "elevator set useXP true"
++expect.feedback = "useXP = true"
++
++[[step]]
++command = "elevator set XPPointsAmount 3"
++expect.feedback = "XPPointsAmount = 3"
++
++# No experience at all.
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = []
++expect.xp-taken = []
++expect.told = ["Alex: You do not have enough XP to use elevators"]
++
++# 2 points (0.2857143 of level 0's 7) is one short of 3.
++[[step]]
++motion = { jumps = 2, xp-progress = 0.2857143 }
++ticks = 1
++expect.teleports = []
++expect.told = ["Alex: You do not have enough XP to use elevators"]
++
++# 3 points are enough: 0.4285714 * 7 = 3.0000000, and the Java mod rounds.
++[[step]]
++motion = { jumps = 3, xp-progress = 0.4285714 }
++ticks = 1
++expect.xp-taken = ["Alex: 3"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++
++# Nothing left: back to the start, and the rest of the level (4 points) is spent.
++[[step]]
++player = { y = 64.0 }
++motion = { jumps = 4, xp-progress = 0.0 }
++ticks = 1
++expect.teleports = []
++expect.told = ["Alex: You do not have enough XP to use elevators"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/experience_levels.toml b/crates/horizon-mod-sdk/examples/elevator/tests/experience_levels.toml
+new file mode 100644
+index 0000000..3c1acce
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/experience_levels.toml
+@@ -0,0 +1,23 @@
++# A level above 0 always pays: the charge takes the level down, the way
++# Player.giveExperiencePoints does.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0, xp-level = 1, xp-progress = 0.0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++]
++command = "elevator set useXP true"
++expect.feedback = "useXP = true"
++ticks = 1
++
++[[step]]
++command = "elevator set XPPointsAmount 3"
++expect.feedback = "XPPointsAmount = 3"
++
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.xp-taken = ["Alex: 3"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/same_color.toml b/crates/horizon-mod-sdk/examples/elevator/tests/same_color.toml
+new file mode 100644
+index 0000000..9804c44
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/same_color.toml
+@@ -0,0 +1,18 @@
++# With sameColor on, only an elevator of the same colour will do.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 72, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++]
++command = "elevator set sameColor true"
++expect.feedback = "sameColor = true"
++ticks = 1
++
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 73 0.5 ~ ~"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/up_and_down.toml b/crates/horizon-mod-sdk/examples/elevator/tests/up_and_down.toml
+new file mode 100644
+index 0000000..bc11793
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/up_and_down.toml
+@@ -0,0 +1,35 @@
++# Jump on an elevator to go up to the next one above; sneak to go down.
++
++[[step]]
++join = "Alex"
++motion = { jumps = 0 }
++blocks = [
++    { x = 0, y = 63, z = 0, state = "elevatorid:elevator_white[directional=false,facing=north,show_arrow=true]" },
++    { x = 0, y = 68, z = 0, state = "elevatorid:elevator_red[directional=false,facing=north,show_arrow=true]" },
++]
++# The first tick only learns what the player is doing.
++ticks = 1
++expect.teleports = []
++
++# A jump: the player lands on top of the elevator above (a full cube, so at y 69).
++[[step]]
++motion = { jumps = 1 }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++expect.sounds = ["minecraft:overworld elevatorid:teleport 0.5 68.5 0.5"]
++
++# Standing still does nothing: the jump counter did not move.
++[[step]]
++ticks = 3
++expect.teleports = []
++
++# Sneaking takes them back down.
++[[step]]
++motion = { sneaking = true }
++ticks = 1
++expect.teleports = ["Alex: minecraft:overworld 0.5 64 0.5 ~ ~"]
++
++# Holding the key is not a new press.
++[[step]]
++ticks = 5
++expect.teleports = []
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 1e71200..362f78f 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -199,7 +199,8 @@ pub mod server {
+         ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+-    pub use horizon::mods::world::{self, BlockChange};
++    pub use horizon::mods::player_control::{self, Motion};
++    pub use horizon::mods::world::{self, BlockChange, CollisionBox};
+ 
+     /// The server's calls into a mod. Only the hooks [`Registration`] asks
+     /// for are called; the others may stay as their defaults.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 045a934..63133a4 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 7;
++pub const LEVEL: u32 = 8;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 46] = [
++pub const FUNCTIONS: [(&str, u32); 51] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -60,6 +60,11 @@ pub const FUNCTIONS: [(&str, u32); 46] = [
+     ("recipes.place", 6),
+     ("recipes.give", 6),
+     ("render.set-far-terrain", 7),
++    ("world.get-collision", 8),
++    ("player-control.get-motion", 8),
++    ("player-control.teleport", 8),
++    ("player-control.take-xp", 8),
++    ("player-control.play-sound", 8),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 7d9eccf..6de69b8 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -650,6 +650,7 @@ impl Step {
+                 .ok_or_else(|| "no player is on the server: add join = \"Name\"".to_string()),
+         };
+         let acts = self.player.is_some()
++            || self.motion.is_some()
+             || self.chat.is_some()
+             || self.command.is_some()
+             || self.broken.is_some()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index e400dd5..71b2a46 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -255,8 +255,10 @@ experimental = ["ui", "render", "input", "recipes"]
+         needed(imports(&wasm).unwrap().iter().map(String::as_str)).0
+     };
+     assert_eq!(level("coords_hud.hmod"), 0);
+-    // The UI guest draws far terrain (`render.set-far-terrain`).
+-    assert_eq!(level("horizon_mods_test_ui_guest.hmod"), LEVEL);
++    // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
++    // world's collision boxes and `player-control`, which the elevator example uses.
++    assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
++    assert_eq!(LEVEL, 8);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+new file mode 100644
+index 0000000..49d2e32
+--- /dev/null
++++ b/docs/api/mods-reference.md
+@@ -0,0 +1,810 @@
++<!-- Generated from crates/horizon-mod-sdk/wit/horizon.wit and the manifest's capabilities by crates/horizon-mods/tests/api_reference.rs; a test fails when this file is out of date. Update it with: HORIZON_WRITE_DOCS=1 cargo test -p horizon-mods --features pack --test api_reference -->
++# Mod API reference
++
++The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`, every interface, type, function and hook in it, and the capabilities a manifest may list. The guide is [mods.md](../mods.md); stability and versions: [stability.md](stability.md). Manifest `api` lines this game serves: `0.1`, `0.2`, `0.3`.
++
++## Capabilities
++
++| In `capabilities` | Grants | The player reads "May …" |
++| --- | --- | --- |
++| `game-read` | [`game`](#game) | see your position, health and the time |
++| `chat` | [`chat`](#chat) | show you chat messages |
++| `hud` | [`hud`](#hud) | draw text on your screen |
++| `storage` | [`storage`](#storage) | save its own settings to disk |
++| `command` | [`command`](#command) | run commands as you, with your permissions |
++| `registries` | data files (`assets/`, `data/`), no interface | add blocks, items, mob effects and entity types to your worlds |
++| `ui` | [`ui`](#ui) | show its own screens and a settings page |
++| `render` | [`render`](#render) | draw on your screen, shake and zoom the camera |
++| `input` | [`input`](#input) | see the keys you hold and your clicks, take over the use button on its own items and the mouse wheel, and add keys |
++| `players` | [`players`](#players) | see who is on the server and message them |
++| `world` | [`world`](#world) | read and change the world's blocks |
++| `player-control` | [`player-control`](#player-control) | see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds |
++| `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
++
++## World `horizon-mod`
++
++A client mod: runs in the player's game.
++
++- Imports (what the game offers): `log`, `game`, `chat`, `hud`, `storage`, `command`
++- Exports (what the mod provides): `events`
++
++## World `horizon-server-mod`
++
++A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
++
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `world`
++- Exports (what the mod provides): `server-events`
++
++## World `horizon-ui-mod`
++
++A mod with widgets (capability `ui`): the SDK builds every mod against this world. Mods built for `horizon-mod` alone (no `ui-events` export) still load and simply hear nothing of their widgets.
++
++- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `log`, `game`, `chat`, `hud`, `storage`, `command`
++- Exports (what the mod provides): `ui-events`, `events`
++
++## World `ui-host`
++
++The game's side of `horizon-ui-mod` beyond `horizon-mod`.
++
++- Imports (what the game offers): `ui`
++- Exports (what the mod provides): `ui-events`
++
++## World `render-host`
++
++The game's side of capability `render` (imports only).
++
++- Imports (what the game offers): `render`, `input`
++- Exports (what the mod provides): 
++
++## World `recipes-host`
++
++The game's side of capability `recipes` (imports only).
++
++- Imports (what the game offers): `recipes`, `browser`
++- Exports (what the mod provides): 
++
++## `log`
++
++Access: always granted.
++
++The mod's log, in the game's log under the mod's id. Always granted.
++
++### enum `level`
++
++| Case | |
++| --- | --- |
++| `debug` |  |
++| `info` |  |
++| `warn` |  |
++| `error` |  |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `write` | `func(level: level, message: string)` | One line in the game's log as `[mod <id>] message`, at that level. |
++
++## `game`
++
++Access: capability `game-read`.
++
++Capability `game-read`: the local player, the world clock and the block the player looks at.
++
++### record `player`
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `f64` | Feet position, in blocks. |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `yaw` | `f32` | Degrees, as F3 shows them. |
++| `pitch` | `f32` | Degrees: -90 looks straight up, 90 straight down. |
++| `health` | `f32` | Hit points as vanilla counts them: 20 is full health without effects. |
++| `food` | `u32` | 0 to 20, as the hunger bar. |
++| `dimension` | `string` | `minecraft:overworld`, `minecraft:the_nether`, ... |
++
++### record `clock`
++
++| Field | Type | |
++| --- | --- | --- |
++| `game-time` | `u64` | Ticks since the world was created. |
++| `day-time` | `u64` | 24000 ticks per day; 0 is 6:00 on the first day. |
++
++### record `hit`
++
++A block along the player's view.
++
++| Field | Type | |
++| --- | --- | --- |
++| `block-x` | `s32` | The block hit. |
++| `block-y` | `s32` |  |
++| `block-z` | `s32` |  |
++| `x` | `f64` | The point on its face where the view meets it. |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `block` | `string` | `minecraft:stone`, ... |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get-player` | `func() -> option<player>` | None on the title screen. |
++| `get-clock` | `func() -> option<clock>` | None on the title screen. |
++| `raycast` | `func(distance: f32) -> option<hit>` | The first block along the player's view (fluids pass), up to `distance` blocks (at most 1024; past the loaded chunks, across the distant terrain when LOD Distance is on), as of this tick. None when nothing is hit, and on the title screen. |
++
++## `chat`
++
++Access: capability `chat`.
++
++Capability `chat`: messages only the local player sees.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `show` | `func(text: string)` | Shown in chat after the mod's name, like a system message. |
++
++## `hud`
++
++Access: capability `hud`.
++
++Capability `hud`: one panel of text lines per mod, drawn by the game every frame until the mod changes or clears it (no call per frame).
++
++### enum `corner`
++
++| Case | |
++| --- | --- |
++| `top-left` |  |
++| `top-right` |  |
++| `bottom-left` |  |
++| `bottom-right` |  |
++
++### record `line`
++
++| Field | Type | |
++| --- | --- | --- |
++| `text` | `string` | Plain text, up to 256 characters. |
++| `color` | `u32` | 0xRRGGBB. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `set-panel` | `func(corner: corner, lines: list<line>)` | Replaces the mod's panel: up to 16 lines in that corner of the screen. |
++| `clear` | `func()` | Removes the mod's panel. |
++
++## `storage`
++
++Access: capability `storage`.
++
++Capability `storage`: a per-mod folder of small key/value files, quota'd (docs/mods.md). Keys are `[a-z0-9_.-]{1,64}`, one path segment.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get` | `func(key: string) -> option<list<u8>>` | None if `key` has never been `set`, or the key is not well-formed. |
++| `set` | `func(key: string, value: list<u8>) -> result<_, string>` | Errs on a malformed key or over quota (bytes for the whole mod). |
++| `delete` | `func(key: string)` | No error if `key` was already absent. |
++
++## `command`
++
++Access: capability `command`.
++
++Capability `command`: vanilla commands run as the player, with the player's permissions, after the hook call returns (8 per call). A mod's own commands are not run this way.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `run` | `func(line: string)` | `line` without its slash; its feedback goes to the chat as if typed. |
++| `run-quiet` | `func(lines: list<string>)` | `lines` (each without its slash, at most 256 a call) as `run` does, but with nothing in the chat: no feedback and no failure. In single player and on Horizon's servers, each runs exactly as the player typing it would (the same rights), in order, 64 a tick, and the server logs one line a batch; one that carries a chat message (`say`, `msg`) is refused. On any other server they go as chat commands, and there their feedback shows: a mod running many should say so. |
++
++## `ui`
++
++Access: capability `ui`.
++
++Capability `ui`: widgets the game draws with its own menus' widgets, for a screen the mod owns and a settings page in Options > Mods. Layout and drawing are the game's: a mod says what its widgets hold, never where they sit or how they look, and the game clips everything it is handed.
++
++### record `text-widget`
++
++A line of text.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` | The mod's own name for the widget; `ui-events` calls echo it. |
++| `text` | `string` | Up to 256 characters. |
++| `color` | `u32` | 0xRRGGBB; 0 is the menus' white. |
++
++### record `item-widget`
++
++An item's icon and a name beside it, as recipe viewers show them.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` | The mod's own name for the widget. |
++| `item` | `string` | `minecraft:diamond`, `<mod>:<path>`; an unknown id draws a "?". |
++| `name` | `string` | The name shown beside the icon (empty: the item's own). |
++
++### record `list-widget`
++
++Rows the player picks one of, as an options page lists choices: a pick is `ui-events::select`, `selected` is the row to mark now.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` | The mod's own name for the widget; `ui-events::select` echoes it. |
++| `rows` | `list<string>` | The rows' texts, at most 512, each up to 256 characters. |
++| `selected` | `option<u32>` | The row to mark as the current choice, if any. |
++
++### record `button-widget`
++
++A thing on a mod's screen or settings page. A button as the options pages have them (200 × 20): a click is `ui-events::select(id, 0)`. Mods cycle its label for a choice ("Corner: Top Left").
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` | The mod's own name for the widget. |
++| `label` | `string` | Up to 256 characters. |
++
++### variant `widget`
++
++| Case | Payload | |
++| --- | --- | --- |
++| `text` | `text-widget` | Text the player reads. |
++| `button` | `button-widget` | A button. |
++| `item` | `item-widget` | An item's icon and name. |
++| `list` | `list-widget` | Rows the player picks from. |
++
++### record `screen`
++
++A screen the mod owns: a title over widgets stacked down the middle, the Done button the game adds, and Esc to leave it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `title` | `string` | Its title, up to 256 characters. |
++| `widgets` | `list<widget>` | Its widgets, in order, at most 64. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `open-screen` | `func(screen: screen)` | Show `screen` over the game; a second call while it is open replaces it. Only the last call of one hook counts. |
++| `close-screen` | `func()` | Close the mod's screen when it is open (the mod hears no `closed` for this: it was its own doing). |
++| `set-settings` | `func(widgets: list<widget>)` | The mod's page in Options > Mods, reached from a settings button on its row: the widgets it shows, an empty list for no page. The player opening the page is `ui-events::settings-opened`: push fresh widgets then; later calls update the page while it shows. |
++
++## `ui-events`
++
++Access: exported by the mod: the game calls it.
++
++What the game calls on a mod that shows widgets (capability `ui`): what the player did with them.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `select` | `func(id: u32, row: u32)` | A row of one of the mod's `list` widgets was picked: the widget's `id` and the row, on the screen or the settings page that showed it. |
++| `closed` | `func()` | The player left the mod's screen (Esc or Done); not for a screen the mod closed itself or one that went away with the mod. |
++| `settings-opened` | `func()` | The player opened the mod's settings page in Options > Mods: call `ui::set-settings` now to fill it with fresh widgets. |
++
++## `input`
++
++Access: capability `input`.
++
++Capability `input` (experimental: the manifest needs `experimental = ["input"]`): the use button on items the mod claims, and the mod's own keys. Events wait for `poll`, at most 256.
++
++### record `held-item`
++
++The main hand's stack.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `minecraft:spyglass`, `<mod>:<path>`. |
++| `count` | `u32` |  |
++| `slot` | `u32` | The hotbar slot, 0 to 8. |
++
++### record `item-use`
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `held-item` |  |
++| `ticks` | `u32` | Game ticks the button was held (0 on `use-start`). |
++
++### variant `event`
++
++| Case | Payload | |
++| --- | --- | --- |
++| `use-start` | `item-use` | The use button went down with a claimed item in the main hand. The game does nothing else with the click: no placing, no eating, no swing. |
++| `use-stop` | `item-use` | It came up again, or the item left the hand, or a screen opened. |
++| `key-down` | `string` | A key `register-key` named went down or up while playing (no screen open). The game's own mapping on that key still runs. A screen opening lets every held key up. |
++| `key-up` | `string` |  |
++| `wheel` | `f32` | Mouse wheel steps while the mod holds the wheel (`claim-wheel`): positive away from the player, as the hotbar reads them. |
++
++### record `mapping-state`
++
++A mapping as the player has bound it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `label` | `string` | The bound key's name as Controls shows it: `W`, `Space`, `LMB`. |
++| `down` | `bool` | Held down now (as of this frame for a mod with a `frame` hook, else this tick). |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `claim-items` | `func(ids: list<string>)` | The items whose use the mod handles instead of the game, by id (at most 64). Replaces the previous list. |
++| `register-key` | `func(name: string, label: string, key: string) -> result<_, string>` | A key of the mod's: `name` comes back in `key-down` and `key-up`, `label` says what it does, `key` is the key as options.txt writes it (`key.keyboard.r`), the default: the player can bind another one on the mod's page in Options > Mods, and that one wins. At most 16; an unknown key is an error. |
++| `held` | `func() -> option<held-item>` | The main hand's stack, as of this tick; none when it is empty. |
++| `poll` | `func() -> list<event>` | The events since the last call, oldest first. |
++| `claim-wheel` | `func(on: bool)` | Takes the mouse wheel while playing (true) or gives it back: while taken, its steps are the mod's `wheel` events and the hotbar doesn't move. The game gives it back when the mod stops. |
++| `mapping` | `func(name: string) -> option<mapping-state>` | A movement or click mapping as the player has bound it: `key.forward`, `key.left`, `key.back`, `key.right`, `key.jump`, `key.sneak`, `key.sprint`, `key.attack` or `key.use`. None for another name. |
++| `clicks-per-second` | `func() -> tuple<u32, u32>` | Clicks of the attack and use buttons in the last second. |
++
++## `render`
++
++Access: capability `render`.
++
++Capability `render` (experimental: the manifest needs `experimental = ["render"]`): shapes the game draws for the mod with its own renderer, kept until the mod replaces them (no call per frame). A mod never supplies shader code.
++
++### enum `corner`
++
++A corner of the screen, as `hud`'s panels use them.
++
++| Case | |
++| --- | --- |
++| `top-left` |  |
++| `top-right` |  |
++| `bottom-left` |  |
++| `bottom-right` |  |
++
++### record `rect`
++
++A rectangle in GUI pixels: the top left corner and the size.
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `f32` |  |
++| `y` | `f32` |  |
++| `w` | `f32` |  |
++| `h` | `f32` |  |
++
++### record `point`
++
++A point in GUI pixels from the screen's top left.
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `f32` |  |
++| `y` | `f32` |  |
++
++### record `fill-shape`
++
++| Field | Type | |
++| --- | --- | --- |
++| `rect` | `rect` |  |
++| `color` | `u32` | 0xAARRGGBB. |
++
++### record `quad-shape`
++
++Any four-cornered shape (a wheel's segment, an arrow): the corners in order round it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `corners` | `tuple<point, point, point, point>` |  |
++| `color` | `u32` | 0xAARRGGBB. |
++
++### record `sprite-shape`
++
++| Field | Type | |
++| --- | --- | --- |
++| `sprite` | `string` | One of the game's GUI sprites, as `gui/sprites/` names them (`hud/heart/full`, `widget/button`), the resource packs' versions included, drawn over `rect` as vanilla draws it: nine-sliced when its `gui.scaling` says so (`tooltip/frame`, `widget/button`: the borders keep their size), stretched otherwise. An unknown one draws nothing. |
++| `rect` | `rect` |  |
++| `color` | `u32` | A tint, 0xAARRGGBB: 0xFFFFFFFF draws it as it is. |
++
++### record `item-shape`
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `string` | `minecraft:diamond`, `<mod>:<path>`; an unknown one draws nothing. |
++| `at` | `point` | The icon's top left. |
++| `scale` | `f32` | 1.0 is the hotbar's 16 × 16. |
++
++### record `text-shape`
++
++| Field | Type | |
++| --- | --- | --- |
++| `text` | `string` | Up to 256 characters, one line. |
++| `at` | `point` |  |
++| `color` | `u32` | 0xRRGGBB, as `hud`'s lines. |
++| `centered` | `bool` | Centred on `at.x` instead of starting there. |
++| `shadow` | `bool` |  |
++
++### variant `shape`
++
++| Case | Payload | |
++| --- | --- | --- |
++| `fill` | `fill-shape` |  |
++| `quad` | `quad-shape` |  |
++| `sprite` | `sprite-shape` |  |
++| `item` | `item-shape` |  |
++| `text` | `text-shape` |  |
++
++### record `frame-rate`
++
++| Field | Type | |
++| --- | --- | --- |
++| `fps` | `u32` | Frames drawn in the last second. |
++| `min` | `u32` | The slowest frame's rate, and the 1% low (the 99th percentile frame time's rate), over the last 5 seconds. |
++| `low` | `u32` |  |
++
++### record `zoom`
++
++| Field | Type | |
++| --- | --- | --- |
++| `factor` | `f32` | The field of view is divided by it: 1 is none, at most 10. |
++| `smooth` | `bool` | Ease in and out through the game's field-of-view easing, as the spyglass does, instead of at once. |
++| `turn` | `f32` | Mouse turning is multiplied by it while zoomed: 1 keeps the player's sensitivity, at least 0.05. |
++
++### record `minimap`
++
++| Field | Type | |
++| --- | --- | --- |
++| `corner` | `corner` |  |
++| `size` | `f32` | Its side in GUI pixels, 16 to 256. |
++| `blocks-per-pixel` | `f32` | World blocks per map pixel, 0.5 to 4; the map is 128 × 128 pixels. |
++| `rotate` | `bool` | The map turns with the player, who faces up, and an N on its rim marks north. Otherwise north is up and the player's arrow turns. |
++| `round` | `bool` | Round, the corners left clear; otherwise square. |
++
++### record `far-terrain`
++
++| Field | Type | |
++| --- | --- | --- |
++| `distance` | `u32` | How far the distant terrain reaches, in chunks: 64 to 1024. On integrated graphics other than Apple's the game caps it lower. |
++| `reduced` | `bool` | Coarser far tiles, as the Far Detail setting's Reduced: 2 to 4 ms less GPU time per frame on integrated graphics. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `set-hud` | `func(shapes: list<shape>)` | Replaces the mod's HUD shapes: up to 1024, drawn every frame in order over the HUD (after the hotbar, under chat and screens), hidden with the HUD (F1). An empty list removes them. |
++| `gui-size` | `func() -> tuple<f32, f32>` | The screen's size in GUI pixels (width, height), as of this tick. |
++| `shake` | `func(strength: f32, seconds: f32)` | Shakes the camera: a jolt of `strength` (0 to 1, 1 the hardest) that fades out over `seconds` (at most 10). Jolts add up to 1. The view turns, the player doesn't, and the player's Distortion Effects option scales it (0 turns it off). |
++| `set-corner` | `func(corner: corner, width: f32, height: f32, shapes: list<shape>)` | Replaces the mod's corner panel: shapes in GUI pixels from the top left of a `width` × `height` box that the game places in `corner`, stacked with the game's overlays and the other mods' panels (under the status effects at the top right), as `hud`'s panels are. |
++| `clear-corner` | `func()` | Removes the mod's corner panel. |
++| `text-width` | `func(text: string) -> f32` | The width of one line of text in GUI pixels, in the HUD's font: exact for Latin letters (U+0000 to U+024F), 6 per other character. |
++| `frame-stats` | `func() -> frame-rate` | The game's frame counter, recomputed twice a second. |
++| `set-zoom` | `func(zoom: zoom)` | Zooms the camera until the next call (`factor` 1 ends it), only while playing: a screen opening or the spyglass's own view (which wins) leave the camera vanilla's. With several mods, the strongest zoom counts. |
++| `set-minimap` | `func(minimap: option<minimap>)` | Shows a map of the world around the player in `corner`, stacked with the game's overlays and the mods' panels, until the next call (none hides it). It looks like a map item: vanilla's map colours with their height shading and water depth, and the player's arrow. Underground, under a roof and in the Nether it maps the floor around the player's height. The game keeps the map's tiles and refreshes them within its own frame budget; hidden, they are dropped. One map shows at a time: the first loaded mod's. |
++| `set-far-terrain` | `func(far-terrain: option<far-terrain>)` | Draws the world beyond the render distance as distant terrain, out to `distance` chunks, until the next call (none ends it). The game builds it on its own workers, from the chunks already loaded or saved and, where nobody has been, from the world's generator; the simulation distance doesn't change. Only worlds whose generator the game has (single player and a LAN world you host) show it. The player's own LOD Distance setting, when on, wins. One far terrain shows at a time: the first loaded mod's. |
++
++## `events`
++
++Access: exported by the mod: the game calls it.
++
++What the game calls. Only the hooks `init` asks for are ever called.
++
++### record `registration`
++
++| Field | Type | |
++| --- | --- | --- |
++| `commands` | `list<string>` | Chat commands, without the slash. A name vanilla already uses is refused (vanilla's command runs). |
++| `tick` | `bool` | Call `tick` every game tick (20 per second while playing). |
++| `frame` | `bool` | Call `frame` every rendered frame. Budget: 0.1 ms. |
++| `chat` | `bool` | Call `chat` for each chat line the player receives. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `init` | `func() -> result<registration, string>` | Once, after loading. An error keeps the mod off and is shown. |
++| `tick` | `func(tick: u64)` | Each game tick while in a world, with the game's tick counter. |
++| `frame` | `func(seconds: f32)` | Each rendered frame, with the seconds since the last one. |
++| `command` | `func(name: string, args: string) -> result<option<string>, string>` | `/name args`: ok(some(text)) is shown as feedback, err(text) in red. |
++| `chat` | `func(text: string)` | Each chat line the player receives, as plain text. |
++
++## `recipes`
++
++Access: capability `recipes`.
++
++Capability `recipes` (experimental): the recipes and items the game knows, for recipe viewers. In single player and on Horizon's servers they are the world's; on any other server they are vanilla 26.3's (a client is sent no others), while `known` follows that server's book.
++
++### record `stack`
++
++An item of `items`, by its index there, with a count and the components it has beyond the item's own, in vanilla's item syntax (`[potion_contents={potion:"minecraft:swiftness"}]`), or "".
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `u32` |  |
++| `count` | `u32` |  |
++| `components` | `string` |  |
++
++### enum `kind`
++
++The station a recipe is made at.
++
++| Case | |
++| --- | --- |
++| `crafting-shaped` |  |
++| `crafting-shapeless` |  |
++| `smelting` |  |
++| `blasting` |  |
++| `smoking` |  |
++| `campfire` |  |
++| `stonecutting` |  |
++| `smithing` |  |
++| `brewing` |  |
++
++### record `recipe`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `minecraft:oak_planks`. |
++| `kind` | `kind` |  |
++| `category` | `string` | The recipe book's tab (`crafting_building_blocks`, `furnace_food`), or "". |
++| `group` | `string` | Recipes the book shows on one button share a group, or "". |
++| `width` | `u32` | A shaped recipe's grid: `slots` holds its cells row by row. 0 for the other kinds. |
++| `height` | `u32` |  |
++| `slots` | `list<list<stack>>` | Each slot's stacks, any one of which fits; an empty list is an empty cell. Cooking and stonecutting: the input. Smithing: the template, the base, the addition. Brewing: the bottle, the reagent. |
++| `results` | `list<stack>` | What it makes; several when that varies (a trim on any armour). |
++| `cooking-time` | `u32` | Cooking: game ticks and experience; 0 for the other kinds. |
++| `experience` | `f32` |  |
++| `book-id` | `s32` | The recipe book's id for it (one per way the book shows it), as `known` lists them; -1 for the kinds the book doesn't show (campfire, stonecutting, smithing, brewing). |
++
++### record `item`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `minecraft:diamond`, `<mod>:<path>`. |
++| `name` | `string` | In the player's language. |
++| `tags` | `list<string>` | Its item tags, without the `#`. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `items` | `func() -> list<item>` | Every item, in the registry's order: `stack.item` indexes this list. |
++| `all` | `func() -> list<recipe>` | Every recipe: the book's in its order, then campfire, stonecutting, smithing and brewing. They don't change while a world is open. |
++| `known` | `func() -> list<s32>` | The `book-id`s of the recipes the player's recipe book holds now. |
++| `place` | `func(book-id: s32, all: bool) -> result<_, string>` | Places a recipe in the open screen's grid as a click in the recipe book does (`ServerboundPlaceRecipePacket`): the inventory's grid or a crafting table. `all` places as many as the items allow, as with Shift. Refused while no such screen is open, for a recipe the player's book doesn't hold and for one that can't be placed; one missing items shows as a ghost in the grid, as in the book. |
++| `give` | `func(stack: stack) -> result<_, string>` | Creative mode only: gives the player the stack, as taking it from the creative inventory does (`ServerboundSetCreativeModeSlot`): the selected slot first, then the hotbar, then the inventory. The count is cut to one stack of the item (64, 16 or 1). |
++
++## `browser`
++
++Access: not granted by any capability.
++
++Capability `ui` (experimental): a recipe viewer's panel beside the game's inventory and container screens (not the creative inventory), on the right of the screen. The game draws it with its own widgets and slots, pages it and keeps its search box; the mod says what it holds. The first loaded mod with a panel shows.
++
++### record `stack`
++
++An item to show: its id, a count (1 draws none) and its components beyond the item's own, in vanilla's item syntax, or "".
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `string` |  |
++| `count` | `u32` |  |
++| `components` | `string` |  |
++
++### record `click`
++
++A click on an item of the panel, by its index in `set-items`'s list.
++
++| Field | Type | |
++| --- | --- | --- |
++| `index` | `u32` |  |
++| `right` | `bool` |  |
++
++### record `item-key`
++
++A key the mod registered (`input.register-key`) went down while the pointer was on an item: a slot of the screen's, or the panel's.
++
++| Field | Type | |
++| --- | --- | --- |
++| `key` | `string` |  |
++| `stack` | `stack` |  |
++
++### record `slot-click`
++
++A click on a slot of a recipe the panel shows (`set-recipes`).
++
++| Field | Type | |
++| --- | --- | --- |
++| `recipe` | `u32` | The recipe's index in `set-recipes`'s list and the slot's in it; the results come after the slots. |
++| `slot` | `u32` |  |
++| `stack` | `stack` | The stack the slot showed at that moment. |
++| `right` | `bool` |  |
++
++### variant `event`
++
++| Case | Payload | |
++| --- | --- | --- |
++| `clicked` | `click` |  |
++| `search` | `string` | The search box's text, each time the player changes it. |
++| `key` | `item-key` |  |
++| `slot-clicked` | `slot-click` |  |
++| `action` | `u32` | The action button of the recipe at this index in `set-recipes`'s list. |
++| `page` | `u32` | The player turned the recipes' page (`set-recipes`): the index of the first recipe now shown. |
++| `back` |  | The back button of `set-recipes`. |
++| `tab` | `u32` | The player picked the tab at this index of `set-recipes`' tabs. |
++
++### enum `layout`
++
++How the game lays out a recipe of `set-recipes`.
++
++| Case | |
++| --- | --- |
++| `grid` | A crafting grid of `width` x `height` slots, an arrow and the result. |
++| `cooking` | One input over a flame, an arrow and the result (furnaces, smokers, campfires). |
++| `single` | One input, an arrow and the result (the stonecutter). |
++| `smithing` | Template, base and addition, an arrow and the result. |
++| `brewing` | A potion and an ingredient, an arrow and the result. |
++
++### record `recipe-view`
++
++A recipe to show. Each slot, and the result, cycles through its stacks, one a second; an empty slot shows nothing.
++
++| Field | Type | |
++| --- | --- | --- |
++| `layout` | `layout` |  |
++| `width` | `u32` | The grid's size (`grid` only), at most 3 x 3. |
++| `height` | `u32` |  |
++| `slots` | `list<list<stack>>` |  |
++| `results` | `list<stack>` |  |
++| `note` | `string` | A short line under the recipe (a cooking time), or "". |
++| `action` | `option<bool>` | The action button beside it: none, enabled, or shown greyed. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `set-items` | `func(items: list<stack>)` | The panel's items, at most 8192 (an empty list hides the panel). |
++| `set-recipes` | `func(title: string, tabs: list<stack>, tab: u32, recipes: list<recipe-view>)` | Shows these recipes in the panel instead of its items, as many as fit a page, under `title` and a back button, with a row of `tabs` (each an icon; `tab` is the selected one) between them; an empty list of recipes shows the items again. At most 256 recipes and 16 tabs. |
++| `poll` | `func() -> list<event>` | What the player did on the panel since the last poll, at most 256 kept. |
++
++## `players`
++
++Access: capability `players`.
++
++Capability `players`, server mods only (manifest `api = "0.3"`, experimental): the players on the server, and messages to them.
++
++### enum `game-mode`
++
++| Case | |
++| --- | --- |
++| `survival` |  |
++| `creative` |  |
++| `adventure` |  |
++| `spectator` |  |
++
++### record `player`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | The player's UUID, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`. |
++| `name` | `string` |  |
++| `x` | `f64` | Feet position, in blocks. |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `dimension` | `string` | `minecraft:overworld`, `minecraft:the_nether`, ... |
++| `game-mode` | `game-mode` |  |
++| `health` | `f32` | Hit points as vanilla counts them: 20 is full health without effects. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `online` | `func() -> list<player>` | The players online, in the order they joined. |
++| `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
++| `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
++
++## `world`
++
++Access: capability `world`.
++
++Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the blocks of the server's loaded chunks, and changes to them through the server's own block updates.
++
++### record `block-change`
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `s32` |  |
++| `y` | `s32` |  |
++| `z` | `s32` |  |
++| `state` | `string` | `minecraft:oak_log[axis=y]`; properties left out take the block's defaults, `minecraft:stone` alone is the default state. |
++
++### record `collision-box`
++
++One collision box of a block, in blocks, relative to the block's own corner (a full cube is `0,0,0` to `1,1,1`).
++
++| Field | Type | |
++| --- | --- | --- |
++| `min-x` | `f64` |  |
++| `min-y` | `f64` |  |
++| `min-z` | `f64` |  |
++| `max-x` | `f64` |  |
++| `max-y` | `f64` |  |
++| `max-z` | `f64` |  |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
++| `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
++| `get-collision` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>` | The collision boxes of the block at a position, as an entity bumps into them (an empty list for air, grass or a carpet's top: none): none where the server has no chunk loaded there. |
++| `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
++
++## `player-control`
++
++Access: capability `player-control`.
++
++Capability `player-control`, server mods only (manifest `api = "0.3"`, experimental): what a player is doing, and moving, charging and sounding for them. It is what an elevator, a waystone or a shop needs.
++
++### record `motion`
++
++What a player is doing as of the last server tick.
++
++| Field | Type | |
++| --- | --- | --- |
++| `sneaking` | `bool` | The sneak key is held. |
++| `on-ground` | `bool` | The player stands on the ground. |
++| `jumps` | `u32` | How many times the player has jumped from the ground since the world opened: a mod compares it with the last tick's to see a jump. |
++| `xp-level` | `s32` | The experience level (`Player.experienceLevel`). |
++| `xp-progress` | `f32` | The progress toward the next level, 0 up to (not including) 1 (`Player.experienceProgress`). |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get-motion` | `func(player: string) -> option<motion>` | What the player with this id is doing; none for an id that is not online. |
++| `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
++| `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
++| `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
++
++## `server-events`
++
++Access: exported by the mod: the game calls it.
++
++What the server calls in a server mod (manifest `api = "0.3"`, experimental). Only the hooks `init` asks for are ever called. The player in each event is as the server saw them when it happened.
++
++### type `player`
++
++`type player = player`
++
++### record `block-pos`
++
++| Field | Type | |
++| --- | --- | --- |
++| `x` | `s32` |  |
++| `y` | `s32` |  |
++| `z` | `s32` |  |
++
++### variant `argument-kind`
++
++What an argument of a command takes. The server sends each command and its arguments to players' games, whose chat box completes and colours them as vanilla's; the server parses them before the mod's `command` hook gets their values.
++
++| Case | Payload | |
++| --- | --- | --- |
++| `word` |  | One word: letters, digits and `_ - . +`. |
++| `text` |  | The rest of the line, spaces included: only last. |
++| `integer` | `tuple<option<s32>, option<s32>>` | A whole number, within the bounds given. |
++| `number` |  | A number with or without decimals. |
++| `boolean` |  | `true` or `false`. |
++| `player` |  | One online player: a name, or `@s` or `@p` (whoever typed it, as vanilla picks for a player). |
++| `block-pos` |  | A block position: three whole numbers, each one also `~` or `~n`, relative to whoever typed it. |
++
++### record `argument`
++
++| Field | Type | |
++| --- | --- | --- |
++| `name` | `string` | Shown in the chat box's hint (`<height>`) and the key of its value. |
++| `kind` | `argument-kind` |  |
++| `optional` | `bool` | Optional arguments come after every required one. |
++
++### record `server-command`
++
++| Field | Type | |
++| --- | --- | --- |
++| `name` | `string` | Without the slash. A name vanilla already uses is refused (vanilla's command runs). |
++| `arguments` | `list<argument>` | In order; none: the command takes nothing after its name. Free text is one optional `text` argument. |
++
++### variant `argument-value`
++
++An argument's value, parsed as its kind says.
++
++| Case | Payload | |
++| --- | --- | --- |
++| `word` | `string` |  |
++| `text` | `string` |  |
++| `integer` | `s32` |  |
++| `number` | `f64` |  |
++| `boolean` | `bool` |  |
++| `player` | `player` |  |
++| `block-pos` | `block-pos` |  |
++
++### record `registration`
++
++| Field | Type | |
++| --- | --- | --- |
++| `commands` | `list<server-command>` | Commands players may type. |
++| `tick` | `bool` | Call `tick` every server tick (20 per second). |
++| `joins` | `bool` | Call `player-joined` and `player-left`. |
++| `chat` | `bool` | Call `chat` for each chat message a player sends. |
++| `blocks` | `bool` | Call `block-broken` and `block-placed`. |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `init` | `func() -> result<registration, string>` | Once, after loading. An error keeps the mod off and is logged. |
++| `tick` | `func(tick: u64)` | Each server tick, with the server's tick counter. |
++| `player-joined` | `func(player: player)` | A player joined the server; they are in `players.online` already. |
++| `player-left` | `func(player: player)` | A player left the server; they are no longer in `players.online`. |
++| `chat` | `func(player: player, text: string)` | A chat message a player sent, as plain text. |
++| `command` | `func(player: player, name: string, args: string, values: list<tuple<string, argument-value>>) -> result<option<string>, string>` | `/name args` typed by `player`: ok(some(text)) is their feedback, err(text) their error in red. `values` holds each argument given, by name, in order (an optional one left out isn't there); a line that doesn't parse never reaches the mod: the player gets vanilla's error. |
++| `block-broken` | `func(player: player, pos: block-pos, state: string)` | A player broke the block at `pos` in their dimension: `state` is what was there, as `minecraft:oak_log[axis=y]`. |
++| `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
+-- 
+2.43.0
+

@@ -1,0 +1,1040 @@
+From 3e3fb5bdb6c9521dc8494aadf7628b4267fe5560 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 02:18:21 +0000
+Subject: [PATCH] Mod key mappings, key-pressed, open-player-menu and
+ selected-slot (API 53)
+
+A content mod declares keys in data/<mod>/horizon/key/<name>.json (label,
+category, default key): they are in Controls under their category beside
+vanilla's, rebound there and kept in horizon-mod-keys.txt. A press while
+playing goes to the server on horizon:key and reaches the mod's new export
+key-pressed. players.open-player-menu opens a menu over no item (the item
+menu hooks, slot 4294967295); player-items.selected-slot gives the held
+hotbar slot. Example item-menu-demo gains the tweaker key and menu.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client-input/src/keybinds.rs   | 112 ++++++++++++++++--
+ .../horizon-client-render/src/options_ui.rs   |  28 +++--
+ crates/horizon-client-render/src/settings.rs  |  14 ++-
+ crates/horizon-client/src/game/mod_input.rs   |  24 ++++
+ crates/horizon-client/src/game/mods.rs        |   5 +
+ crates/horizon-client/src/game/server_mods.rs |  50 +++++++-
+ .../data/imenu/horizon/key/tweaker.json       |   1 +
+ .../data/imenu/horizon/menu/tweaker.json      |  13 ++
+ .../examples/item-menu-demo/horizon-mod.toml  |   4 +-
+ .../examples/item-menu-demo/src/lib.rs        |  19 ++-
+ .../item-menu-demo/tests/dictionary.toml      |  22 ++++
+ crates/horizon-mod-sdk/src/lib.rs             |  10 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  11 ++
+ crates/horizon-mods/src/api_level.rs          |   6 +-
+ crates/horizon-mods/src/content.rs            |  72 ++++++++++-
+ crates/horizon-mods/src/runtime.rs            |  28 +++++
+ crates/horizon-mods/src/screen.rs             |   3 +
+ crates/horizon-mods/src/testing.rs            |  27 +++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |   3 +
+ 20 files changed, 422 insertions(+), 34 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/key/tweaker.json
+ create mode 100644 crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/tweaker.json
+
+diff --git a/crates/horizon-client-input/src/keybinds.rs b/crates/horizon-client-input/src/keybinds.rs
+index bdd9a1a21..afa9b45a0 100644
+--- a/crates/horizon-client-input/src/keybinds.rs
++++ b/crates/horizon-client-input/src/keybinds.rs
+@@ -74,6 +74,38 @@ pub const MAPPINGS: &[(&str, &str, &str)] = &[
+     ("key.debug.lightmapTexture", "key.keyboard.4", "debug"),
+     ("key.debug.improvedTransparency", "key.keyboard.x", "debug"),
+ ];
++/// A key mapping a content mod declares (`data/<mod>/horizon/key/`): its name `<mod>:<key>`, default key, category and label
++/// (translation keys or text), shown in Controls after vanilla's.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ModMapping {
++    pub name: &'static str,
++    pub default: &'static str,
++    pub category: &'static str,
++    pub label: &'static str,
++}
++
++static MOD_MAPPINGS: std::sync::OnceLock<Vec<ModMapping>> = std::sync::OnceLock::new();
++
++/// Registers the content mods' key mappings, once per process (false when they already were). `(name, default, category, label)`.
++pub fn register_mod_mappings(list: impl IntoIterator<Item = (String, String, String, String)>) -> bool {
++    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
++    let list = list
++        .into_iter()
++        .map(|(name, default, category, label)| ModMapping { name: leak(name), default: leak(default), category: leak(category), label: leak(label) })
++        .collect();
++    MOD_MAPPINGS.set(list).is_ok()
++}
++
++/// The content mods' key mappings.
++pub fn mod_mappings() -> &'static [ModMapping] {
++    MOD_MAPPINGS.get().map_or(&[], Vec::as_slice)
++}
++
++/// Every mapping as `(name, default, category)`: vanilla's, then the mods'.
++pub fn all_mappings() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
++    MAPPINGS.iter().copied().chain(mod_mappings().iter().map(|m| (m.name, m.default, m.category)))
++}
++
+ /// Mappings Options builds as `ToggleKeyMapping` (hold or toggle by option).
+ pub fn is_toggle(name: &str) -> bool {
+     matches!(name, "key.sneak" | "key.sprint" | "key.use" | "key.attack")
+@@ -343,24 +375,51 @@ fn distinct<T: PartialEq>(keys: Vec<T>) -> Vec<T> {
+ 
+ impl KeyBinds {
+     pub fn get(&self, name: &str) -> &str {
+-        self.keys
+-            .get(name)
+-            .map_or("key.keyboard.unknown", String::as_str)
++        // A mod's mapping registered after these binds were made has its default.
++        self.keys.get(name).map_or_else(|| Self::default_of(name), String::as_str)
+     }
+     pub fn default_of(name: &str) -> &'static str {
+-        MAPPINGS
+-            .iter()
+-            .find(|m| m.0 == name)
+-            .map_or("key.keyboard.unknown", |m| m.1)
++        all_mappings().find(|m| m.0 == name).map_or("key.keyboard.unknown", |m| m.1)
+     }
+     pub fn is_default(&self, name: &str) -> bool {
+         self.get(name) == Self::default_of(name)
+     }
+     pub fn set(&mut self, name: &str, key: &str) {
+-        if let Some((n, _, _)) = MAPPINGS.iter().find(|m| m.0 == name) {
++        if let Some((n, _, _)) = all_mappings().find(|m| m.0 == name) {
+             self.keys.insert(n, key.to_owned());
+         }
+     }
++    /// A mod's mapping (`<mod>:<key>`) bound to `key`, read before the mods' content registered it (`horizon-mod-keys.txt`).
++    pub fn set_mod(&mut self, name: &str, key: &str) {
++        if !name.contains(':') || name.starts_with("key.") {
++            return;
++        }
++        let n: &'static str = match all_mappings().find(|m| m.0 == name) {
++            Some((n, _, _)) => n,
++            None => Box::leak(name.to_owned().into_boxed_str()),
++        };
++        self.keys.insert(n, key.to_owned());
++    }
++    /// The mods' mappings bound away from their defaults, as `horizon-mod-keys.txt` keeps them.
++    pub fn mod_saved(&self) -> Vec<(&'static str, String)> {
++        self.keys
++            .iter()
++            .filter(|(n, k)| n.contains(':') && !n.starts_with("key.") && k.as_str() != Self::default_of(n))
++            .map(|(n, k)| (*n, k.clone()))
++            .collect()
++    }
++    /// The `horizon-mod-keys.txt` text: `<mod>:<key>=key.keyboard.x` lines.
++    pub fn mod_keys_text(&self) -> String {
++        self.mod_saved().into_iter().map(|(n, k)| format!("{n}={k}\n")).collect()
++    }
++    /// Reads `horizon-mod-keys.txt`'s lines into the binds.
++    pub fn read_mod_keys(&mut self, text: &str) {
++        for line in text.lines() {
++            if let Some((name, key)) = line.split_once('=') {
++                self.set_mod(name.trim(), key.trim());
++            }
++        }
++    }
+     pub fn saved(&self) -> Vec<(&'static str, String)> {
+         MAPPINGS
+             .iter()
+@@ -370,18 +429,21 @@ impl KeyBinds {
+     pub fn reset_all(&mut self) {
+         *self = Self::default();
+     }
++    /// The mods' mappings bound to `key` (physical input name), for their presses.
++    pub fn mod_mappings_for<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'static str> + 'a {
++        mod_mappings().iter().map(|m| m.name).filter(move |n| key != "key.keyboard.unknown" && self.get(n) == key)
++    }
+     /// Mappings sharing `name`'s key (KeyMapping.same), for conflict marks.
+     pub fn conflicts(&self, name: &str) -> Vec<&'static str> {
+         let key = self.get(name);
+         if key == "key.keyboard.unknown" {
+             return Vec::new();
+         }
+-        MAPPINGS
+-            .iter()
++        all_mappings()
+             .filter(|(n, _, _)| {
+                 *n != name && self.get(n) == key && (!self.is_default(n) || !self.is_default(name))
+             })
+-            .map(|(n, _, _)| *n)
++            .map(|(n, _, _)| n)
+             .collect()
+     }
+     /// The mapping a physical input triggers (first in list order).
+@@ -496,6 +558,34 @@ impl KeyBinds {
+ 
+ #[cfg(test)]
+ mod tests {
++    /// A mod's key mapping: its default until rebound, kept apart from options.txt in `horizon-mod-keys.txt`, read back before the
++    /// mod registered it, and found by the key it is bound to.
++    #[test]
++    fn a_mods_key_mapping_has_its_default_and_keeps_its_rebinding() {
++        assert!(register_mod_mappings([(
++            "mekanism:module_tweaker".to_owned(),
++            "key.keyboard.backslash".to_owned(),
++            "key.categories.mekanism".to_owned(),
++            "key.mekanism.module_tweaker".to_owned(),
++        )]));
++        let mut keys = KeyBinds::default();
++        assert_eq!(keys.get("mekanism:module_tweaker"), "key.keyboard.backslash");
++        assert_eq!(keys.mod_mappings_for("key.keyboard.backslash").collect::<Vec<_>>(), ["mekanism:module_tweaker"]);
++        assert_eq!(keys.mod_keys_text(), "", "nothing rebound");
++        keys.set("mekanism:module_tweaker", "key.keyboard.o");
++        assert_eq!(keys.mod_keys_text(), "mekanism:module_tweaker=key.keyboard.o\n");
++        // options.txt keeps vanilla's alone.
++        assert!(keys.saved().iter().all(|(n, _)| n.starts_with("key.")));
++        // Read back, and a line for a mod not loaded now is kept for when it is.
++        let mut again = KeyBinds::default();
++        again.read_mod_keys("mekanism:module_tweaker=key.keyboard.o\nother:boost=key.keyboard.b\nkey.jump=key.keyboard.j\n");
++        assert_eq!(again.get("mekanism:module_tweaker"), "key.keyboard.o");
++        assert_eq!(again.get("key.jump"), "key.keyboard.space", "vanilla's are options.txt's");
++        assert!(again.mod_keys_text().contains("other:boost=key.keyboard.b"));
++        // O is Horizon's Friends key: Controls marks the two as sharing it.
++        assert_eq!(keys.conflicts("mekanism:module_tweaker"), ["key.friends"]);
++    }
++
+     use super::*;
+     #[test]
+     fn container_mouse_hotkeys_follow_slot_bindings_and_pick_item_priority() {
+diff --git a/crates/horizon-client-render/src/options_ui.rs b/crates/horizon-client-render/src/options_ui.rs
+index 0de0124e0..4b3168a4d 100644
+--- a/crates/horizon-client-render/src/options_ui.rs
++++ b/crates/horizon-client-render/src/options_ui.rs
+@@ -9,7 +9,7 @@ pub use crate::settings::Opt;
+ use crate::{
+     gamepad::{self, GlyphStyle},
+     hud::{HudAtlas, HudBatch, rgba},
+-    keybinds::{self, CATEGORIES, KeyBinds, MAPPINGS},
++    keybinds::{self, CATEGORIES, KeyBinds},
+     lang::{self, LanguageInfo},
+     settings::{SOUND_SOURCES, Settings},
+     text::{self, Style, Text},
+@@ -3101,10 +3101,14 @@ impl OptionsUi {
+                     ));
+                 }
+                 let label = |name: &str| {
+-                    crate::keypad::ACTIONS
+-                        .iter()
+-                        .find(|a| a.0 == name)
+-                        .map_or_else(|| lang::get(name), |a| a.1.to_owned())
++                    crate::keypad::ACTIONS.iter().find(|a| a.0 == name).map_or_else(
++                        || match keybinds::mod_mappings().iter().find(|m| m.name == name) {
++                            // A mod's mapping: its label, a translation key or the text.
++                            Some(m) => lang::get(m.label),
++                            None => lang::get(name),
++                        },
++                        |a| a.1.to_owned(),
++                    )
+                 };
+                 let mut mappings: Vec<(&str, &str)> = if keypad {
+                     crate::keypad::ACTIONS
+@@ -3112,7 +3116,8 @@ impl OptionsUi {
+                         .map(|a| (a.0, "movement"))
+                         .collect()
+                 } else {
+-                    MAPPINGS.iter().map(|(n, _, c)| (*n, *c)).collect()
++                    // Vanilla's, then the content mods' own (their categories after vanilla's).
++                    keybinds::all_mappings().map(|(n, _, c)| (n, c)).collect()
+                 };
+                 let query = self.settings_search.value.to_lowercase();
+                 mappings.retain(|(name, _)| {
+@@ -3148,8 +3153,13 @@ impl OptionsUi {
+                     if category != last_category {
+                         last_category = category;
+                         rows.begin(&out, y);
++                        let heading = if CATEGORIES.contains(&category) || keypad {
++                            format!("key.category.minecraft.{category}")
++                        } else {
++                            category.to_owned()
++                        };
+                         let label =
+-                            Text::translate(&format!("key.category.minecraft.{category}"), &[])
++                            Text::translate(&heading, &[])
+                                 .with_style(&Style {
+                                     bold: Some(true),
+                                     underlined: Some(true),
+@@ -3178,7 +3188,7 @@ impl OptionsUi {
+                         w: 200.0,
+                         h: 9.0,
+                         kind: WKind::Text {
+-                            text: if keypad {
++                            text: if keypad || name.contains(':') {
+                                 Text::literal(label(name))
+                             } else {
+                                 tr(name)
+@@ -3236,7 +3246,7 @@ impl OptionsUi {
+                             .find(|a| a.0 == name)
+                             .map_or("", |a| a.0)
+                     } else {
+-                        MAPPINGS.iter().find(|m| m.0 == name).map_or("", |m| m.0)
++                        keybinds::all_mappings().find(|m| m.0 == name).map_or("", |m| m.0)
+                     };
+                     out.push(button(change_x, y, 75.0, message, Act::Key(name_static)));
+                     if !conflicts.is_empty() {
+diff --git a/crates/horizon-client-render/src/settings.rs b/crates/horizon-client-render/src/settings.rs
+index 1881f61b6..157843cf6 100644
+--- a/crates/horizon-client-render/src/settings.rs
++++ b/crates/horizon-client-render/src/settings.rs
+@@ -320,6 +320,9 @@ fn put_s(f: &mut OptionsFile, key: &str, v: &str) {
+         f.set(key, V::Str(v.to_owned()));
+     }
+ }
++/// The content mods' key mappings the player rebound, beside `options.txt` (`<mod>:<key>=key.keyboard.x` lines).
++pub const MOD_KEYS_FILE: &str = "horizon-mod-keys.txt";
++
+ impl Settings {
+     /// The index in `video_modes` of the preferred fullscreen mode, -1 (the desktop's own mode)
+     /// when none is set or the monitor lacks it: `Monitor.indexOfMode`.
+@@ -351,7 +354,7 @@ impl Settings {
+             .unwrap_or_default();
+         let keypad = crate::keypad::Settings::load(&path.with_file_name("horizon-keypad.json"));
+         let touch = crate::touch::Settings::load_from(&path.with_file_name("horizon-touch.json"));
+-        let settings = match fs::read(path) {
++        let mut settings = match fs::read(path) {
+             Ok(bytes) => Self {
+                 horizon,
+                 controller,
+@@ -371,6 +374,10 @@ impl Settings {
+                 ..Self::default()
+             },
+         };
++        // The mods' own key mappings, rebound (`horizon-mod-keys.txt`, beside options.txt).
++        if let Ok(text) = fs::read_to_string(path.with_file_name(MOD_KEYS_FILE)) {
++            settings.keys.read_mod_keys(&text);
++        }
+         settings.describe_for_crashes();
+         // Options.load: the backend asked for at startup, what a restart is measured from.
+         Self {
+@@ -669,6 +676,11 @@ impl Settings {
+             let _ = self.touch.save_to(&dir.join("horizon-touch.json"));
+             self.extras.save(dir);
+             self.mods.save(dir);
++            let mod_keys = self.keys.mod_keys_text();
++            let file = dir.join(MOD_KEYS_FILE);
++            if !mod_keys.is_empty() || file.exists() {
++                let _ = fs::write(file, mod_keys);
++            }
+         }
+     }
+     /// Volume of a sound source (master excluded).
+diff --git a/crates/horizon-client/src/game/mod_input.rs b/crates/horizon-client/src/game/mod_input.rs
+index 7ef892359..5f93f07bc 100644
+--- a/crates/horizon-client/src/game/mod_input.rs
++++ b/crates/horizon-client/src/game/mod_input.rs
+@@ -118,6 +118,9 @@ impl Game<'_> {
+     /// screen) is its `key-down` / `key-up`. Vanilla's mapping on the same
+     /// key still runs.
+     pub(super) fn mod_key(&mut self, key: KeyCode, pressed: bool, repeat: bool) {
++        if pressed && !repeat && let Some(name) = horizon_client::keybinds::key_name(key) {
++            self.content_key_pressed(name);
++        }
+         if repeat || !self.mods.mods.has_keys() {
+             return;
+         }
+@@ -144,11 +147,32 @@ impl Game<'_> {
+     /// A mouse button while playing: a mod's key bound to it
+     /// (`key.mouse.4`...), as `mod_key`.
+     pub(super) fn mod_mouse_key(&mut self, button: MouseButton, pressed: bool) {
++        if pressed {
++            let name = horizon_client::keybinds::mouse_name(button);
++            self.content_key_pressed(&name);
++        }
+         if self.mods.mods.has_keys() {
+             let name = horizon_client::keybinds::mouse_name(button);
+             self.mods.mods.key(&name, pressed);
+         }
+     }
++    /// A key or button `name` went down: each content mod key mapping bound to it (`data/<mod>/horizon/key/`) goes to the server
++    /// while playing with no screen, which hands it to the mod's `key-pressed`.
++    fn content_key_pressed(&mut self, name: &str) {
++        if !self.mod_playing() {
++            return;
++        }
++        let ids: Vec<&'static str> = self.settings.keys.mod_mappings_for(name).collect();
++        for id in ids {
++            if self.remote.is_some() {
++                let _ = self.native_net_send_to_server(horizon_mods::screen::KEY_CHANNEL, id.as_bytes());
++            } else {
++                // A game that is its own server (never the default now): the press is its own player's.
++                let player = self.player_uuid();
++                self.mod_net_event(player, horizon_mods::screen::KEY_CHANNEL, id.as_bytes());
++            }
++        }
++    }
+     /// Wheel steps while playing: true when a mod holds the wheel, so the
+     /// hotbar doesn't move.
+     pub(super) fn mod_wheel(&mut self, steps: f32) -> bool {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index d4028dc14..f87c7aee9 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -436,6 +436,10 @@ pub(super) static MOD_REDSTONE_EMITTERS: std::sync::OnceLock<std::collections::H
+ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+     let emitters = mods.iter().flat_map(|m| m.content.blocks.iter()).filter(|b| b.redstone_emitter).map(|b| b.id.clone()).collect();
+     let _ = MOD_REDSTONE_EMITTERS.set(emitters);
++    // The mods' key mappings, in Controls with vanilla's (`data/<mod>/horizon/key/`).
++    let _ = horizon_client::keybinds::register_mod_mappings(mods.iter().flat_map(|m| m.content.keys.iter()).map(|k| {
++        (k.id.clone(), k.default_key().to_owned(), k.category.clone(), k.label.clone())
++    }));
+     // The mods' items that hold energy, for `recipe-types.item-energy` (round 4, item 5).
+     horizon_mods::item_energy::register(mods.iter().flat_map(|m| m.content.items.iter()).filter_map(|i| Some((i.id.clone(), i.energy?))));
+     use horizon_client::containers;
+@@ -686,6 +690,7 @@ impl Game<'_> {
+             mobs: Vec::new(),
+             mobs_dimension: String::new(),
+             inventories: Vec::new(),
++            selected_slots: Vec::new(),
+             view_hit: self.mod_view_hit(),
+             recipes,
+             known_recipes,
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 7990fd018..bc82de054 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -41,6 +41,11 @@ pub(super) enum ModEvent {
+         channel: String,
+         data: Vec<u8>,
+     },
++    /// A player pressed a content mod's key (`<mod>:<name>`).
++    Key {
++        who: Who,
++        key: String,
++    },
+     /// A player pressed menu button `id` of the mod menu at `pos`.
+     MenuButton {
+         who: Who,
+@@ -537,6 +542,7 @@ mod run {
+             }
+             if self.mods.mods.wants_player_items() {
+                 snapshot.inventories = self.server_inventories(&players);
++                snapshot.selected_slots = self.server_selected_slots(&players);
+             }
+             if self.mods.mods.wants_entities() {
+                 let dim = self.dim.id();
+@@ -625,6 +631,12 @@ mod run {
+                             self.mods.mods.net_message(&p, &channel, &data);
+                         }
+                     }
++                    ModEvent::Key { who: w, key } => {
++                        if let Some(p) = who(&w) {
++                            let used = self.mods.mods.key_pressed(&p, &key);
++                            log::debug!("Horizon: key {key} of {}: used {used}", p.name);
++                        }
++                    }
+                     ModEvent::MenuButton { who: w, pos, id } => {
+                         let Some(p) = who(&w) else { continue };
+                         if let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos)
+@@ -1011,6 +1023,20 @@ mod run {
+             out
+         }
+ 
++        /// The hotbar slot each player holds (`player-items.selected-slot`).
++        fn server_selected_slots(&mut self, players: &[horizon_mods::ServerPlayer]) -> Vec<(String, u32)> {
++            let mut out = Vec::new();
++            for p in players {
++                let Some((target, _)) = self.mod_player(&p.id) else {
++                    continue;
++                };
++                if let Some(slot) = self.for_player(target, |g| g.selected as u32) {
++                    out.push((p.id.clone(), slot));
++                }
++            }
++            out
++        }
++
+         /// This player's carried stacks, in the order of `player-items`.
+         fn inventory_for_mods(&self) -> Vec<Option<horizon_mods::ModItemStack>> {
+             let stack = |s: Option<&Option<horizon_client::items::ItemStack>>| {
+@@ -2683,9 +2709,15 @@ mod run {
+             let Some(mut host) = self.lan.take() else {
+                 return false;
+             };
+-            let Some(item) = host.hub.guest(conn).and_then(|g| horizon_client::lan::menu::mod_slot(g, slot)).map(|s| s.item.to_string()) else {
+-                self.lan = Some(host);
+-                return false;
++            // `open-player-menu` (no slot): no item to stand on.
++            let item = if slot == horizon_mods::NO_SLOT {
++                String::new()
++            } else {
++                let Some(item) = host.hub.guest(conn).and_then(|g| horizon_client::lan::menu::mod_slot(g, slot)).map(|s| s.item.to_string()) else {
++                    self.lan = Some(host);
++                    return false;
++                };
++                item
+             };
+             self.guest_close_all(&mut host, conn);
+             let key = crate::game::mods::OpenItemMenu::key(conn);
+@@ -2839,7 +2871,9 @@ mod run {
+         /// Whether the item menu of connection `conn` may stay open: the mod did not close it and the slot still holds its item.
+         pub(in crate::game) fn item_menu_still_valid(&self, g: &horizon_client::lan::guest::Guest) -> bool {
+             self.mods.item_menus.iter().find(|m| m.conn == g.conn).is_some_and(|m| {
+-                !m.closing && horizon_client::lan::menu::mod_slot(g, m.slot).is_some_and(|s| *s.item == *m.item)
++                !m.closing
++                    && (m.slot == horizon_mods::NO_SLOT
++                        || horizon_client::lan::menu::mod_slot(g, m.slot).is_some_and(|s| *s.item == *m.item))
+             })
+         }
+ 
+@@ -3071,6 +3105,14 @@ mod run {
+             if !self.hears_players() {
+                 return;
+             }
++            // A press of a content mod's key: its id, one the content declares, reaches the mod's `key-pressed`.
++            if channel == horizon_mods::screen::KEY_CHANNEL {
++                let Ok(key) = std::str::from_utf8(data) else { return };
++                if horizon_client::keybinds::mod_mappings().iter().any(|m| m.name == key) {
++                    self.mods.events.push(ModEvent::Key { who: Who::Uuid(player), key: key.to_owned() });
++                }
++                return;
++            }
+             // A text box of a mod entity's menu (FORK-10 5b): the client knows no position for it, the mod gets the entity's id.
+             let mut data = data.to_vec();
+             if channel.ends_with(":menu_text")
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/key/tweaker.json b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/key/tweaker.json
+new file mode 100644
+index 000000000..fb859980f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/key/tweaker.json
+@@ -0,0 +1 @@
++{"label": "Open the Tweaker", "category": "Item Menu Demo", "key": "key.keyboard.backslash"}
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/tweaker.json b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/tweaker.json
+new file mode 100644
+index 000000000..baa30c6d0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/data/imenu/horizon/menu/tweaker.json
+@@ -0,0 +1,13 @@
++{
++  "slots": 0,
++  "screen": {
++    "width": 176,
++    "height": 80,
++    "hide_inventory": true,
++    "slots": [],
++    "widgets": [
++      {"type": "text", "x": 8, "y": 6, "text_data": 0},
++      {"type": "text", "x": 8, "y": 20, "text_data": 1}
++    ]
++  }
++}
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
+index 8283666f9..f37c18822 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/horizon-mod.toml
+@@ -5,5 +5,5 @@ description = "Test mod for item menus (round 4, item 2): a message opens a dict
+ authors = ["Rust port"]
+ api = "0.3"
+ side = "server"
+-capabilities = ["registries", "players", "net"]
+-experimental = ["net"]
++capabilities = ["registries", "players", "player-items", "net"]
++experimental = ["player-items", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+index 7ece3227a..46b3a71c8 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/src/lib.rs
+@@ -2,7 +2,7 @@
+ //! `imenu:dictionary` over that slot of the player's. Each tick (`item-menu-tick`) it names the item it was opened over and the input's,
+ //! shows the logs in the input as data slot 0, and puts 4 oak planks in the result for a log; taking them (`item-menu-taken`) uses up a
+ //! log. Button 1 empties the input, button 2 closes the menu, and the text box (`imenu:menu_text`) names the dictionary.
+-use horizon_mod_sdk::server::{ItemMenu, ItemMenuUpdate, ItemStack, Player, Registration, ServerMod, menu_input, players};
++use horizon_mod_sdk::server::{ItemMenu, ItemMenuUpdate, ItemStack, Player, Registration, ServerMod, menu_input, player_items, players};
+ 
+ struct Demo {
+     name: String,
+@@ -38,7 +38,22 @@ impl ServerMod for Demo {
+             _ => {}
+         }
+     }
+-    fn item_menu_tick(&mut self, _player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
++    /// Its key `imenu:tweaker` (Controls, default backslash) opens the tweaker over no item (`open-player-menu`), as Mekanism's
++    /// "Open Module Tweaker" does; another key of its own is not used.
++    fn key_pressed(&mut self, player: &Player, key: &str) -> bool {
++        key == "imenu:tweaker" && players::open_player_menu(&player.id, "imenu:tweaker")
++    }
++    fn item_menu_tick(&mut self, player: &Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
++        // The tweaker reads the player's equipment: the main hand's slot and stack, and the head (slot 39) and off hand (40).
++        if menu.menu == "imenu:tweaker" {
++            let inv = player_items::get_inventory(&player.id).unwrap_or_default();
++            let name = |slot: usize| inv.get(slot).cloned().flatten().map_or_else(|| "-".to_owned(), |s| s.item);
++            let held = player_items::selected_slot(&player.id).unwrap_or(0);
++            return Some(ItemMenuUpdate {
++                menu_text: Some(vec![format!("main {held} {}", name(held as usize)), format!("head {} off {}", name(39), name(40))]),
++                ..update()
++            });
++        }
+         if menu.menu == "imenu:reader" {
+             // Its data slot counts the ticks it has been open (the mod's own count, kept in the menu's data).
+             let reads = menu.menu_data.first().copied().unwrap_or(0) + 1;
+diff --git a/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+index 61b5cc71e..277ebaf99 100644
+--- a/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
++++ b/crates/horizon-mod-sdk/examples/item-menu-demo/tests/dictionary.toml
+@@ -63,3 +63,25 @@ expect.item-menus = ["Alex 0 imenu:reader - data=[0] text=0 slot(s)"]
+ [[step]]
+ close-item-menu = true
+ expect.item-menus = []
++
++[[step]]
++# The mod's key (data/imenu/horizon/key/tweaker.json) pressed: the mod opens its tweaker over no item (slot 4294967295).
++key-press = "imenu:tweaker"
++expect.key-result = true
++expect.item-menu-open = ["Alex 4294967295 imenu:tweaker"]
++
++[[step]]
++# It reads the equipment: the sword in the held hotbar slot 2, the helmet (39) and the shield in the off hand (40).
++selected = 2
++inventory = ["", "", "minecraft:iron_sword*1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "minecraft:iron_helmet*1", "minecraft:shield*1"]
++
++[[step]]
++ticks = 1
++expect.item-menus = ["Alex 4294967295 imenu:tweaker - data=[] text=main 2 minecraft:iron_sword|head minecraft:iron_helmet off minecraft:shield"]
++
++[[step]]
++# Another of its keys that it does not use, and the tweaker closes as any menu does.
++key-press = "imenu:other"
++expect.key-result = false
++close-item-menu = true
++expect.item-menus = []
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index be74fa904..e716e6acf 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -320,6 +320,11 @@ pub mod server {
+         }
+         /// One of the mod's own entities died of damage. When [`Registration::on_mod_entities`] is set.
+         fn mod_entity_died(&mut self, _entity: ModEntity) {}
++        /// A player pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id) while playing: true when the
++        /// mod used the press.
++        fn key_pressed(&mut self, _player: &Player, _key: &str) -> bool {
++            false
++        }
+         /// Each tick while a player has one of the mod's item menus open (`players::open_item_menu`): what to change in it.
+         fn item_menu_tick(&mut self, _player: &Player, _menu: ItemMenu) -> Option<ItemMenuUpdate> {
+             None
+@@ -760,6 +765,11 @@ macro_rules! export_server_mod {
+                 fn mod_entity_died(entity: ModEntity) {
+                     with(|m| m.mod_entity_died(entity));
+                 }
++                fn key_pressed(player: Player, key: String) -> bool {
++                    let mut out = false;
++                    with(|m| out = m.key_pressed(&player, &key));
++                    out
++                }
+                 fn item_menu_tick(player: Player, menu: ItemMenu) -> Option<ItemMenuUpdate> {
+                     let mut out = None;
+                     with(|m| out = m.item_menu_tick(&player, menu));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 16a61d890..fbbbc3f16 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -712,6 +712,11 @@ interface players {
+     /// one it opened on, or when the mod answers `close`. True when asked; false for a player who is not online, a slot past 40 or
+     /// a menu of another mod. API 48.
+     open-item-menu: func(player: string, slot: u32, menu: string) -> bool;
++    /// Opens menu type `menu` of the mod for one player with no item behind it (Mekanism's Module Tweaker, opened by a key): as
++    /// `open-item-menu` in all else, its `item-menu` has `slot` 4294967295 and no `stack`, it closes only when the player or the mod
++    /// closes it, and a `textfield`'s message carries `(i32::MIN, 1, -1)`. True when asked; false for a player who is not online or a
++    /// menu of another mod. API 53.
++    open-player-menu: func(player: string, menu: string) -> bool;
+     /// A system message to every player and the server's log, after the
+     /// mod's name. Counts toward the same 8 per call.
+     broadcast: func(text: string);
+@@ -1358,6 +1363,9 @@ interface player-items {
+     /// Lets two mods or a mod and the player swap a stack without losing it.
+     /// Same errors as `set-slot`. API 25.
+     compare-and-set-slot: func(player: string, slot: u32, expected: option<item-stack>, replacement: option<item-stack>) -> result<_, string>;
++    /// The hotbar slot (0 to 8) the player holds in the main hand, as of the last tick: with `get-inventory` and `set-slot` (36 the
++    /// feet to 39 the head, 40 the off hand) what an equipment screen reads and writes. None for a player who isn't online. API 53.
++    selected-slot: func(player: string) -> option<u32>;
+ }
+ 
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+@@ -1801,6 +1809,9 @@ interface server-events {
+     /// An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right
+     /// after; its drops, if it has any, are the mod's to spawn.
+     mod-entity-died: func(entity: mod-entity);
++    /// `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with
++    /// no screen open, as the player bound it in Controls. True when the mod used the press. API 53.
++    key-pressed: func(player: player, key: string) -> bool;
+     /// Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48.
+     item-menu-tick: func(player: player, menu: item-menu) -> option<item-menu-update>;
+     /// `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 265074ef3..0618ae9cd 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 52;
++pub const LEVEL: u32 = 53;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 131] = [
++pub const FUNCTIONS: [(&str, u32); 133] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -100,6 +100,8 @@ pub const FUNCTIONS: [(&str, u32); 131] = [
+     ("recipe-types.item-repairs-with", 52),
+     ("recipe-types.item-enchantments", 52),
+     ("recipe-types.anvil-result", 52),
++    ("players.open-player-menu", 53),
++    ("player-items.selected-slot", 53),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index ef2f79600..b4b43fa38 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -1486,6 +1486,8 @@ pub struct Content {
+     pub entity_types: Vec<EntityType>,
+     /// Its own living entity kinds (FORK-10), by id.
+     pub entity_kinds: Vec<EntityKind>,
++    /// The key mappings it adds (`data/<id>/horizon/key/`).
++    pub keys: Vec<KeyMapping>,
+     pub menu_types: Vec<MenuType>,
+     /// Its block entity renderers, by block id.
+     pub renderers: Vec<BlockRenderer>,
+@@ -1579,6 +1581,7 @@ impl Content {
+             creative_tabs: Vec::new(),
+             entity_types: Vec::new(),
+             entity_kinds: Vec::new(),
++            keys: Vec::new(),
+             menu_types: Vec::new(),
+             renderers: Vec::new(),
+             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
+@@ -1629,6 +1632,7 @@ impl Content {
+         let mut menus = Vec::new();
+         let mut renderers = Vec::new();
+         let mut kinds = Vec::new();
++        let mut keys = Vec::new();
+         for name in &self.files {
+             let mut parts = name.splitn(3, '/');
+             let (top, namespace, rest) = (
+@@ -1681,9 +1685,11 @@ impl Content {
+                 menus.push((menu, name.clone()));
+             } else if let Some(block) = parse("renderer") {
+                 renderers.push((block, name.clone()));
++            } else if let Some(key) = parse("key") {
++                keys.push((key, name.clone()));
+             } else {
+                 return Err(format!(
+-                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/, entity_kind/, menu/ and renderer/*.json only"
++                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/, entity_kind/, menu/, renderer/ and key/*.json only"
+                 ));
+             }
+         }
+@@ -1872,8 +1878,52 @@ impl Content {
+             }
+             self.entity_kinds.push(EntityKind { id: kind, ..file });
+         }
++        if keys.len() > MAX_KEYS {
++            return Err(format!("data/{id}/horizon/key/: {MAX_KEYS} keys at most"));
++        }
++        for (key, name) in keys {
++            let file: KeyMapping = serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
++            file.check(&name)?;
++            self.keys.push(KeyMapping { id: key, ..file });
++        }
++        Ok(())
++    }
++}
++
++/// The most keys a mod declares.
++pub const MAX_KEYS: usize = 32;
++
++/// A key mapping a mod adds (`data/<mod>/horizon/key/<name>.json`, `<mod>:<name>`): it shows in Controls under its category and the
++/// player binds it as vanilla's; a press while playing reaches the server mod's `key-pressed` (Mekanism's "Open Module Tweaker").
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct KeyMapping {
++    #[serde(skip)]
++    pub id: String,
++    /// What Controls shows: a translation key of the mod's lang files, or the text itself.
++    pub label: String,
++    /// The heading it is under in Controls, a translation key or text; its own after vanilla's.
++    pub category: String,
++    /// The default key as options.txt writes it (`key.keyboard.o`, `key.mouse.4`); empty for none (`key.keyboard.unknown`).
++    #[serde(default)]
++    pub key: String,
++}
++
++impl KeyMapping {
++    fn check(&self, name: &str) -> Result<(), String> {
++        let text = |t: &str| !t.is_empty() && t.len() <= 128;
++        if !text(&self.label) || !text(&self.category) {
++            return Err(format!("{name}: label and category are 1 to 128 bytes"));
++        }
++        if !self.key.is_empty() && !(self.key.starts_with("key.keyboard.") || self.key.starts_with("key.mouse.")) {
++            return Err(format!("{name}: key is empty, key.keyboard.<name> or key.mouse.<name>"));
++        }
+         Ok(())
+     }
++    /// The default key, `key.keyboard.unknown` for none.
++    pub fn default_key(&self) -> &str {
++        if self.key.is_empty() { "key.keyboard.unknown" } else { &self.key }
++    }
+ }
+ 
+ /// Namespaced component types, removals as `{}`, and none of `fields`,
+@@ -2382,6 +2432,26 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn a_mod_declares_keys_with_a_label_a_category_and_a_default() {
++        let tweaker = br#"{"label": "key.mekanism.module_tweaker", "category": "key.categories.mekanism", "key": "key.keyboard.backslash"}"#;
++        let none = br#"{"label": "Boost", "category": "Mekanism"}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/key/module_tweaker.json", tweaker), ("data/ruby/horizon/key/boost.json", none)];
++        let keys = hmod("keys", MANIFEST_TEXT, files).unwrap().keys;
++        let mut found: Vec<(String, String)> = keys.iter().map(|k| (k.id.clone(), k.default_key().to_owned())).collect();
++        found.sort();
++        assert_eq!(found, [("ruby:boost".into(), "key.keyboard.unknown".into()), ("ruby:module_tweaker".into(), "key.keyboard.backslash".into())]);
++        for (case, file, why) in [
++            ("key-label", r#"{"label": "", "category": "x"}"#, "label and category are 1 to 128 bytes"),
++            ("key-name", r#"{"label": "a", "category": "x", "key": "o"}"#, "key is empty, key.keyboard.<name> or key.mouse.<name>"),
++            ("key-field", r#"{"label": "a", "category": "x", "modifier": "shift"}"#, "unknown field"),
++        ] {
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/key/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++    }
++
+     #[test]
+     fn a_menu_of_buttons_alone_has_no_slots_and_hides_the_inventory() {
+         let file = br#"{"slots": 0, "data_slots": 2, "screen": {"width": 176, "height": 120, "hide_inventory": true, "slots": [],
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index ad31547d4..387f277c7 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -310,6 +310,8 @@ pub struct Snapshot {
+     /// What each player carries (slots 0 to 40, see `player-items`), by player
+     /// id, for capability `player-items`.
+     pub inventories: Vec<(String, Vec<Option<ModItemStack>>)>,
++    /// The hotbar slot each player holds, by player id (`player-items.selected-slot`).
++    pub selected_slots: Vec<(String, u32)>,
+     /// The first block along the player's view within [`RAYCAST_MAX`] and
+     /// its distance from the eye, for `game.raycast`; the game works it out
+     /// only while a mod calls it ([`Mods::wants_raycast`]).
+@@ -1772,6 +1774,15 @@ impl Mods {
+         let (ns, _) = menu.split_once(':')?;
+         self.entries.iter().position(|e| e.run.as_ref().is_some_and(|r| r.hooks.server().is_some()) && e.manifest.as_ref().is_some_and(|m| m.id == ns))
+     }
++    /// `player` pressed key `key` (`<mod>:<name>`, a content key mapping): whether the mod that owns it used the press.
++    pub fn key_pressed(&mut self, player: &ServerPlayer, key: &str) -> bool {
++        let Some(i) = self.menu_owner(key) else { return false };
++        self.call(i, FUEL_EVENT, |run| match &run.hooks {
++            Hooks::Server(m, _) => m.horizon_mods_server_events().call_key_pressed(&mut run.store, player, key),
++            Hooks::Client(..) => Ok(false),
++        })
++        .unwrap_or(false)
++    }
+     /// One tick of `player`'s open item menu (round 4, item 2): the update of the mod that owns the menu type, checked.
+     pub fn item_menu_tick(&mut self, player: &ServerPlayer, menu: &ItemMenu) -> Option<ItemMenuUpdate> {
+         let i = self.menu_owner(&menu.menu)?;
+@@ -2552,6 +2563,9 @@ pub fn nearest_first(found: Vec<SeenEntity>, min: [f64; 3], max: [f64; 3]) -> Ve
+     found
+ }
+ 
++/// The `slot` of a menu `open-player-menu` opened: none of the player's.
++pub const NO_SLOT: u32 = u32::MAX;
++
+ /// Whether a mod's update of an item menu is in bounds: 256 slots, 256 data slots and the menu strings' limits.
+ pub fn item_menu_update_ok(u: &ItemMenuUpdate) -> bool {
+     u.items.as_ref().is_none_or(|s| s.len() <= 256)
+@@ -3103,6 +3117,9 @@ impl chunks::Host for State {
+     }
+ }
+ impl player_items::Host for State {
++    fn selected_slot(&mut self, player: String) -> Option<u32> {
++        self.snapshot.selected_slots.iter().find(|(id, _)| *id == player).map(|(_, s)| *s)
++    }
+     fn get_inventory(&mut self, player: String) -> Option<Vec<Option<ModItemStack>>> {
+         self.snapshot
+             .inventories
+@@ -3967,6 +3984,17 @@ impl players::Host for State {
+         self.out.push(Output::ItemMenu { name: self.name.clone(), mod_id: self.id.clone(), player, slot, menu });
+         true
+     }
++    fn open_player_menu(&mut self, player: String, menu: String) -> bool {
++        let mine = menu.split_once(':').is_some_and(|(ns, path)| ns == self.id && !path.is_empty());
++        if !mine
++            || !self.snapshot.players.iter().any(|p| p.id == player)
++            || self.out.iter().filter(|o| matches!(o, Output::ItemMenu { .. })).count() >= 8
++        {
++            return false;
++        }
++        self.out.push(Output::ItemMenu { name: self.name.clone(), mod_id: self.id.clone(), player, slot: NO_SLOT, menu });
++        true
++    }
+     fn broadcast(&mut self, text: String) {
+         self.say(|name| Output::Broadcast {
+             name,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index 05a1f71ea..767e98d4b 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -701,6 +701,9 @@ pub fn decode_menu_input(data: &[u8]) -> Option<([i32; 3], i32, String)> {
+     Some(([int(0)?, int(4)?, int(8)?], int(12)?, String::from_utf8(data.get(16..)?.to_vec()).ok()?))
+ }
+ 
++/// The channel a press of a content mod's key travels on, client to host (its id `<mod>:<name>` as the bytes).
++pub const KEY_CHANNEL: &str = "horizon:key";
++
+ /// The channel a block entity's menu strings travel on, host to client (`world.set-menu-text`).
+ pub const MENU_TEXT_CHANNEL: &str = "horizon:menu_text";
+ 
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index fce372dae..68a233601 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -71,6 +71,9 @@ pub struct TestGame {
+     pub release_result: Option<bool>,
+     /// What the last `block_break_start` answered.
+     pub break_start_result: Option<bool>,
++    /// What the last `key_pressed` answered, and each player's held hotbar slot.
++    pub key_result: Option<bool>,
++    pub selected_slots: Vec<(String, u32)>,
+     /// What the last `mod_entity_used` answered, and the damage the last `mod_entity_damaged` applied.
+     pub entity_used_result: Option<bool>,
+     pub entity_damage_result: Option<f32>,
+@@ -419,6 +422,8 @@ impl TestGame {
+             release_result: None,
+             entity_used_result: None,
+             break_start_result: None,
++            key_result: None,
++            selected_slots: Vec::new(),
+             entity_damage_result: None,
+             mod_entities: Vec::new(),
+             menu_types: Vec::new(),
+@@ -482,6 +487,7 @@ impl TestGame {
+             mobs: self.mobs.clone(),
+             mobs_dimension: "minecraft:overworld".into(),
+             inventories: self.inventories.clone(),
++            selected_slots: self.selected_slots.clone(),
+             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
+             gui_size: (427.0, 240.0),
+             ..Snapshot::default()
+@@ -1764,6 +1770,9 @@ pub struct Step {
+     break_start: Option<BreakStartSet>,
+     /// Server mods (FORK-10 d): the actor right-clicks one of the mod's entities.
+     use_mod_entity: Option<EntityUseSet>,
++    /// Server mods: the actor presses a mod's key (`<mod>:<name>`) while playing, and holds this hotbar slot from now on.
++    key_press: Option<String>,
++    selected: Option<u32>,
+     /// Server mods (FORK-10 5b): the actor puts stacks in slots of an entity's open menu (`-` empties one), presses one of its
+     /// buttons, takes from one of its result slots, or closes it.
+     entity_menu_set: Option<Vec<EntityMenuSlotSet>>,
+@@ -1841,6 +1850,8 @@ pub struct Expect {
+     hit_damage_result: Option<f32>,
+     /// Server mods: whether the mod let the step's `release-item` shoot.
+     release_result: Option<bool>,
++    /// Server mods: whether the mod used the step's `key-press`.
++    key_result: Option<bool>,
+     /// Server mods: whether the mod cancelled the normal break of the step's `break-start`.
+     break_start_result: Option<bool>,
+     /// Server mods (FORK-10 d): whether the mod took the step's `use-mod-entity` click.
+@@ -2152,6 +2163,8 @@ impl Step {
+             || self.item_menu_button.is_some()
+             || self.item_menu_take.is_some()
+             || self.item_menu_set.is_some()
++            || self.key_press.is_some()
++            || self.selected.is_some()
+             || self.close_item_menu
+             || self.entity_menu_take.is_some()
+             || self.break_start.is_some()
+@@ -2232,6 +2245,11 @@ impl Step {
+             let id = game.players[i].id.clone();
+             set.apply(game.motion_of(&id));
+         }
++        if let (Some(slot), Some(i)) = (self.selected, actor) {
++            let id = game.players[i].id.clone();
++            game.selected_slots.retain(|(p, _)| *p != id);
++            game.selected_slots.push((id, slot.min(8)));
++        }
+         if let (Some(list), Some(i)) = (&self.inventory, actor) {
+             let id = game.players[i].id.clone();
+             let slots = list.iter().map(|s| parse_stack(s)).collect();
+@@ -2324,6 +2342,10 @@ impl Step {
+             let stack = parse_stack(&b.stack).ok_or("break-start: a stack is item*count")?;
+             game.break_start_result = Some(game.mods.block_break_start(who, &stack, b.pos, &b.state));
+         }
++        if let (Some(key), Some(who)) = (&self.key_press, &who) {
++            game.snapshot();
++            game.key_result = Some(game.mods.key_pressed(who, key));
++        }
+         if let (Some(u), Some(who)) = (&self.use_mod_entity, &who) {
+             game.snapshot();
+             let entity = game.mod_entities.iter().find(|e| e.id == u.id).cloned().ok_or("use-mod-entity: no such entity")?;
+@@ -3105,6 +3127,11 @@ impl Step {
+                 .collect();
+             same("mod-entity-menu", want, &got)?;
+         }
++        if let Some(want) = e.key_result {
++            if game.key_result != Some(want) {
++                return Err(format!("key-result: expected {want}, got {:?}", game.key_result));
++            }
++        }
+         if let Some(want) = &e.item_menu_open {
+             let name = |id: &str| game.players.iter().find(|p| p.id == id).map_or(id.to_owned(), |p| p.name.clone());
+             let got: Vec<String> = out
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 80e327b4e..b0aa9312e 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 53 is `players.open-player-menu` and `player-items.selected-slot`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 52);
++    assert_eq!(LEVEL, 53);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 3dae12f3a..5ab3c6263 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -693,6 +693,7 @@ One choice of a radial menu.
+ | `open-radial-menu` | `func(player: string, entries: list<radial-entry>, current: u32) -> bool` | Opens a radial menu on one player's screen (Mekanism's mode selector of the Meka-Tool and the configurator, `IRadialSelectorEnum`): 2 to 16 entries around the screen's centre, `current` marked. The pointer is let go so the player can point; a click (a tap on a touch screen) on an entry chooses it and closes the menu, one in the middle or Escape closes it without a choice. The choice comes back as a mod message on channel `<mod id>:radial` whose bytes are the entry's id (UTF-8): register `on_net` to hear it. False for a player who is not online or entries out of bounds. API 42. |
+ | `open-entity-menu` | `func(player: string, dimension: string, id: u32) -> bool` | Opens the container of one of the mod's own entities (FORK-10 d2, the Robit's inventory) for one player, as a chest of as many rows of 9 as its `container_slots` fill (1 to 6; the slots past them stay out of the menu): the player moves items in and out as in a chest, the entity's slots follow each tick (what the mod's `entities-tick` puts there shows in the menu, and what the player puts there reaches the mod), and the menu closes when the player is more than 4 blocks from its box or the entity goes. Titled with the entity's name, else the kind's (`entity.<ns>.<path>`). False for a player who is not online, an entity of another mod, one with fewer than 9 slots, or one not in the level in place. API 43. A kind with a `menu` (FORK-10 5b, API 46) opens that menu type instead, drawn by its `screen` as a block's (slots, data slots, widgets, windows as tabs): its first `container_slots` slots are the entity's, the ones past them are virtual (a crafting grid, an anvil's), shown to the mod past the container's in `mod-entity.items` while the menu is open and handed back to the player (its result slots emptied) when it closes. Its data slots are the entity's `menu-data`, its strings the entity's `menu-text`, a button calls the mod's `entity-menu-button`, taking from a result slot calls `entity-menu-taken`, and a `textfield`'s message on `<mod id>:menu_text` carries the position `(i32::MIN, 0, entity id)`. |
+ | `open-item-menu` | `func(player: string, slot: u32, menu: string) -> bool` | Opens menu type `menu` (`<mod id>:<path>`, one of the mod's `data/<mod>/horizon/menu/*.json`, drawn by its `screen` as a block's) for one player over the item in their slot `slot` (0 to 35 the inventory, 36 to 39 the armour, 40 the off hand): the item menus of Mekanism (Module Tweaker, Dictionary, Portable Teleporter, Seismic Reader, Portable QIO Dashboard). Every slot of the menu is virtual: empty when it opens, kept while it is open, and what the player left in them (not the `results`) comes back to the player when it closes. Each tick the mod's `item-menu-tick` sees it and sets its slots, data slots and strings; a button calls `item-menu-button`, taking from a result slot calls `item-menu-taken`, and a `textfield`'s message on `<mod id>:menu_text` carries the position `(i32::MIN, 1, slot)`. It closes when the player closes it, when the slot no longer holds an item of the one it opened on, or when the mod answers `close`. True when asked; false for a player who is not online, a slot past 40 or a menu of another mod. API 48. |
++| `open-player-menu` | `func(player: string, menu: string) -> bool` | Opens menu type `menu` of the mod for one player with no item behind it (Mekanism's Module Tweaker, opened by a key): as `open-item-menu` in all else, its `item-menu` has `slot` 4294967295 and no `stack`, it closes only when the player or the mod closes it, and a `textfield`'s message carries `(i32::MIN, 1, -1)`. True when asked; false for a player who is not online or a menu of another mod. API 53. |
+ | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+ 
+ ## `world`
+@@ -1106,6 +1107,7 @@ Capability `player-items`, server mods only (manifest `api = "0.3"`, experimenta
+ | `hurt` | `func(player: string, damage-type: string, amount: f32) -> result<_, string>` | Hurts the player by `amount` of a damage type (`minecraft:magic`, `minecraft:fall`...), as vanilla's damage does (armour, absorption and invulnerable time count; creative players take none). |
+ | `add-effect` | `func(player: string, effect: string, duration-ticks: s32, amplifier: s32) -> result<_, string>` | Gives the player an effect (`minecraft:speed`, or a content mod's own `mymod:radiation`) for `duration-ticks` (-1 is infinite), at `amplifier` (0 is level I). |
+ | `compare-and-set-slot` | `func(player: string, slot: u32, expected: option<item-stack>, replacement: option<item-stack>) -> result<_, string>` | Puts `replacement` in a slot only if the slot holds `expected` (item, count and components equal; none for an empty slot) at the moment the request is made, after the call returns; otherwise nothing changes. Lets two mods or a mod and the player swap a stack without losing it. Same errors as `set-slot`. API 25. |
++| `selected-slot` | `func(player: string) -> option<u32>` | The hotbar slot (0 to 8) the player holds in the main hand, as of the last tick: with `get-inventory` and `set-slot` (36 the feet to 39 the head, 40 the off hand) what an equipment screen reads and writes. None for a player who isn't online. API 53. |
+ 
+ ## `server-events`
+ 
+@@ -1452,6 +1454,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-break-start` | `func(player: player, stack: item-stack, pos: block-pos, state: string) -> bool` | A player is breaking the block `state` at `pos` holding `stack`, an item of the mod (`registration.block-break`; NeoForge's `IItemExtension.onBlockStartBreak`, where the Meka-Tool mines a vein or blasts an area): asked once the game allowed the break (the item can break blocks; a dig in survival when it ends, a creative click at once), on the PC and on Android (a long press) alike. Answer true to cancel the normal break: the block stays, nothing drops, and the mod breaks what it wants (`world.break-blocks`); false lets the game break it. The first mod that answers true decides. (An export: it has no level; a mod that implements it needs a Horizon that has it, from API 43.) |
+ | `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
+ | `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
++| `key-pressed` | `func(player: player, key: string) -> bool` | `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with no screen open, as the player bound it in Controls. True when the mod used the press. API 53. |
+ | `item-menu-tick` | `func(player: player, menu: item-menu) -> option<item-menu-update>` | Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48. |
+ | `item-menu-button` | `func(player: player, menu: item-menu, id: s32) -> option<item-menu-update>` | `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus. |
+ | `item-menu-taken` | `func(player: player, menu: item-menu, slot: u32, stack: item-stack) -> option<item-menu-update>` | `player` took `stack` out of result slot `slot` of one of the mod's item menus (the menu as it is after the take): the mod uses up what made it. |
+-- 
+2.43.0
+

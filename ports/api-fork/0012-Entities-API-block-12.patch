@@ -1,0 +1,1225 @@
+From fcb08c1e042d2390e99c206f315b29875c9e0ea6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 23:26:50 +0000
+Subject: [PATCH] Entities for WASM server mods (API block 12)
+
+Capability entities: read the level's mobs; spawn mobs and summon any entity
+(an item_display is a moving model), answered by entity-spawned; move,
+display, remove, teleport, push, heal, kill. Built on the services native
+mods already had. API level 11; robit-demo example with harness support.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   1 +
+ crates/horizon-client/src/game/mods.rs        |   9 +-
+ crates/horizon-client/src/game/server_mods.rs |  78 +++++
+ .../examples/robit-demo/Cargo.toml            |  16 +
+ .../examples/robit-demo/horizon-mod.toml      |   9 +
+ .../examples/robit-demo/src/lib.rs            |  63 ++++
+ .../examples/robit-demo/tests/robit.toml      |  25 ++
+ crates/horizon-mod-sdk/src/lib.rs             |   7 +
+ crates/horizon-mod-sdk/wit/horizon.wit        |  79 +++++
+ crates/horizon-mods/src/api_level.rs          |  15 +-
+ crates/horizon-mods/src/manifest.rs           |  11 +-
+ crates/horizon-mods/src/runtime.rs            | 280 +++++++++++++++++-
+ crates/horizon-mods/src/testing.rs            |  97 ++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  64 +++-
+ 17 files changed, 758 insertions(+), 8 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/robit-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/robit-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/robit-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/robit-demo/tests/robit.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 84373d5..2078716 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3894,6 +3894,13 @@ dependencies = [
+  "windows-sys 0.52.0",
+ ]
+ 
++[[package]]
++name = "robit-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "rustc-demangle"
+ version = "0.1.28"
+diff --git a/Cargo.toml b/Cargo.toml
+index 1279896..fdb9216 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -49,6 +49,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/net-echo",
+     "crates/horizon-mod-sdk/examples/cable-demo",
+     "crates/horizon-mod-sdk/examples/multiblock-demo",
++    "crates/horizon-mod-sdk/examples/robit-demo",
+     "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index a83685a..9ae9a42 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -280,6 +280,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
++            Output::Entity { command, .. } => format!("asked for an entity change: {command:?}"),
+             Output::NetSend { channel, data, .. } => {
+                 format!("sent {} byte(s) on {channel}", data.len())
+             }
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index f3fd705..df80aec 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -99,6 +99,10 @@ pub(super) struct ModsState {
+     /// Extras that are official mods now, being installed.
+     #[cfg(feature = "mods")]
+     pub(super) moved: super::moved_extras::MovedState,
++    /// Answers to `spawn-mob` and `summon` tickets, for the next tick: the
++    /// mod's id, the ticket and the new entity's id.
++    #[cfg(feature = "mods")]
++    pub(super) spawn_answers: Vec<(String, u64, Option<u32>)>,
+     /// What the clients were last told of each declared-renderer block entity.
+     #[cfg(feature = "mods")]
+     pub(super) shown_displays: std::collections::HashMap<[i32; 3], u64>,
+@@ -605,6 +609,8 @@ impl Game<'_> {
+             font_widths: self.mods.font_widths.clone(),
+             players,
+             motions: Vec::new(),
++            mobs: Vec::new(),
++            mobs_dimension: String::new(),
+             view_hit: self.mod_view_hit(),
+             recipes,
+             known_recipes,
+@@ -839,7 +845,8 @@ impl Game<'_> {
+                 | Output::TakeXp { .. }
+                 | Output::PlaySound { .. }
+                 | Output::NetSend { .. }
+-                | Output::NetToServer { .. }) => {
++                | Output::NetToServer { .. }
++                | Output::Entity { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 19cbce7..af0816b 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -288,6 +288,22 @@ mod run {
+             if self.mods.world {
+                 snapshot.motions = self.server_motions();
+             }
++            if self.mods.mods.wants_entities() {
++                let dim = self.dim.id();
++                snapshot.mobs = self
++                    .native_mobs(dim)
++                    .into_iter()
++                    .map(|m| horizon_mods::MobInfo {
++                        id: m.id,
++                        kind: m.kind,
++                        pos: m.pos,
++                        yaw: m.yaw,
++                        health: m.health,
++                        max_health: m.max_health,
++                    })
++                    .collect();
++                snapshot.mobs_dimension = dim.to_owned();
++            }
+             self.mods.mods.set_snapshot(snapshot);
+             self.lend_recipe_types();
+             let entities = self.collect_mod_entities();
+@@ -310,6 +326,9 @@ mod run {
+                 .collect();
+             let mut menu_updates = Vec::new();
+             self.lend_world();
++            for (id, ticket, entity) in std::mem::take(&mut self.mods.spawn_answers) {
++                self.mods.mods.entity_spawned(&id, ticket, entity);
++            }
+             let before = std::mem::take(&mut self.mods.players);
+             for p in before
+                 .iter()
+@@ -1451,6 +1470,65 @@ mod run {
+                         });
+                     }
+                 }
++                Output::Entity {
++                    name,
++                    id: mod_id,
++                    dimension,
++                    command,
++                } => {
++                    use crate::game::{native_entities::NativeDisplay, native_mobs::NativeSpawn};
++                    use horizon_mods::EntityCommand as C;
++                    let done = match command {
++                        C::SpawnMob { ticket, kind, pos, options } => {
++                            let spawn = NativeSpawn {
++                                name: options.name,
++                                health: options.health,
++                                no_ai: options.no_ai,
++                                invisible: options.invisible,
++                                silent: options.silent,
++                                invulnerable: options.invulnerable,
++                                no_gravity: options.no_gravity,
++                            };
++                            let entity = self.native_spawn_mob(&dimension, &kind, pos, &spawn);
++                            self.mods.spawn_answers.push((mod_id, ticket, entity));
++                            entity.is_some()
++                        }
++                        C::Summon { ticket, kind, pos, nbt } => {
++                            let text = if nbt.trim().is_empty() { "{}" } else { nbt.as_str() };
++                            let compound = match horizon_world::nbt::parse_snbt(text) {
++                                Ok((horizon_world::nbt::Tag::Compound(c), _)) => Some(c),
++                                _ => None,
++                            };
++                            let entity = compound
++                                .and_then(|c| self.native_summon(&dimension, &kind, pos, c));
++                            self.mods.spawn_answers.push((mod_id, ticket, entity));
++                            entity.is_some()
++                        }
++                        C::Move { id, pos, yaw, pitch } => {
++                            self.native_move_entity(&dimension, id, pos, yaw, pitch)
++                        }
++                        C::SetDisplay { id, display } => {
++                            let d = NativeDisplay {
++                                translation: [display.translation.0, display.translation.1, display.translation.2],
++                                left_rotation: [display.left_rotation.0, display.left_rotation.1, display.left_rotation.2, display.left_rotation.3],
++                                scale: [display.scale.0, display.scale.1, display.scale.2],
++                                right_rotation: [display.right_rotation.0, display.right_rotation.1, display.right_rotation.2, display.right_rotation.3],
++                                interpolation: display.interpolation,
++                                teleport: display.teleport,
++                            };
++                            self.native_set_display(&dimension, id, &d)
++                        }
++                        C::RemoveEntity { id } => self.native_remove_entity(&dimension, id),
++                        C::TeleportMob { id, pos } => self.native_teleport_mob(&dimension, id, pos),
++                        C::PushMob { id, velocity } => self.native_push_mob(&dimension, id, velocity),
++                        C::SetMobHealth { id, health } => self.native_set_mob_health(&dimension, id, health),
++                        C::KillMob { id } => self.native_kill_mob(&dimension, id),
++                        C::RemoveMob { id } => self.native_remove_mob(&dimension, id),
++                    };
++                    if !done {
++                        log::debug!("Horizon: mod {name}'s entity request was refused");
++                    }
++                }
+                 Output::NetSend {
+                     name,
+                     player,
+diff --git a/crates/horizon-mod-sdk/examples/robit-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/robit-demo/Cargo.toml
+new file mode 100644
+index 0000000..5c19a80
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/robit-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "robit-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a companion display that follows a player and hurts mobs near it"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/robit-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/robit-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..16ec9c7
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/robit-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "robitdemo"
++name = "Robit Demo"
++version = "0.1.0"
++description = "Test mod for entities: /robit summons a floating stone that follows you and hurts mobs within 4 blocks."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "entities"]
++experimental = ["entities"]
+diff --git a/crates/horizon-mod-sdk/examples/robit-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/robit-demo/src/lib.rs
+new file mode 100644
+index 0000000..b7a1280
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/robit-demo/src/lib.rs
+@@ -0,0 +1,63 @@
++//! Robit Demo: the smallest user of entities. `/robit` summons an
++//! `item_display` showing a stone (the model of a companion) and, once the
++//! game answers with its id, moves it beside its owner every tick and hurts
++//! the mobs within 4 blocks of it: 2 health a tick, and kills what has
++//! 2 or less.
++use horizon_mod_sdk::server::{
++    Args, Player, Registration, ServerMod, entities, players,
++};
++
++struct Robit {
++    owner: Option<String>,
++    ticket: Option<u64>,
++    id: Option<u32>,
++}
++
++const DIMENSION: &str = "minecraft:overworld";
++
++impl ServerMod for Robit {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((
++            Robit { owner: None, ticket: None, id: None },
++            Registration::new().command_with("robit", []).on_tick(),
++        ))
++    }
++    fn command(&mut self, player: &Player, _name: &str, _args: &Args) -> Result<Option<String>, String> {
++        let nbt = r#"{item:{id:"minecraft:stone",count:1},teleport_duration:3}"#;
++        let ticket = entities::summon(
++            DIMENSION,
++            "minecraft:item_display",
++            player.x + 1.0,
++            player.y + 1.0,
++            player.z,
++            nbt,
++        )?;
++        self.owner = Some(player.id.clone());
++        self.ticket = Some(ticket);
++        Ok(Some("Robit coming".into()))
++    }
++    fn entity_spawned(&mut self, ticket: u64, id: Option<u32>) {
++        if self.ticket == Some(ticket) {
++            self.id = id;
++        }
++    }
++    fn tick(&mut self, _tick: u64) {
++        let (Some(id), Some(owner)) = (self.id, self.owner.clone()) else { return };
++        let Some(me) = players::online().into_iter().find(|p| p.id == owner) else { return };
++        let (x, y, z) = (me.x + 1.0, me.y + 1.0, me.z);
++        let _ = entities::move_entity(DIMENSION, id, x, y, z, 0.0, 0.0);
++        for m in entities::mobs(DIMENSION) {
++            let d = (m.x - x).powi(2) + (m.y - y).powi(2) + (m.z - z).powi(2);
++            if d > 16.0 {
++                continue;
++            }
++            if m.health > 2.0 {
++                let _ = entities::set_mob_health(DIMENSION, m.id, m.health - 2.0);
++            } else {
++                let _ = entities::kill_mob(DIMENSION, m.id);
++            }
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Robit);
+diff --git a/crates/horizon-mod-sdk/examples/robit-demo/tests/robit.toml b/crates/horizon-mod-sdk/examples/robit-demo/tests/robit.toml
+new file mode 100644
+index 0000000..bd81629
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/robit-demo/tests/robit.toml
+@@ -0,0 +1,25 @@
++[[step]]
++join = "Alex"
++player = { x = 10.0, y = 64.0, z = 10.0 }
++command = "robit"
++expect.feedback = "Robit coming"
++expect.entity-commands = ['summon minecraft:item_display 11 65 10 #1 {item:{id:"minecraft:stone",count:1},teleport_duration:3}']
++
++[[step]]
++# The game answers (a step's ticks come before its answer): the robit now follows.
++spawned = { ticket = 1, id = 77 }
++
++[[step]]
++# A zombie near it is hurt, a far one is not, and a creeper with 2 health is killed.
++mobs = [
++    { id = 5, kind = "minecraft:zombie", x = 22.0, y = 65.0, z = 10.0, health = 20.0 },
++    { id = 6, kind = "minecraft:zombie", x = 40.0, y = 65.0, z = 10.0, health = 20.0 },
++    { id = 7, kind = "minecraft:creeper", x = 21.0, y = 65.0, z = 11.0, health = 2.0 },
++]
++player = { x = 20.0 }
++ticks = 1
++expect.entity-commands = [
++    "move 77 21 65 10 0 0",
++    "health 5 18",
++    "kill-mob 7",
++]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index c0a12d7..afb7eed 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -212,6 +212,7 @@ pub mod server {
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
++    pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
+     pub use horizon::mods::recipe_types::{self, CustomRecipe};
+     /// For reading the recipes' JSON.
+@@ -244,6 +245,9 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// The answer to `entities::spawn_mob` or `summon`: the new entity's
++        /// id, or none when it could not be made.
++        fn entity_spawned(&mut self, _ticket: u64, _id: Option<u32>) {}
+         /// The structure candidates of a multiblock `group` in `dimension` changed
+         /// (all of them now); returns what to change in member blocks.
+         fn multiblock_changed(
+@@ -570,6 +574,9 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn entity_spawned(ticket: u64, id: Option<u32>) {
++                    with(|m| m.entity_spawned(ticket, id))
++                }
+                 fn multiblock_changed(
+                     group: String,
+                     dimension: String,
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 01720ba..03ba921 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -797,6 +797,80 @@ interface net-events {
+     message: func(channel: string, data: list<u8>);
+ }
+ 
++/// Capability `entities`, server mods only (manifest `api = "0.3"`,
++/// experimental): the mobs and the other entities of the level the server is
++/// simulating. Reading is as of the last server tick. What a mod asks for is
++/// made after the call returns, before the next tick; a spawn answers with
++/// the new entity's id in `entity-spawned` the tick after (its `ticket` is
++/// what the call returned). An entity is named by its `dimension`: another
++/// level than the one in place is refused.
++interface entities {
++    record mob {
++        id: u32,
++        /// `minecraft:zombie`.
++        kind: string,
++        x: f64,
++        y: f64,
++        z: f64,
++        /// Degrees; 0 faces south.
++        yaw: f32,
++        health: f32,
++        max-health: f32,
++    }
++    /// What a spawned mob starts with.
++    record mob-options {
++        /// A name over it, shown to everyone.
++        name: option<string>,
++        health: option<f32>,
++        no-ai: bool,
++        invisible: bool,
++        silent: bool,
++        invulnerable: bool,
++        no-gravity: bool,
++    }
++    /// A display entity's transformation (`block_display`, `item_display`,
++    /// `text_display`): a translation, a left rotation (a quaternion
++    /// `x, y, z, w`), a scale and a right rotation, eased over `interpolation`
++    /// ticks from what it showed; a move eases over `teleport` ticks (0 to 59).
++    record display {
++        translation: tuple<f32, f32, f32>,
++        left-rotation: tuple<f32, f32, f32, f32>,
++        scale: tuple<f32, f32, f32>,
++        right-rotation: tuple<f32, f32, f32, f32>,
++        interpolation: s32,
++        teleport: s32,
++    }
++    /// The living mobs of `dimension` as of the last tick (none for a level
++    /// that is not the one in place).
++    mobs: func(dimension: string) -> list<mob>;
++    /// Spawns a mob of `kind` at the position, finalized as a natural spawn is
++    /// and kept when its chunk unloads. Returns the ticket `entity-spawned`
++    /// answers with. An error for a position that isn't finite or a kind that
++    /// isn't a plain id, and past 64 requests in a call.
++    spawn-mob: func(dimension: string, kind: string, x: f64, y: f64, z: f64, options: mob-options) -> result<u64, string>;
++    /// Spawns any entity of `kind` (`minecraft:item_display`) from `nbt`
++    /// (SNBT of its compound, as `/summon` takes it, at most 8192 bytes; an
++    /// empty text is `{}`). Returns a ticket as `spawn-mob` does.
++    summon: func(dimension: string, kind: string, x: f64, y: f64, z: f64, nbt: string) -> result<u64, string>;
++    /// Moves an entity Horizon keeps without simulating (a display, a marker,
++    /// an interaction); a display eases there over its `teleport` ticks.
++    move-entity: func(dimension: string, id: u32, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> result<_, string>;
++    /// Sets a display's transformation.
++    set-display: func(dimension: string, id: u32, display: display) -> result<_, string>;
++    /// Removes an entity Horizon keeps without simulating, as `/kill` does.
++    remove-entity: func(dimension: string, id: u32) -> result<_, string>;
++    /// Moves a mob to the position at once, as `/tp` does.
++    teleport-mob: func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>;
++    /// Adds a velocity to a mob's.
++    push-mob: func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>;
++    /// Sets a living mob's health (above 0, cut to its maximum).
++    set-mob-health: func(dimension: string, id: u32, health: f32) -> result<_, string>;
++    /// Kills a mob as `/kill` does: it falls and drops its loot.
++    kill-mob: func(dimension: string, id: u32) -> result<_, string>;
++    /// Takes a mob out of the world with no death and no loot.
++    remove-mob: func(dimension: string, id: u32) -> result<_, string>;
++}
++
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+ /// experimental). Only the hooks `init` asks for are ever called. The player
+ /// in each event is as the server saw them when it happened.
+@@ -1095,6 +1169,10 @@ interface server-events {
+     /// tick's transfers. Returns what to change in member blocks: updates
+     /// for other blocks are dropped.
+     multiblock-changed: func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>;
++    /// The answer to a `spawn-mob` or `summon`: the new entity's id, or none
++    /// when it could not be made (an unknown kind, a chunk not loaded, a
++    /// monster on peaceful, a mod keeping it out).
++    entity-spawned: func(ticket: u64, id: option<u32>);
+ }
+ 
+ /// A client mod: runs in the player's game.
+@@ -1118,6 +1196,7 @@ world horizon-server-mod {
+     import player-control;
+     import recipe-types;
+     import net;
++    import entities;
+     import %world;
+     export server-events;
+ }
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index fa95704..f3d358f 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 10;
++pub const LEVEL: u32 = 11;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 55] = [
++pub const FUNCTIONS: [(&str, u32); 66] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -69,6 +69,17 @@ pub const FUNCTIONS: [(&str, u32); 55] = [
+     ("recipe-types.ingredient-items", 9),
+     ("net.send", 10),
+     ("net-client.send-to-server", 10),
++    ("entities.mobs", 11),
++    ("entities.spawn-mob", 11),
++    ("entities.summon", 11),
++    ("entities.move-entity", 11),
++    ("entities.set-display", 11),
++    ("entities.remove-entity", 11),
++    ("entities.teleport-mob", 11),
++    ("entities.push-mob", 11),
++    ("entities.set-mob-health", 11),
++    ("entities.kill-mob", 11),
++    ("entities.remove-mob", 11),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index 556b572..b0d23f8 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -108,6 +108,9 @@ pub enum Capability {
+     RecipeTypes,
+     /// Bytes to and from the client half of the mod (server mods; interface `net`).
+     Net,
++    /// The level's mobs and entities, to read, spawn, move and remove (server
++    /// mods; interface `entities`).
++    Entities,
+     /// Bytes to and from the server half of the mod (client mods; interface `net-client`).
+     NetClient,
+     /// The recipes and items the game knows, for recipe viewers
+@@ -115,7 +118,7 @@ pub enum Capability {
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 16] = [
++    pub const ALL: [Capability; 17] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -130,6 +133,7 @@ impl Capability {
+         Capability::PlayerControl,
+         Capability::RecipeTypes,
+         Capability::Net,
++        Capability::Entities,
+         Capability::NetClient,
+         Capability::Recipes,
+     ];
+@@ -143,6 +147,7 @@ impl Capability {
+                 | Capability::PlayerControl
+                 | Capability::RecipeTypes
+                 | Capability::Net
++                | Capability::Entities
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -162,6 +167,7 @@ impl Capability {
+             Capability::PlayerControl => "player-control",
+             Capability::RecipeTypes => "recipe-types",
+             Capability::Net => "net",
++            Capability::Entities => "entities",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         }
+@@ -178,6 +184,7 @@ impl Capability {
+                 | Capability::PlayerControl
+                 | Capability::RecipeTypes
+                 | Capability::Net
++                | Capability::Entities
+                 | Capability::NetClient
+         )
+     }
+@@ -203,6 +210,7 @@ impl Capability {
+                 "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
+             }
+             Capability::RecipeTypes => "read the recipes of the types it brings and the item tags they use",
++            Capability::Entities => "see the mobs of the world, spawn, move, hurt and remove them",
+             Capability::Net => "send bytes to its half running in players' games, and hear theirs",
+             Capability::NetClient => "send bytes to its half running on the server, and hear it",
+             Capability::Recipes => {
+@@ -251,6 +259,7 @@ impl fmt::Display for Capability {
+             Capability::PlayerControl => "player-control",
+             Capability::RecipeTypes => "recipe-types",
+             Capability::Net => "net",
++            Capability::Entities => "entities",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         };
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 92e637b..d8d534b 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{net, player_control, players, recipe_types, world as mod_world},
++    horizon::mods::{entities, net, player_control, players, recipe_types, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -147,6 +147,65 @@ const STORAGE_MAX_KEYS: usize = 64;
+ /// cap, separate from the on-disk quota it would otherwise stay under.
+ const STORAGE_WRITE_BUDGET: u64 = 1 << 20;
+ 
++/// A mob as capability `entities` reads it.
++#[derive(Clone, Debug, PartialEq)]
++pub struct MobInfo {
++    pub id: u32,
++    pub kind: String,
++    pub pos: [f64; 3],
++    pub yaw: f32,
++    pub health: f32,
++    pub max_health: f32,
++}
++
++/// What a mod asked of an entity (capability `entities`), made after its call.
++#[derive(Clone, Debug, PartialEq)]
++pub enum EntityCommand {
++    SpawnMob {
++        ticket: u64,
++        kind: String,
++        pos: [f64; 3],
++        options: entities::MobOptions,
++    },
++    Summon {
++        ticket: u64,
++        kind: String,
++        pos: [f64; 3],
++        nbt: String,
++    },
++    Move {
++        id: u32,
++        pos: [f64; 3],
++        yaw: f32,
++        pitch: f32,
++    },
++    SetDisplay {
++        id: u32,
++        display: entities::Display,
++    },
++    RemoveEntity {
++        id: u32,
++    },
++    TeleportMob {
++        id: u32,
++        pos: [f64; 3],
++    },
++    PushMob {
++        id: u32,
++        velocity: [f64; 3],
++    },
++    SetMobHealth {
++        id: u32,
++        health: f32,
++    },
++    KillMob {
++        id: u32,
++    },
++    RemoveMob {
++        id: u32,
++    },
++}
++
+ /// What mods may read of the game, copied once per tick by the game.
+ #[derive(Clone, Debug, Default)]
+ pub struct Snapshot {
+@@ -171,6 +230,10 @@ pub struct Snapshot {
+     /// What each of those players is doing, by player id, for capability
+     /// `player-control`'s `motion`.
+     pub motions: Vec<(String, Motion)>,
++    /// The living mobs of the level in place (`mobs_dimension`), for
++    /// capability `entities`.
++    pub mobs: Vec<MobInfo>,
++    pub mobs_dimension: String,
+     /// The first block along the player's view within [`RAYCAST_MAX`] and
+     /// its distance from the eye, for `game.raycast`; the game works it out
+     /// only while a mod calls it ([`Mods::wants_raycast`]).
+@@ -274,6 +337,13 @@ pub enum Output {
+         volume: f32,
+         pitch: f32,
+     },
++    /// An `entities` request of mod `id`, for `dimension`.
++    Entity {
++        name: String,
++        id: String,
++        dimension: String,
++        command: EntityCommand,
++    },
+     /// `net.send`: bytes for a player's client half, on a channel of the mod.
+     NetSend {
+         name: String,
+@@ -491,6 +561,8 @@ struct State {
+     limits: StoreLimits,
+     world: WorldSlot,
+     recipe_data: RecipeSlot,
++    /// The next ticket `entities.spawn-mob` and `summon` hand out.
++    next_ticket: u64,
+ }
+ 
+ /// The installed mods and the engine running them. `Mods::default()` is
+@@ -536,6 +608,16 @@ impl Mods {
+                     .is_some_and(|m| m.capabilities.contains(&crate::Capability::RecipeTypes))
+         })
+     }
++    /// Whether a running mod may use capability `entities`: only then is the
++    /// level's mob list worth making each tick.
++    pub fn wants_entities(&self) -> bool {
++        self.entries.iter().any(|e| {
++            e.status == Status::Running
++                && e.manifest
++                    .as_ref()
++                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::Entities))
++        })
++    }
+     /// Whether [`Mods::set_recipe_data`] has been called.
+     pub fn has_recipe_data(&self) -> bool {
+         self.recipe_data.lock().is_ok_and(|s| s.is_some())
+@@ -636,6 +718,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             net::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            entities::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -726,6 +810,7 @@ impl Mods {
+                 .build(),
+             world,
+             recipe_data,
++            next_ticket: 1,
+         };
+         let mut store = Store::new(engine, state);
+         store.limiter(|s| &mut s.limits);
+@@ -1150,6 +1235,21 @@ impl Mods {
+             .take(BLOCK_ENTITIES_PER_CALL)
+             .collect()
+     }
++    /// The answer to mod `id`'s `spawn-mob` or `summon` `ticket`.
++    pub fn entity_spawned(&mut self, id: &str, ticket: u64, entity: Option<u32>) {
++        let Some(i) = self.entries.iter().position(|e| {
++            e.manifest.as_ref().is_some_and(|m| m.id == id)
++                && e.run.as_ref().and_then(|r| r.hooks.server()).is_some()
++        }) else {
++            return;
++        };
++        self.call(i, FUEL_EVENT, |run| match &run.hooks {
++            Hooks::Server(m, _) => m
++                .horizon_mods_server_events()
++                .call_entity_spawned(&mut run.store, ticket, entity),
++            Hooks::Client(..) => Ok(()),
++        });
++    }
+     /// What `player`'s client half sent on `channel` (`<mod id>:<name>`): the
+     /// server mod of that id hears it, if it asked for `net`.
+     pub fn net_message(&mut self, player: &ServerPlayer, channel: &str, data: &[u8]) {
+@@ -1931,6 +2031,184 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++/// Entity requests one call may make, and the longest `summon` compound.
++const ENTITY_REQUESTS: usize = 64;
++const SUMMON_BYTES: usize = 8192;
++impl State {
++    fn entity_request(
++        &mut self,
++        dimension: String,
++        command: EntityCommand,
++        numbers: &[f64],
++    ) -> Result<(), String> {
++        if numbers.iter().any(|v| !v.is_finite()) {
++            return Err("positions and velocities must be numbers".into());
++        }
++        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
++            && !view.has_dimension(&dimension)
++        {
++            return Err(format!("no dimension {dimension}"));
++        }
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::Entity { .. }))
++            .count();
++        if made >= ENTITY_REQUESTS {
++            return Err(format!("at most {ENTITY_REQUESTS} entity requests a call"));
++        }
++        self.out.push(Output::Entity {
++            name: self.name.clone(),
++            id: self.id.clone(),
++            dimension,
++            command,
++        });
++        Ok(())
++    }
++    fn ticket(&mut self) -> u64 {
++        let t = self.next_ticket;
++        self.next_ticket += 1;
++        t
++    }
++}
++/// An entity kind: a namespaced id of plain characters.
++fn kind_ok(kind: &str) -> bool {
++    (1..=128).contains(&kind.len())
++        && kind.bytes().all(|b| {
++            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.' | b'/' | b'-' | b':')
++        })
++}
++impl entities::Host for State {
++    fn mobs(&mut self, dimension: String) -> Vec<entities::Mob> {
++        if self.snapshot.mobs_dimension != dimension {
++            return Vec::new();
++        }
++        self.snapshot
++            .mobs
++            .iter()
++            .map(|m| entities::Mob {
++                id: m.id,
++                kind: m.kind.clone(),
++                x: m.pos[0],
++                y: m.pos[1],
++                z: m.pos[2],
++                yaw: m.yaw,
++                health: m.health,
++                max_health: m.max_health,
++            })
++            .collect()
++    }
++    fn spawn_mob(
++        &mut self,
++        dimension: String,
++        kind: String,
++        x: f64,
++        y: f64,
++        z: f64,
++        options: entities::MobOptions,
++    ) -> Result<u64, String> {
++        if !kind_ok(&kind) {
++            return Err(format!("{kind:?} is not an entity kind"));
++        }
++        let ticket = self.next_ticket;
++        let command = EntityCommand::SpawnMob {
++            ticket,
++            kind,
++            pos: [x, y, z],
++            options,
++        };
++        self.entity_request(dimension, command, &[x, y, z])?;
++        self.next_ticket += 1;
++        Ok(ticket)
++    }
++    fn summon(
++        &mut self,
++        dimension: String,
++        kind: String,
++        x: f64,
++        y: f64,
++        z: f64,
++        nbt: String,
++    ) -> Result<u64, String> {
++        if !kind_ok(&kind) {
++            return Err(format!("{kind:?} is not an entity kind"));
++        }
++        if nbt.len() > SUMMON_BYTES {
++            return Err(format!("nbt is {SUMMON_BYTES} bytes at most"));
++        }
++        let ticket = self.next_ticket;
++        let command = EntityCommand::Summon {
++            ticket,
++            kind,
++            pos: [x, y, z],
++            nbt,
++        };
++        self.entity_request(dimension, command, &[x, y, z])?;
++        self.next_ticket += 1;
++        Ok(ticket)
++    }
++    fn move_entity(
++        &mut self,
++        dimension: String,
++        id: u32,
++        x: f64,
++        y: f64,
++        z: f64,
++        yaw: f32,
++        pitch: f32,
++    ) -> Result<(), String> {
++        if !yaw.is_finite() || !pitch.is_finite() {
++            return Err("yaw and pitch must be numbers".into());
++        }
++        let command = EntityCommand::Move {
++            id,
++            pos: [x, y, z],
++            yaw,
++            pitch,
++        };
++        self.entity_request(dimension, command, &[x, y, z])
++    }
++    fn set_display(
++        &mut self,
++        dimension: String,
++        id: u32,
++        display: entities::Display,
++    ) -> Result<(), String> {
++        let d = &display;
++        let floats = [
++            d.translation.0, d.translation.1, d.translation.2,
++            d.left_rotation.0, d.left_rotation.1, d.left_rotation.2, d.left_rotation.3,
++            d.scale.0, d.scale.1, d.scale.2,
++            d.right_rotation.0, d.right_rotation.1, d.right_rotation.2, d.right_rotation.3,
++        ];
++        if floats.iter().any(|v| !v.is_finite()) {
++            return Err("a display's numbers must be finite".into());
++        }
++        self.entity_request(dimension, EntityCommand::SetDisplay { id, display }, &[])
++    }
++    fn remove_entity(&mut self, dimension: String, id: u32) -> Result<(), String> {
++        self.entity_request(dimension, EntityCommand::RemoveEntity { id }, &[])
++    }
++    fn teleport_mob(&mut self, dimension: String, id: u32, x: f64, y: f64, z: f64) -> Result<(), String> {
++        self.entity_request(dimension, EntityCommand::TeleportMob { id, pos: [x, y, z] }, &[x, y, z])
++    }
++    fn push_mob(&mut self, dimension: String, id: u32, vx: f64, vy: f64, vz: f64) -> Result<(), String> {
++        let command = EntityCommand::PushMob { id, velocity: [vx, vy, vz] };
++        self.entity_request(dimension, command, &[vx, vy, vz])
++    }
++    fn set_mob_health(&mut self, dimension: String, id: u32, health: f32) -> Result<(), String> {
++        if !health.is_finite() || health <= 0.0 {
++            return Err("health must be above 0 (kill-mob kills)".into());
++        }
++        self.entity_request(dimension, EntityCommand::SetMobHealth { id, health }, &[])
++    }
++    fn kill_mob(&mut self, dimension: String, id: u32) -> Result<(), String> {
++        self.entity_request(dimension, EntityCommand::KillMob { id }, &[])
++    }
++    fn remove_mob(&mut self, dimension: String, id: u32) -> Result<(), String> {
++        self.entity_request(dimension, EntityCommand::RemoveMob { id }, &[])
++    }
++}
+ /// Most bytes a mod message holds, and messages a call may send.
+ const NET_BYTES: usize = 30_000;
+ const NET_PER_CALL: usize = 32;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 192ec33..1a27923 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -52,6 +52,8 @@ pub struct TestGame {
+     pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
+     /// The faces each transmitter connects through, by position.
+     pub block_transmitters: std::collections::BTreeMap<(i32, i32, i32), [bool; 6]>,
++    /// The mobs of the Overworld a script set, for capability `entities`.
++    pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+     multiblock_seen: crate::multiblock::Seen,
+ }
+@@ -178,6 +180,7 @@ impl TestGame {
+             block_menu_data: Default::default(),
+             block_transmitters: Default::default(),
+             multiblock_seen: Default::default(),
++            mobs: Vec::new(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -206,11 +209,20 @@ impl TestGame {
+             clock: self.clock,
+             players: self.players.clone(),
+             motions: self.motions.clone(),
++            mobs: self.mobs.clone(),
++            mobs_dimension: "minecraft:overworld".into(),
+             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
+             gui_size: (427.0, 240.0),
+             ..Snapshot::default()
+         });
+     }
++    /// The id of the (first) mod under test.
++    pub fn mod_id(&self) -> String {
++        self.mods.entries()[0]
++            .manifest
++            .as_ref()
++            .map_or_else(String::new, |m| m.id.clone())
++    }
+     /// Whether the mod is a server mod.
+     pub fn server(&self) -> bool {
+         self.mods.runs_server()
+@@ -811,6 +823,33 @@ pub struct NetSet {
+     data: Vec<u8>,
+ }
+ 
++/// A mob a step puts in the Overworld (replacing the last list).
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct MobSet {
++    id: u32,
++    kind: String,
++    #[serde(default)]
++    x: f64,
++    #[serde(default)]
++    y: f64,
++    #[serde(default)]
++    z: f64,
++    #[serde(default = "twenty")]
++    health: f32,
++}
++fn twenty() -> f32 {
++    20.0
++}
++
++/// The answer to a spawn ticket a step gives the mod (no `id`: it failed).
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct SpawnedSet {
++    ticket: u64,
++    id: Option<u32>,
++}
++
+ /// A menu button a step presses.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -920,6 +959,10 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Server mods, capability `entities`: the mobs of the Overworld from now on.
++    mobs: Option<Vec<MobSet>>,
++    /// Server mods: a spawn ticket is answered after the ticks.
++    spawned: Option<SpawnedSet>,
+     /// Server mods: the actor's client half sends bytes after the ticks.
+     net: Option<NetSet>,
+     /// Client mods: the server half sends bytes after the ticks.
+@@ -957,6 +1000,11 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods, capability `entities`: every request, as `"spawn-mob kind x y z #ticket"`,
++    /// `"summon kind x y z #ticket nbt"`, `"move id x y z yaw pitch"`, `"display id"`,
++    /// `"remove-entity id"`, `"teleport-mob id x y z"`, `"push-mob id x y z"`,
++    /// `"health id value"`, `"kill-mob id"` and `"remove-mob id"`.
++    entity_commands: Option<Vec<String>>,
+     /// Server mods, capability `net`: every `net.send` as `"Name: channel [bytes]"`.
+     net_sent: Option<Vec<String>>,
+     /// Client mods, capability `net-client`: every `send-to-server` as `"channel [bytes]"`.
+@@ -1198,9 +1246,26 @@ impl Step {
+                 day_time: 0,
+             }));
+         }
++        if let Some(mobs) = &self.mobs {
++            game.mobs = mobs
++                .iter()
++                .map(|m| crate::MobInfo {
++                    id: m.id,
++                    kind: m.kind.clone(),
++                    pos: [m.x, m.y, m.z],
++                    yaw: 0.0,
++                    health: m.health,
++                    max_health: 20.0,
++                })
++                .collect();
++        }
+         game.tick(self.ticks);
+         game.frames(self.frames);
+         let who = actor.map(|i| game.players[i].clone());
++        if let Some(s) = &self.spawned {
++            game.snapshot();
++            game.mods.entity_spawned(&game.mod_id(), s.ticket, s.id);
++        }
+         if let (Some(n), Some(who)) = (&self.net, &who) {
+             game.snapshot();
+             game.mods.net_message(who, &n.channel, &n.data);
+@@ -1424,6 +1489,38 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.entity_commands {
++            use crate::EntityCommand as C;
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::Entity { command, .. } => Some(match command {
++                        C::SpawnMob { ticket, kind, pos, .. } => {
++                            format!("spawn-mob {kind} {} {} {} #{ticket}", pos[0], pos[1], pos[2])
++                        }
++                        C::Summon { ticket, kind, pos, nbt } => {
++                            format!("summon {kind} {} {} {} #{ticket} {nbt}", pos[0], pos[1], pos[2])
++                        }
++                        C::Move { id, pos, yaw, pitch } => {
++                            format!("move {id} {} {} {} {yaw} {pitch}", pos[0], pos[1], pos[2])
++                        }
++                        C::SetDisplay { id, .. } => format!("display {id}"),
++                        C::RemoveEntity { id } => format!("remove-entity {id}"),
++                        C::TeleportMob { id, pos } => {
++                            format!("teleport-mob {id} {} {} {}", pos[0], pos[1], pos[2])
++                        }
++                        C::PushMob { id, velocity } => {
++                            format!("push-mob {id} {} {} {}", velocity[0], velocity[1], velocity[2])
++                        }
++                        C::SetMobHealth { id, health } => format!("health {id} {health}"),
++                        C::KillMob { id } => format!("kill-mob {id}"),
++                        C::RemoveMob { id } => format!("remove-mob {id}"),
++                    }),
++                    _ => None,
++                })
++                .collect();
++            same("entity-commands", want, &got)?;
++        }
+         if let Some(want) = &e.net_sent {
+             let name = |id: &str| {
+                 let p = game.players.iter().find(|p| p.id == id);
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 316adf4..7c8c14e 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 10);
++    assert_eq!(LEVEL, 11);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index b73989e..4b61054 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -21,6 +21,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
+ | `player-control` | [`player-control`](#player-control) | see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds |
+ | `recipe-types` | [`recipe-types`](#recipe-types) | read the recipes of the types it brings and the item tags they use |
+ | `net` | [`net`](#net) | send bytes to its half running in players' games, and hear theirs |
++| `entities` | [`entities`](#entities) | see the mobs of the world, spawn, move, hurt and remove them |
+ | `net-client` | [`net-client`](#net-client) | send bytes to its half running on the server, and hear it |
+ | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+ 
+@@ -35,7 +36,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -785,6 +786,66 @@ What the game calls in a client mod that took `net-client`; a mod built before i
+ | --- | --- | --- |
+ | `message` | `func(channel: string, data: list<u8>)` | Bytes the server's half of the mod sent on `channel`. |
+ 
++## `entities`
++
++Access: capability `entities`.
++
++Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): the mobs and the other entities of the level the server is simulating. Reading is as of the last server tick. What a mod asks for is made after the call returns, before the next tick; a spawn answers with the new entity's id in `entity-spawned` the tick after (its `ticket` is what the call returned). An entity is named by its `dimension`: another level than the one in place is refused.
++
++### record `mob`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` |  |
++| `kind` | `string` | `minecraft:zombie`. |
++| `x` | `f64` |  |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `yaw` | `f32` | Degrees; 0 faces south. |
++| `health` | `f32` |  |
++| `max-health` | `f32` |  |
++
++### record `mob-options`
++
++What a spawned mob starts with.
++
++| Field | Type | |
++| --- | --- | --- |
++| `name` | `option<string>` | A name over it, shown to everyone. |
++| `health` | `option<f32>` |  |
++| `no-ai` | `bool` |  |
++| `invisible` | `bool` |  |
++| `silent` | `bool` |  |
++| `invulnerable` | `bool` |  |
++| `no-gravity` | `bool` |  |
++
++### record `display`
++
++A display entity's transformation (`block_display`, `item_display`, `text_display`): a translation, a left rotation (a quaternion `x, y, z, w`), a scale and a right rotation, eased over `interpolation` ticks from what it showed; a move eases over `teleport` ticks (0 to 59).
++
++| Field | Type | |
++| --- | --- | --- |
++| `translation` | `tuple<f32, f32, f32>` |  |
++| `left-rotation` | `tuple<f32, f32, f32, f32>` |  |
++| `scale` | `tuple<f32, f32, f32>` |  |
++| `right-rotation` | `tuple<f32, f32, f32, f32>` |  |
++| `interpolation` | `s32` |  |
++| `teleport` | `s32` |  |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `mobs` | `func(dimension: string) -> list<mob>` | The living mobs of `dimension` as of the last tick (none for a level that is not the one in place). |
++| `spawn-mob` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, options: mob-options) -> result<u64, string>` | Spawns a mob of `kind` at the position, finalized as a natural spawn is and kept when its chunk unloads. Returns the ticket `entity-spawned` answers with. An error for a position that isn't finite or a kind that isn't a plain id, and past 64 requests in a call. |
++| `summon` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, nbt: string) -> result<u64, string>` | Spawns any entity of `kind` (`minecraft:item_display`) from `nbt` (SNBT of its compound, as `/summon` takes it, at most 8192 bytes; an empty text is `{}`). Returns a ticket as `spawn-mob` does. |
++| `move-entity` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> result<_, string>` | Moves an entity Horizon keeps without simulating (a display, a marker, an interaction); a display eases there over its `teleport` ticks. |
++| `set-display` | `func(dimension: string, id: u32, display: display) -> result<_, string>` | Sets a display's transformation. |
++| `remove-entity` | `func(dimension: string, id: u32) -> result<_, string>` | Removes an entity Horizon keeps without simulating, as `/kill` does. |
++| `teleport-mob` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>` | Moves a mob to the position at once, as `/tp` does. |
++| `push-mob` | `func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>` | Adds a velocity to a mob's. |
++| `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
++| `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
++| `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
++
+ ## `server-events`
+ 
+ Access: exported by the mod: the game calls it.
+@@ -1027,3 +1088,4 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
++| `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
+-- 
+2.43.0
+

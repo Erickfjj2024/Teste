@@ -1,0 +1,856 @@
+From 401d2175b531c9aa3864c2954130477de847538a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 19:37:02 +0000
+Subject: [PATCH] API 33: bow-like mod items (behaves_as), item-released,
+ item-shot and entities.set-entity-fire
+
+A content mod's item records the vanilla item it copies (horizon:behaves_as), and the game's checks by item id for the bow (use, release, FOV, trigger feel, hands) read it through Items::behaves_as, so a mod item with template minecraft:bow draws and shoots as a bow. registration.item-release turns on item-released (false cancels the shot) and item-shot (the arrows' entity ids exist). set-entity-fire lights a mob or an arrow in flight.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 +++
+ Cargo.toml                                    |  1 +
+ crates/horizon-client/src/game.rs             | 18 +++++++-
+ crates/horizon-client/src/game/fov.rs         |  2 +-
+ crates/horizon-client/src/game/hand.rs        |  4 +-
+ crates/horizon-client/src/game/item_use.rs    |  2 +-
+ crates/horizon-client/src/game/native_mobs.rs | 27 +++++++++++
+ .../horizon-client/src/game/pad/hardware.rs   |  2 +-
+ crates/horizon-client/src/game/remote.rs      |  6 +--
+ crates/horizon-client/src/game/server_mods.rs | 26 +++++++++++
+ crates/horizon-client/src/mod_content.rs      |  8 ++++
+ .../horizon-client/src/mod_content_tests.rs   | 29 ++++++++++++
+ crates/horizon-items/src/items.rs             |  9 ++++
+ .../examples/bow-hooks/Cargo.toml             | 16 +++++++
+ .../examples/bow-hooks/horizon-mod.toml       |  9 ++++
+ .../examples/bow-hooks/src/lib.rs             | 35 ++++++++++++++
+ .../examples/bow-hooks/tests/bow.toml         | 26 +++++++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 20 ++++++++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 13 ++++++
+ crates/horizon-mods/src/api_level.rs          |  5 +-
+ crates/horizon-mods/src/runtime.rs            | 46 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 37 +++++++++++++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  4 ++
+ 24 files changed, 342 insertions(+), 14 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/bow-hooks/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/bow-hooks/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/bow-hooks/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/bow-hooks/tests/bow.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 50c99d637..52ef506de 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -390,6 +390,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "bow-hooks"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "bumpalo"
+ version = "3.20.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index e8f5219ba..cececd222 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -42,6 +42,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-counter",
+     "crates/horizon-mod-sdk/examples/block-use",
+     "crates/horizon-mod-sdk/examples/damage-mods",
++    "crates/horizon-mod-sdk/examples/bow-hooks",
+     "crates/horizon-mod-sdk/examples/fuel-demo",
+     "crates/horizon-mod-sdk/examples/crafting-probe",
+     "crates/horizon-mod-sdk/examples/body-probe",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 7039d1c1d..34c6c8d23 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -6092,7 +6092,7 @@ impl Game<'_> {
+             self.use_instrument(&stack);
+             return Ok(true);
+         }
+-        if !on_block && &*stack.item == "minecraft:bow" {
++        if !on_block && self.res.items().behaves_as(&stack.item) == "minecraft:bow" {
+             if self.creative || self.projectile_slot("minecraft:bow").is_some() {
+                 self.start_using_item();
+             }
+@@ -6545,7 +6545,7 @@ impl Game<'_> {
+     /// used for `ticks`, its hand acting: a bow or a trident lets go (not
+     /// when its hand changed), a spyglass stops scoping.
+     pub(super) fn release_used_item(&mut self, stack: &ItemStack, ticks: u32, hand_changed: bool) {
+-        match &*stack.item {
++        match self.res.items().behaves_as(&stack.item) {
+             "minecraft:bow" if !hand_changed => self.release_bow(ticks),
+             "minecraft:trident" if !hand_changed => self.release_trident(ticks),
+             "minecraft:spyglass" => self.stop_spyglass(),
+@@ -13186,6 +13186,13 @@ impl Game<'_> {
+         let Some(eye) = self.eye_position() else {
+             return;
+         };
++        // A mod's bow-like item may cancel the shot (`item-released`): nothing is shot or used.
++        if let Some(held) = self.held().cloned()
++            && self.res.items().get(&held.item).is_some_and(|i| i.behaves_as.is_some())
++            && !self.mod_item_released(&held, ticks)
++        {
++            return;
++        }
+         // BowItem.shootProjectile: shootFromRotation(power * 3, inaccuracy 1).
+         let p = Vec3::new(eye[0], eye[1] - 0.1, eye[2]);
+         let ammo = arrow_slot
+@@ -13237,6 +13244,13 @@ impl Game<'_> {
+             on_ground,
+         );
+         self.add_projectile(arrow);
++        // The arrow's id is the last one added; a mod's bow-like item hears it (`item-shot`).
++        if let Some(held) = self.held().cloned()
++            && self.res.items().get(&held.item).is_some_and(|i| i.behaves_as.is_some())
++            && let Some(id) = self.creatures.projectiles.last().map(|p| p.id)
++        {
++            self.mod_item_shot(&held, &[id]);
++        }
+         self.player_projectile_shot();
+         let pitch = 1.0 / (self.world.random.next_float() * 0.4 + 1.2) + power * 0.5;
+         self.audio
+diff --git a/crates/horizon-client/src/game/fov.rs b/crates/horizon-client/src/game/fov.rs
+index fe272cf06..bf8740b74 100644
+--- a/crates/horizon-client/src/game/fov.rs
++++ b/crates/horizon-client/src/game/fov.rs
+@@ -55,7 +55,7 @@ impl Game<'_> {
+         let p = self.player.as_ref()?;
+         let using = self.using.and_then(|(slot, ticks)| {
+             let stack = self.stack_in(slot)?;
+-            let item = match &*stack.item {
++            let item = match self.res.items().behaves_as(&stack.item) {
+                 "minecraft:bow" => UseItem::Bow,
+                 "minecraft:spyglass" => UseItem::Spyglass,
+                 _ => UseItem::Other,
+diff --git a/crates/horizon-client/src/game/hand.rs b/crates/horizon-client/src/game/hand.rs
+index c949e84a0..17c52ef57 100644
+--- a/crates/horizon-client/src/game/hand.rs
++++ b/crates/horizon-client/src/game/hand.rs
+@@ -588,12 +588,12 @@ impl Game<'_> {
+     pub(super) fn hands_to_render(&self) -> [bool; 2] {
+         let held = |slot| {
+             self.stack_in(slot)
+-                .map(|s: &ItemStack| (&*s.item, s.data().is_some_and(|d| !d.charged.is_empty())))
++                .map(|s: &ItemStack| (self.res.items().behaves_as(&s.item), s.data().is_some_and(|d| !d.charged.is_empty())))
+         };
+         let using = self.used_hand().zip(
+             self.using
+                 .and_then(|(slot, _)| self.stack_in(slot))
+-                .map(|s| &*s.item),
++                .map(|s| self.res.items().behaves_as(&s.item)),
+         );
+         horizon_client::first_person::hands_to_render(
+             [held(self.selected), held(super::shield::OFFHAND_SLOT)],
+diff --git a/crates/horizon-client/src/game/item_use.rs b/crates/horizon-client/src/game/item_use.rs
+index fbbab47cb..fcb26f339 100644
+--- a/crates/horizon-client/src/game/item_use.rs
++++ b/crates/horizon-client/src/game/item_use.rs
+@@ -33,7 +33,7 @@ impl Game<'_> {
+     /// goat horns, 0 for the rest, then a mod's answer.
+     pub(super) fn use_duration(&self, stack: &ItemStack) -> i32 {
+         let info = self.items().get(&stack.item);
+-        let mut duration = match &*stack.item {
++        let mut duration = match self.res.items().behaves_as(&stack.item) {
+             "minecraft:bow" | "minecraft:crossbow" | "minecraft:trident" => 72_000,
+             "minecraft:spyglass" => 1200,
+             "minecraft:brush" => 200,
+diff --git a/crates/horizon-client/src/game/native_mobs.rs b/crates/horizon-client/src/game/native_mobs.rs
+index 0ed8e18a7..753568b7c 100644
+--- a/crates/horizon-client/src/game/native_mobs.rs
++++ b/crates/horizon-client/src/game/native_mobs.rs
+@@ -172,6 +172,33 @@ impl Game<'_> {
+         m.needs_sync = true;
+         true
+     }
++    /// Sets the mob `id`, or the projectile `id` in flight, on fire for `ticks` (`Entity.igniteForTicks`: a longer fire it has stays):
++    /// false for none of them, another dimension or a mob that is immune. API 33.
++    pub(super) fn native_set_fire(&mut self, dimension: &str, id: u32, ticks: u32) -> bool {
++        if !self.native_mob_level(dimension) {
++            return false;
++        }
++        let ticks = ticks as i32;
++        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id && !m.removed) {
++            if m.kind.flags.fire_immune {
++                return false;
++            }
++            m.fire_ticks = m.fire_ticks.max(ticks);
++            m.needs_sync = true;
++            return true;
++        }
++        if let Some(a) = self
++            .creatures
++            .projectiles
++            .iter_mut()
++            .find(|p| p.id == id)
++            .and_then(|p| p.arrow.as_mut())
++        {
++            a.ignite_for_ticks(ticks);
++            return true;
++        }
++        false
++    }
+     /// Sets the living mob `id`'s health, cut to its maximum: false for no such
+     /// mob, another dimension or a health that isn't above 0 (`native_kill_mob`
+     /// kills). API 37.
+diff --git a/crates/horizon-client/src/game/pad/hardware.rs b/crates/horizon-client/src/game/pad/hardware.rs
+index bfb8af4b7..672d90f8f 100644
+--- a/crates/horizon-client/src/game/pad/hardware.rs
++++ b/crates/horizon-client/src/game/pad/hardware.rs
+@@ -379,7 +379,7 @@ impl Game<'_> {
+     fn trigger_feels(&self) -> (TriggerFeel, TriggerFeel) {
+         let using = match self.using {
+             Some((slot, ticks)) => match self.stack_in(slot) {
+-                Some(s) if &*s.item == "minecraft:bow" => {
++                Some(s) if self.res.items().behaves_as(&s.item) == "minecraft:bow" => {
+                     TriggerFeel::Draw(gamepad::bow_power(ticks))
+                 }
+                 // TridentItem.THROW_THRESHOLD_TIME.
+diff --git a/crates/horizon-client/src/game/remote.rs b/crates/horizon-client/src/game/remote.rs
+index 863b3a0e0..d7281eec5 100644
+--- a/crates/horizon-client/src/game/remote.rs
++++ b/crates/horizon-client/src/game/remote.rs
+@@ -7655,7 +7655,7 @@ impl Game<'_> {
+             return true;
+         }
+         let bundle = self.items().get(&held.item).is_some_and(|i| i.bundle);
+-        let start = match &*held.item {
++        let start = match self.res.items().behaves_as(&held.item) {
+             // BundleItem.use: always starts; the server drops the contents.
+             _ if bundle => true,
+             // BowItem.use: with an arrow, or in creative.
+@@ -7695,7 +7695,7 @@ impl Game<'_> {
+         if start {
+             self.start_using_item();
+         }
+-        start || !matches!(&*held.item, "minecraft:bow" | "minecraft:crossbow")
++        start || !matches!(self.res.items().behaves_as(&held.item), "minecraft:bow" | "minecraft:crossbow")
+     }
+     /// `InstrumentItem.use` on this client: unless the horn is on cooldown,
+     /// it is held up, plays its sound at the player and starts its cooldown.
+@@ -7727,7 +7727,7 @@ impl Game<'_> {
+             return true;
+         }
+         matches!(
+-            &*stack.item,
++            self.res.items().behaves_as(&stack.item),
+             "minecraft:bow"
+                 | "minecraft:crossbow"
+                 | "minecraft:trident"
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index b59520bf6..9df8edd33 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2008,6 +2008,31 @@ mod run {
+             self.mods.mods.item_hit_damage(&player, &stack, kind, damage)
+         }
+ 
++        /// A bow-like item of a mod was let go after `ticks` of drawing: false when a server mod cancels the shot.
++        pub(in crate::game) fn mod_item_released(&mut self, stack: &horizon_client::items::ItemStack, ticks: u32) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_item_release() {
++                return true;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return true;
++            };
++            let hand = if self.used_hand() == Some(horizon_client::first_person::Hand::Off) { "off" } else { "main" };
++            let stack = Self::mod_stack(stack);
++            self.mods.mods.item_released(&player, &stack, hand, ticks)
++        }
++
++        /// The arrows `ids` of the acting player's shot with `stack` exist.
++        pub(in crate::game) fn mod_item_shot(&mut self, stack: &horizon_client::items::ItemStack, ids: &[u32]) {
++            if !self.mods.server || !self.mods.mods.hears_item_release() {
++                return;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return;
++            };
++            let stack = Self::mod_stack(stack);
++            self.mods.mods.item_shot(&player, &stack, ids);
++        }
++
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+         pub(in crate::game) fn mod_item_hit(
+             &mut self,
+@@ -2620,6 +2645,7 @@ mod run {
+                         C::SetMobHealth { id, health } => self.native_set_mob_health(&dimension, id, health),
+                         C::KillMob { id } => self.native_kill_mob(&dimension, id),
+                         C::RemoveMob { id } => self.native_remove_mob(&dimension, id),
++                        C::SetFire { id, ticks } => self.native_set_fire(&dimension, id, ticks),
+                     };
+                     if !done {
+                         log::debug!("Horizon: mod {name}'s entity request was refused");
+diff --git a/crates/horizon-client/src/mod_content.rs b/crates/horizon-client/src/mod_content.rs
+index e7f098fda..50d4c8b57 100644
+--- a/crates/horizon-client/src/mod_content.rs
++++ b/crates/horizon-client/src/mod_content.rs
+@@ -500,6 +500,8 @@ struct NewItem {
+     rarity: Option<Rarity>,
+     components: Vec<(String, J)>,
+     crafting_remainder: Option<String>,
++    /// A standalone item of a mod (not a block's): the game's checks by item id take it for its template (`Items::behaves_as`).
++    behaves_as: bool,
+ }
+ 
+ struct Plan<'a> {
+@@ -960,6 +962,7 @@ impl<'a> Plan<'a> {
+                     rarity: None,
+                     components: component_patch(&b.decl.id, &b.decl.components)?,
+                     crafting_remainder: None,
++                    behaves_as: false,
+                 });
+             }
+         }
+@@ -971,6 +974,7 @@ impl<'a> Plan<'a> {
+                     rarity: i.rarity,
+                     components: component_patch(&i.id, &i.components)?,
+                     crafting_remainder: i.crafting_remainder.clone(),
++                    behaves_as: true,
+                 });
+             }
+         }
+@@ -1133,6 +1137,10 @@ impl<'a> Plan<'a> {
+             let mut v = v.clone();
+             v.rename(&i.rename, false);
+             if components {
++                // What the game's checks by id (`"minecraft:bow"`) take this item for.
++                if i.behaves_as {
++                    v.set("horizon:behaves_as", J::Str(i.rename.from.clone()));
++                }
+                 if let Some(n) = i.max_stack_size {
+                     v.set("minecraft:max_stack_size", J::Num(n.into()));
+                 }
+diff --git a/crates/horizon-client/src/mod_content_tests.rs b/crates/horizon-client/src/mod_content_tests.rs
+index 21cd1377e..92d4b7d12 100644
+--- a/crates/horizon-client/src/mod_content_tests.rs
++++ b/crates/horizon-client/src/mod_content_tests.rs
+@@ -67,6 +67,35 @@ fn item_components_patch_the_template_entry() {
+     }
+ }
+ 
++#[test]
++fn a_standalone_item_records_the_vanilla_item_it_behaves_as() {
++    // A mod bow copies `minecraft:bow`: its row says so, which is what the game's checks by id ("minecraft:bow") read. A block's own
++    // item does not (it is a block, not a template to behave as).
++    let scratch = std::env::temp_dir().join(format!("horizon-behaves-as-{}", std::process::id()));
++    let _ = fs::remove_dir_all(&scratch);
++    let base = scratch.join("base");
++    fs::create_dir_all(&base).unwrap();
++    let mods = [folder_mod(
++        &scratch.join("bows"),
++        &[
++            ("horizon-mod.toml", &manifest("bows", "")),
++            (
++                "data/bows/horizon/item/electric_bow.json",
++                r#"{"template": "minecraft:bow", "components": {"!minecraft:max_damage": {}}}"#,
++            ),
++        ],
++    )];
++    let mut doc: J =
++        serde_json::from_str(r#"{"minecraft:bow": {"minecraft:max_damage": 384, "minecraft:enchantable": {"value": 1}}}"#)
++            .unwrap();
++    Plan::new(&base, &mods).unwrap().json("items.json", &mut doc).unwrap();
++    let doc: serde_json::Value = serde_json::to_value(&doc).unwrap();
++    assert_eq!(doc["bows:electric_bow"]["horizon:behaves_as"], "minecraft:bow");
++    assert!(doc["bows:electric_bow"].get("minecraft:max_damage").is_none());
++    assert!(doc["minecraft:bow"].get("horizon:behaves_as").is_none());
++    let _ = fs::remove_dir_all(&scratch);
++}
++
+ #[test]
+ fn creative_tabs_keep_vanilla_items_missing_from_search() {
+     let tab = horizon_mods::content::CreativeTab {
+diff --git a/crates/horizon-items/src/items.rs b/crates/horizon-items/src/items.rs
+index 081c6c292..47003d91c 100644
+--- a/crates/horizon-items/src/items.rs
++++ b/crates/horizon-items/src/items.rs
+@@ -202,6 +202,9 @@ pub struct ItemInfo {
+     pub interact_vibrations: bool,
+     /// `glider` (elytra).
+     pub glider: bool,
++    /// The vanilla item a mod item copies, which the game's id checks (`"minecraft:bow"`...) treat it as: set for the items of
++    /// content mods (`horizon:behaves_as` of their row). `None` for vanilla items.
++    pub behaves_as: Option<Arc<str>>,
+     /// `equippable.swappable` and `equip_sound`.
+     pub swappable: bool,
+     /// `equippable.dispensable` (dispensers may put it on an entity).
+@@ -795,6 +798,7 @@ impl Items {
+                         .unwrap_or(name)
+                         .to_owned(),
+                     glider: c["minecraft:glider"].is_object(),
++                    behaves_as: c["horizon:behaves_as"].as_str().map(Arc::from),
+                     swappable: c["minecraft:equippable"]["swappable"]
+                         .as_bool()
+                         .unwrap_or(true),
+@@ -921,6 +925,11 @@ impl Items {
+     pub fn get(&self, id: &str) -> Option<&ItemInfo> {
+         self.items.get(id)
+     }
++    /// The item whose behaviour `id` has: the vanilla template a mod item copies (`minecraft:bow` for a mod bow), else `id`.
++    /// The game's checks by item id go through it.
++    pub fn behaves_as<'a>(&'a self, id: &'a str) -> &'a str {
++        self.items.get(id).and_then(|i| i.behaves_as.as_deref()).unwrap_or(id)
++    }
+     /// The instrument a goat horn plays: its `instrument` component's
+     /// registry entry or inline instrument.
+     pub fn instrument(&self, stack: &ItemStack) -> Option<Instrument> {
+diff --git a/crates/horizon-mod-sdk/examples/bow-hooks/Cargo.toml b/crates/horizon-mod-sdk/examples/bow-hooks/Cargo.toml
+new file mode 100644
+index 000000000..98c2e6bd9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/bow-hooks/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "bow-hooks"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a bow of the mod that spends energy per shot and lights its arrows"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/bow-hooks/horizon-mod.toml b/crates/horizon-mod-sdk/examples/bow-hooks/horizon-mod.toml
+new file mode 100644
+index 000000000..fb6896409
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/bow-hooks/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "bowhooks"
++name = "Bow Hooks"
++version = "0.1.0"
++description = "Test mod for item-released and item-shot: bowhooks:power_bow (a bow-like item) spends 100 energy a shot, is refused when there is not enough, and its fire mode lights the arrows it shoots."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "entities"]
++experimental = ["entities"]
+diff --git a/crates/horizon-mod-sdk/examples/bow-hooks/src/lib.rs b/crates/horizon-mod-sdk/examples/bow-hooks/src/lib.rs
+new file mode 100644
+index 000000000..60cdd6876
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/bow-hooks/src/lib.rs
+@@ -0,0 +1,35 @@
++//! Bow Hooks: `item-released` and `item-shot`. `bowhooks:power_bow` (a mod item whose template is `minecraft:bow`, so the game treats it
++//! as a bow) spends 100 energy every shot; with less the shot is cancelled, as `ItemElectricBow.releaseUsing` does. A stack whose
++//! components name `fire` lights the arrows it shoots (the Flame arrow of the fire mode) for 100 ticks.
++use horizon_mod_sdk::server::{entities, ItemStack, Player, Registration, ServerMod};
++
++struct Bow {
++    energy: u32,
++}
++
++const SHOT: u32 = 100;
++
++impl ServerMod for Bow {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Bow { energy: 250 }, Registration::new().on_item_release()))
++    }
++    fn item_released(&mut self, _player: &Player, stack: ItemStack, _hand: &str, _ticks_held: u32) -> bool {
++        if stack.item != "bowhooks:power_bow" {
++            return true;
++        }
++        if self.energy < SHOT {
++            return false;
++        }
++        self.energy -= SHOT;
++        true
++    }
++    fn item_shot(&mut self, _player: &Player, stack: ItemStack, projectiles: Vec<u32>) {
++        if stack.item == "bowhooks:power_bow" && stack.components.contains("fire") {
++            for id in projectiles {
++                let _ = entities::set_entity_fire("minecraft:overworld", id, 100);
++            }
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Bow);
+diff --git a/crates/horizon-mod-sdk/examples/bow-hooks/tests/bow.toml b/crates/horizon-mod-sdk/examples/bow-hooks/tests/bow.toml
+new file mode 100644
+index 000000000..71bb0d6b1
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/bow-hooks/tests/bow.toml
+@@ -0,0 +1,26 @@
++[[step]]
++join = "Alex"
++# 250 energy: the first shot passes, and its arrow (entity 41) is not lit in the normal mode.
++release-item = { stack = "bowhooks:power_bow*1", ticks = 20, projectiles = [41] }
++ticks = 1
++expect.release-result = true
++expect.entity-commands = []
++
++[[step]]
++# The fire mode lights the arrow of the second shot.
++release-item = { stack = 'bowhooks:power_bow*1{mode:"fire"}', ticks = 20, projectiles = [42] }
++ticks = 1
++expect.release-result = true
++expect.entity-commands = ["fire 42 100"]
++
++[[step]]
++# 50 energy are left: the third shot is cancelled and nothing is asked for its arrow.
++release-item = { stack = 'bowhooks:power_bow*1{mode:"fire"}', ticks = 20, projectiles = [43] }
++ticks = 1
++expect.release-result = false
++expect.entity-commands = []
++
++[[step]]
++# Another item is not the mod's bow: it goes on.
++release-item = { stack = "minecraft:bow*1", ticks = 20, projectiles = [44] }
++expect.release-result = true
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index adb66e2f6..db28b69f8 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -272,6 +272,12 @@ pub mod server {
+         fn item_hit_damage(&mut self, _player: &Player, _stack: ItemStack, _kind: &str, damage: f32) -> f32 {
+             damage
+         }
++        /// A player let go of a bow-like item of the mod: false cancels the shot. When [`Registration::on_item_release`] is set.
++        fn item_released(&mut self, _player: &Player, _stack: ItemStack, _hand: &str, _ticks_held: u32) -> bool {
++            true
++        }
++        /// The arrows of a shot exist, with these entity ids. When [`Registration::on_item_release`] is set.
++        fn item_shot(&mut self, _player: &Player, _stack: ItemStack, _projectiles: Vec<u32>) {}
+         /// A mod's block was placed at `pos`: false takes it away again (`BlockItem.canPlace`). When [`Registration::blocks`] is set.
+         fn can_place(&mut self, _player: &Player, _pos: BlockPos, _state: &str) -> bool {
+             true
+@@ -365,6 +371,7 @@ pub mod server {
+                 items: false,
+                 chunks: false,
+                 damage: false,
++                item_release: false,
+                 redirects: Vec::new(),
+             }
+         }
+@@ -449,6 +456,11 @@ pub mod server {
+             self.damage = true;
+             self
+         }
++        /// Call [`ServerMod::item_released`] and [`ServerMod::item_shot`] for bow-like items.
++        pub fn on_item_release(mut self) -> Self {
++            self.item_release = true;
++            self
++        }
+         /// Call [`ServerMod::chunk_loaded`].
+         pub fn on_chunks(mut self) -> Self {
+             self.chunks = true;
+@@ -655,6 +667,14 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.item_hit_damage(&player, stack, &kind, damage));
+                     out
+                 }
++                fn item_released(player: Player, stack: ItemStack, hand: String, ticks_held: u32) -> bool {
++                    let mut out = true;
++                    with(|m| out = m.item_released(&player, stack, &hand, ticks_held));
++                    out
++                }
++                fn item_shot(player: Player, stack: ItemStack, projectiles: Vec<u32>) {
++                    with(|m| m.item_shot(&player, stack, projectiles));
++                }
+                 fn can_place(player: Player, pos: BlockPos, state: String) -> bool {
+                     let mut out = true;
+                     with(|m| out = m.can_place(&player, pos, &state));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 64b076656..ead700252 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1119,6 +1119,9 @@ interface entities {
+     kill-mob: func(dimension: string, id: u32) -> result<_, string>;
+     /// Takes a mob out of the world with no death and no loot.
+     remove-mob: func(dimension: string, id: u32) -> result<_, string>;
++    /// Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in
++    /// flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33.
++    set-entity-fire: func(dimension: string, id: u32, ticks: u32) -> result<_, string>;
+ }
+ 
+ /// Types shared by the server interfaces; no capability asks for it.
+@@ -1301,6 +1304,8 @@ interface server-events {
+         chunks: bool,
+         /// Call `player-damaged` and `item-hit-damage`.
+         damage: bool,
++        /// Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`).
++        item-release: bool,
+         /// Blocks of the mod that stand for another block (FORK-35): a click on
+         /// them, or breaking them, reaches the block they name.
+         redirects: list<redirect-spec>,
+@@ -1565,6 +1570,14 @@ interface server-events {
+     /// scale it, against an entity of `kind`, holding `stack`. Returns the
+     /// damage to use. The first mod to change it decides.
+     item-hit-damage: func(player: player, stack: item-stack, kind: string, damage: f32) -> f32;
++    /// A player let go of a bow-like item (`registration.item-release`; `BowItem.releaseUsing`): `stack` is the held weapon, `hand` is
++    /// `main` or `off`, `ticks-held` how long the string was drawn. Answer false to cancel the shot (nothing is consumed, no arrow, no
++    /// sound); true lets the game shoot. The first mod to answer false decides.
++    /// (An export: it has no level; a mod that implements it needs a Horizon that has it.)
++    item-released: func(player: player, stack: item-stack, hand: string, ticks-held: u32) -> bool;
++    /// The arrows of a shot exist (`ItemElectricBow.shoot`'s place in `ProjectileWeaponItem.shoot`): their entity ids, to light with
++    /// `entities.set-entity-fire` or to charge for. Asked after `item-released` answered true. Nothing to answer.
++    item-shot: func(player: player, stack: item-stack, projectiles: list<u32>);
+     /// A player placed the mod's block `state` at `pos` (`registration.blocks`):
+     /// asked right after the game set it, for the blocks of any mod that asked.
+     /// Answer false to refuse: the block is taken away again and nothing is
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 440f5d9af..6394074ae 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 32;
++pub const LEVEL: u32 = 33;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 102] = [
++pub const FUNCTIONS: [(&str, u32); 103] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -79,6 +79,7 @@ pub const FUNCTIONS: [(&str, u32); 102] = [
+     ("entities.push-mob", 11),
+     ("entities.set-mob-health", 11),
+     ("entities.kill-mob", 11),
++    ("entities.set-entity-fire", 33),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index ad9f8a36d..a64683a20 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -237,6 +237,10 @@ pub enum EntityCommand {
+     RemoveMob {
+         id: u32,
+     },
++    SetFire {
++        id: u32,
++        ticks: u32,
++    },
+ }
+ 
+ /// What mods may read of the game, copied once per tick by the game.
+@@ -922,6 +926,45 @@ impl Mods {
+             .filter_map(|e| e.run.as_ref()?.hooks.server())
+             .any(|r| r.damage)
+     }
++    /// Whether a running server mod asked for `item-release`.
++    pub fn hears_item_release(&self) -> bool {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .any(|r| r.item_release)
++    }
++    /// `player` let go of the bow-like `stack` (in `hand`) after `ticks` of drawing: false when a mod cancels the shot.
++    pub fn item_released(&mut self, player: &ServerPlayer, stack: &ModItemStack, hand: &str, ticks: u32) -> bool {
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.item_release) {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_item_released(&mut run.store, player, stack, hand, ticks),
++                Hooks::Client(..) => Ok(true),
++            });
++            if answer == Some(false) {
++                return false;
++            }
++        }
++        true
++    }
++    /// The arrows `projectiles` of `player`'s shot with `stack` exist.
++    pub fn item_shot(&mut self, player: &ServerPlayer, stack: &ModItemStack, projectiles: &[u32]) {
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.item_release) {
++                continue;
++            }
++            let _ = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_item_shot(&mut run.store, player, stack, projectiles),
++                Hooks::Client(..) => Ok(()),
++            });
++        }
++    }
+     /// `player` is about to be hurt by `source` for `amount`: the damage to go on with (the first mod that changes it decides).
+     pub fn player_damaged(&mut self, player: &ServerPlayer, source: &DamageSource, amount: f32) -> f32 {
+         for i in 0..self.entries.len() {
+@@ -2942,6 +2985,9 @@ impl entities::Host for State {
+     fn remove_mob(&mut self, dimension: String, id: u32) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::RemoveMob { id }, &[])
+     }
++    fn set_entity_fire(&mut self, dimension: String, id: u32, ticks: u32) -> Result<(), String> {
++        self.entity_request(dimension, EntityCommand::SetFire { id, ticks: ticks.min(72_000) }, &[])
++    }
+ }
+ /// Most bytes a mod message holds, and messages a call may send.
+ const NET_BYTES: usize = 30_000;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index cf9917014..89f632930 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -67,6 +67,8 @@ pub struct TestGame {
+     /// What the last `player_damaged` and `item_hit_damage` answered.
+     pub damage_result: Option<f32>,
+     pub hit_damage_result: Option<f32>,
++    /// What the last `item_released` answered.
++    pub release_result: Option<bool>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
+     /// The blocks packed into boxes (`world.pack-block`), by the box's position.
+@@ -261,6 +263,7 @@ impl TestGame {
+             block_use: None,
+             damage_result: None,
+             hit_damage_result: None,
++            release_result: None,
+             can_place_result: None,
+             packed: Default::default(),
+             crafts: Vec::new(),
+@@ -1046,6 +1049,19 @@ pub struct HitDamageSet {
+     damage: f32,
+ }
+ 
++/// A bow-like item let go: `item-released`, and when the mod lets the shot stand, `item-shot` with the arrows' ids.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ReleaseSet {
++    stack: String,
++    ticks: u32,
++    #[serde(default)]
++    hand: Option<String>,
++    /// The entity ids of the arrows the game made.
++    #[serde(default)]
++    projectiles: Vec<u32>,
++}
++
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct UseBlockSet {
+@@ -1231,6 +1247,8 @@ pub struct Step {
+     place_mod_block: Option<PlaceSet>,
+     /// Server mods: the actor's melee blow is worked out.
+     hit_damage: Option<HitDamageSet>,
++    /// Server mods: the actor let go of a bow-like item.
++    release_item: Option<ReleaseSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+     mobs: Option<Vec<MobSet>>,
+     /// Server mods: a spawn ticket is answered after the ticks.
+@@ -1289,6 +1307,8 @@ pub struct Expect {
+     redirects: Option<Vec<String>>,
+     /// Server mods: what the mod answered to the step's `hit-damage`.
+     hit_damage_result: Option<f32>,
++    /// Server mods: whether the mod let the step's `release-item` shoot.
++    release_result: Option<bool>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+     /// (`-` for an empty slot), `"hurt Name type amount"` and `"effect Name id ticks level"`.
+     player_items: Option<Vec<String>>,
+@@ -1538,6 +1558,7 @@ impl Step {
+             || self.damage.is_some()
+             || self.place_mod_block.is_some()
+             || self.hit_damage.is_some()
++            || self.release_item.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+             || self.net.is_some()
+@@ -1674,6 +1695,16 @@ impl Step {
+             let stack = parse_stack(&h.stack).ok_or("hit-damage: a stack is item*count")?;
+             game.hit_damage_result = Some(game.mods.item_hit_damage(who, &stack, &h.kind, h.damage));
+         }
++        if let (Some(r), Some(who)) = (&self.release_item, &who) {
++            game.snapshot();
++            let stack = parse_stack(&r.stack).ok_or("release-item: a stack is item*count")?;
++            let hand = r.hand.as_deref().unwrap_or("main");
++            let allowed = game.mods.item_released(who, &stack, hand, r.ticks);
++            if allowed {
++                game.mods.item_shot(who, &stack, &r.projectiles);
++            }
++            game.release_result = Some(allowed);
++        }
+         if let (Some(u), Some(who)) = (&self.use_block, &who) {
+             game.snapshot();
+             let stack = match &u.stack {
+@@ -1985,6 +2016,11 @@ impl Step {
+                 return Err(format!("hit-damage-result: expected {want}, got {:?}", game.hit_damage_result));
+             }
+         }
++        if let Some(want) = e.release_result {
++            if game.release_result != Some(want) {
++                return Err(format!("release-result: expected {want}, got {:?}", game.release_result));
++            }
++        }
+         if let Some(want) = &e.block_use {
+             if game.block_use != Some(want.as_str()) {
+                 return Err(format!("block-use: expected {want}, got {:?}", game.block_use));
+@@ -2071,6 +2107,7 @@ impl Step {
+                         C::SetMobHealth { id, health } => format!("health {id} {health}"),
+                         C::KillMob { id } => format!("kill-mob {id}"),
+                         C::RemoveMob { id } => format!("remove-mob {id}"),
++                        C::SetFire { id, ticks } => format!("fire {id} {ticks}"),
+                     }),
+                     _ => None,
+                 })
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 6ae296f11..4357b15d0 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 32);
++    assert_eq!(LEVEL, 33);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 67a1b314a..daf2b646c 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -904,6 +904,7 @@ A display entity's transformation (`block_display`, `item_display`, `text_displa
+ | `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
+ | `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+ | `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
++| `set-entity-fire` | `func(dimension: string, id: u32, ticks: u32) -> result<_, string>` | Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33. |
+ 
+ ## `item-types`
+ 
+@@ -1224,6 +1225,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `items` | `bool` | Call `item-used` and `item-hit`. |
+ | `chunks` | `bool` | Call `chunk-loaded`. |
+ | `damage` | `bool` | Call `player-damaged` and `item-hit-damage`. |
++| `item-release` | `bool` | Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`). |
+ | `redirects` | `list<redirect-spec>` | Blocks of the mod that stand for another block (FORK-35): a click on them, or breaking them, reaches the block they name. |
+ 
+ ### record `block-entity`
+@@ -1281,5 +1283,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-used` | `func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use` | What a right click on a block of this mod does (`registration.blocks`), asked at the moment of the click for the mod's own blocks, with the block's own use still to come: `default` leaves it to the game (the block opens its menu or acts as it would), `pass` skips the block's own use and goes on to the held item (so a block in hand is placed against it), `consume` takes the click (the hand swings and nothing else runs). `sneaking` and `stack` (the held item, none for an empty hand) are as at the click. API 24. |
+ | `player-damaged` | `func(player: player, source: damage-source, amount: f32) -> f32` | A player is about to be hurt (`registration.damage`): where NeoForge's `LivingIncomingDamageEvent` runs, in `hurtServer` once its guards (creative, dead, immune) have passed and before the armour, the enchantments, the resistance and the absorption take their share of `amount`. Returns the damage to go on with: the same to leave it, less to reduce it, 0 (or less) to cancel the hit. The first mod to change it decides. What the mod asks for through imports is made at the end of the tick; `player-items.get-inventory` is as of the last tick. (An export: it has no level; a mod that implements it needs a Horizon that has it.) |
+ | `item-hit-damage` | `func(player: player, stack: item-stack, kind: string, damage: f32) -> f32` | A player's melee blow is being worked out (`registration.damage`): the attack damage attribute, with the held weapon's modifiers, is `damage` before the attack strength, the critical hit and the enchantments scale it, against an entity of `kind`, holding `stack`. Returns the damage to use. The first mod to change it decides. |
++| `item-released` | `func(player: player, stack: item-stack, hand: string, ticks-held: u32) -> bool` | A player let go of a bow-like item (`registration.item-release`; `BowItem.releaseUsing`): `stack` is the held weapon, `hand` is `main` or `off`, `ticks-held` how long the string was drawn. Answer false to cancel the shot (nothing is consumed, no arrow, no sound); true lets the game shoot. The first mod to answer false decides. (An export: it has no level; a mod that implements it needs a Horizon that has it.) |
++| `item-shot` | `func(player: player, stack: item-stack, projectiles: list<u32>)` | The arrows of a shot exist (`ItemElectricBow.shoot`'s place in `ProjectileWeaponItem.shoot`): their entity ids, to light with `entities.set-entity-fire` or to charge for. Asked after `item-released` answered true. Nothing to answer. |
+ | `can-place` | `func(player: player, pos: block-pos, state: string) -> bool` | A player placed the mod's block `state` at `pos` (`registration.blocks`): asked right after the game set it, for the blocks of any mod that asked. Answer false to refuse: the block is taken away again and nothing is used up (a big machine whose model needs the blocks around it free). Where `BlockItem.canPlace` is in the original. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

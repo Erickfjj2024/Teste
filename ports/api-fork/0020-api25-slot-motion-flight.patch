@@ -1,0 +1,492 @@
+From 333bd94070fa7ddc18263963ae377b3297294811 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 11:39:40 +0000
+Subject: [PATCH] API 25: player-items.compare-and-set-slot,
+ player-control.set-motion and set-allow-flight
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  2 +
+ crates/horizon-client/src/game/lan_actions.rs |  2 +-
+ crates/horizon-client/src/game/mods.rs        |  2 +
+ crates/horizon-client/src/game/server_mods.rs | 32 ++++++++++
+ crates/horizon-client/src/lan/guest.rs        | 16 ++++-
+ crates/horizon-client/src/lan/hub.rs          | 34 +++++++++++
+ .../examples/item-logic/horizon-mod.toml      |  4 +-
+ .../examples/item-logic/src/lib.rs            | 11 +++-
+ .../examples/item-logic/tests/items.toml      |  8 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 17 ++++++
+ crates/horizon-mods/src/api_level.rs          |  7 ++-
+ crates/horizon-mods/src/runtime.rs            | 60 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 10 ++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  3 +
+ 15 files changed, 202 insertions(+), 10 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index c11fc4805..5dc467912 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -278,6 +278,8 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::Teleport { dimension, pos, .. } => {
+                 format!("teleported a player to {} {} {} in {dimension}", pos[0], pos[1], pos[2])
+             }
++            Output::SetMotion { velocity, .. } => format!("set a player's motion to {velocity:?}"),
++            Output::SetAllowFlight { allowed, .. } => format!("allowed flight: {allowed}"),
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
+             Output::SetBlockProperty { property, value, .. } => format!("set {property}={value}"),
+diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
+index 2b92825ed..5a642e4c1 100644
+--- a/crates/horizon-client/src/game/lan_actions.rs
++++ b/crates/horizon-client/src/game/lan_actions.rs
+@@ -412,7 +412,7 @@ impl Game<'_> {
+         motion.yaw = g.yaw;
+         motion.pitch = g.pitch;
+         motion.sprinting = g.sprinting;
+-        motion.may_fly = g.creative() || g.game_mode == SPECTATOR;
++        motion.may_fly = g.creative() || g.game_mode == SPECTATOR || g.mod_may_fly;
+         motion.flying = g.flying;
+         motion.flying_speed = g.flying_speed;
+         // FireworkRocketItem.use boosts only a gliding player.
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index d70baace7..a3feedbde 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -868,6 +868,8 @@ impl Game<'_> {
+                 | Output::SetBlocks { .. }
+                 | Output::Teleport { .. }
+                 | Output::TakeXp { .. }
++                | Output::SetMotion { .. }
++                | Output::SetAllowFlight { .. }
+                 | Output::PlaySound { .. }
+                 | Output::NetSend { .. }
+                 | Output::NetToServer { .. }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 6495027a9..a745a3111 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -1945,6 +1945,24 @@ mod run {
+                     });
+                     self.teleport_to_in_level(target, pos, rotation);
+                 }
++                Output::SetMotion { name, player, velocity } => {
++                    let Some((Target::Guest(conn), _)) = self.mod_player(&player) else {
++                        log::debug!("Horizon: mod {name} set the motion of a player that is not a guest");
++                        return;
++                    };
++                    if let Some(host) = self.lan.as_mut() {
++                        host.hub.set_motion(conn, velocity);
++                    }
++                }
++                Output::SetAllowFlight { name, player, allowed } => {
++                    let Some((Target::Guest(conn), _)) = self.mod_player(&player) else {
++                        log::debug!("Horizon: mod {name} changed the flight of a player that is not a guest");
++                        return;
++                    };
++                    if let Some(host) = self.lan.as_mut() {
++                        host.hub.set_may_fly(conn, allowed);
++                    }
++                }
+                 Output::TakeXp {
+                     name,
+                     player,
+@@ -2117,6 +2135,20 @@ mod run {
+                                 true
+                             })
+                             .unwrap_or(false),
++                        P::CompareAndSet { slot, expected, replacement } => self
++                            .for_player(target, |g| {
++                                let now = g.inventory_for_mods();
++                                if now.get(slot as usize).cloned().flatten() != expected {
++                                    return false;
++                                }
++                                let made = replacement.as_ref().and_then(|s| g.game_stack(s));
++                                if replacement.is_some() && made.is_none() {
++                                    return false;
++                                }
++                                g.put_slot_for_mods(slot, made);
++                                true
++                            })
++                            .unwrap_or(false),
+                         P::Hurt { damage_type, amount } => self
+                             .for_player(target, |g| g.hurt_player_by(&damage_type, amount))
+                             .is_some(),
+diff --git a/crates/horizon-client/src/lan/guest.rs b/crates/horizon-client/src/lan/guest.rs
+index db29e64af..dc6f2faa9 100644
+--- a/crates/horizon-client/src/lan/guest.rs
++++ b/crates/horizon-client/src/lan/guest.rs
+@@ -281,6 +281,8 @@ pub struct Guest {
+     /// `Abilities.flyingSpeed`: vanilla's 0.05, unless a server mod set
+     /// another (`native_set_flying_speed`). Saved with the player.
+     pub flying_speed: f32,
++    /// A server mod allowed this player to fly (`player-control.set-allow-flight`), whatever their game mode.
++    pub mod_may_fly: bool,
+     /// The level the player is in (`ServerPlayer.level().dimension()`): the
+     /// hub's level passes only reach the players in theirs.
+     pub dimension: String,
+@@ -431,6 +433,7 @@ impl Guest {
+             death_time: 0,
+             placed: false,
+             flying_speed: 0.05,
++            mod_may_fly: false,
+             dimension: "minecraft:overworld".into(),
+             menu: None,
+             next_window: 0,
+@@ -549,7 +552,7 @@ impl Guest {
+         if self.flying || self.spectator() {
+             f |= 2;
+         }
+-        if self.creative() || self.spectator() {
++        if self.creative() || self.spectator() || self.mod_may_fly {
+             f |= 4;
+         }
+         if self.creative() {
+@@ -1261,6 +1264,17 @@ mod tests {
+         )
+     }
+ 
++    #[test]
++    fn a_mod_can_let_a_survival_player_fly() {
++        let mut g = guest_at([0.0; 3]);
++        // Survival: no ability. With the mod's leave: may fly (bit 4), not flying yet, and nothing else.
++        assert_eq!(g.ability_flags() & 4, 0);
++        g.mod_may_fly = true;
++        assert_eq!(g.ability_flags(), 4);
++        let play::Clientbound::PlayerAbilities(p) = g.abilities() else { panic!("abilities") };
++        assert_eq!(p.flags, 4);
++    }
++
+     #[test]
+     fn the_client_has_loaded_once_it_says_so_or_after_60_ticks_and_not_while_dead() {
+         let mut g = guest_at([0.0; 3]);
+diff --git a/crates/horizon-client/src/lan/hub.rs b/crates/horizon-client/src/lan/hub.rs
+index 33676873d..9c947f34d 100644
+--- a/crates/horizon-client/src/lan/hub.rs
++++ b/crates/horizon-client/src/lan/hub.rs
+@@ -3290,6 +3290,40 @@ impl Hub {
+     /// Set a guest's flying speed and tell it (`Abilities.setFlyingSpeed`, then
+     /// `onUpdateAbilities`). The abilities packets after carry it too, so a
+     /// respawn or a game mode change keeps it.
++    /// A server mod lets the guest fly (or not) whatever their game mode is (`player-control.set-allow-flight`); a creative or
++    /// spectator player keeps theirs. The abilities go to their client.
++    pub fn set_may_fly(&mut self, conn: u32, allowed: bool) {
++        let Some(g) = self.guest_mut(conn) else {
++            return;
++        };
++        g.mod_may_fly = allowed;
++        let may = g.creative() || g.spectator() || allowed;
++        if !may {
++            g.flying = false;
++        }
++        // The server's copy of the body, which the movement replay reads.
++        if let Some(motion) = g.motion.as_mut() {
++            motion.may_fly = may;
++            if !may {
++                motion.flying = false;
++            }
++        }
++        g.send(&g.abilities());
++    }
++
++    /// A server mod sets the guest's velocity (`player-control.set-motion`), in blocks a tick: `ServerPlayer.setDeltaMovement`
++    /// followed by the `hurtMarked` packet, `ClientboundSetEntityMotionPacket`.
++    pub fn set_motion(&mut self, conn: u32, velocity: [f64; 3]) {
++        let Some(g) = self.guest_mut(conn) else {
++            return;
++        };
++        if let Some(motion) = g.motion.as_mut() {
++            motion.velocity = horizon_core::geometry::Vec3::new(velocity[0], velocity[1], velocity[2]);
++        }
++        let id = g.entity_id;
++        g.send(&play::Clientbound::SetEntityMotion(play::SetEntityMotion { id, velocity }));
++    }
++
+     pub fn set_flying_speed(&mut self, conn: u32, speed: f32) {
+         let Some(g) = self.guest_mut(conn) else {
+             return;
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml b/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
+index 10b1aebf0..39da2fda1 100644
+--- a/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
+@@ -5,5 +5,5 @@ description = "Test mod for items with logic: itemlogic:wand hurts its user for
+ authors = ["Rust port"]
+ api = "0.3"
+ side = "server"
+-capabilities = ["players", "player-items"]
+-experimental = ["player-items"]
++capabilities = ["players", "player-items", "player-control"]
++experimental = ["player-items", "player-control"]
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs b/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
+index d70716475..5822aea3b 100644
+--- a/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
+@@ -5,7 +5,7 @@
+ //! `itemlogic:energy` component each tick until it has none.
+ use horizon_mod_sdk::components::Components;
+ use horizon_mod_sdk::server::{
+-    BlockPos, ItemStack, Player, Registration, ServerMod, player_items, players,
++    BlockPos, ItemStack, Player, Registration, ServerMod, player_control, player_items, players,
+ };
+ 
+ struct Logic;
+@@ -24,6 +24,15 @@ impl ServerMod for Logic {
+         }
+         let _ = player_items::hurt(&player.id, "minecraft:magic", 2.0);
+         let _ = player_items::add_effect(&player.id, "minecraft:speed", 100, 1);
++        // The wand also launches its user and lets them fly, and swaps itself for a stick only if still in slot 0.
++        let _ = player_control::set_motion(&player.id, 0.0, 1.5, 0.0);
++        let _ = player_control::set_allow_flight(&player.id, true);
++        let _ = player_items::compare_and_set_slot(
++            &player.id,
++            0,
++            Some(&stack),
++            Some(&ItemStack { item: "minecraft:stick".into(), count: 1, components: String::new() }),
++        );
+         true
+     }
+     fn item_hit(&mut self, player: &Player, stack: ItemStack, _entity: u32, _kind: &str) {
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml b/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
+index 582ce9845..7e42cae38 100644
+--- a/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
++++ b/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
+@@ -2,7 +2,13 @@
+ join = "Alex"
+ use-item = { stack = "itemlogic:wand*1" }
+ expect.claimed = true
+-expect.player-items = ["hurt Alex minecraft:magic 2", "effect Alex minecraft:speed 100 1"]
++expect.player-items = [
++    "hurt Alex minecraft:magic 2",
++    "effect Alex minecraft:speed 100 1",
++    "set-motion Alex 0 1.5 0",
++    "allow-flight Alex true",
++    "compare-and-set Alex 0 itemlogic:wand*1 minecraft:stick*1",
++]
+ 
+ [[step]]
+ # Another item is left to the game.
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index c6b82080d..403c273de 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -822,6 +822,17 @@ interface player-control {
+     /// the level's points run out; never below level 0. Made after this call
+     /// returns. An error (nothing queued) for a player not online or 0 points.
+     take-xp: func(player: string, points: u32) -> result<_, string>;
++    /// Sets the player's velocity in blocks a tick (each component within -10
++    /// and 10), as vanilla's `setDeltaMovement` followed by the motion packet
++    /// does: the player's client moves with it from the next tick. Made after
++    /// this call returns. An error for a player not online or a value that is
++    /// not a number. API 25.
++    set-motion: func(player: string, x: f64, y: f64, z: f64) -> result<_, string>;
++    /// Lets the player fly (`Abilities.mayfly`) whatever their game mode is,
++    /// or takes it away (a creative or spectator player keeps theirs); the
++    /// player's client gets the abilities. Kept until the player leaves. An
++    /// error for a player not online. API 25.
++    set-allow-flight: func(player: string, allowed: bool) -> result<_, string>;
+     /// Plays a sound event for the players near a position, as `/playsound`
+     /// does at the `block` category. `sound` is vanilla's (`minecraft:...`)
+     /// or the mod's own, from its `assets/<id>/sounds.json`.
+@@ -1015,6 +1026,12 @@ interface player-items {
+     /// `mymod:radiation`) for `duration-ticks` (-1 is infinite), at
+     /// `amplifier` (0 is level I).
+     add-effect: func(player: string, effect: string, duration-ticks: s32, amplifier: s32) -> result<_, string>;
++    /// Puts `replacement` in a slot only if the slot holds `expected` (item,
++    /// count and components equal; none for an empty slot) at the moment the
++    /// request is made, after the call returns; otherwise nothing changes.
++    /// Lets two mods or a mod and the player swap a stack without losing it.
++    /// Same errors as `set-slot`. API 25.
++    compare-and-set-slot: func(player: string, slot: u32, expected: option<item-stack>, replacement: option<item-stack>) -> result<_, string>;
+ }
+ 
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 20745bf22..ac844b62a 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 24;
++pub const LEVEL: u32 = 25;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 83] = [
++pub const FUNCTIONS: [(&str, u32); 86] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -97,6 +97,9 @@ pub const FUNCTIONS: [(&str, u32); 83] = [
+     ("world.pull-items", 22),
+     ("world.mine-block", 23),
+     ("world.set-capabilities-enabled", 24),
++    ("player-items.compare-and-set-slot", 25),
++    ("player-control.set-motion", 25),
++    ("player-control.set-allow-flight", 25),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index c1d23832c..a26fec532 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -169,6 +169,12 @@ pub enum PlayerItemsCommand {
+         damage_type: String,
+         amount: f32,
+     },
++    /// `compare-and-set-slot`: the slot changes only if it holds `expected` when this is made.
++    CompareAndSet {
++        slot: u32,
++        expected: Option<ModItemStack>,
++        replacement: Option<ModItemStack>,
++    },
+     Effect {
+         effect: String,
+         duration: i32,
+@@ -344,6 +350,18 @@ pub enum Output {
+         yaw: Option<f32>,
+         pitch: Option<f32>,
+     },
++    /// `player-control.set-motion`: the player's velocity, in blocks a tick.
++    SetMotion {
++        name: String,
++        player: String,
++        velocity: [f64; 3],
++    },
++    /// `player-control.set-allow-flight`: `Abilities.mayfly` whatever the game mode.
++    SetAllowFlight {
++        name: String,
++        player: String,
++        allowed: bool,
++    },
+     /// `player-control.take-xp`: `Player.giveExperiencePoints(-points)`.
+     TakeXp {
+         name: String,
+@@ -2478,6 +2496,23 @@ impl player_items::Host for State {
+         }
+         self.player_request(player, PlayerItemsCommand::SetSlot { slot, stack })
+     }
++    fn compare_and_set_slot(
++        &mut self,
++        player: String,
++        slot: u32,
++        expected: Option<ModItemStack>,
++        replacement: Option<ModItemStack>,
++    ) -> Result<(), String> {
++        if slot > 40 {
++            return Err(format!("slot {slot}: 0 to 40"));
++        }
++        for s in [&expected, &replacement].into_iter().flatten() {
++            if s.item.is_empty() || s.count == 0 || s.components.len() > SUMMON_BYTES {
++                return Err("a stack has an item, a count over 0 and small components".into());
++            }
++        }
++        self.player_request(player, PlayerItemsCommand::CompareAndSet { slot, expected, replacement })
++    }
+     fn hurt(&mut self, player: String, damage_type: String, amount: f32) -> Result<(), String> {
+         if !amount.is_finite() || amount <= 0.0 || !kind_ok(&damage_type) {
+             return Err("an amount over 0 and a damage type id".into());
+@@ -2873,6 +2908,31 @@ impl player_control::Host for State {
+         });
+         Ok(())
+     }
++    fn set_motion(&mut self, player: String, x: f64, y: f64, z: f64) -> Result<(), String> {
++        if ![x, y, z].iter().all(|v| v.is_finite() && v.abs() <= 10.0) {
++            return Err("each component is a number from -10 to 10".into());
++        }
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        let queued = self.out.iter().filter(|o| matches!(o, Output::SetMotion { .. })).count();
++        if queued >= CONTROL_PER_CALL {
++            return Err(format!("at most {CONTROL_PER_CALL} motions per call"));
++        }
++        self.out.push(Output::SetMotion { name: self.name.clone(), player, velocity: [x, y, z] });
++        Ok(())
++    }
++    fn set_allow_flight(&mut self, player: String, allowed: bool) -> Result<(), String> {
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        let queued = self.out.iter().filter(|o| matches!(o, Output::SetAllowFlight { .. })).count();
++        if queued >= CONTROL_PER_CALL {
++            return Err(format!("at most {CONTROL_PER_CALL} flight changes per call"));
++        }
++        self.out.push(Output::SetAllowFlight { name: self.name.clone(), player, allowed });
++        Ok(())
++    }
+     fn take_xp(&mut self, player: String, points: u32) -> Result<(), String> {
+         if points == 0 {
+             return Err("take at least 1 point".into());
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index ddca34976..e61c4aa75 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1776,12 +1776,22 @@ impl Step {
+             let got: Vec<String> = out
+                 .iter()
+                 .filter_map(|o| match o {
++                    Output::SetMotion { player, velocity, .. } => {
++                        Some(format!("set-motion {} {} {} {}", name(player), velocity[0], velocity[1], velocity[2]))
++                    }
++                    Output::SetAllowFlight { player, allowed, .. } => Some(format!("allow-flight {} {allowed}", name(player))),
+                     Output::PlayerItems { player, command, .. } => Some(match command {
+                         P::SetSlot { slot, stack } => format!(
+                             "set-slot {} {slot} {}",
+                             name(player),
+                             stack.as_ref().map_or("-".to_owned(), |s| show_stack(&Some(s.clone())))
+                         ),
++                        P::CompareAndSet { slot, expected, replacement } => format!(
++                            "compare-and-set {} {slot} {} {}",
++                            name(player),
++                            show_stack(expected),
++                            show_stack(replacement)
++                        ),
+                         P::Hurt { damage_type, amount } => {
+                             format!("hurt {} {damage_type} {amount}", name(player))
+                         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 516953fcf..d28a97a5b 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 24);
++    assert_eq!(LEVEL, 25);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 23cf79327..8c0001e94 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -763,6 +763,8 @@ What a player is doing as of the last server tick.
+ | `get-look` | `func(player: string) -> option<tuple<f32, f32>>` | Where the player with this id looks, `(yaw, pitch)` in degrees as F3 shows them (yaw 0 faces south, pitch -90 looks straight up); none for an id that is not online. With the eye (the feet and 1.62 blocks, 1.27 sneaking) it gives the face of a block a use met. API 16. |
+ | `teleport` | `func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>` | Moves the player, as `/tp` does: the vehicle is left, velocity and fall distance reset. `yaw` and `pitch` stay as they are when none. The move is made after this call returns, before the next tick. An error (nothing queued) for a player not online, a dimension the server does not have, a position that is not finite or lies outside the world border of 30,000,000 blocks. |
+ | `take-xp` | `func(player: string, points: u32) -> result<_, string>` | Takes `points` experience points from the player, as vanilla's `Player.giveExperiencePoints(-points)` does, going down a level when the level's points run out; never below level 0. Made after this call returns. An error (nothing queued) for a player not online or 0 points. |
++| `set-motion` | `func(player: string, x: f64, y: f64, z: f64) -> result<_, string>` | Sets the player's velocity in blocks a tick (each component within -10 and 10), as vanilla's `setDeltaMovement` followed by the motion packet does: the player's client moves with it from the next tick. Made after this call returns. An error for a player not online or a value that is not a number. API 25. |
++| `set-allow-flight` | `func(player: string, allowed: bool) -> result<_, string>` | Lets the player fly (`Abilities.mayfly`) whatever their game mode is, or takes it away (a creative or spectator player keeps theirs); the player's client gets the abilities. Kept until the player leaves. An error for a player not online. API 25. |
+ | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+ 
+ ## `recipe-types`
+@@ -929,6 +931,7 @@ Capability `player-items`, server mods only (manifest `api = "0.3"`, experimenta
+ | `set-slot` | `func(player: string, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in a slot (none empties it); the player's client gets it. An error for a slot past 40, a player not online or a stack of an item the game doesn't know. |
+ | `hurt` | `func(player: string, damage-type: string, amount: f32) -> result<_, string>` | Hurts the player by `amount` of a damage type (`minecraft:magic`, `minecraft:fall`...), as vanilla's damage does (armour, absorption and invulnerable time count; creative players take none). |
+ | `add-effect` | `func(player: string, effect: string, duration-ticks: s32, amplifier: s32) -> result<_, string>` | Gives the player an effect (`minecraft:speed`, or a content mod's own `mymod:radiation`) for `duration-ticks` (-1 is infinite), at `amplifier` (0 is level I). |
++| `compare-and-set-slot` | `func(player: string, slot: u32, expected: option<item-stack>, replacement: option<item-stack>) -> result<_, string>` | Puts `replacement` in a slot only if the slot holds `expected` (item, count and components equal; none for an empty slot) at the moment the request is made, after the call returns; otherwise nothing changes. Lets two mods or a mod and the player swap a stack without losing it. Same errors as `set-slot`. API 25. |
+ 
+ ## `server-events`
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,1064 @@
+From 0e888eb13b614ca765324b6435fd69beaa8e057a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:52:04 +0000
+Subject: [PATCH] Mod messages for WASM mods (API block 8)
+
+Capabilities net (server) and net-client (client): bytes between a mod's
+halves on <mod id>:<name> channels over the existing horizon:mod_net
+payload; net-message hooks both ways; API level 10; net-echo and
+net-client-demo examples with harness support.
+---
+ Cargo.lock                                    |  14 ++
+ Cargo.toml                                    |   2 +
+ crates/cargo-horizon-mod/src/check.rs         |   6 +
+ crates/horizon-client/src/game/mods.rs        |   4 +-
+ .../horizon-client/src/game/native_hooks.rs   |   6 +
+ crates/horizon-client/src/game/server_mods.rs |  43 ++++++
+ .../examples/net-client-demo/Cargo.toml       |  16 ++
+ .../examples/net-client-demo/horizon-mod.toml |   9 ++
+ .../examples/net-client-demo/src/lib.rs       |  18 +++
+ .../examples/net-client-demo/tests/ack.toml   |   8 +
+ .../examples/net-echo/Cargo.toml              |  16 ++
+ .../examples/net-echo/horizon-mod.toml        |   9 ++
+ .../examples/net-echo/src/lib.rs              |  27 ++++
+ .../examples/net-echo/tests/echo.toml         |  12 ++
+ crates/horizon-mod-sdk/src/lib.rs             |  24 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  42 ++++++
+ crates/horizon-mods/src/api_level.rs          |   6 +-
+ crates/horizon-mods/src/manifest.rs           |  17 ++-
+ crates/horizon-mods/src/runtime.rs            | 137 +++++++++++++++++-
+ crates/horizon-mods/src/testing.rs            |  52 +++++++
+ crates/horizon-mods/tests/sandbox.rs          |   8 +-
+ docs/api/mods-reference.md                    |  47 +++++-
+ 22 files changed, 510 insertions(+), 13 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/net-client-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/net-client-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/net-client-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/net-client-demo/tests/ack.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/net-echo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/net-echo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/net-echo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/net-echo/tests/echo.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 7a63efb..fe8bc97 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2807,6 +2807,20 @@ dependencies = [
+  "jni-sys 0.3.1",
+ ]
+ 
++[[package]]
++name = "net-client-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
++[[package]]
++name = "net-echo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "nix"
+ version = "0.31.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 3308ca6..fddbe2c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -46,6 +46,8 @@ members = [
+     "crates/horizon-mod-sdk/examples/item-charger",
+     "crates/horizon-mod-sdk/examples/recipe-crusher",
+     "crates/horizon-mod-sdk/examples/menu-demo",
++    "crates/horizon-mod-sdk/examples/net-echo",
++    "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 03256c0..a83685a 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -280,6 +280,12 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
++            Output::NetSend { channel, data, .. } => {
++                format!("sent {} byte(s) on {channel}", data.len())
++            }
++            Output::NetToServer { channel, data, .. } => {
++                format!("sent {} byte(s) to the server on {channel}", data.len())
++            }
+             Output::OpenScreen { .. } => "opened a screen".to_string(),
+             Output::CloseScreen { .. } => "closed its screen".to_string(),
+             Output::PlaceRecipe { book_id, all } => {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index d92b0a5..9fa84b8 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -826,7 +826,9 @@ impl Game<'_> {
+                 | Output::SetBlocks { .. }
+                 | Output::Teleport { .. }
+                 | Output::TakeXp { .. }
+-                | Output::PlaySound { .. }) => {
++                | Output::PlaySound { .. }
++                | Output::NetSend { .. }
++                | Output::NetToServer { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 7566794..a10f078 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2293,11 +2293,17 @@ impl Game<'_> {
+     /// player's own bytes, checked by nothing. Runs in the tick after it
+     /// arrives, with no player's state swapped in. Server-side. API 40.
+     pub(super) fn native_net_from_client(&mut self, player: u128, channel: &str, data: &[u8]) {
++        // Server mods (WebAssembly) hear it at the end of the tick.
++        #[cfg(feature = "mods")]
++        self.mod_net_event(player, channel, data);
+         let _ = (player, channel, data);
+     }
+     /// A message from the server on `channel` (`mod_id:name`), whose `data`
+     /// is the sender's own bytes. The window's game only. API 40.
+     pub(super) fn native_net_from_server(&mut self, channel: &str, data: &[u8]) {
++        // Client mods (WebAssembly) hear it now.
++        #[cfg(feature = "mods")]
++        self.mods.mods.net_from_server(channel, data);
+         let _ = (channel, data);
+     }
+     /// Chunk `chunk` (`[x, z]`, in chunks) of `dimension` came into the world
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 163a011..8f2598f 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -29,6 +29,12 @@ pub(super) enum ModEvent {
+         state: String,
+         placed: bool,
+     },
++    /// A player's client half sent bytes on a mod channel.
++    Net {
++        who: Who,
++        channel: String,
++        data: Vec<u8>,
++    },
+     /// A player pressed menu button `id` of the mod menu at `pos`.
+     MenuButton {
+         who: Who,
+@@ -335,6 +341,11 @@ mod run {
+                             self.mods.mods.player_chat(&p, &text);
+                         }
+                     }
++                    ModEvent::Net { who: w, channel, data } => {
++                        if let Some(p) = who(&w) {
++                            self.mods.mods.net_message(&p, &channel, &data);
++                        }
++                    }
+                     ModEvent::MenuButton { who: w, pos, id } => {
+                         let Some(p) = who(&w) else { continue };
+                         if let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos)
+@@ -1051,6 +1062,18 @@ mod run {
+             }
+         }
+ 
++        /// A player's client half sent `data` on `channel`.
++        pub(in crate::game) fn mod_net_event(&mut self, player: u128, channel: &str, data: &[u8]) {
++            if !self.hears_players() {
++                return;
++            }
++            self.mods.events.push(ModEvent::Net {
++                who: Who::Uuid(player),
++                channel: channel.to_owned(),
++                data: data.to_vec(),
++            });
++        }
++
+         /// A player pressed menu button `id` of the mod menu at `pos`: the
+         /// player acting now.
+         pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
+@@ -1300,6 +1323,26 @@ mod run {
+                         });
+                     }
+                 }
++                Output::NetSend {
++                    name,
++                    player,
++                    channel,
++                    data,
++                } => {
++                    let id = u128::from_str_radix(&player.replace('-', ""), 16).unwrap_or(0);
++                    if let Err(e) = self.native_net_send_to_player(id, &channel, &data) {
++                        log::debug!("Horizon: mod {name}'s message to {player}: {e}");
++                    }
++                }
++                Output::NetToServer {
++                    name,
++                    channel,
++                    data,
++                } => {
++                    if let Err(e) = self.native_net_send_to_server(&channel, &data) {
++                        log::debug!("Horizon: mod {name}'s message to the server: {e}");
++                    }
++                }
+                 _ => {}
+             }
+         }
+diff --git a/crates/horizon-mod-sdk/examples/net-client-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/net-client-demo/Cargo.toml
+new file mode 100644
+index 0000000..0a88098
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-client-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "net-client-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a test mod for mod messages"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/net-client-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/net-client-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..407eb97
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-client-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "netclientdemo"
++name = "Net Client Demo"
++version = "0.1.0"
++description = "Test mod for mod messages (client half): answers the server's netclientdemo:hello with netclientdemo:ack."
++authors = ["Rust port"]
++api = "0.1"
++side = "client"
++capabilities = ["chat", "net-client"]
++experimental = ["net-client"]
+diff --git a/crates/horizon-mod-sdk/examples/net-client-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/net-client-demo/src/lib.rs
+new file mode 100644
+index 0000000..db46f60
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-client-demo/src/lib.rs
+@@ -0,0 +1,18 @@
++//! Net Client Demo (client half): answers the bytes the server's half sends
++//! on `netclientdemo:hello` with their length on `netclientdemo:ack`.
++use horizon_mod_sdk::{Mod, Registration, net_client};
++
++struct Demo;
++
++impl Mod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Demo, Registration::new()))
++    }
++    fn net_message(&mut self, channel: &str, data: &[u8]) {
++        if channel == "netclientdemo:hello" {
++            let _ = net_client::send_to_server("netclientdemo:ack", &[data.len() as u8]);
++        }
++    }
++}
++
++horizon_mod_sdk::export_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/net-client-demo/tests/ack.toml b/crates/horizon-mod-sdk/examples/net-client-demo/tests/ack.toml
+new file mode 100644
+index 0000000..4756c2c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-client-demo/tests/ack.toml
+@@ -0,0 +1,8 @@
++[[step]]
++net-from-server = { channel = "netclientdemo:hello", data = [5, 6, 7, 8] }
++expect.net-to-server = ["netclientdemo:ack [4]"]
++
++[[step]]
++# A channel of another mod is not heard.
++net-from-server = { channel = "other:hello", data = [1] }
++expect.net-to-server = []
+diff --git a/crates/horizon-mod-sdk/examples/net-echo/Cargo.toml b/crates/horizon-mod-sdk/examples/net-echo/Cargo.toml
+new file mode 100644
+index 0000000..3493c68
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-echo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "net-echo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a test mod for mod messages"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/net-echo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/net-echo/horizon-mod.toml
+new file mode 100644
+index 0000000..e865a58
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-echo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "netecho"
++name = "Net Echo"
++version = "0.1.0"
++description = "Test mod for mod messages (server half): answers netecho:ping with the bytes reversed on netecho:pong."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "net"]
++experimental = ["net"]
+diff --git a/crates/horizon-mod-sdk/examples/net-echo/src/lib.rs b/crates/horizon-mod-sdk/examples/net-echo/src/lib.rs
+new file mode 100644
+index 0000000..58c5deb
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-echo/src/lib.rs
+@@ -0,0 +1,27 @@
++//! Net Echo (server half): the smallest user of mod messages. A player's
++//! client half sends bytes on `netecho:ping`; the server answers with the
++//! bytes reversed on `netecho:pong`, and refuses to send on a channel that is
++//! not its own (the answer to that is logged in the pong's text).
++use horizon_mod_sdk::server::{Player, Registration, ServerMod, net};
++
++struct Echo;
++
++impl ServerMod for Echo {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Echo, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        if channel != "netecho:ping" {
++            return;
++        }
++        let mut back = data.to_vec();
++        back.reverse();
++        let _ = net::send(&player.id, "netecho:pong", &back);
++        // Another mod's channel is refused.
++        if let Err(e) = net::send(&player.id, "other:pong", &back) {
++            let _ = net::send(&player.id, "netecho:refused", e.as_bytes());
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Echo);
+diff --git a/crates/horizon-mod-sdk/examples/net-echo/tests/echo.toml b/crates/horizon-mod-sdk/examples/net-echo/tests/echo.toml
+new file mode 100644
+index 0000000..01d94d9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/net-echo/tests/echo.toml
+@@ -0,0 +1,12 @@
++[[step]]
++join = "Alex"
++net = { channel = "netecho:ping", data = [1, 2, 3] }
++expect.net-sent = [
++    "Alex: netecho:pong [3, 2, 1]",
++    "Alex: netecho:refused [116, 104, 101, 32, 99, 104, 97, 110, 110, 101, 108, 32, 34, 111, 116, 104, 101, 114, 58, 112, 111, 110, 103, 34, 32, 105, 115, 32, 110, 111, 116, 32, 110, 101, 116, 101, 99, 104, 111, 58, 60, 110, 97, 109, 101, 62]",
++]
++
++[[step]]
++# Another channel is not the mod's: nothing happens.
++net = { channel = "netecho:other", data = [9] }
++expect.net-sent = []
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 3e2560d..675c119 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -38,9 +38,10 @@ wit_bindgen::generate!({
+ });
+ 
+ pub use exports::horizon::mods::events::{Guest as __Guest, Registration};
++pub use exports::horizon::mods::net_events::Guest as __NetEventsGuest;
+ pub use exports::horizon::mods::ui_events::Guest as __UiEventsGuest;
+ pub use horizon::mods::{
+-    browser, chat, command, game, hud, input, log, recipes, render, storage, ui,
++    browser, chat, command, game, hud, input, log, net_client, recipes, render, storage, ui,
+ };
+ 
+ /// The game's calls into a mod. Only the hooks [`Registration`] asks for
+@@ -68,6 +69,9 @@ pub trait Mod: Sized + 'static {
+     /// The player opened the mod's settings page (capability `ui`): call
+     /// [`ui::set_settings`] for fresh widgets.
+     fn ui_settings_opened(&mut self) {}
++    /// Bytes the server half of the mod sent on `channel` (capability
++    /// `net-client`).
++    fn net_message(&mut self, _channel: &str, _data: &[u8]) {}
+ }
+ 
+ impl Registration {
+@@ -163,6 +167,11 @@ macro_rules! export_mod {
+                     with(|m| $crate::Mod::ui_settings_opened(m))
+                 }
+             }
++            impl $crate::__NetEventsGuest for Export {
++                fn message(channel: String, data: Vec<u8>) {
++                    with(|m| $crate::Mod::net_message(m, &channel, &data))
++                }
++            }
+             // Only WebAssembly has the component's exports: a host build (cargo test or
+             // clippy on the workspace) checks the mod without them, which macOS
+             // couldn't link (its exported-symbols list cuts names at the `#`).
+@@ -203,6 +212,7 @@ pub mod server {
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
++    pub use horizon::mods::net;
+     pub use horizon::mods::recipe_types::{self, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+@@ -234,6 +244,9 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// What `player`'s client half sent on `channel`, when
++        /// [`Registration::on_net`] is set. The bytes are the player's own.
++        fn net_message(&mut self, _player: &Player, _channel: &str, _data: &[u8]) {}
+         /// A player pressed a menu button of a block entity: what to change
+         /// in it, if anything.
+         fn menu_button(
+@@ -301,6 +314,7 @@ pub mod server {
+                 chat: false,
+                 blocks: false,
+                 block_entities: Vec::new(),
++                net: false,
+             }
+         }
+         /// `block` (`mymod:machine`) carries a block entity; `ticks` asks
+@@ -369,6 +383,11 @@ pub mod server {
+             self.chat = true;
+             self
+         }
++        /// Call [`ServerMod::net_message`].
++        pub fn on_net(mut self) -> Self {
++            self.net = true;
++            self
++        }
+         pub fn on_blocks(mut self) -> Self {
+             self.blocks = true;
+             self
+@@ -537,6 +556,9 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn net_message(player: Player, channel: String, data: Vec<u8>) {
++                    with(|m| m.net_message(&player, &channel, &data))
++                }
+                 fn menu_button(
+                     player: Player,
+                     _dimension: String,
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 5bf692d..4419e17 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -769,6 +769,34 @@ interface recipe-types {
+     ingredient-items: func(ingredient: string) -> list<string>;
+ }
+ 
++/// Capability `net`, server mods only (manifest `api = "0.3"`, experimental):
++/// bytes between a mod's server half and its client half (`net-client`), on
++/// channels `<mod id>:<name>` (the mod's own id; the name is `[a-z0-9_./-]{1,64}`).
++/// At most 30000 bytes a message and 32 a player a tick; a player on a vanilla
++/// client gets nothing.
++interface net {
++    /// Sends `data` on `channel` to the player with this id, at the end of
++    /// the tick. Ok means accepted. An error for a channel that isn't the
++    /// mod's own, too many bytes or too many messages this tick.
++    send: func(player: string, channel: string, data: list<u8>) -> result<_, string>;
++}
++
++/// Capability `net-client`, client mods (API 0.1): the client half's side of
++/// `net`.
++interface net-client {
++    /// Sends `data` on `channel` to the server (at most 32 a tick). An error
++    /// when the server carries no mod messages (a vanilla server), before the
++    /// player has joined, or for a channel that isn't the mod's own.
++    send-to-server: func(channel: string, data: list<u8>) -> result<_, string>;
++}
++
++/// What the game calls in a client mod that took `net-client`; a mod built
++/// before it has no such export and hears nothing.
++interface net-events {
++    /// Bytes the server's half of the mod sent on `channel`.
++    message: func(channel: string, data: list<u8>);
++}
++
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+ /// experimental). Only the hooks `init` asks for are ever called. The player
+ /// in each event is as the server saw them when it happened.
+@@ -844,6 +872,8 @@ interface server-events {
+         /// have a block entity (a furnace, a chest...), so that breaking the
+         /// block removes it.
+         block-entities: list<block-entity-kind>,
++        /// Call `net-message` for what players' client halves send.
++        net: bool,
+     }
+     record block-entity-kind {
+         /// The block's id, `mymod:machine`.
+@@ -1004,6 +1034,9 @@ interface server-events {
+     /// (a `button` widget of the menu type's screen), with the entity as it
+     /// is. Returns what to change in it, if anything.
+     menu-button: func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>;
++    /// What `player`'s client half sent on `channel` (the mod's own), when
++    /// `registration.net` is set. The bytes are the player's own: check them.
++    net-message: func(player: player, channel: string, data: list<u8>);
+ }
+ 
+ /// A client mod: runs in the player's game.
+@@ -1026,6 +1059,7 @@ world horizon-server-mod {
+     import players;
+     import player-control;
+     import recipe-types;
++    import net;
+     import %world;
+     export server-events;
+ }
+@@ -1041,6 +1075,14 @@ world horizon-ui-mod {
+     import recipes;
+     import browser;
+     export ui-events;
++    import net-client;
++    export net-events;
++}
++
++/// The game's side of capability `net-client` (an optional export).
++world net-host {
++    import net-client;
++    export net-events;
+ }
+ 
+ /// The game's side of `horizon-ui-mod` beyond `horizon-mod`.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 3472d81..fa95704 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 9;
++pub const LEVEL: u32 = 10;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 53] = [
++pub const FUNCTIONS: [(&str, u32); 55] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -67,6 +67,8 @@ pub const FUNCTIONS: [(&str, u32); 53] = [
+     ("player-control.play-sound", 8),
+     ("recipe-types.recipes-of-type", 9),
+     ("recipe-types.ingredient-items", 9),
++    ("net.send", 10),
++    ("net-client.send-to-server", 10),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index 4abc650..556b572 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -106,12 +106,16 @@ pub enum Capability {
+     /// The recipes of types the mod brings, and the items an ingredient
+     /// names (server mods; interface `recipe-types`).
+     RecipeTypes,
++    /// Bytes to and from the client half of the mod (server mods; interface `net`).
++    Net,
++    /// Bytes to and from the server half of the mod (client mods; interface `net-client`).
++    NetClient,
+     /// The recipes and items the game knows, for recipe viewers
+     /// (interface `recipes`).
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 14] = [
++    pub const ALL: [Capability; 16] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -125,6 +129,8 @@ impl Capability {
+         Capability::World,
+         Capability::PlayerControl,
+         Capability::RecipeTypes,
++        Capability::Net,
++        Capability::NetClient,
+         Capability::Recipes,
+     ];
+     /// Whether a server mod may have it: the others act on a local player.
+@@ -136,6 +142,7 @@ impl Capability {
+                 | Capability::World
+                 | Capability::PlayerControl
+                 | Capability::RecipeTypes
++                | Capability::Net
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -154,6 +161,8 @@ impl Capability {
+             Capability::World => "world",
+             Capability::PlayerControl => "player-control",
+             Capability::RecipeTypes => "recipe-types",
++            Capability::Net => "net",
++            Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         }
+     }
+@@ -168,6 +177,8 @@ impl Capability {
+                 | Capability::Recipes
+                 | Capability::PlayerControl
+                 | Capability::RecipeTypes
++                | Capability::Net
++                | Capability::NetClient
+         )
+     }
+     /// What the player reads before turning the mod on: "May <this>".
+@@ -192,6 +203,8 @@ impl Capability {
+                 "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
+             }
+             Capability::RecipeTypes => "read the recipes of the types it brings and the item tags they use",
++            Capability::Net => "send bytes to its half running in players' games, and hear theirs",
++            Capability::NetClient => "send bytes to its half running on the server, and hear it",
+             Capability::Recipes => {
+                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
+             }
+@@ -237,6 +250,8 @@ impl fmt::Display for Capability {
+             Capability::World => "world",
+             Capability::PlayerControl => "player-control",
+             Capability::RecipeTypes => "recipe-types",
++            Capability::Net => "net",
++            Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         };
+         f.write_str(name)
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 5fe6291..dde3c7d 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{player_control, players, recipe_types, world as mod_world},
++    horizon::mods::{net, player_control, players, recipe_types, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -71,6 +71,15 @@ pub use ui_bindings::horizon::mods::ui::{
+     ButtonWidget, ItemWidget, ListWidget, Screen as UiScreen, TextWidget, Widget as UiWidget,
+ };
+ use ui_bindings::{UiHost, horizon::mods::ui};
++/// Capability `net-client`'s world beyond `horizon-mod`: an optional export, so
++/// mods built before it still instantiate and simply hear nothing.
++mod net_bindings {
++    wasmtime::component::bindgen!({
++        path: "../horizon-mod-sdk/wit",
++        world: "net-host",
++    });
++}
++use net_bindings::{NetHost, horizon::mods::net_client};
+ /// Capability `render`'s imports (docs/mods.md): the game draws the shapes.
+ mod render_bindings {
+     wasmtime::component::bindgen!({
+@@ -265,6 +274,19 @@ pub enum Output {
+         volume: f32,
+         pitch: f32,
+     },
++    /// `net.send`: bytes for a player's client half, on a channel of the mod.
++    NetSend {
++        name: String,
++        player: String,
++        channel: String,
++        data: Vec<u8>,
++    },
++    /// `net-client.send-to-server`: bytes for the server half.
++    NetToServer {
++        name: String,
++        channel: String,
++        data: Vec<u8>,
++    },
+     /// `ui.open-screen`: the mod's entry in `entries()`; what it shows is
+     /// [`Mods::screen`].
+     OpenScreen { owner: usize },
+@@ -352,6 +374,8 @@ struct Running {
+     /// The mod's `ui-events` export; none for a mod built before `ui`, or a
+     /// server mod.
+     ui: Option<UiHost>,
++    /// The mod's `net-events` export; none for a mod built before `net-client`.
++    net: Option<NetHost>,
+     hooks: Hooks,
+     /// It imports `game.raycast`.
+     raycasts: bool,
+@@ -610,6 +634,10 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             recipe_types::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            net::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
++            NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             RenderHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -705,6 +733,11 @@ impl Mods {
+         let instance = linker
+             .instantiate(&mut store, &component)
+             .map_err(|e| reason(&e))?;
++        let net_events = if server {
++            None
++        } else {
++            NetHost::new(&mut store, &instance).ok()
++        };
+         let (mut hooks, ui) = if server {
+             let exports = HorizonServerMod::new(&mut store, &instance).map_err(|e| reason(&e))?;
+             let r = exports
+@@ -751,6 +784,7 @@ impl Mods {
+         Ok(Some(Running {
+             store,
+             ui,
++            net: net_events,
+             hooks,
+             raycasts: functions.iter().any(|f| f == "game.raycast"),
+             reads_recipes: functions.iter().any(|f| f.starts_with("recipes.")),
+@@ -1036,6 +1070,49 @@ impl Mods {
+             && update.menu_data.as_ref().is_none_or(|s| s.len() <= 256))
+         .then_some(update)
+     }
++    /// What `player`'s client half sent on `channel` (`<mod id>:<name>`): the
++    /// server mod of that id hears it, if it asked for `net`.
++    pub fn net_message(&mut self, player: &ServerPlayer, channel: &str, data: &[u8]) {
++        let Some((id, _)) = channel.split_once(':') else {
++            return;
++        };
++        let Some(i) = self.entries.iter().position(|e| {
++            e.manifest.as_ref().is_some_and(|m| m.id == id)
++                && e.run
++                    .as_ref()
++                    .and_then(|r| r.hooks.server())
++                    .is_some_and(|r| r.net)
++        }) else {
++            return;
++        };
++        self.call(i, FUEL_EVENT, |run| match &run.hooks {
++            Hooks::Server(m, _) => m.horizon_mods_server_events().call_net_message(
++                &mut run.store,
++                player,
++                channel,
++                data,
++            ),
++            Hooks::Client(..) => Ok(()),
++        });
++    }
++    /// What the server's half sent on `channel` (`<mod id>:<name>`): the client
++    /// mod of that id hears it, if it exports `net-events`.
++    pub fn net_from_server(&mut self, channel: &str, data: &[u8]) {
++        let Some((id, _)) = channel.split_once(':') else {
++            return;
++        };
++        let Some(i) = self.entries.iter().position(|e| {
++            e.manifest.as_ref().is_some_and(|m| m.id == id)
++                && e.run.as_ref().is_some_and(|r| r.net.is_some())
++        }) else {
++            return;
++        };
++        self.call(i, FUEL_EVENT, |run| {
++            let net = run.net.as_ref().expect("checked above");
++            net.horizon_mods_net_events()
++                .call_message(&mut run.store, channel, data)
++        });
++    }
+     /// `player` joined the server (they are in the snapshot's players).
+     pub fn player_joined(&mut self, player: &ServerPlayer) {
+         self.each_server(
+@@ -1774,6 +1851,64 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++/// Most bytes a mod message holds, and messages a call may send.
++const NET_BYTES: usize = 30_000;
++const NET_PER_CALL: usize = 32;
++/// A channel of the mod `id`: `<id>:<name>`, the name `[a-z0-9_./-]{1,64}`.
++fn own_channel(id: &str, channel: &str) -> bool {
++    channel.split_once(':').is_some_and(|(prefix, name)| {
++        prefix == id
++            && (1..=64).contains(&name.len())
++            && name
++                .bytes()
++                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.' | b'/' | b'-'))
++    })
++}
++impl State {
++    fn check_net(&self, channel: &str, data: &[u8]) -> Result<(), String> {
++        if !own_channel(&self.id, channel) {
++            return Err(format!("the channel {channel:?} is not {}:<name>", self.id));
++        }
++        if data.len() > NET_BYTES {
++            return Err(format!("{} bytes: at most {NET_BYTES} a message", data.len()));
++        }
++        let sent = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::NetSend { .. } | Output::NetToServer { .. }))
++            .count();
++        if sent >= NET_PER_CALL {
++            return Err(format!("at most {NET_PER_CALL} messages a call"));
++        }
++        Ok(())
++    }
++}
++impl net::Host for State {
++    fn send(&mut self, player: String, channel: String, data: Vec<u8>) -> Result<(), String> {
++        self.check_net(&channel, &data)?;
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        self.out.push(Output::NetSend {
++            name: self.id.clone(),
++            player,
++            channel,
++            data,
++        });
++        Ok(())
++    }
++}
++impl net_client::Host for State {
++    fn send_to_server(&mut self, channel: String, data: Vec<u8>) -> Result<(), String> {
++        self.check_net(&channel, &data)?;
++        self.out.push(Output::NetToServer {
++            name: self.id.clone(),
++            channel,
++            data,
++        });
++        Ok(())
++    }
++}
+ /// Most recipes one `recipes-of-type` call hands over.
+ const RECIPES_PER_CALL: usize = 1 << 16;
+ impl recipe_types::Host for State {
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 6c5618a..07b1906 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -734,6 +734,15 @@ pub struct BlockItemsSet {
+     slots: Vec<String>,
+ }
+ 
++/// Bytes sent on a mod channel in a step, or expected.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct NetSet {
++    channel: String,
++    #[serde(default)]
++    data: Vec<u8>,
++}
++
+ /// A menu button a step presses.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -843,6 +852,10 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Server mods: the actor's client half sends bytes after the ticks.
++    net: Option<NetSet>,
++    /// Client mods: the server half sends bytes after the ticks.
++    net_from_server: Option<NetSet>,
+     /// Server mods: the actor presses a menu button after the ticks.
+     press: Option<PressSet>,
+     /// Tanks of block entities before the ticks (as `set-items`).
+@@ -876,6 +889,10 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods, capability `net`: every `net.send` as `"Name: channel [bytes]"`.
++    net_sent: Option<Vec<String>>,
++    /// Client mods, capability `net-client`: every `send-to-server` as `"channel [bytes]"`.
++    net_to_server: Option<Vec<String>>,
+     /// Server mods: the data slots of block entities' menus after the step.
+     block_menu_data: Option<Vec<MenuDataSet>>,
+     /// Server mods: the tanks of block entities after the step.
+@@ -1086,6 +1103,7 @@ impl Step {
+         };
+         let acts = self.player.is_some()
+             || self.press.is_some()
++            || self.net.is_some()
+             || self.motion.is_some()
+             || self.chat.is_some()
+             || self.command.is_some()
+@@ -1115,6 +1133,14 @@ impl Step {
+         game.tick(self.ticks);
+         game.frames(self.frames);
+         let who = actor.map(|i| game.players[i].clone());
++        if let (Some(n), Some(who)) = (&self.net, &who) {
++            game.snapshot();
++            game.mods.net_message(who, &n.channel, &n.data);
++        }
++        if let Some(n) = &self.net_from_server {
++            game.snapshot();
++            game.mods.net_from_server(&n.channel, &n.data);
++        }
+         if let (Some(p), Some(who)) = (&self.press, &who) {
+             game.press_button(who, (p.x, p.y, p.z), p.id);
+         }
+@@ -1330,6 +1356,32 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.net_sent {
++            let name = |id: &str| {
++                let p = game.players.iter().find(|p| p.id == id);
++                p.map_or(id.to_owned(), |p| p.name.clone())
++            };
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::NetSend { player, channel, data, .. } => {
++                        Some(format!("{}: {channel} {data:?}", name(player)))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("net-sent", want, &got)?;
++        }
++        if let Some(want) = &e.net_to_server {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::NetToServer { channel, data, .. } => Some(format!("{channel} {data:?}")),
++                    _ => None,
++                })
++                .collect();
++            same("net-to-server", want, &got)?;
++        }
+         if let Some(want) = &e.teleports {
+             let name = |id: &str| {
+                 let p = game.players.iter().find(|p| p.id == id);
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index c32359e..316adf4 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -241,8 +241,8 @@ id = "too_new"
+ name = "Too New"
+ version = "0.1.0"
+ api = "0.1"
+-capabilities = ["game-read", "chat", "hud", "storage", "command", "ui", "render", "input", "recipes"]
+-experimental = ["ui", "render", "input", "recipes"]
++capabilities = ["game-read", "chat", "hud", "storage", "command", "ui", "render", "input", "recipes", "net-client"]
++experimental = ["ui", "render", "input", "recipes", "net-client"]
+ "#;
+     std::fs::write(dir.join("horizon-mod.toml"), manifest).unwrap();
+     std::fs::write(dir.join("mod.wasm"), wasm).unwrap();
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`.
++    // level 9 is `recipe-types`, 10 is `net`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 9);
++    assert_eq!(LEVEL, 10);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 0d38b29..85c3548 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -20,6 +20,8 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
+ | `world` | [`world`](#world) | read and change the world's blocks |
+ | `player-control` | [`player-control`](#player-control) | see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds |
+ | `recipe-types` | [`recipe-types`](#recipe-types) | read the recipes of the types it brings and the item tags they use |
++| `net` | [`net`](#net) | send bytes to its half running in players' games, and hear theirs |
++| `net-client` | [`net-client`](#net-client) | send bytes to its half running on the server, and hear it |
+ | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+ 
+ ## World `horizon-mod`
+@@ -33,15 +35,22 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+ 
+ A mod with widgets (capability `ui`): the SDK builds every mod against this world. Mods built for `horizon-mod` alone (no `ui-events` export) still load and simply hear nothing of their widgets.
+ 
+-- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `log`, `game`, `chat`, `hud`, `storage`, `command`
+-- Exports (what the mod provides): `ui-events`, `events`
++- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `net-client`, `log`, `game`, `chat`, `hud`, `storage`, `command`
++- Exports (what the mod provides): `ui-events`, `net-events`, `events`
++
++## World `net-host`
++
++The game's side of capability `net-client` (an optional export).
++
++- Imports (what the game offers): `net-client`
++- Exports (what the mod provides): `net-events`
+ 
+ ## World `ui-host`
+ 
+@@ -746,6 +755,36 @@ Capability `recipe-types`, server mods only (manifest `api = "0.3"`, experimenta
+ | `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
+ | `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
+ 
++## `net`
++
++Access: capability `net`.
++
++Capability `net`, server mods only (manifest `api = "0.3"`, experimental): bytes between a mod's server half and its client half (`net-client`), on channels `<mod id>:<name>` (the mod's own id; the name is `[a-z0-9_./-]{1,64}`). At most 30000 bytes a message and 32 a player a tick; a player on a vanilla client gets nothing.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `send` | `func(player: string, channel: string, data: list<u8>) -> result<_, string>` | Sends `data` on `channel` to the player with this id, at the end of the tick. Ok means accepted. An error for a channel that isn't the mod's own, too many bytes or too many messages this tick. |
++
++## `net-client`
++
++Access: capability `net-client`.
++
++Capability `net-client`, client mods (API 0.1): the client half's side of `net`.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `send-to-server` | `func(channel: string, data: list<u8>) -> result<_, string>` | Sends `data` on `channel` to the server (at most 32 a tick). An error when the server carries no mod messages (a vanilla server), before the player has joined, or for a channel that isn't the mod's own. |
++
++## `net-events`
++
++Access: exported by the mod: the game calls it.
++
++What the game calls in a client mod that took `net-client`; a mod built before it has no such export and hears nothing.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `message` | `func(channel: string, data: list<u8>)` | Bytes the server's half of the mod sent on `channel`. |
++
+ ## `server-events`
+ 
+ Access: exported by the mod: the game calls it.
+@@ -882,6 +921,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `chat` | `bool` | Call `chat` for each chat message a player sends. |
+ | `blocks` | `bool` | Call `block-broken` and `block-placed`. |
+ | `block-entities` | `list<block-entity-kind>` | Blocks of the mod that carry a block entity: its saved bytes (`block-entity.data`), kept with the chunk and ticked by `block-entities-tick`. The block's content `template` must itself have a block entity (a furnace, a chest...), so that breaking the block removes it. |
++| `net` | `bool` | Call `net-message` for what players' client halves send. |
+ 
+ ### record `item-stack`
+ 
+@@ -938,3 +978,4 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
++| `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+-- 
+2.43.0
+

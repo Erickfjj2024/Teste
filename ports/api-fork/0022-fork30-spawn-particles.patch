@@ -1,0 +1,342 @@
+From c6c9d5233261e563c1cd5bd6e5f0a23fb3636b3d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 12:01:30 +0000
+Subject: [PATCH] FORK-30: world.spawn-particles (API 26): particles shown to
+ the players near a position, vanilla or the mod's own
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ .../horizon-client/src/game/lan_particles.rs  | 53 ++++++++++++++++++
+ crates/horizon-client/src/game/mods.rs        |  1 +
+ crates/horizon-client/src/game/server_mods.rs |  5 ++
+ .../examples/block-use/src/lib.rs             |  4 ++
+ .../examples/block-use/tests/block_use.toml   |  5 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 11 ++++
+ crates/horizon-mods/src/api_level.rs          |  5 +-
+ crates/horizon-mods/src/runtime.rs            | 56 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 14 +++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  1 +
+ 12 files changed, 156 insertions(+), 4 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 5dc467912..36b866439 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -278,6 +278,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::Teleport { dimension, pos, .. } => {
+                 format!("teleported a player to {} {} {} in {dimension}", pos[0], pos[1], pos[2])
+             }
++            Output::SpawnParticles { particle, count, .. } => format!("{count} {particle} particle(s)"),
+             Output::SetMotion { velocity, .. } => format!("set a player's motion to {velocity:?}"),
+             Output::SetAllowFlight { allowed, .. } => format!("allowed flight: {allowed}"),
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+diff --git a/crates/horizon-client/src/game/lan_particles.rs b/crates/horizon-client/src/game/lan_particles.rs
+index 16c11a9d6..c70b0542f 100644
+--- a/crates/horizon-client/src/game/lan_particles.rs
++++ b/crates/horizon-client/src/game/lan_particles.rs
+@@ -485,6 +485,59 @@ impl Game<'_> {
+         });
+     }
+ 
++    /// A server mod's `world.spawn-particles` (FORK-30): `particle` to the players of `dimension` within `max_distance` blocks.
++    #[allow(clippy::too_many_arguments)]
++    pub(super) fn lan_send_mod_particles(
++        &mut self,
++        dimension: &str,
++        particle: &str,
++        at: [f64; 3],
++        spread: [f32; 3],
++        speed: f32,
++        count: u32,
++        color: Option<u32>,
++        scale: f32,
++        max_distance: f32,
++    ) -> bool {
++        let Some(host) = self.lan.as_ref() else {
++            return false;
++        };
++        let mut options = match ParticleType::from_name(particle) {
++            Some(ty) => ParticleOptions::simple(ty),
++            None if !particle.starts_with("minecraft:") => ParticleOptions::named(particle),
++            None => return false,
++        };
++        if let Some(c) = color {
++            options.color = [
++                ((c >> 16) & 255) as f32 / 255.0,
++                ((c >> 8) & 255) as f32 / 255.0,
++                (c & 255) as f32 / 255.0,
++                1.0,
++            ];
++        }
++        options.scale = scale.clamp(0.01, 4.0);
++        let Some(packet_particle) = Self::hub_particle(&host.hub, &options, None) else {
++            return false;
++        };
++        let horizon_only = mod_particle_only_for_horizon(&packet_particle);
++        let body = C::LevelParticles(play::LevelParticles {
++            particle: packet_particle,
++            override_limiter: true,
++            always_show: false,
++            pos: at,
++            dist: spread,
++            max_speed: [speed; 3],
++            count: count as i32,
++            randomization: 0,
++        })
++        .encode();
++        let range = f64::from(max_distance);
++        send_native_nearby(host, dimension, body, horizon_only, |position| {
++            (0..3).map(|k| (position[k] - at[k]).powi(2)).sum::<f64>() <= range * range
++        });
++        true
++    }
++
+     /// Native sounds wait until the server host is available. An unknown
+     /// `minecraft:` event is dropped; a mod's goes by name (`sound_packet`).
+     pub(super) fn flush_native_sounds(&mut self) {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index a3feedbde..2f1bdc533 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -882,6 +882,7 @@ impl Game<'_> {
+                 | Output::PullItems { .. }
+                 | Output::MineBlock { .. }
+                 | Output::SetCapabilitiesEnabled { .. }
++                | Output::SpawnParticles { .. }
+                 | Output::SetTankFilter { .. }
+                 | Output::SetEnergyCapacity { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index f916d7a6b..b7377d31e 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2082,6 +2082,11 @@ mod run {
+                         log::debug!("Horizon: mod {name} set item faces in another level");
+                     }
+                 }
++                Output::SpawnParticles { name, dimension, particle, pos, spread, speed, count, color, scale, max_distance } => {
++                    if !self.lan_send_mod_particles(&dimension, &particle, pos, spread, speed, count, color, scale, max_distance) {
++                        log::debug!("Horizon: mod {name} asked for the particle {particle}, which was not shown");
++                    }
++                }
+                 Output::SetCapabilitiesEnabled { name, dimension, pos, items, fluids, energy } => {
+                     if dimension == self.dim.id() {
+                         self.native_set_capabilities_enabled(pos, items, fluids, energy);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index a75f0fc43..40a16f31c 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -14,6 +14,10 @@ impl ServerMod for Gate {
+         if pos.y == 70 {
+             let _ = world::set_capabilities_enabled(&player.dimension, pos.x, pos.y, pos.z, false, false, false);
+         }
++        // FORK-30: the gate at y 71 is a structure that has just formed: it sparkles for the players within 40 blocks.
++        if pos.y == 71 {
++            let _ = world::spawn_particles(&player.dimension, "minecraft:dust", f64::from(pos.x) + 0.5, f64::from(pos.y) + 0.5, f64::from(pos.z) + 0.5, 0.3, 0.3, 0.3, 0.0, 8, Some(0x5555FF), 1.0, 40.0);
++        }
+         match stack {
+             Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
+             None if !sneaking => BlockUse::Consume,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index a762775e7..da1c7c514 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -22,3 +22,8 @@ expect.block-use = "default"
+ # FORK-34: a click on the closed gate closes every capability of its entity to the outside...
+ use-block = { pos = [1, 70, 1] }
+ expect.capabilities = ["minecraft:overworld 1 70 1 items=false fluids=false energy=false"]
++
++[[step]]
++# FORK-30: a structure that has formed sparkles.
++use-block = { pos = [1, 71, 1] }
++expect.particles = ["minecraft:overworld minecraft:dust 1.5 71.5 1.5 8"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 70ce037a8..80cc5cbfa 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -757,6 +757,17 @@ interface %world {
+     /// with the entity. Made after this call returns; nothing happens for a
+     /// block that is not a mod's block entity. API 24.
+     set-capabilities-enabled: func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>;
++    /// Shows a particle to the players of `dimension` within `max-distance`
++    /// blocks (at most 128) of `x y z`, as `/particle` does:
++    /// `ServerLevel.sendParticles`. `particle` is a vanilla particle type
++    /// (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own
++    /// (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is
++    /// the box the `count` particles (1 to 512) scatter over, `speed` how
++    /// fast they move; `color` (0xRRGGBB) and `scale` are the options of
++    /// `minecraft:dust` and the spell particles. Made after this call
++    /// returns, at most 1024 requests a call. An error (nothing shown) for a
++    /// particle the game does not know or numbers that are not finite. API 26.
++    spawn-particles: func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>;
+     /// Pulls items out of the container beside the block entity, on its face
+     /// `face` (0 to 5: down, up, north, south, west, east), into the block
+     /// entity's own container through that same face: up to `max` items of the
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index ac844b62a..20c9d7195 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 25;
++pub const LEVEL: u32 = 26;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 86] = [
++pub const FUNCTIONS: [(&str, u32); 87] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -97,6 +97,7 @@ pub const FUNCTIONS: [(&str, u32); 86] = [
+     ("world.pull-items", 22),
+     ("world.mine-block", 23),
+     ("world.set-capabilities-enabled", 24),
++    ("world.spawn-particles", 26),
+     ("player-items.compare-and-set-slot", 25),
+     ("player-control.set-motion", 25),
+     ("player-control.set-allow-flight", 25),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index b3247ec00..265ebea0a 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -393,6 +393,19 @@ pub enum Output {
+         pos: [i32; 3],
+         faces: Vec<Vec<u32>>,
+     },
++    /// `world.spawn-particles`: a particle shown to the players near a position.
++    SpawnParticles {
++        name: String,
++        dimension: String,
++        particle: String,
++        pos: [f64; 3],
++        spread: [f32; 3],
++        speed: f32,
++        count: u32,
++        color: Option<u32>,
++        scale: f32,
++        max_distance: f32,
++    },
+     /// `world.set-capabilities-enabled`: which of a block entity's capabilities the outside can use.
+     SetCapabilitiesEnabled {
+         name: String,
+@@ -2341,6 +2354,49 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+     #[allow(clippy::too_many_arguments)]
++    fn spawn_particles(
++        &mut self,
++        dimension: String,
++        particle: String,
++        x: f64,
++        y: f64,
++        z: f64,
++        spread_x: f32,
++        spread_y: f32,
++        spread_z: f32,
++        speed: f32,
++        count: u32,
++        color: Option<u32>,
++        scale: f32,
++        max_distance: f32,
++    ) -> Result<(), String> {
++        let numbers = [x, y, z].iter().all(|v| v.is_finite() && v.abs() < TP_XZ)
++            && [spread_x, spread_y, spread_z, speed, scale, max_distance].iter().all(|v| v.is_finite());
++        if !numbers || !kind_ok(&particle) {
++            return Err("a particle id and finite numbers".into());
++        }
++        if count == 0 || count > 512 || !(0.0..=128.0).contains(&max_distance) || !(0.0..=4.0).contains(&scale) {
++            return Err("1 to 512 particles, a distance of 0 to 128 blocks and a scale of 0 to 4".into());
++        }
++        let made = self.out.iter().filter(|o| matches!(o, Output::SpawnParticles { .. })).count();
++        if made >= 1024 {
++            return Err("at most 1024 particle requests a call".into());
++        }
++        self.out.push(Output::SpawnParticles {
++            name: self.name.clone(),
++            dimension,
++            particle,
++            pos: [x, y, z],
++            spread: [spread_x, spread_y, spread_z],
++            speed,
++            count,
++            color,
++            scale,
++            max_distance,
++        });
++        Ok(())
++    }
++    #[allow(clippy::too_many_arguments)]
+     fn set_capabilities_enabled(
+         &mut self,
+         dimension: String,
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 3be3cf169..39ff2a7e5 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1230,6 +1230,8 @@ pub struct Expect {
+     sounds: Option<Vec<String>>,
+     /// Server mods (FORK-34): every `set-capabilities-enabled`, as `"dimension x y z items=true fluids=true energy=false"`.
+     capabilities: Option<Vec<String>>,
++    /// Server mods (FORK-30): every `spawn-particles`, as `"dimension particle x y z count"`.
++    particles: Option<Vec<String>>,
+     /// The mod is turned off during this step, for a reason holding this text.
+     /// Without it, a mod that stops fails the test.
+     stopped: Option<String>,
+@@ -1987,6 +1989,18 @@ impl Step {
+                 .collect();
+             same("sounds", want, &got)?;
+         }
++        if let Some(want) = &e.particles {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::SpawnParticles { dimension, particle, pos, count, .. } => {
++                        Some(format!("{dimension} {particle} {} {} {} {count}", pos[0], pos[1], pos[2]))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("particles", want, &got)?;
++        }
+         if let Some(want) = &e.capabilities {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index d28a97a5b..2bfa909ce 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 25);
++    assert_eq!(LEVEL, 26);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index dcdd9a515..ef577ecb5 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -734,6 +734,7 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
+ | `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
+ | `set-capabilities-enabled` | `func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>` | Closes or opens, for everything outside the block entity (hoppers and droppers, pipes, tubes and cables, other machines), the three kinds of capability it carries: its `items` container, its `fluids` (tanks) and its `energy`. A closed capability gives and takes nothing through any face, whatever the faces say; the contents, the faces and the mod's own reads and writes are untouched, so a structure that becomes valid again finds everything where it was. All three are open until closed. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. API 24. |
++| `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
+ | `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
+ | `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
+ | `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
+-- 
+2.43.0
+

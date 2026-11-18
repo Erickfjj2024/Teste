@@ -1,0 +1,626 @@
+From dc7ad30e0580d971d7a6b6f3ad02c9d2808f050c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 00:42:31 +0000
+Subject: [PATCH] Item wear, repair, enchantments and the anvil for mods (round
+ 4 item 6, API 52)
+
+recipe-types gains item-durability, item-set-damage, item-repairs-with,
+item-enchantments and anvil-result, answered from the game's items and its
+port of AnvilMenu.createResult. Harness: [max-damage], [repairs] and
+[[anvil]] script tables. Example anvil-probe.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |   7 ++
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/server_mods.rs |  54 ++++++++
+ .../examples/anvil-probe/Cargo.toml           |  16 +++
+ .../examples/anvil-probe/horizon-mod.toml     |   9 ++
+ .../examples/anvil-probe/src/lib.rs           |  36 ++++++
+ .../examples/anvil-probe/tests/anvil.toml     |  36 ++++++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  26 ++++
+ crates/horizon-mods/src/api_level.rs          |   9 +-
+ crates/horizon-mods/src/runtime.rs            |  45 +++++++
+ crates/horizon-mods/src/testing.rs            | 118 ++++++++++++++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  24 ++++
+ 13 files changed, 381 insertions(+), 4 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/anvil-probe/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/anvil-probe/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/anvil-probe/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/anvil-probe/tests/anvil.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 2f2f9e0ed..24c777d0b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -155,6 +155,13 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "anvil-probe"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "anyhow"
+ version = "1.0.104"
+diff --git a/Cargo.toml b/Cargo.toml
+index 56a7474ca..27672463c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -51,6 +51,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/item-menu-demo",
+     "crates/horizon-mod-sdk/examples/teleport-probe",
+     "crates/horizon-mod-sdk/examples/energy-items-demo",
++    "crates/horizon-mod-sdk/examples/anvil-probe",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index ca1d89322..7990fd018 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -131,6 +131,12 @@ mod run {
+         res: Arc<crate::game::Resources>,
+     }
+     impl LentWorld {
++        /// The game's stack as a mod's (`mod_stack` without the game).
++        fn back(stack: &horizon_client::items::ItemStack) -> horizon_mods::ModItemStack {
++            let tag = horizon_client::save::item_to_nbt(stack);
++            let components = tag.get("components").map(horizon_world::snbt_text::to_snbt).unwrap_or_default();
++            horizon_mods::ModItemStack { item: stack.item.to_string(), count: stack.count, components }
++        }
+         /// A mod's stack as the game's (`game_stack` without the game): none for an item it does not know.
+         fn stack(&self, s: &horizon_mods::ModItemStack) -> Option<horizon_client::items::ItemStack> {
+             let max = self.res.items().get(&s.item).map(|i| i.max_stack)?;
+@@ -216,6 +222,54 @@ mod run {
+             let base = &*f.name;
+             !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava") && f.hardness >= 0.0
+         }
++        fn item_durability(&self, stack: &horizon_mods::ModItemStack) -> Option<(u32, u32)> {
++            let s = self.stack(stack)?;
++            let items = self.res.items();
++            horizon_client::stations::is_damageable(items, &s).then(|| {
++                let max = items.get(&s.item).map_or(0, |i| i.max_damage);
++                (s.damage.min(max), max)
++            })
++        }
++        fn item_set_damage(&self, stack: &horizon_mods::ModItemStack, damage: u32) -> Option<horizon_mods::ModItemStack> {
++            let mut s = self.stack(stack)?;
++            let items = self.res.items();
++            if !horizon_client::stations::is_damageable(items, &s) {
++                return None;
++            }
++            s.damage = damage.min(items.get(&s.item).map_or(0, |i| i.max_damage));
++            Some(Self::back(&s))
++        }
++        fn item_repairs_with(&self, stack: &horizon_mods::ModItemStack, material: &horizon_mods::ModItemStack) -> bool {
++            let (Some(s), Some(m)) = (self.stack(stack), self.stack(material)) else { return false };
++            horizon_client::stations::is_valid_repair_item(&self.res.stations().enchantments, self.res.items(), &s, &m)
++        }
++        fn item_enchantments(&self, stack: &horizon_mods::ModItemStack) -> Vec<(String, u32)> {
++            let Some(s) = self.stack(stack) else { return Vec::new() };
++            s.data()
++                .map(|d| d.enchantments.iter().chain(&d.stored_enchantments).map(|(id, l)| (id.to_string(), *l)).collect())
++                .unwrap_or_default()
++        }
++        fn anvil_result(
++            &self,
++            left: &horizon_mods::ModItemStack,
++            right: Option<&horizon_mods::ModItemStack>,
++            name: Option<&str>,
++        ) -> Option<(horizon_mods::ModItemStack, i32, u32)> {
++            let left = self.stack(left)?;
++            let right = right.and_then(|r| self.stack(r));
++            // The rename box starts with the item's name: its custom name or item name; with none a given name renames it.
++            let hover = left.custom_name().or_else(|| left.item_name()).unwrap_or_default();
++            let a = horizon_client::stations::anvil_result(
++                &self.res.stations().enchantments,
++                self.res.items(),
++                Some(&left),
++                right.as_ref(),
++                name,
++                &hover,
++                false,
++            );
++            Some((Self::back(a.result.as_ref()?), a.cost, a.repair_item_count_cost))
++        }
+         fn entities(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<horizon_mods::SeenEntity> {
+             if dimension != self.dimension {
+                 return Vec::new();
+diff --git a/crates/horizon-mod-sdk/examples/anvil-probe/Cargo.toml b/crates/horizon-mod-sdk/examples/anvil-probe/Cargo.toml
+new file mode 100644
+index 000000000..2cb1df635
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/anvil-probe/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "anvil-probe"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: item wear, repair, enchantments and the anvil"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/anvil-probe/horizon-mod.toml b/crates/horizon-mod-sdk/examples/anvil-probe/horizon-mod.toml
+new file mode 100644
+index 000000000..0b58ede16
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/anvil-probe/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "anvilprobe"
++name = "Anvil Probe"
++version = "0.1.0"
++description = "Test mod for item wear, repair, enchantments and the anvil (round 4, item 6): a message reads the first two slots and says what an anvil makes of them."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "recipe-types", "player-items", "net"]
++experimental = ["recipe-types", "player-items", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/anvil-probe/src/lib.rs b/crates/horizon-mod-sdk/examples/anvil-probe/src/lib.rs
+new file mode 100644
+index 000000000..2ba4e66aa
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/anvil-probe/src/lib.rs
+@@ -0,0 +1,36 @@
++//! Anvil Probe (round 4, item 6): a message on `anvilprobe:go` reads the sender's first two slots and tells the first's wear and
++//! enchantments, whether the second repairs it, and what an anvil makes of the two (renamed to the message's text when it has one),
++//! as the Robit's repair tab does; then it mends the first slot by 10 (`item-set-damage`).
++use horizon_mod_sdk::server::{Player, Registration, ServerMod, player_items, players, recipe_types};
++
++struct Probe;
++
++impl ServerMod for Probe {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Probe, Registration::new().on_net()))
++    }
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        if channel != "anvilprobe:go" {
++            return;
++        }
++        let inv = player_items::get_inventory(&player.id).unwrap_or_default();
++        let (Some(left), right) = (inv.first().cloned().flatten(), inv.get(1).cloned().flatten()) else { return };
++        let wear = recipe_types::item_durability(&left).map_or_else(|| "no wear".to_owned(), |d| format!("{}/{}", d.damage, d.max_damage));
++        let enchants: Vec<String> = recipe_types::item_enchantments(&left).iter().map(|(id, l)| format!("{id} {l}")).collect();
++        let repairs = right.as_ref().is_some_and(|r| recipe_types::item_repairs_with(&left, r));
++        let _ = players::tell(&player.id, &format!("wear {wear}; enchantments [{}]; repairs {repairs}", enchants.join(", ")));
++        let name = (!data.is_empty()).then(|| String::from_utf8_lossy(data).into_owned());
++        let answer = match recipe_types::anvil_result(&left, right.as_ref(), name.as_deref()) {
++            Some(a) => format!("anvil {}*{}{} for {} levels, {} used", a.output.item, a.output.count, a.output.components, a.cost, a.material_cost),
++            None => "anvil nothing".to_owned(),
++        };
++        let _ = players::tell(&player.id, &answer);
++        if let Some(d) = recipe_types::item_durability(&left)
++            && let Some(mended) = recipe_types::item_set_damage(&left, d.damage.saturating_sub(10))
++        {
++            let _ = player_items::set_slot(&player.id, 0, Some(&mended));
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Probe);
+diff --git a/crates/horizon-mod-sdk/examples/anvil-probe/tests/anvil.toml b/crates/horizon-mod-sdk/examples/anvil-probe/tests/anvil.toml
+new file mode 100644
+index 000000000..a0317d0a0
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/anvil-probe/tests/anvil.toml
+@@ -0,0 +1,36 @@
++# The world's items as the script has them: an iron sword wears out after 250 and iron ingots repair it.
++[max-damage]
++"minecraft:iron_sword" = 250
++
++[repairs]
++"minecraft:iron_sword" = ["minecraft:iron_ingot"]
++
++# What the anvil makes of a worn sword and two ingots, renamed "Edge".
++[[anvil]]
++left = 'minecraft:iron_sword*1{"minecraft:damage":200,"minecraft:enchantments":{"minecraft:sharpness":3}}'
++right = "minecraft:iron_ingot*2"
++name = "Edge"
++result = 'minecraft:iron_sword*1{"minecraft:damage":76,"minecraft:custom_name":"Edge"}'
++cost = 3
++material_cost = 2
++
++[[step]]
++join = "Alex"
++inventory = ['minecraft:iron_sword*1{"minecraft:damage":200,"minecraft:enchantments":{"minecraft:sharpness":3}}', "minecraft:iron_ingot*2"]
++
++[[step]]
++# The sword's wear and enchantment, the ingots repair it, the anvil's answer; then it is mended by 10.
++net = { channel = "anvilprobe:go", data = [69, 100, 103, 101] }
++expect.told = [
++    "Alex: wear 200/250; enchantments [minecraft:sharpness 3]; repairs true",
++    'Alex: anvil minecraft:iron_sword*1{"minecraft:damage":76,"minecraft:custom_name":"Edge"} for 3 levels, 2 used',
++]
++expect.player-items = ['set-slot Alex 0 minecraft:iron_sword*1{"minecraft:enchantments":{"minecraft:sharpness":3},"minecraft:damage":190}']
++
++[[step]]
++# A stick does not wear out, is not repaired by ingots, and makes nothing in an anvil (the script has no answer for it).
++inventory = ["minecraft:stick*1", "minecraft:iron_ingot*2"]
++
++[[step]]
++net = { channel = "anvilprobe:go" }
++expect.told = ["Alex: wear no wear; enchantments []; repairs false", "Alex: anvil nothing"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index e877111d1..16a61d890 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1108,6 +1108,32 @@ interface recipe-types {
+     item-energy-insert: func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>;
+     /// Drains up to `amount` from `stack` (`extractEnergy`): the stack after and the energy it gave. API 51.
+     item-energy-extract: func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>;
++    /// The wear of a stack that can wear out (`ItemStack.isDamageableItem`: a `max_damage`, not `unbreakable`).
++    record durability {
++        damage: u32,
++        max-damage: u32,
++    }
++    /// How worn `stack` is, the game's way; none for one that does not wear out (round 4, item 6). API 52.
++    item-durability: func(stack: item-stack) -> option<durability>;
++    /// `stack` with its damage set to `damage` (kept within 0 and its `max-damage`, the component left out at 0): how a mod repairs
++    /// or wears an item; none for one that does not wear out. API 52.
++    item-set-damage: func(stack: item-stack, damage: u32) -> option<item-stack>;
++    /// Whether `material` repairs `stack` in an anvil (`ItemStack.isValidRepairItem`: the item's `repairable` items or tag). API 52.
++    item-repairs-with: func(stack: item-stack, material: item-stack) -> bool;
++    /// The enchantments on `stack` (`minecraft:enchantments`, and a book's `minecraft:stored_enchantments`) with their levels. API 52.
++    item-enchantments: func(stack: item-stack) -> list<tuple<string, u32>>;
++    /// What an anvil makes of `left` and `right` (`AnvilMenu.createResult`, a player in survival).
++    record anvil-answer {
++        /// What the result slot shows.
++        output: item-stack,
++        /// The levels it costs (the `cost` data slot; 40 and up is "too expensive" in survival).
++        cost: s32,
++        /// The items of `right` used up when the result is taken (a repair's materials; 0 uses it all).
++        material-cost: u32,
++    }
++    /// `AnvilMenu.createResult` of the game for `left` and `right` and the rename box's text `name` (none leaves the name as it is;
++    /// "" takes a custom name away): the Robit's repair tab, as a vanilla anvil. None when the anvil shows nothing. API 52.
++    anvil-result: func(left: item-stack, right: option<item-stack>, name: option<string>) -> option<anvil-answer>;
+ }
+ 
+ /// Capability `net`, server mods only (manifest `api = "0.3"`, experimental):
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index dadf594eb..265074ef3 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 51;
++pub const LEVEL: u32 = 52;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 126] = [
++pub const FUNCTIONS: [(&str, u32); 131] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -95,6 +95,11 @@ pub const FUNCTIONS: [(&str, u32); 126] = [
+     ("recipe-types.item-energy", 51),
+     ("recipe-types.item-energy-insert", 51),
+     ("recipe-types.item-energy-extract", 51),
++    ("recipe-types.item-durability", 52),
++    ("recipe-types.item-set-damage", 52),
++    ("recipe-types.item-repairs-with", 52),
++    ("recipe-types.item-enchantments", 52),
++    ("recipe-types.anvil-result", 52),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 075afbf5a..ad31547d4 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -616,6 +616,26 @@ pub trait WorldView: std::any::Any + Send {
+     fn environment(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Environment>;
+     /// The redstone signal at a mod block entity's position, 0 to 15.
+     fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8;
++    /// `(damage, max damage)` of a stack that wears out (round 4, item 6); none where it does not or the view does not know.
++    fn item_durability(&self, _stack: &ModItemStack) -> Option<(u32, u32)> {
++        None
++    }
++    /// The stack with its damage set (within its max damage), for one that wears out.
++    fn item_set_damage(&self, _stack: &ModItemStack, _damage: u32) -> Option<ModItemStack> {
++        None
++    }
++    /// `ItemStack.isValidRepairItem`.
++    fn item_repairs_with(&self, _stack: &ModItemStack, _material: &ModItemStack) -> bool {
++        false
++    }
++    /// The stack's enchantments and stored enchantments, with their levels.
++    fn item_enchantments(&self, _stack: &ModItemStack) -> Vec<(String, u32)> {
++        Vec::new()
++    }
++    /// `AnvilMenu.createResult`: the result, its level cost and the materials it uses up.
++    fn anvil_result(&self, _left: &ModItemStack, _right: Option<&ModItemStack>, _name: Option<&str>) -> Option<(ModItemStack, i32, u32)> {
++        None
++    }
+     /// The entities with their feet in `min` to `max` of `dimension` (round 4, item 3); none where the view does not know.
+     fn entities(&self, _dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<SeenEntity> {
+         Vec::new()
+@@ -3641,6 +3661,31 @@ impl recipe_types::Host for State {
+         let (moved, components) = crate::item_energy::extract(&spec, &stack.components, amount, simulate);
+         (ModItemStack { components, ..stack }, moved)
+     }
++    fn item_durability(&mut self, stack: ModItemStack) -> Option<recipe_types::Durability> {
++        let view = self.world.lock().ok()?;
++        let (damage, max_damage) = view.as_ref()?.item_durability(&stack)?;
++        Some(recipe_types::Durability { damage, max_damage })
++    }
++    fn item_set_damage(&mut self, stack: ModItemStack, damage: u32) -> Option<ModItemStack> {
++        let view = self.world.lock().ok()?;
++        view.as_ref()?.item_set_damage(&stack, damage)
++    }
++    fn item_repairs_with(&mut self, stack: ModItemStack, material: ModItemStack) -> bool {
++        let Ok(view) = self.world.lock() else { return false };
++        view.as_ref().is_some_and(|v| v.item_repairs_with(&stack, &material))
++    }
++    fn item_enchantments(&mut self, stack: ModItemStack) -> Vec<(String, u32)> {
++        let Ok(view) = self.world.lock() else { return Vec::new() };
++        view.as_ref().map_or_else(Vec::new, |v| v.item_enchantments(&stack))
++    }
++    fn anvil_result(&mut self, left: ModItemStack, right: Option<ModItemStack>, name: Option<String>) -> Option<recipe_types::AnvilAnswer> {
++        if name.as_ref().is_some_and(|n| n.chars().count() > 50) {
++            return None;
++        }
++        let view = self.world.lock().ok()?;
++        let (result, cost, material_cost) = view.as_ref()?.anvil_result(&left, right.as_ref(), name.as_deref())?;
++        Some(recipe_types::AnvilAnswer { output: result, cost, material_cost })
++    }
+     fn item_tag_members(&mut self, tag: String) -> Vec<String> {
+         let Ok(slot) = self.recipe_data.lock() else { return Vec::new() };
+         let Some(data) = slot.as_ref() else { return Vec::new() };
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 3eca037d0..fce372dae 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -104,6 +104,8 @@ pub struct TestGame {
+     pub stack_sizes: std::collections::BTreeMap<String, u32>,
+     /// The hardness of blocks a script gave.
+     pub hardness: std::collections::BTreeMap<String, f32>,
++    /// Items' wear and the anvil's answers a script gave (round 4, item 6).
++    pub item_rules: ItemRules,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -119,8 +121,76 @@ struct ScriptWorld(
+     std::collections::BTreeMap<String, f32>,
+     Vec<DroppedSet>,
+     Vec<crate::SeenEntity>,
++    ItemRules,
+ );
+ 
++/// What a script says of items' wear and anvils (round 4, item 6): max damage by item, the materials that repair each, and the
++/// anvil's answers (`[[anvil]]`).
++#[derive(Clone, Debug, Default)]
++pub struct ItemRules {
++    pub max_damage: std::collections::BTreeMap<String, u32>,
++    pub repairs: std::collections::BTreeMap<String, Vec<String>>,
++    pub anvil: Vec<AnvilSet>,
++}
++
++/// An anvil answer of a script: for these `left`, `right` and `name`, the `result`, its `cost` and its `material_cost`.
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct AnvilSet {
++    left: String,
++    #[serde(default)]
++    right: Option<String>,
++    #[serde(default)]
++    name: Option<String>,
++    result: String,
++    cost: i32,
++    #[serde(default)]
++    material_cost: u32,
++}
++
++/// `minecraft:damage` of a stack's components (0 for none).
++fn damage_of(components: &str) -> u32 {
++    let key = "\"minecraft:damage\":";
++    components.find(key).map_or(0, |i| components[i + key.len()..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
++}
++
++/// The components with `minecraft:damage` set to `damage`, left out at 0.
++fn with_damage(components: &str, damage: u32) -> String {
++    let key = "\"minecraft:damage\":";
++    let mut parts: Vec<String> = Vec::new();
++    let inner = components.trim().strip_prefix('{').and_then(|c| c.strip_suffix('}')).unwrap_or("");
++    for part in inner.split(',').filter(|p| !p.trim().is_empty()) {
++        if !part.trim().starts_with(key) {
++            parts.push(part.trim().to_owned());
++        }
++    }
++    if damage > 0 {
++        parts.push(format!("{key}{damage}"));
++    }
++    if parts.is_empty() { String::new() } else { format!("{{{}}}", parts.join(",")) }
++}
++
++/// The enchantments of a stack's components (`"minecraft:enchantments":{"id":level,...}`, a book's stored ones too).
++fn enchantments_of(components: &str) -> Vec<(String, u32)> {
++    let mut out = Vec::new();
++    for key in ["\"minecraft:enchantments\":{", "\"minecraft:stored_enchantments\":{"] {
++        let Some(at) = components.find(key) else { continue };
++        let body = &components[at + key.len()..];
++        let body = &body[..body.find('}').unwrap_or(body.len())];
++        for pair in body.split(',') {
++            if let Some((id, level)) = pair.split_once(':').and_then(|(a, b)| {
++                // An id has a colon of its own: split at the last one.
++                let whole = format!("{a}:{b}");
++                let (id, level) = whole.rsplit_once(':')?;
++                Some((id.trim().trim_matches('"').to_owned(), level.trim().parse::<u32>().ok()?))
++            }) {
++                out.push((id, level));
++            }
++        }
++    }
++    out
++}
++
+ /// An item lying in the world of a script (`dropped = [...]` of a step): its entity id, stack and position.
+ #[derive(Clone, Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -167,6 +237,25 @@ impl crate::WorldView for ScriptWorld {
+         let base = name.split('[').next().unwrap_or("");
+         !base.ends_with(":air") && !matches!(base, "minecraft:water" | "minecraft:lava" | "minecraft:bedrock") && self.block_hardness(dimension, x, y, z).is_some_and(|h| h >= 0.0)
+     }
++    fn item_durability(&self, stack: &crate::ModItemStack) -> Option<(u32, u32)> {
++        let max = *self.7.max_damage.get(&stack.item)?;
++        Some((damage_of(&stack.components).min(max), max))
++    }
++    fn item_set_damage(&self, stack: &crate::ModItemStack, damage: u32) -> Option<crate::ModItemStack> {
++        let max = *self.7.max_damage.get(&stack.item)?;
++        Some(crate::ModItemStack { components: with_damage(&stack.components, damage.min(max)), ..stack.clone() })
++    }
++    fn item_repairs_with(&self, stack: &crate::ModItemStack, material: &crate::ModItemStack) -> bool {
++        self.7.repairs.get(&stack.item).is_some_and(|m| m.contains(&material.item))
++    }
++    fn item_enchantments(&self, stack: &crate::ModItemStack) -> Vec<(String, u32)> {
++        enchantments_of(&stack.components)
++    }
++    fn anvil_result(&self, left: &crate::ModItemStack, right: Option<&crate::ModItemStack>, name: Option<&str>) -> Option<(crate::ModItemStack, i32, u32)> {
++        let shown = |s: &crate::ModItemStack| show_stack(&Some(s.clone()));
++        let a = self.7.anvil.iter().find(|a| a.left == shown(left) && a.right.as_deref() == right.map(shown).as_deref() && a.name.as_deref() == name)?;
++        Some((parse_stack(&a.result)?, a.cost, a.material_cost))
++    }
+     fn entities(&self, dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<crate::SeenEntity> {
+         if dimension == "minecraft:overworld" { self.6.clone() } else { Vec::new() }
+     }
+@@ -349,6 +438,7 @@ impl TestGame {
+             crafts: Vec::new(),
+             stack_sizes: Default::default(),
+             hardness: Default::default(),
++            item_rules: ItemRules::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -1172,6 +1262,15 @@ pub struct Script {
+     /// The destroy time of blocks (`[hardness]`, `"minecraft:stone" = 1.5`); a block not listed is 0.
+     #[serde(default)]
+     pub hardness: std::collections::BTreeMap<String, f32>,
++    /// Items' max damage (`[max-damage]`, `"minecraft:iron_sword" = 250`): an item not listed does not wear out (round 4, item 6).
++    #[serde(default)]
++    pub max_damage: std::collections::BTreeMap<String, u32>,
++    /// The materials that repair an item (`[repairs]`, `"minecraft:iron_sword" = ["minecraft:iron_ingot"]`).
++    #[serde(default)]
++    pub repairs: std::collections::BTreeMap<String, Vec<String>>,
++    /// The anvil's answers (`[[anvil]]`: `left`, `right`, `name`, `result`, `cost`, `material_cost`).
++    #[serde(default)]
++    pub anvil: Vec<AnvilSet>,
+     #[serde(default, rename = "step")]
+     pub steps: Vec<Step>,
+ }
+@@ -1828,6 +1927,7 @@ impl Script {
+         game.crafts = self.crafts.clone();
+         game.stack_sizes = self.stack_sizes.clone();
+         game.hardness = self.hardness.clone();
++        game.item_rules = ItemRules { max_damage: self.max_damage.clone(), repairs: self.repairs.clone(), anvil: self.anvil.clone() };
+         if let Some(p) = &mut game.player {
+             self.player.apply(p);
+         }
+@@ -2023,6 +2123,7 @@ impl Step {
+                 game.hardness.clone(),
+                 game.dropped.clone(),
+                 game.seen_entities(),
++                game.item_rules.clone(),
+             )));
+         if let Some(name) = &self.join {
+             game.join(name);
+@@ -3168,3 +3269,20 @@ fn same<T: PartialEq + std::fmt::Debug>(what: &str, want: &T, got: &T) -> Result
+         "{what}\n    expected: {want:?}\n    got:      {got:?}"
+     ))
+ }
++
++#[cfg(test)]
++mod item_rule_tests {
++    use super::*;
++
++    #[test]
++    fn a_scripts_damage_and_enchantments_read_from_the_components() {
++        assert_eq!(damage_of(r#"{"minecraft:damage":40}"#), 40);
++        assert_eq!(damage_of(""), 0);
++        assert_eq!(with_damage(r#"{"minecraft:damage":40,"minecraft:repair_cost":1}"#, 10), r#"{"minecraft:repair_cost":1,"minecraft:damage":10}"#);
++        assert_eq!(with_damage(r#"{"minecraft:damage":40}"#, 0), "");
++        assert_eq!(
++            enchantments_of(r#"{"minecraft:enchantments":{"minecraft:sharpness":3,"minecraft:unbreaking":1}}"#),
++            [("minecraft:sharpness".to_owned(), 3), ("minecraft:unbreaking".to_owned(), 1)]
++        );
++    }
++}
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 77da686c6..80e327b4e 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 51);
++    assert_eq!(LEVEL, 52);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index c121b4c8f..3dae12f3a 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -932,6 +932,25 @@ How much energy an item holds (round 4, item 5; NeoForge's item `IEnergyStorage`
+ | `max-insert` | `u64` | The most a call moves in, and out. |
+ | `max-extract` | `u64` |  |
+ 
++### record `durability`
++
++The wear of a stack that can wear out (`ItemStack.isDamageableItem`: a `max_damage`, not `unbreakable`).
++
++| Field | Type | |
++| --- | --- | --- |
++| `damage` | `u32` |  |
++| `max-damage` | `u32` |  |
++
++### record `anvil-answer`
++
++What an anvil makes of `left` and `right` (`AnvilMenu.createResult`, a player in survival).
++
++| Field | Type | |
++| --- | --- | --- |
++| `output` | `item-stack` | What the result slot shows. |
++| `cost` | `s32` | The levels it costs (the `cost` data slot; 40 and up is "too expensive" in survival). |
++| `material-cost` | `u32` | The items of `right` used up when the result is taken (a repair's materials; 0 uses it all). |
++
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+ | `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
+@@ -946,6 +965,11 @@ How much energy an item holds (round 4, item 5; NeoForge's item `IEnergyStorage`
+ | `item-energy` | `func(stack: item-stack) -> option<energy-info>` | The energy of `stack`, of any mod's item whose content declares `"energy"` (the amount is its `horizon:energy` component); none for an item that holds none. API 51. |
+ | `item-energy-insert` | `func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>` | Charges `stack` with up to `amount` (`receiveEnergy`): the stack after (as it was when `simulate`) and the energy it took, as much as its room and its `max-insert` allow; 0 for an item that holds none. The mod puts the stack back where it was. API 51. |
+ | `item-energy-extract` | `func(stack: item-stack, amount: u64, simulate: bool) -> tuple<item-stack, u64>` | Drains up to `amount` from `stack` (`extractEnergy`): the stack after and the energy it gave. API 51. |
++| `item-durability` | `func(stack: item-stack) -> option<durability>` | How worn `stack` is, the game's way; none for one that does not wear out (round 4, item 6). API 52. |
++| `item-set-damage` | `func(stack: item-stack, damage: u32) -> option<item-stack>` | `stack` with its damage set to `damage` (kept within 0 and its `max-damage`, the component left out at 0): how a mod repairs or wears an item; none for one that does not wear out. API 52. |
++| `item-repairs-with` | `func(stack: item-stack, material: item-stack) -> bool` | Whether `material` repairs `stack` in an anvil (`ItemStack.isValidRepairItem`: the item's `repairable` items or tag). API 52. |
++| `item-enchantments` | `func(stack: item-stack) -> list<tuple<string, u32>>` | The enchantments on `stack` (`minecraft:enchantments`, and a book's `minecraft:stored_enchantments`) with their levels. API 52. |
++| `anvil-result` | `func(left: item-stack, right: option<item-stack>, name: option<string>) -> option<anvil-answer>` | `AnvilMenu.createResult` of the game for `left` and `right` and the rename box's text `name` (none leaves the name as it is; "" takes a custom name away): the Robit's repair tab, as a vanilla anvil. None when the anvil shows nothing. API 52. |
+ 
+ ## `entities`
+ 
+-- 
+2.43.0
+

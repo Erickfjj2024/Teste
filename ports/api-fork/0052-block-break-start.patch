@@ -1,0 +1,340 @@
+From be2c0089f1565fb77c2179717ac75ae2ad0abacb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 10:45:26 +0000
+Subject: [PATCH] block-break-start: a mod's item may take a block break over
+ (the Meka-Tool's vein mining and blasting)
+
+registration.block-break; asked where ServerPlayerGameMode.destroyBlock starts (native_destroy_block), once the game allowed the break, for the PC and Android digs alike; true cancels the normal break and the mod breaks what it wants with world.break-blocks. Only the mod that owns the held item is asked.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/native_hooks.rs   |  5 ++++
+ crates/horizon-client/src/game/server_mods.rs | 20 ++++++++++++++
+ .../examples/block-use/src/lib.rs             | 12 ++++++++-
+ .../examples/block-use/tests/block_use.toml   | 13 +++++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 16 +++++++++++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  9 +++++++
+ crates/horizon-mods/src/runtime.rs            | 24 +++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 27 +++++++++++++++++++
+ docs/api/mods-reference.md                    |  2 ++
+ 9 files changed, 127 insertions(+), 1 deletion(-)
+
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index ff57c1e93..9a55964b6 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2282,6 +2282,11 @@ impl Game<'_> {
+         state: BlockStateId,
+         canceled: &mut bool,
+     ) {
++        // A server mod's item may take the break over (`block-break-start`: the Meka-Tool's vein mining and blasting).
++        #[cfg(feature = "mods")]
++        if !*canceled && self.mod_block_break_start(pos, state) {
++            *canceled = true;
++        }
+         let _ = (pos, state, canceled);
+     }
+     /// A player placed `stack` as the block `state` at `pos`: where
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 1256d5332..535291e81 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2301,6 +2301,26 @@ mod run {
+             ))
+         }
+ 
++        /// The acting player is breaking the block `state` at `pos`: whether the mod of the held item cancels the normal break.
++        pub(in crate::game) fn mod_block_break_start(&mut self, pos: [i32; 3], state: horizon_world::registry::BlockStateId) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_block_break() {
++                return false;
++            }
++            let Some(stack) = self.held().cloned().filter(|s| !s.item.starts_with("minecraft:")) else {
++                return false;
++            };
++            let Some(player) = self.acting_server_player() else {
++                return false;
++            };
++            let text = state_string(self.pack.assets.registry, state);
++            let stack = Self::mod_stack(&stack);
++            self.lend_world();
++            let cancel = self.mods.mods.block_break_start(&player, &stack, pos, &text);
++            self.return_world();
++            self.apply_mod_block_writes();
++            cancel
++        }
++
+         /// The acting player right-clicked entity `entity`: when it is the box of one of a mod's own entities (FORK-10 d), whether the
+         /// mod that owns the kind takes the click.
+         pub(in crate::game) fn mod_entity_click(&mut self, entity: u32) -> bool {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 23b707a20..a0f0b64c4 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -7,7 +7,7 @@ struct Gate;
+ 
+ impl ServerMod for Gate {
+     fn init() -> Result<(Self, Registration), String> {
+-        Ok((Gate, Registration::new().on_blocks().on_net().redirect("blockuse:bound", 0, 1)))
++        Ok((Gate, Registration::new().on_blocks().on_net().on_block_break_start().redirect("blockuse:bound", 0, 1)))
+     }
+     /// FORK-35: a machine of the mod needs the block above it free: with one over it (y 81 over a block at 80), the placement is refused.
+     fn can_place(&mut self, _player: &Player, pos: BlockPos, _state: &str) -> bool {
+@@ -34,6 +34,16 @@ impl ServerMod for Gate {
+             let _ = world::set_menu_text(&player.dimension, input.pos.x, input.pos.y, input.pos.z, &[input.text]);
+         }
+     }
++    /// The mod's drill (`blockuse:drill`) breaks a 1 by 3 column instead of one block: the normal break is cancelled and the three go
++    /// with `break-blocks`.
++    fn block_break_start(&mut self, player: &Player, stack: ItemStack, pos: BlockPos, _state: &str) -> bool {
++        if stack.item != "blockuse:drill" {
++            return false;
++        }
++        let column = [(pos.x, pos.y, pos.z), (pos.x, pos.y - 1, pos.z), (pos.x, pos.y - 2, pos.z)];
++        let _ = world::break_blocks(&player.dimension, &column, "minecraft:diamond_pickaxe", false, 0);
++        true
++    }
+     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
+         // FORK-34: the gate at y 70 is a structure that is not formed: its items, tanks and energy are closed to the outside.
+         if pos.y == 70 {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index c0f7663c4..0b8424b5c 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -119,3 +119,16 @@ expect.radial = ["Alex: off=Off,vein=Vein,extended=Extended current 1"]
+ net = { channel = "blockuse:radial", data = [118, 101, 105, 110] }
+ ticks = 1
+ expect.told = ["Alex: mode vein"]
++
++[[step]]
++# block-break-start: breaking a block with the mod's drill cancels the normal break and breaks a column of 3 instead.
++blocks = [{ x = 5, y = 66, z = 5, state = "minecraft:stone" }, { x = 5, y = 65, z = 5, state = "minecraft:stone" }, { x = 5, y = 64, z = 5, state = "minecraft:stone" }]
++break-start = { pos = [5, 66, 5], state = "minecraft:stone", stack = "blockuse:drill*1" }
++ticks = 1
++expect.break-start-result = true
++expect.broken = ["3 with minecraft:diamond_pickaxe silk=false fortune=0"]
++
++[[step]]
++# Another item, or vanilla's, is not the mod's to take: the game breaks the block.
++break-start = { pos = [5, 66, 5], state = "minecraft:stone", stack = "minecraft:diamond_pickaxe*1" }
++expect.break-start-result = false
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index d27c45fea..4ca0c2a4d 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -304,6 +304,11 @@ pub mod server {
+         }
+         /// The arrows of a shot exist, with these entity ids. When [`Registration::on_item_release`] is set.
+         fn item_shot(&mut self, _player: &Player, _stack: ItemStack, _projectiles: Vec<u32>) {}
++        /// A player is breaking the block `state` at `pos` holding `stack`, an item of the mod: true cancels the normal break. When
++        /// [`Registration::on_block_break_start`] is set.
++        fn block_break_start(&mut self, _player: &Player, _stack: ItemStack, _pos: BlockPos, _state: &str) -> bool {
++            false
++        }
+         /// A player right-clicked one of the mod's own entities: true takes the click. When [`Registration::on_mod_entities`] is set.
+         fn mod_entity_used(&mut self, _player: &Player, _entity: ModEntity, _sneaking: bool) -> bool {
+             false
+@@ -414,6 +419,7 @@ pub mod server {
+                 damage: false,
+                 item_release: false,
+                 mod_entities: false,
++                block_break: false,
+                 redirects: Vec::new(),
+             }
+         }
+@@ -503,6 +509,11 @@ pub mod server {
+             self.item_release = true;
+             self
+         }
++        /// Call [`ServerMod::block_break_start`] when a player breaks a block holding an item of the mod.
++        pub fn on_block_break_start(mut self) -> Self {
++            self.block_break = true;
++            self
++        }
+         /// Call [`ServerMod::entities_tick`] for the mod's own entity kinds.
+         pub fn on_mod_entities(mut self) -> Self {
+             self.mod_entities = true;
+@@ -727,6 +738,11 @@ macro_rules! export_server_mod {
+                 fn mod_entity_died(entity: ModEntity) {
+                     with(|m| m.mod_entity_died(entity));
+                 }
++                fn block_break_start(player: Player, stack: ItemStack, pos: BlockPos, state: String) -> bool {
++                    let mut out = false;
++                    with(|m| out = m.block_break_start(&player, stack, pos, &state));
++                    out
++                }
+                 fn mod_entity_used(player: Player, entity: ModEntity, sneaking: bool) -> bool {
+                     let mut out = false;
+                     with(|m| out = m.mod_entity_used(&player, entity, sneaking));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index d13b1ca1e..2da728b7c 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1377,6 +1377,8 @@ interface server-events {
+         damage: bool,
+         /// Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`).
+         item-release: bool,
++        /// Call `block-break-start` when a player breaks a block holding an item of the mod.
++        block-break: bool,
+         /// Call `entities-tick` with the living entities of the mod's own kinds (`data/<id>/horizon/entity_kind/`).
+         mod-entities: bool,
+         /// Blocks of the mod that stand for another block (FORK-35): a click on
+@@ -1642,6 +1644,13 @@ interface server-events {
+     /// `height`, reached like an interaction entity, before the item in hand is used on it. Answer true to take the click (the arm swings,
+     /// nothing else happens); false leaves it to the game, which does nothing with it. The first mod that owns the kind answers.
+     mod-entity-used: func(player: player, entity: mod-entity, sneaking: bool) -> bool;
++    /// A player is breaking the block `state` at `pos` holding `stack`, an item of the mod (`registration.block-break`;
++    /// NeoForge's `IItemExtension.onBlockStartBreak`, where the Meka-Tool mines a vein or blasts an area): asked once the game allowed
++    /// the break (the item can break blocks; a dig in survival when it ends, a creative click at once), on the PC and on Android (a long
++    /// press) alike. Answer true to cancel the normal break: the block stays, nothing drops, and the mod breaks what it wants
++    /// (`world.break-blocks`); false lets the game break it. The first mod that answers true decides.
++    /// (An export: it has no level; a mod that implements it needs a Horizon that has it, from API 43.)
++    block-break-start: func(player: player, stack: item-stack, pos: block-pos, state: string) -> bool;
+     /// One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box,
+     /// `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage
+     /// to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 3eea85801..58d23920d 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -1572,6 +1572,30 @@ impl Mods {
+     pub fn hears_mod_entities(&self) -> bool {
+         self.entries.iter().filter_map(|e| e.run.as_ref()?.hooks.server()).any(|r| r.mod_entities)
+     }
++    /// Whether a running server mod asked for `block-break`.
++    pub fn hears_block_break(&self) -> bool {
++        self.entries.iter().filter_map(|e| e.run.as_ref()?.hooks.server()).any(|r| r.block_break)
++    }
++    /// `player` is breaking `state` at `pos` holding `stack`: true when the mod that owns the item cancels the normal break.
++    pub fn block_break_start(&mut self, player: &ServerPlayer, stack: &ModItemStack, pos: [i32; 3], state: &str) -> bool {
++        let Some((owner, _)) = stack.item.split_once(':') else { return false };
++        let at = BlockPos { x: pos[0], y: pos[1], z: pos[2] };
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.block_break)
++                || self.entries[i].manifest.as_ref().is_none_or(|m| m.id != owner)
++            {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_block_break_start(&mut run.store, player, stack, at, state),
++                Hooks::Client(..) => Ok(false),
++            });
++            if answer == Some(true) {
++                return true;
++            }
++        }
++        false
++    }
+     /// `player` right-clicked `entity` (of a mod's own kind): whether the mod that owns the kind took the click.
+     pub fn mod_entity_used(&mut self, player: &ServerPlayer, entity: &ModEntity, sneaking: bool) -> bool {
+         let Some((owner, _)) = entity.kind.split_once(':') else { return false };
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 9f123417a..c8866f18a 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -69,6 +69,8 @@ pub struct TestGame {
+     pub hit_damage_result: Option<f32>,
+     /// What the last `item_released` answered.
+     pub release_result: Option<bool>,
++    /// What the last `block_break_start` answered.
++    pub break_start_result: Option<bool>,
+     /// What the last `mod_entity_used` answered, and the damage the last `mod_entity_damaged` applied.
+     pub entity_used_result: Option<bool>,
+     pub entity_damage_result: Option<f32>,
+@@ -309,6 +311,7 @@ impl TestGame {
+             hit_damage_result: None,
+             release_result: None,
+             entity_used_result: None,
++            break_start_result: None,
+             entity_damage_result: None,
+             mod_entities: Vec::new(),
+             entity_kinds: Vec::new(),
+@@ -1189,6 +1192,15 @@ pub struct HitDamageSet {
+     damage: f32,
+ }
+ 
++/// The actor breaking a block holding a stack (`block-break-start`).
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct BreakStartSet {
++    pos: [i32; 3],
++    state: String,
++    stack: String,
++}
++
+ /// A right click on one of the mod's entities.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -1406,6 +1418,8 @@ pub struct Step {
+     hit_damage: Option<HitDamageSet>,
+     /// Server mods: the actor let go of a bow-like item.
+     release_item: Option<ReleaseSet>,
++    /// Server mods: the actor breaks a block holding a stack of the mod.
++    break_start: Option<BreakStartSet>,
+     /// Server mods (FORK-10 d): the actor right-clicks one of the mod's entities.
+     use_mod_entity: Option<EntityUseSet>,
+     /// Server mods (FORK-10 f): the items lying in the world from this step on (they replace the earlier ones).
+@@ -1472,6 +1486,8 @@ pub struct Expect {
+     hit_damage_result: Option<f32>,
+     /// Server mods: whether the mod let the step's `release-item` shoot.
+     release_result: Option<bool>,
++    /// Server mods: whether the mod cancelled the normal break of the step's `break-start`.
++    break_start_result: Option<bool>,
+     /// Server mods (FORK-10 d): whether the mod took the step's `use-mod-entity` click.
+     mod_entity_used: Option<bool>,
+     /// Server mods (FORK-10 f): the items still lying in the world after the step, as `"id item*count"`.
+@@ -1749,6 +1765,7 @@ impl Step {
+             || self.hit_damage.is_some()
+             || self.release_item.is_some()
+             || self.use_mod_entity.is_some()
++            || self.break_start.is_some()
+             || self.damage_mod_entity.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+@@ -1912,6 +1929,11 @@ impl Step {
+                 game.entity_goals.remove(&d.id);
+             }
+         }
++        if let (Some(b), Some(who)) = (&self.break_start, &who) {
++            game.snapshot();
++            let stack = parse_stack(&b.stack).ok_or("break-start: a stack is item*count")?;
++            game.break_start_result = Some(game.mods.block_break_start(who, &stack, b.pos, &b.state));
++        }
+         if let (Some(u), Some(who)) = (&self.use_mod_entity, &who) {
+             game.snapshot();
+             let entity = game.mod_entities.iter().find(|e| e.id == u.id).cloned().ok_or("use-mod-entity: no such entity")?;
+@@ -2312,6 +2334,11 @@ impl Step {
+                 return Err(format!("mod-entity-damage: expected {want}, got {:?}", game.entity_damage_result));
+             }
+         }
++        if let Some(want) = e.break_start_result {
++            if game.break_start_result != Some(want) {
++                return Err(format!("break-start-result: expected {want}, got {:?}", game.break_start_result));
++            }
++        }
+         if let Some(want) = e.mod_entity_used {
+             if game.entity_used_result != Some(want) {
+                 return Err(format!("mod-entity-used: expected {want}, got {:?}", game.entity_used_result));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 06b6de54f..e59241ce2 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -1263,6 +1263,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `chunks` | `bool` | Call `chunk-loaded`. |
+ | `damage` | `bool` | Call `player-damaged` and `item-hit-damage`. |
+ | `item-release` | `bool` | Call `item-released` and `item-shot` (a bow-like item of the mod, whose template is `minecraft:bow`). |
++| `block-break` | `bool` | Call `block-break-start` when a player breaks a block holding an item of the mod. |
+ | `mod-entities` | `bool` | Call `entities-tick` with the living entities of the mod's own kinds (`data/<id>/horizon/entity_kind/`). |
+ | `redirects` | `list<redirect-spec>` | Blocks of the mod that stand for another block (FORK-35): a click on them, or breaking them, reaches the block they name. |
+ 
+@@ -1353,6 +1354,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
+ | `entities-tick` | `func(tick: u64, entities: list<mod-entity>) -> list<mod-entity-update>` | Each tick, the living entities of the mod's own kinds (`registration.mod-entities`, FORK-10) in the level in place, up to 256: what the mod answers is applied at once. Not asked of an entity whose chunk is not loaded. API 36. |
+ | `mod-entity-used` | `func(player: player, entity: mod-entity, sneaking: bool) -> bool` | A player right-clicked one of the mod's own entities (`registration.mod-entities`, FORK-10 d): its box is the kind's `width` by `height`, reached like an interaction entity, before the item in hand is used on it. Answer true to take the click (the arm swings, nothing else happens); false leaves it to the game, which does nothing with it. The first mod that owns the kind answers. |
++| `block-break-start` | `func(player: player, stack: item-stack, pos: block-pos, state: string) -> bool` | A player is breaking the block `state` at `pos` holding `stack`, an item of the mod (`registration.block-break`; NeoForge's `IItemExtension.onBlockStartBreak`, where the Meka-Tool mines a vein or blasts an area): asked once the game allowed the break (the item can break blocks; a dig in survival when it ends, a creative click at once), on the PC and on Android (a long press) alike. Answer true to cancel the normal break: the block stays, nothing drops, and the mod breaks what it wants (`world.break-blocks`); false lets the game break it. The first mod that answers true decides. (An export: it has no level; a mod that implements it needs a Horizon that has it, from API 43.) |
+ | `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
+ | `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+-- 
+2.43.0
+

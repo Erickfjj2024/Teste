@@ -1,0 +1,613 @@
+From 2b53f1dba9f2da39915aa624d208d7eed06dc90a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 13:00:55 +0000
+Subject: [PATCH] API 28: recipe-types.crafting-find, crafting-matches and
+ item-max-stack-size (the game's crafting recipes for the Formulaic
+ Assemblicator)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 ++
+ Cargo.toml                                    |  1 +
+ crates/horizon-client/src/crafting.rs         | 20 +++++
+ crates/horizon-client/src/game/server_mods.rs | 48 +++++++++++
+ .../examples/crafting-probe/Cargo.toml        | 16 ++++
+ .../examples/crafting-probe/horizon-mod.toml  |  9 ++
+ .../examples/crafting-probe/src/lib.rs        | 41 +++++++++
+ .../examples/crafting-probe/tests/craft.toml  | 13 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 24 ++++++
+ crates/horizon-mods/src/api_level.rs          |  7 +-
+ crates/horizon-mods/src/runtime.rs            | 33 ++++++++
+ crates/horizon-mods/src/testing.rs            | 51 +++++++++++-
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    | 83 +++++++++++--------
+ 14 files changed, 318 insertions(+), 39 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/crafting-probe/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/crafting-probe/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/crafting-probe/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/crafting-probe/tests/craft.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 26f072b0a..07dca020a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -753,6 +753,13 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "crafting-probe"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "cranelift-assembler-x64"
+ version = "0.135.8"
+diff --git a/Cargo.toml b/Cargo.toml
+index df442d04c..d754a416a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -43,6 +43,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/block-use",
+     "crates/horizon-mod-sdk/examples/damage-mods",
+     "crates/horizon-mod-sdk/examples/fuel-demo",
++    "crates/horizon-mod-sdk/examples/crafting-probe",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/crafting.rs b/crates/horizon-client/src/crafting.rs
+index 09864a329..89bd340a1 100644
+--- a/crates/horizon-client/src/crafting.rs
++++ b/crates/horizon-client/src/crafting.rs
+@@ -1628,6 +1628,26 @@ impl Recipes {
+         }
+         None
+     }
++    /// `Recipe.matches` of the crafting recipe `id` for the `size`x`size` grid: false for an id that is not one.
++    pub fn matches_recipe(
++        &self,
++        id: &str,
++        grid: &[Option<ItemStack>],
++        size: usize,
++        map_scale: &dyn Fn(i32) -> Option<u8>,
++    ) -> bool {
++        let Some(input) = Input::of(grid, size) else {
++            return false;
++        };
++        let ctx = Context {
++            recipes: self,
++            map_scale,
++        };
++        self.crafting
++            .iter()
++            .find(|(name, _)| name == id)
++            .is_some_and(|(_, recipe)| Self::assemble_if_matches(&ctx, &input, recipe).is_some())
++    }
+     /// `Recipe.matches` then `assemble` for one recipe: None when it does
+     /// not match, Some(None) when it matches with nothing to make.
+     fn assemble_if_matches(
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 4fd112b0d..894fcc6e4 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -120,8 +120,55 @@ mod run {
+         /// The redstone signal at each mod block entity of the dimension in place, read as the tick began.
+         signals: std::collections::HashMap<[i32; 3], u8>,
+         dimension: &'static str,
++        /// The game's recipes and items, for `crafting-find`, `crafting-matches` and `item-max-stack-size`.
++        res: Arc<crate::game::Resources>,
++    }
++    impl LentWorld {
++        /// A mod's stack as the game's (`game_stack` without the game): none for an item it does not know.
++        fn stack(&self, s: &horizon_mods::ModItemStack) -> Option<horizon_client::items::ItemStack> {
++            let max = self.res.items().get(&s.item).map(|i| i.max_stack)?;
++            if s.count == 0 {
++                return None;
++            }
++            let mut entries = vec![
++                ("id", horizon_world::nbt::Tag::String(s.item.as_str().into())),
++                ("count", horizon_world::nbt::Tag::Int(s.count.min(max) as i32)),
++            ];
++            if !s.components.is_empty() {
++                let (components, _) = horizon_world::nbt::parse_snbt(&s.components).ok()?;
++                entries.push(("components", components));
++            }
++            horizon_client::save::item_from_nbt(&horizon_world::nbt::Tag::compound(entries))
++        }
++        /// The grid as the game's stacks: none when a cell holds an item the game does not know.
++        fn grid(&self, grid: &[Option<horizon_mods::ModItemStack>]) -> Option<Vec<Option<horizon_client::items::ItemStack>>> {
++            grid.iter()
++                .map(|c| match c {
++                    None => Some(None),
++                    Some(s) => self.stack(s).map(Some),
++                })
++                .collect()
++        }
+     }
+     impl WorldView for LentWorld {
++        fn crafting_find(&self, grid: &[Option<horizon_mods::ModItemStack>]) -> Option<horizon_mods::CraftMatch> {
++            let stacks = self.grid(grid)?;
++            let recipes = self.res.recipes();
++            let (id, output) = recipes.find_with(&stacks, 3, &|_| None)?;
++            let remaining = recipes
++                .remainders(id, &stacks, 3)
++                .iter()
++                .map(|s| s.as_ref().map(Game::mod_stack))
++                .collect();
++            Some(horizon_mods::CraftMatch { id: id.to_owned(), output: Game::mod_stack(&output), remaining })
++        }
++        fn crafting_matches(&self, id: &str, grid: &[Option<horizon_mods::ModItemStack>]) -> bool {
++            let Some(stacks) = self.grid(grid) else { return false };
++            self.res.recipes().matches_recipe(id, &stacks, 3, &|_| None)
++        }
++        fn item_max_stack(&self, item: &str) -> Option<u32> {
++            self.res.items().get(item).map(|i| i.max_stack)
++        }
+         fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8 {
+             if dimension != self.dimension {
+                 return 0;
+@@ -547,6 +594,7 @@ mod run {
+                 thunder,
+                 signals,
+                 dimension,
++                res: Arc::clone(&self.res),
+             }));
+         }
+ 
+diff --git a/crates/horizon-mod-sdk/examples/crafting-probe/Cargo.toml b/crates/horizon-mod-sdk/examples/crafting-probe/Cargo.toml
+new file mode 100644
+index 000000000..01f7322f2
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/crafting-probe/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "crafting-probe"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: asking the game for crafting recipes"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/crafting-probe/horizon-mod.toml b/crates/horizon-mod-sdk/examples/crafting-probe/horizon-mod.toml
+new file mode 100644
+index 000000000..c88005c7c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/crafting-probe/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "craftprobe"
++name = "Crafting Probe"
++version = "0.1.0"
++description = "Test mod for the game's crafting recipes: using craftprobe:probe tells what a stick over a stick makes, whether a recipe matches and the stack size of a stick."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "recipe-types"]
++experimental = ["recipe-types"]
+diff --git a/crates/horizon-mod-sdk/examples/crafting-probe/src/lib.rs b/crates/horizon-mod-sdk/examples/crafting-probe/src/lib.rs
+new file mode 100644
+index 000000000..4178e866b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/crafting-probe/src/lib.rs
+@@ -0,0 +1,41 @@
++//! Crafting Probe (`crafting-find`, `crafting-matches`, `item-max-stack-size`): using `craftprobe:probe` tells the player what two
++//! planks over each other make, whether recipe `minecraft:stick` accepts the grid, what stays in the cells, and a stick's stack size.
++use horizon_mod_sdk::server::{BlockPos, ItemStack, Player, Registration, ServerMod, players, recipe_types};
++
++struct Probe;
++
++fn stack(item: &str, count: u32) -> Option<ItemStack> {
++    Some(ItemStack { item: item.into(), count, components: String::new() })
++}
++
++impl ServerMod for Probe {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Probe, Registration::new().on_items()))
++    }
++    fn item_used(&mut self, player: &Player, s: ItemStack, _pos: Option<BlockPos>) -> bool {
++        if s.item != "craftprobe:probe" {
++            return false;
++        }
++        let mut grid: Vec<Option<ItemStack>> = vec![None; 9];
++        grid[1] = stack("minecraft:oak_planks", 1);
++        grid[4] = stack("minecraft:oak_planks", 1);
++        let found = recipe_types::crafting_find(&grid);
++        let text = match &found {
++            Some(m) => format!(
++                "{} makes {}*{} keeps {}",
++                m.id,
++                m.output.item,
++                m.output.count,
++                m.remaining.iter().flatten().count()
++            ),
++            None => "nothing".to_owned(),
++        };
++        let matches = recipe_types::crafting_matches("minecraft:stick", &grid);
++        let other = recipe_types::crafting_matches("minecraft:torch", &grid);
++        let size = recipe_types::item_max_stack_size("minecraft:stick").map_or("none".to_owned(), |n| n.to_string());
++        let _ = players::tell(&player.id, &format!("{text}; stick {matches}; torch {other}; size {size}"));
++        true
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Probe);
+diff --git a/crates/horizon-mod-sdk/examples/crafting-probe/tests/craft.toml b/crates/horizon-mod-sdk/examples/crafting-probe/tests/craft.toml
+new file mode 100644
+index 000000000..1ad10615f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/crafting-probe/tests/craft.toml
+@@ -0,0 +1,13 @@
++[[craft]]
++id = "minecraft:stick"
++grid = ["", "minecraft:oak_planks*1", "", "", "minecraft:oak_planks*1", "", "", "", ""]
++output = "minecraft:stick*4"
++
++[stack-sizes]
++"minecraft:stick" = 64
++
++[[step]]
++join = "Alex"
++use-item = { stack = "craftprobe:probe*1" }
++expect.claimed = true
++expect.told = ["Alex: minecraft:stick makes minecraft:stick*4 keeps 0; stick true; torch false; size 64"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 42a7d4988..15c60fd97 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -856,6 +856,17 @@ interface player-control {
+ /// is kept as it is written; the mod reads it as it likes, and asks the game
+ /// which items an ingredient of it names (the game knows the item tags).
+ interface recipe-types {
++    use item-types.{item-stack};
++    /// A crafting recipe that a 3 by 3 grid makes.
++    record craft-match {
++        /// `minecraft:iron_pickaxe`, `mymod:crushing_kit`: the recipe's id.
++        id: string,
++        /// What it makes.
++        output: item-stack,
++        /// What stays in each of the nine cells after a craft (`Recipe.getRemainingItems`: a
++        /// bucket, a bottle, the patterned banner a copy keeps); none for a cell that keeps nothing.
++        remaining: list<option<item-stack>>,
++    }
+     record custom-recipe {
+         /// `<namespace>:<path>`, its place under `data/<namespace>/recipe/`.
+         id: string,
+@@ -891,6 +902,19 @@ interface recipe-types {
+     /// does not burn or is not known. (A smoker or blast furnace burns it
+     /// the same ticks; those cook twice as fast.) API 27.
+     burn-time: func(item: string) -> option<u32>;
++    /// The first crafting recipe the 3 by 3 `grid` makes, in the game's
++    /// order, vanilla, data packs and content mods alike
++    /// (`RecipeManager.getRecipeFor(CRAFTING, ...)`): nine cells, row by row,
++    /// none for an empty one. None when it makes nothing, or when the grid is
++    /// not nine cells or has an item the game does not know. Asked while the
++    /// world is lent (in a tick, a command or a hook of the server). API 28.
++    crafting-find: func(grid: list<option<item-stack>>) -> option<craft-match>;
++    /// Whether the crafting recipe `id` accepts the 3 by 3 `grid`
++    /// (`Recipe.matches`). False for an id the game does not know. API 28.
++    crafting-matches: func(id: string, grid: list<option<item-stack>>) -> bool;
++    /// How many of `item` fit a stack (`Item.getMaxStackSize`, the
++    /// `max_stack_size` component); none for an item the game does not know. API 28.
++    item-max-stack-size: func(item: string) -> option<u32>;
+ }
+ 
+ /// Capability `net`, server mods only (manifest `api = "0.3"`, experimental):
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 9f5e69dd7..98e11ca36 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 27;
++pub const LEVEL: u32 = 28;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 88] = [
++pub const FUNCTIONS: [(&str, u32); 91] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -99,6 +99,9 @@ pub const FUNCTIONS: [(&str, u32); 88] = [
+     ("world.set-capabilities-enabled", 24),
+     ("world.spawn-particles", 26),
+     ("recipe-types.burn-time", 27),
++    ("recipe-types.crafting-find", 28),
++    ("recipe-types.crafting-matches", 28),
++    ("recipe-types.item-max-stack-size", 28),
+     ("player-items.compare-and-set-slot", 25),
+     ("player-control.set-motion", 25),
+     ("player-control.set-allow-flight", 25),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 8ca0f229e..03a76b258 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -527,8 +527,23 @@ pub trait WorldView: std::any::Any + Send {
+     fn has_dimension(&self, dimension: &str) -> bool;
+     /// `Err` (why) for a state string that names no block state.
+     fn check_state(&self, state: &str) -> Result<(), String>;
++    /// The first crafting recipe the 3 by 3 grid makes (`crafting-find`).
++    fn crafting_find(&self, _grid: &[Option<ModItemStack>]) -> Option<CraftMatch> {
++        None
++    }
++    /// Whether crafting recipe `id` accepts the grid (`crafting-matches`).
++    fn crafting_matches(&self, _id: &str, _grid: &[Option<ModItemStack>]) -> bool {
++        false
++    }
++    /// An item's stack size (`item-max-stack-size`).
++    fn item_max_stack(&self, _item: &str) -> Option<u32> {
++        None
++    }
+ }
+ 
++/// A crafting recipe a grid makes (`recipe-types.craft-match`).
++pub use server_bindings::horizon::mods::recipe_types::CraftMatch;
++
+ /// The view lent for the current calls, shared by every mod's store.
+ type WorldSlot = Arc<Mutex<Option<Box<dyn WorldView>>>>;
+ /// The recipes of mods' own types and the tags that resolve their ingredients.
+@@ -2938,6 +2953,24 @@ impl recipe_types::Host for State {
+                 .collect()
+         })
+     }
++    fn crafting_find(&mut self, grid: Vec<Option<ModItemStack>>) -> Option<recipe_types::CraftMatch> {
++        if grid.len() != 9 {
++            return None;
++        }
++        let slot = self.world.lock().ok()?;
++        slot.as_ref()?.crafting_find(&grid)
++    }
++    fn crafting_matches(&mut self, id: String, grid: Vec<Option<ModItemStack>>) -> bool {
++        if grid.len() != 9 {
++            return false;
++        }
++        let Ok(slot) = self.world.lock() else { return false };
++        slot.as_ref().is_some_and(|v| v.crafting_matches(&id, &grid))
++    }
++    fn item_max_stack_size(&mut self, item: String) -> Option<u32> {
++        let slot = self.world.lock().ok()?;
++        slot.as_ref()?.item_max_stack(&item)
++    }
+     fn burn_time(&mut self, item: String) -> Option<u32> {
+         let slot = self.recipe_data.lock().ok()?;
+         slot.as_ref()?.burn_times.get(&item).copied().filter(|t| *t > 0)
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 8c44448be..2ff6a663d 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -67,6 +67,9 @@ pub struct TestGame {
+     pub hit_damage_result: Option<f32>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
++    /// The crafting recipes and stack sizes a script gave.
++    pub crafts: Vec<CraftSet>,
++    pub stack_sizes: std::collections::BTreeMap<String, u32>,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -74,9 +77,43 @@ pub struct TestGame {
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+-struct ScriptWorld(std::collections::BTreeMap<(i32, i32, i32), String>, std::collections::BTreeMap<(i32, i32, i32), u8>);
++struct ScriptWorld(
++    std::collections::BTreeMap<(i32, i32, i32), String>,
++    std::collections::BTreeMap<(i32, i32, i32), u8>,
++    Vec<CraftSet>,
++    std::collections::BTreeMap<String, u32>,
++);
++
++/// A crafting recipe of a script (`[[craft]]`): the nine cells it takes, what it makes, what stays in the cells.
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct CraftSet {
++    id: String,
++    grid: Vec<String>,
++    output: String,
++    #[serde(default)]
++    remaining: Vec<String>,
++}
++
++impl ScriptWorld {
++    fn cells(list: &[String]) -> Vec<Option<crate::ModItemStack>> {
++        list.iter().map(|t| parse_stack(t)).collect()
++    }
++}
+ 
+ impl crate::WorldView for ScriptWorld {
++    fn crafting_find(&self, grid: &[Option<crate::ModItemStack>]) -> Option<crate::CraftMatch> {
++        let r = self.2.iter().find(|c| Self::cells(&c.grid) == grid)?;
++        let mut remaining = Self::cells(&r.remaining);
++        remaining.resize(9, None);
++        Some(crate::CraftMatch { id: r.id.clone(), output: parse_stack(&r.output)?, remaining })
++    }
++    fn crafting_matches(&self, id: &str, grid: &[Option<crate::ModItemStack>]) -> bool {
++        self.2.iter().any(|c| c.id == id && Self::cells(&c.grid) == grid)
++    }
++    fn item_max_stack(&self, item: &str) -> Option<u32> {
++        self.3.get(item).copied()
++    }
+     fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String> {
+         let here = (dimension == "minecraft:overworld")
+             .then(|| self.0.get(&(x, y, z)).cloned())
+@@ -220,6 +257,8 @@ impl TestGame {
+             damage_result: None,
+             hit_damage_result: None,
+             can_place_result: None,
++            crafts: Vec::new(),
++            stack_sizes: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -790,6 +829,12 @@ pub struct Script {
+     /// The ticks items burn in a furnace (`[burn_times]`, `"minecraft:coal" = 1600`).
+     #[serde(default)]
+     pub burn_times: std::collections::BTreeMap<String, u32>,
++    /// Crafting recipes (`[[craft]]`: `id`, the nine cells of `grid`, `output`, `remaining`) the world's crafting answers from.
++    #[serde(default, rename = "craft")]
++    pub crafts: Vec<CraftSet>,
++    /// Stack sizes (`[stack-sizes]`, `"minecraft:stick" = 64`).
++    #[serde(default)]
++    pub stack_sizes: std::collections::BTreeMap<String, u32>,
+     #[serde(default, rename = "step")]
+     pub steps: Vec<Step>,
+ }
+@@ -1263,6 +1308,8 @@ impl Script {
+ 
+     /// Runs every step on `game`; the error names the first step that failed.
+     pub fn run(&self, game: &mut TestGame) -> Result<(), String> {
++        game.crafts = self.crafts.clone();
++        game.stack_sizes = self.stack_sizes.clone();
+         if let Some(p) = &mut game.player {
+             self.player.apply(p);
+         }
+@@ -1443,7 +1490,7 @@ impl Step {
+             game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
+         }
+         game.mods
+-            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone())));
++            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone(), game.crafts.clone(), game.stack_sizes.clone())));
+         if let Some(name) = &self.join {
+             game.join(name);
+         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index d73c1a015..d6e61ea6b 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 27);
++    assert_eq!(LEVEL, 28);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 5a5cdb94c..7dd36b582 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -38,7 +38,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `item-types`, `player-items`, `chunks`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `item-types`, `recipe-types`, `net`, `entities`, `player-items`, `chunks`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -768,38 +768,6 @@ What a player is doing as of the last server tick.
+ | `set-allow-flight` | `func(player: string, allowed: bool) -> result<_, string>` | Lets the player fly (`Abilities.mayfly`) whatever their game mode is, or takes it away (a creative or spectator player keeps theirs); the player's client gets the abilities. Kept until the player leaves. An error for a player not online. API 25. |
+ | `play-sound` | `func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32)` | Plays a sound event for the players near a position, as `/playsound` does at the `block` category. `sound` is vanilla's (`minecraft:...`) or the mod's own, from its `assets/<id>/sounds.json`. |
+ 
+-## `recipe-types`
+-
+-Access: capability `recipe-types`.
+-
+-Capability `recipe-types`, server mods only (manifest `api = "0.3"`, experimental): the recipes of types the mod brings. A recipe file `data/<namespace>/recipe/<path>.json` whose `type` is outside `minecraft` is kept as it is written; the mod reads it as it likes, and asks the game which items an ingredient of it names (the game knows the item tags).
+-
+-### record `custom-recipe`
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `id` | `string` | `<namespace>:<path>`, its place under `data/<namespace>/recipe/`. |
+-| `json` | `string` | The file's JSON. |
+-
+-### record `cooking-recipe`
+-
+-A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `campfire_cooking`), vanilla's and the mods', as a furnace reads it.
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `inputs` | `list<string>` | The items that cook, as `minecraft:iron_ore`. |
+-| `output` | `string` | What it makes. |
+-| `count` | `u32` |  |
+-| `experience` | `f32` |  |
+-| `time` | `u32` | Ticks a furnace takes (`cookingtime`). |
+-
+-| Function | Signature | What it does |
+-| --- | --- | --- |
+-| `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
+-| `cooking-recipes` | `func(kind: string) -> list<cooking-recipe>` | The cooking recipes of a kind (`smelting`, `blasting`...), in the game's order. |
+-| `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
+-| `burn-time` | `func(item: string) -> option<u32>` | How many ticks `item` burns in a furnace, from the game's fuel registry (`FuelValues`: the `furnace_fuels` data map, data packs and the content mods' own, as a furnace reads them); none for an item that does not burn or is not known. (A smoker or blast furnace burns it the same ticks; those cook twice as fast.) API 27. |
+-
+ ## `net`
+ 
+ Access: capability `net`.
+@@ -907,6 +875,55 @@ An item stack. `components` is the SNBT of its data components (`{"minecraft:dam
+ | `components` | `string` |  |
+ 
+ 
++## `recipe-types`
++
++Access: capability `recipe-types`.
++
++Capability `recipe-types`, server mods only (manifest `api = "0.3"`, experimental): the recipes of types the mod brings. A recipe file `data/<namespace>/recipe/<path>.json` whose `type` is outside `minecraft` is kept as it is written; the mod reads it as it likes, and asks the game which items an ingredient of it names (the game knows the item tags).
++
++### type `item-stack`
++
++`type item-stack = item-stack`
++
++### record `craft-match`
++
++A crafting recipe that a 3 by 3 grid makes.
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `minecraft:iron_pickaxe`, `mymod:crushing_kit`: the recipe's id. |
++| `output` | `item-stack` | What it makes. |
++| `remaining` | `list<option<item-stack>>` | What stays in each of the nine cells after a craft (`Recipe.getRemainingItems`: a bucket, a bottle, the patterned banner a copy keeps); none for a cell that keeps nothing. |
++
++### record `custom-recipe`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `string` | `<namespace>:<path>`, its place under `data/<namespace>/recipe/`. |
++| `json` | `string` | The file's JSON. |
++
++### record `cooking-recipe`
++
++A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `campfire_cooking`), vanilla's and the mods', as a furnace reads it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `inputs` | `list<string>` | The items that cook, as `minecraft:iron_ore`. |
++| `output` | `string` | What it makes. |
++| `count` | `u32` |  |
++| `experience` | `f32` |  |
++| `time` | `u32` | Ticks a furnace takes (`cookingtime`). |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `recipes-of-type` | `func(kind: string) -> list<custom-recipe>` | The recipes of type `kind` (`mymod:crushing`), in file order, from the content mods and the world's data packs. Empty for a type nobody uses. |
++| `cooking-recipes` | `func(kind: string) -> list<cooking-recipe>` | The cooking recipes of a kind (`smelting`, `blasting`...), in the game's order. |
++| `ingredient-items` | `func(ingredient: string) -> list<string>` | The items an ingredient names, in order, once each: `ingredient` is JSON, an item id, a `#tag`, a list of them, or an object with an `item`, a `tag` or `items`. A bare id is `minecraft:`; items the game doesn't know are left out. |
++| `burn-time` | `func(item: string) -> option<u32>` | How many ticks `item` burns in a furnace, from the game's fuel registry (`FuelValues`: the `furnace_fuels` data map, data packs and the content mods' own, as a furnace reads them); none for an item that does not burn or is not known. (A smoker or blast furnace burns it the same ticks; those cook twice as fast.) API 27. |
++| `crafting-find` | `func(grid: list<option<item-stack>>) -> option<craft-match>` | The first crafting recipe the 3 by 3 `grid` makes, in the game's order, vanilla, data packs and content mods alike (`RecipeManager.getRecipeFor(CRAFTING, ...)`): nine cells, row by row, none for an empty one. None when it makes nothing, or when the grid is not nine cells or has an item the game does not know. Asked while the world is lent (in a tick, a command or a hook of the server). API 28. |
++| `crafting-matches` | `func(id: string, grid: list<option<item-stack>>) -> bool` | Whether the crafting recipe `id` accepts the 3 by 3 `grid` (`Recipe.matches`). False for an id the game does not know. API 28. |
++| `item-max-stack-size` | `func(item: string) -> option<u32>` | How many of `item` fit a stack (`Item.getMaxStackSize`, the `max_stack_size` component); none for an item the game does not know. API 28. |
++
+ ## `chunks`
+ 
+ Access: capability `chunks`.
+-- 
+2.43.0
+

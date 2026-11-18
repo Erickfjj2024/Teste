@@ -1,0 +1,352 @@
+From f956374c03f7232e01e7480423a2a5174c42f1dc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 14 Nov 2026 19:04:16 +0000
+Subject: [PATCH] Code screens: say why one cannot run and show its JSON screen
+ instead; log the screens.wasm a mod brings
+
+A menu whose screen is drawn by code and whose code could not run (no screens.wasm registered, the component not
+loading, open refused, the open menu's panel not found) drew nothing: no panel, no slot frames, no log line, and
+horizon-ctl state's screen_code was null. Now:
+- the reason is warned once per menu and kept: horizon-ctl state's screen_code has the menu and error even when the
+  screen never opened;
+- the menu's JSON screen (its widgets and the slots' frames) is drawn and pressed instead, with a red line under the
+  panel saying why;
+- loading content says which menus a mod draws by code and the size of its screens.wasm, warns when a mod has menus
+  drawn by code but no screens.wasm, or a screens.wasm without capability screen.
+- HORIZON_ASYNC_STARTUP=1 keeps the loading screen's startup (the one Android always takes) under the control socket,
+  to test that path on the desktop.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game.rs             |  4 +
+ .../horizon-client/src/game/code_screens.rs   | 99 ++++++++++++++++---
+ .../horizon-client/src/game/menu_screens.rs   | 19 ++--
+ crates/horizon-client/src/game/mods.rs        | 37 +++++--
+ .../horizon-client/src/game/native_hooks.rs   |  2 +-
+ 5 files changed, 136 insertions(+), 25 deletions(-)
+
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index ceb52a7e7..3453b16ce 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -19045,6 +19045,10 @@ impl Progress {
+ /// Harness and dedicated runs keep the fully-synchronous startup so their
+ /// output stays byte-identical; only an ordinary launch shows the window first.
+ fn synchronous_startup(options: &Options) -> bool {
++    // Tests of the loading screen's path (the one Android always takes) under the control socket.
++    if std::env::var_os("HORIZON_ASYNC_STARTUP").is_some() && !options.headless {
++        return false;
++    }
+     // A headless game has no window for the loading screen.
+     options.headless
+         || options.frames.is_some()
+diff --git a/crates/horizon-client/src/game/code_screens.rs b/crates/horizon-client/src/game/code_screens.rs
+index 0f595a462..a7aae15d8 100644
+--- a/crates/horizon-client/src/game/code_screens.rs
++++ b/crates/horizon-client/src/game/code_screens.rs
+@@ -57,6 +57,31 @@ mod imp {
+     static INSTANCES: Mutex<BTreeMap<String, ScreenMod>> = Mutex::new(BTreeMap::new());
+     /// The open screen.
+     static OPEN: Mutex<Option<Open>> = Mutex::new(None);
++    /// The menu whose code screen could not run, and why: logged once, shown on the JSON screen drawn instead and in
++    /// `horizon-ctl state`'s `screen_code`.
++    static FAILED: Mutex<Option<(String, String)>> = Mutex::new(None);
++
++    /// A code screen that could not run: warned once per menu and reason, kept for the panel and `state`.
++    fn fail(menu: &str, reason: String) {
++        let Ok(mut f) = FAILED.lock() else { return };
++        if f.as_ref().is_some_and(|(m, r)| m == menu && *r == reason) {
++            return;
++        }
++        log::warn!(
++            "Horizon: the code screen of {menu} could not run, its JSON screen is shown instead: {reason}"
++        );
++        *f = Some((menu.to_owned(), reason));
++    }
++
++    /// Why the code screen of `menu` could not run, if it could not.
++    pub(in crate::game) fn failure(menu: &str) -> Option<String> {
++        FAILED
++            .lock()
++            .ok()?
++            .as_ref()
++            .filter(|(m, _)| m == menu)
++            .map(|(_, r)| r.clone())
++    }
+     /// What the screen asked for, waiting for a place with the game mutable to send it.
+     static ACTIONS: Mutex<Vec<ScreenAction>> = Mutex::new(Vec::new());
+     /// Renders a second at most for an animated screen.
+@@ -325,7 +350,7 @@ mod imp {
+             open: &'a mut Option<Open>,
+             menu: &str,
+             data: &[i32],
+-        ) -> Option<&'a mut Open> {
++        ) -> Result<&'a mut Open, String> {
+             let at = self.native_screen_pos().unwrap_or([0; 3]);
+             if open.as_ref().is_some_and(|o| o.menu != menu || o.at != at) {
+                 close(open);
+@@ -367,13 +392,23 @@ mod imp {
+                         s
+                     }
+                     None => {
+-                        log::warn!("Horizon: {}", error.clone().unwrap_or_default());
+-                        return None;
++                        return Err(error
++                            .unwrap_or_else(|| format!("mod {namespace}'s screens did not load")));
+                     }
+                 };
+-                if let Some(e) = &error {
+-                    log::warn!("Horizon: {e}");
++                // `open` refused: the JSON screen instead, and the component kept for the next menu.
++                if let Some(e) = error {
++                    if screen.failed.is_none()
++                        && let Ok(mut i) = INSTANCES.lock()
++                    {
++                        i.insert(screen.id.clone(), screen);
++                    }
++                    return Err(e);
++                }
++                if let Ok(mut f) = FAILED.lock() {
++                    *f = None;
+                 }
++                log::info!("Horizon: the screen of {menu} is drawn by mod {namespace}'s code");
+                 *open = Some(Open {
+                     menu: menu.to_owned(),
+                     at,
+@@ -398,7 +433,7 @@ mod imp {
+                     frames: VecDeque::new(),
+                 });
+             }
+-            open.as_mut()
++            open.as_mut().ok_or_else(|| "the screen closed".to_owned())
+         }
+ 
+         /// Renders when the frame is stale.
+@@ -661,20 +696,31 @@ mod imp {
+             );
+         }
+ 
+-        /// The panel's commands up to `SLOTS` (all of them without one); true when the open menu has a code screen.
++        /// The panel's commands up to `SLOTS` (all of them without one) of the code screen of menu `block`; false
++        /// when it could not run (the reason is logged once and kept: the caller draws the JSON screen instead).
+         pub(in crate::game) fn code_screen_draw(
+             &self,
++            block: &str,
+             batch: &mut HudBatch,
+             origin: [f32; 2],
+         ) -> bool {
+             let Some((menu, data, _)) = self.code_target() else {
++                fail(
++                    block,
++                    "the open menu's panel was not found (no screen shown or no renderer)".into(),
++                );
+                 return false;
+             };
+             let Ok(mut guard) = OPEN.lock() else {
+-                return true;
++                return false;
+             };
+-            let Some(o) = self.code_open(&mut guard, &menu, &data) else {
+-                return true;
++            let o = match self.code_open(&mut guard, &menu, &data) {
++                Ok(o) => o,
++                Err(e) => {
++                    drop(guard);
++                    fail(&menu, e);
++                    return false;
++                }
+             };
+             self.code_render(o, data, origin);
+             o.frames.push_back(Instant::now());
+@@ -1000,9 +1046,28 @@ mod imp {
+             g.as_ref()?.slots.get(&(slot as u32)).copied()
+         }
+ 
++        /// Whether the open menu's code screen runs (else its JSON screen is drawn and pressed).
++        pub(in crate::game) fn code_screen_running(&self) -> bool {
++            let Some((menu, _, _)) = self.code_target() else {
++                return false;
++            };
++            OPEN.lock()
++                .ok()
++                .is_some_and(|g| g.as_ref().is_some_and(|o| o.menu == menu))
++        }
++
+         pub(in crate::game) fn code_screen_stats(&self) -> Option<CodeStats> {
+             let g = OPEN.lock().ok()?;
+-            let o = g.as_ref()?;
++            let Some(o) = g.as_ref() else {
++                // A code screen that could not run: its menu and why.
++                let block = self.native_open_block()?;
++                let reason = failure(&block)?;
++                return Some(CodeStats {
++                    menu: block,
++                    error: Some(reason),
++                    ..Default::default()
++                });
++            };
+             let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+             Some(CodeStats {
+                 menu: o.menu.clone(),
+@@ -1220,20 +1285,30 @@ impl Game<'_> {
+ }
+ 
+ #[cfg(feature = "mods")]
+-pub(super) use imp::{WASM, reset};
++pub(super) use imp::{WASM, failure, reset};
+ 
+ #[cfg(not(feature = "mods"))]
+ pub(super) fn reset() {}
+ 
++/// Without the WebAssembly runtime a code screen never runs: its JSON screen is drawn, and this says why.
++#[cfg(not(feature = "mods"))]
++pub(super) fn failure(_menu: &str) -> Option<String> {
++    Some("this build runs no mod code (no mods feature)".into())
++}
++
+ #[cfg(not(feature = "mods"))]
+ impl Game<'_> {
+     pub(in crate::game) fn code_screen_draw(
+         &self,
++        _block: &str,
+         _batch: &mut HudBatch,
+         _origin: [f32; 2],
+     ) -> bool {
+         false
+     }
++    pub(in crate::game) fn code_screen_running(&self) -> bool {
++        false
++    }
+     pub(in crate::game) fn code_screen_draw_after_slots(&self, _batch: &mut HudBatch) {}
+     pub(in crate::game) fn code_screen_tooltip(&self, _batch: &mut HudBatch) -> bool {
+         false
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 8a77ced3d..a77e26622 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -523,9 +523,9 @@ impl Game<'_> {
+         let Some(def) = screen_of(block) else {
+             return false;
+         };
+-        // Drawn by the mod's code (capability `screen`, API 56).
+-        if def.code {
+-            return self.code_screen_draw(batch, origin);
++        // Drawn by the mod's code (capability `screen`, API 56); if that cannot run, the JSON screen below, with why.
++        if def.code && self.code_screen_draw(block, batch, origin) {
++            return true;
+         }
+         let [ox, oy] = origin;
+         let locals = locals();
+@@ -557,6 +557,13 @@ impl Game<'_> {
+             }
+             self.draw_widgets(&window.widgets, data, &locals, batch, at, cursor);
+         }
++        // A code screen that could not run: this JSON screen stands in for it, and says why.
++        if def.code
++            && let Some(why) = super::code_screens::failure(block)
++        {
++            let text = horizon_client::text::Text::literal(format!("Screen by code unavailable: {why}"));
++            batch.text_styled(&self.gui.atlas, &text, ox + 2.0, oy + def.height as f32 + 2.0, rgba(255, 85, 85, 255), true);
++        }
+         true
+     }
+ 
+@@ -636,7 +643,7 @@ impl Game<'_> {
+     /// here (a window opened); `alt` is a right press.
+     pub(super) fn declared_screen_press(&self, block: &str, data: &[i32], at: [f32; 2], alt: bool) -> Option<i32> {
+         let screen = screen_of(block)?;
+-        if screen.code {
++        if screen.code && self.code_screen_running() {
+             return (self.code_screen_press(at, alt) == Some(true)).then_some(super::code_screens::CODE_PRESS);
+         }
+         let mut l = LOCALS.lock().ok()?;
+@@ -715,7 +722,7 @@ impl Game<'_> {
+         let Some(screen) = screen_of(&block) else {
+             return false;
+         };
+-        if screen.code {
++        if screen.code && self.code_screen_running() {
+             return self.code_screen_scroll(delta) == Some(true);
+         }
+         let Ok(mut l) = LOCALS.lock() else {
+@@ -922,7 +929,7 @@ impl Game<'_> {
+         at: [f32; 2],
+     ) -> Vec<String> {
+         let Some(screen) = screen_of(block) else { return Vec::new() };
+-        if screen.code {
++        if screen.code && self.code_screen_running() {
+             return Vec::new();
+         }
+         // Over a grid cell: the item and its whole count.
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index b467338a4..1350ac149 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -323,6 +323,13 @@ pub(super) fn content_root(
+                 }
+             },
+         };
++        // Its menus whose screen is drawn by code (capability `screen`, API 56).
++        let code_menus: Vec<String> = content
++            .menu_types
++            .iter()
++            .filter(|t| t.screen.as_ref().is_some_and(|s| s.code))
++            .map(|t| t.id.clone())
++            .collect();
+         let candidate = ContentMod {
+             id: m.id.clone(),
+             content,
+@@ -331,12 +338,30 @@ pub(super) fn content_root(
+             log::warn!("Horizon: mod {} content not loaded: {e}", m.id);
+         } else {
+             // Its menus drawn by code (capability `screen`, API 56): the component runs in this game.
+-            #[cfg(feature = "mods")]
+-            if let Some(screens) = &package.screens
+-                && m.capabilities.contains(&Capability::Screen)
+-                && let Ok(mut w) = super::code_screens::WASM.lock()
+-            {
+-                w.insert(m.id.clone(), std::sync::Arc::new(screens.clone()));
++            match &package.screens {
++                Some(screens) if m.capabilities.contains(&Capability::Screen) => {
++                    #[cfg(feature = "mods")]
++                    if let Ok(mut w) = super::code_screens::WASM.lock() {
++                        w.insert(m.id.clone(), std::sync::Arc::new(screens.clone()));
++                    }
++                    log::info!(
++                        "Horizon: mod {} draws {} menu screen(s) by code (screens.wasm, {} bytes): {}",
++                        m.id,
++                        code_menus.len(),
++                        screens.len(),
++                        code_menus.join(", ")
++                    );
++                }
++                Some(_) => log::warn!(
++                    "Horizon: mod {} has a screens.wasm but not capability screen in its manifest: its screens are not run",
++                    m.id
++                ),
++                None if !code_menus.is_empty() => log::warn!(
++                    "Horizon: mod {} has menus drawn by code ({}) but no screens.wasm: their JSON screens are shown",
++                    m.id,
++                    code_menus.join(", ")
++                ),
++                None => {}
+             }
+         }
+     }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 2d549d303..3cdea915c 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4405,7 +4405,7 @@ impl Game<'_> {
+             rgba(198, 198, 198, 255),
+         );
+         // A code screen draws its own panel and has the frames drawn where it says (`SLOTS`).
+-        if !super::menu_screens::screen_of(&s.block).is_some_and(|d| d.code) {
++        if !self.code_screen_running() {
+             self.draw_native_slot_frames(batch, ox, oy);
+         }
+         super::menu_screens::set_screen_at([s.at.0, s.at.1, s.at.2]);
+-- 
+2.43.0
+

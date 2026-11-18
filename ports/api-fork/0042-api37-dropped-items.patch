@@ -1,0 +1,622 @@
+From 39a9b0f2e602ad92b30fc0610c2515fd063fa5c9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 01:51:34 +0000
+Subject: [PATCH] API 37 (FORK-10 f): entities.items-in-box and
+ take-dropped-item
+
+items-in-box lists the item entities lying in a box (id, stack, position; the nearest to the centre first, up to 256) from the level in place; take-dropped-item takes count items from one after the call (the entity goes when none are left, mods hear it leave). The Robit's pickup and the Laser Tractor Beam's attraction use them.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/mod_entities.rs   |  19 +++
+ crates/horizon-client/src/game/server_mods.rs |  20 +++
+ .../examples/entity-kinds/src/lib.rs          |  18 ++-
+ .../examples/entity-kinds/tests/robits.toml   |  10 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  16 ++
+ crates/horizon-mods/src/api_level.rs          |   6 +-
+ crates/horizon-mods/src/runtime.rs            |  32 ++++
+ crates/horizon-mods/src/testing.rs            |  70 ++++++++-
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    | 142 ++++++++++--------
+ 10 files changed, 268 insertions(+), 69 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+index 698fa8c86..11a84b501 100644
+--- a/crates/horizon-client/src/game/mod_entities.rs
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -199,6 +199,25 @@ impl Game<'_> {
+         dead
+     }
+ 
++    /// A mod's `take-dropped-item`: `count` items out of the item entity `id` (it goes when none are left; mods hear it leave). False
++    /// for none, another level or a client's copy of the world.
++    pub(super) fn native_take_dropped(&mut self, dimension: &str, id: u32, count: u32) -> bool {
++        if self.remote.is_some() || dimension != self.dim.id() {
++            return false;
++        }
++        let Some(i) = self.dropped.iter().position(|d| d.id == id) else {
++            return false;
++        };
++        let have = self.dropped[i].stack.count;
++        if count >= have {
++            self.remove_dropped(i);
++        } else {
++            self.dropped[i].stack.count = have - count;
++            self.dropped[i].needs_sync = true;
++        }
++        true
++    }
++
+     /// The entities of the level in place, as the mods see them.
+     #[cfg(feature = "mods")]
+     pub(super) fn mod_entities_view(&self) -> Vec<horizon_mods::ModEntity> {
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index cd9d2bebc..475f2bc0b 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -120,6 +120,8 @@ mod run {
+         /// The redstone signal at each mod block entity of the dimension in place, read as the tick began.
+         signals: std::collections::HashMap<[i32; 3], u8>,
+         dimension: &'static str,
++        /// The items lying in the level in place, as the mods may look for them (`items-in-box`), at most 4096.
++        dropped: Vec<(u32, horizon_mods::ModItemStack, [f64; 3])>,
+         /// The game's recipes and items, for `crafting-find`, `crafting-matches` and `item-max-stack-size`.
+         res: Arc<crate::game::Resources>,
+     }
+@@ -202,6 +204,16 @@ mod run {
+                     .unwrap_or_default(),
+             )
+         }
++        fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, horizon_mods::ModItemStack, [f64; 3])> {
++            if dimension != self.dimension {
++                return Vec::new();
++            }
++            self.dropped
++                .iter()
++                .filter(|(_, _, p)| (0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]))
++                .cloned()
++                .collect()
++        }
+         fn block_hardness(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<f32> {
+             let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
+             let chunk = chunks.get(&(x >> 4, z >> 4))?;
+@@ -590,6 +602,12 @@ mod run {
+             for (dim, chunks) in self.levels.parked_chunks() {
+                 dims.push((dim.id(), std::mem::take(chunks)));
+             }
++            let dropped: Vec<(u32, horizon_mods::ModItemStack, [f64; 3])> = self
++                .dropped
++                .iter()
++                .take(4096)
++                .map(|d| (d.id, Self::mod_stack(&d.stack), [d.position.x, d.position.y, d.position.z]))
++                .collect();
+             let registry = self.pack.assets.registry;
+             let biomes = self.res.biomes().clone();
+             let shapes = self.collision_table();
+@@ -605,6 +623,7 @@ mod run {
+                 thunder,
+                 signals,
+                 dimension,
++                dropped,
+                 res: Arc::clone(&self.res),
+             }));
+         }
+@@ -2752,6 +2771,7 @@ mod run {
+                             };
+                             self.native_set_display(&dimension, id, &d)
+                         }
++                        C::TakeDropped { id, count } => self.native_take_dropped(&dimension, id, count),
+                         C::SpawnModEntity { ticket, kind, pos, data } => {
+                             let entity = self.native_spawn_mod_entity(&dimension, &kind, pos, data);
+                             self.mods.spawn_answers.push((mod_id, ticket, entity));
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+index b6a882fe7..d4598cc1f 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -39,11 +39,27 @@ impl ServerMod for Robits {
+         list.into_iter()
+             .map(|e| {
+                 let count = e.data.first().copied().unwrap_or(0) + 1;
++                // FORK-10 f: it picks up the nearest item lying within a block and a half, into its first free slot.
++                let mut items = None;
++                if let Some(slot) = e.items.iter().position(Option::is_none)
++                    && let Some(found) = entities::items_in_box(
++                        &e.dimension,
++                        (e.x - 1.5, e.y - 1.0, e.z - 1.5),
++                        (e.x + 1.5, e.y + 1.0, e.z + 1.5),
++                    )
++                    .into_iter()
++                    .next()
++                    && entities::take_dropped_item(&e.dimension, found.id, found.stack.count).is_ok()
++                {
++                    let mut now = e.items.clone();
++                    now[slot] = Some(found.stack);
++                    items = Some(now);
++                }
+                 ModEntityUpdate {
+                     dimension: e.dimension,
+                     id: e.id,
+                     data: Some(vec![count]),
+-                    items: None,
++                    items,
+                     energy: Some(e.energy + 10),
+                     skin: (count >= 2).then(|| "red".to_owned()),
+                     name: (count == 3).then(|| Some("Bolt".to_owned())),
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+index b8aee1d73..ef690e91d 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -28,11 +28,19 @@ expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=20 data=[2]
+ ticks = 1
+ expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
+ 
++[[step]]
++# FORK-10 f: coal lies a few tenths from the robit; in a tick the mod finds it with items-in-box, takes it with take-dropped-item
++# (the item entity goes) and puts it in the robit's first slot.
++dropped = [{ id = 9, stack = "minecraft:coal*3", x = 4.3, y = 70.0, z = 4.5 }, { id = 10, stack = "minecraft:stick*1", x = 40.0, y = 70.0, z = 4.5 }]
++ticks = 1
++expect.dropped-left = ["10 minecraft:stick*1"]
++expect.mod-entity-items = ["1001 0=minecraft:coal*3"]
++
+ [[step]]
+ # FORK-10 e: it is red now, so a blow of 0.5 hurts for 0.25 (health 1 to 0.75), and the robit is still there.
+ damage-mod-entity = { id = 1001, amount = 0.5 }
+ expect.mod-entity-damage = 0.25
+-expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
++expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=40 data=[4] skin=red name=Bolt"]
+ 
+ [[step]]
+ # A blow of 4 hurts for 2: more than the health left, so it dies, the mod hears of it (its words go to the menu text under it) and it is gone.
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index d2e97abf9..57bc26b0b 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1064,6 +1064,16 @@ interface net-events {
+ /// what the call returned). An entity is named by its `dimension`: another
+ /// level than the one in place is refused.
+ interface entities {
++    use item-types.{item-stack};
++    /// An item lying in the world (FORK-10 f).
++    record dropped-item {
++        /// The item entity's id, for `take-dropped-item`.
++        id: u32,
++        stack: item-stack,
++        x: f64,
++        y: f64,
++        z: f64,
++    }
+     record mob {
+         id: u32,
+         /// `minecraft:zombie`.
+@@ -1128,6 +1138,12 @@ interface entities {
+     kill-mob: func(dimension: string, id: u32) -> result<_, string>;
+     /// Takes a mob out of the world with no death and no loot.
+     remove-mob: func(dimension: string, id: u32) -> result<_, string>;
++    /// The items lying in the box of `dimension` (the level in place; none for another) as of the start of the call: up to 256, the
++    /// nearest to the box's centre first, whatever their pickup delay. The box is `min` to `max`, each at most 64 blocks across. API 37.
++    items-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>;
++    /// Takes `count` items from the item entity `id` (all of them when it has fewer; the entity goes when it has none left), made after
++    /// this call returns: the stack is the mod's to put somewhere (an entity's slots). An error for a count of 0. API 37.
++    take-dropped-item: func(dimension: string, id: u32, count: u32) -> result<_, string>;
+     /// Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position
+     /// with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with.
+     /// An error for a kind that is not a plain id or too many bytes. API 36.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index f62c0e7c5..489256818 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 36;
++pub const LEVEL: u32 = 37;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 106] = [
++pub const FUNCTIONS: [(&str, u32); 108] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -81,6 +81,8 @@ pub const FUNCTIONS: [(&str, u32); 106] = [
+     ("entities.kill-mob", 11),
+     ("entities.set-entity-fire", 33),
+     ("entities.spawn-mod-entity", 36),
++    ("entities.items-in-box", 37),
++    ("entities.take-dropped-item", 37),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 2439578d7..5d05b3517 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -244,6 +244,11 @@ pub enum EntityCommand {
+         ticks: u32,
+     },
+     /// `entities.spawn-mod-entity` (FORK-10): a living entity of the mod's own kind.
++    /// `entities.take-dropped-item` (FORK-10 f).
++    TakeDropped {
++        id: u32,
++        count: u32,
++    },
+     SpawnModEntity {
+         ticket: u64,
+         kind: String,
+@@ -569,6 +574,10 @@ pub trait WorldView: std::any::Any + Send {
+     fn environment(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Environment>;
+     /// The redstone signal at a mod block entity's position, 0 to 15.
+     fn redstone(&self, dimension: &str, x: i32, y: i32, z: i32) -> u8;
++    /// The items lying in `min` to `max` of `dimension`, as `(id, stack, position)`; none where the view does not know.
++    fn dropped_items(&self, _dimension: &str, _min: [f64; 3], _max: [f64; 3]) -> Vec<(u32, ModItemStack, [f64; 3])> {
++        Vec::new()
++    }
+     /// The destroy time of the block at a position, `None` where no chunk of that dimension is loaded.
+     fn block_hardness(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<f32> {
+         None
+@@ -3108,6 +3117,29 @@ impl entities::Host for State {
+     fn remove_mob(&mut self, dimension: String, id: u32) -> Result<(), String> {
+         self.entity_request(dimension, EntityCommand::RemoveMob { id }, &[])
+     }
++    fn items_in_box(&mut self, dimension: String, min: (f64, f64, f64), max: (f64, f64, f64)) -> Vec<entities::DroppedItem> {
++        let (min, max) = ([min.0, min.1, min.2], [max.0, max.1, max.2]);
++        if min.iter().chain(&max).any(|v| !v.is_finite()) || (0..3).any(|i| max[i] - min[i] > 64.0) {
++            return Vec::new();
++        }
++        let Ok(view) = self.world.lock() else { return Vec::new() };
++        let Some(view) = view.as_ref() else { return Vec::new() };
++        let mut found = view.dropped_items(&dimension, min, max);
++        let centre = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
++        let far = |p: &[f64; 3]| (0..3).map(|i| (p[i] - centre[i]).powi(2)).sum::<f64>();
++        found.sort_by(|a, b| far(&a.2).total_cmp(&far(&b.2)));
++        found
++            .into_iter()
++            .take(256)
++            .map(|(id, stack, p)| entities::DroppedItem { id, stack, x: p[0], y: p[1], z: p[2] })
++            .collect()
++    }
++    fn take_dropped_item(&mut self, dimension: String, id: u32, count: u32) -> Result<(), String> {
++        if count == 0 {
++            return Err("count is at least 1".into());
++        }
++        self.entity_request(dimension, EntityCommand::TakeDropped { id, count }, &[])
++    }
+     fn spawn_mod_entity(&mut self, dimension: String, kind: String, x: f64, y: f64, z: f64, data: Vec<u8>) -> Result<u64, String> {
+         if !kind_ok(&kind) {
+             return Err(format!("{kind:?} is not an entity kind"));
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 6178a3ecd..925fdf3dc 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -76,6 +76,8 @@ pub struct TestGame {
+     pub mod_entities: Vec<crate::ModEntity>,
+     pub entity_kinds: Vec<crate::content::EntityKind>,
+     next_mod_entity: u32,
++    /// The items lying in the world of the script (FORK-10 f).
++    pub dropped: Vec<DroppedSet>,
+     entity_goals: std::collections::BTreeMap<u32, ([f64; 3], f32)>,
+     /// What the last `can_place` answered.
+     pub can_place_result: Option<bool>,
+@@ -99,8 +101,20 @@ struct ScriptWorld(
+     Vec<CraftSet>,
+     std::collections::BTreeMap<String, u32>,
+     std::collections::BTreeMap<String, f32>,
++    Vec<DroppedSet>,
+ );
+ 
++/// An item lying in the world of a script (`dropped = [...]` of a step): its entity id, stack and position.
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct DroppedSet {
++    id: u32,
++    stack: String,
++    x: f64,
++    y: f64,
++    z: f64,
++}
++
+ /// A crafting recipe of a script (`[[craft]]`): the nine cells it takes, what it makes, what stays in the cells.
+ #[derive(Clone, Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -131,6 +145,16 @@ impl crate::WorldView for ScriptWorld {
+     fn item_max_stack(&self, item: &str) -> Option<u32> {
+         self.3.get(item).copied()
+     }
++    fn dropped_items(&self, dimension: &str, min: [f64; 3], max: [f64; 3]) -> Vec<(u32, crate::ModItemStack, [f64; 3])> {
++        if dimension != "minecraft:overworld" {
++            return Vec::new();
++        }
++        self.5
++            .iter()
++            .filter(|d| (0..3).all(|i| [d.x, d.y, d.z][i] >= min[i] && [d.x, d.y, d.z][i] <= max[i]))
++            .filter_map(|d| Some((d.id, parse_stack(&d.stack)?, [d.x, d.y, d.z])))
++            .collect()
++    }
+     fn block_hardness(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<f32> {
+         let name = self.block(dimension, x, y, z)?;
+         Some(self.4.get(name.split('[').next().unwrap_or("")).copied().unwrap_or(0.0))
+@@ -284,6 +308,7 @@ impl TestGame {
+             mod_entities: Vec::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
++            dropped: Vec::new(),
+             entity_goals: Default::default(),
+             can_place_result: None,
+             packed: Default::default(),
+@@ -1366,6 +1391,8 @@ pub struct Step {
+     release_item: Option<ReleaseSet>,
+     /// Server mods (FORK-10 d): the actor right-clicks one of the mod's entities.
+     use_mod_entity: Option<EntityUseSet>,
++    /// Server mods (FORK-10 f): the items lying in the world from this step on (they replace the earlier ones).
++    dropped: Option<Vec<DroppedSet>>,
+     /// Server mods (FORK-10 e): a blow on one of the mod's entities.
+     damage_mod_entity: Option<EntityDamageSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+@@ -1430,6 +1457,10 @@ pub struct Expect {
+     release_result: Option<bool>,
+     /// Server mods (FORK-10 d): whether the mod took the step's `use-mod-entity` click.
+     mod_entity_used: Option<bool>,
++    /// Server mods (FORK-10 f): the items still lying in the world after the step, as `"id item*count"`.
++    dropped_left: Option<Vec<String>>,
++    /// Server mods (FORK-10 f): the slots of the mod's entities after the step, as `"id slot=item*count,slot=..."`.
++    mod_entity_items: Option<Vec<String>>,
+     /// Server mods (FORK-10 e): the damage the mod let the step's `damage-mod-entity` apply.
+     mod_entity_damage: Option<f32>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+@@ -1648,6 +1679,9 @@ impl Step {
+         for p in &self.power {
+             game.power.insert((p.x, p.y, p.z), p.level);
+         }
++        if let Some(list) = &self.dropped {
++            game.dropped.clone_from(list);
++        }
+         for s in &self.set_tanks {
+             if let Some(held) = game.block_tanks.get_mut(&(s.x, s.y, s.z)) {
+                 for (slot, text) in held.iter_mut().zip(&s.tanks) {
+@@ -1664,7 +1698,7 @@ impl Step {
+             game.block_items.insert((s.x, s.y, s.z), s.slots.clone());
+         }
+         game.mods
+-            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone(), game.crafts.clone(), game.stack_sizes.clone(), game.hardness.clone())));
++            .lend_world(Box::new(ScriptWorld(game.world.clone(), game.power.clone(), game.crafts.clone(), game.stack_sizes.clone(), game.hardness.clone(), game.dropped.clone())));
+         if let Some(name) = &self.join {
+             game.join(name);
+         }
+@@ -1966,6 +2000,18 @@ impl Step {
+                     game.snapshot();
+                     game.mods.entity_spawned(&game.mod_id(), *ticket, Some(id));
+                 }
++                crate::EntityCommand::TakeDropped { id, count } => {
++                    if let Some(i) = game.dropped.iter().position(|d| d.id == *id)
++                        && let Some(mut stack) = parse_stack(&game.dropped[i].stack)
++                    {
++                        stack.count = stack.count.saturating_sub(*count);
++                        if stack.count == 0 {
++                            game.dropped.remove(i);
++                        } else {
++                            game.dropped[i].stack = show_stack(&Some(stack));
++                        }
++                    }
++                }
+                 crate::EntityCommand::RemoveEntity { id } => {
+                     game.mod_entities.retain(|e| e.id != *id);
+                     game.entity_goals.remove(id);
+@@ -2213,6 +2259,27 @@ impl Step {
+                 return Err(format!("hit-damage-result: expected {want}, got {:?}", game.hit_damage_result));
+             }
+         }
++        if let Some(want) = &e.dropped_left {
++            let got: Vec<String> = game.dropped.iter().map(|d| format!("{} {}", d.id, d.stack)).collect();
++            same("dropped-left", want, &got)?;
++        }
++        if let Some(want) = &e.mod_entity_items {
++            let got: Vec<String> = game
++                .mod_entities
++                .iter()
++                .filter(|m| m.items.iter().any(Option::is_some))
++                .map(|m| {
++                    let slots: Vec<String> = m
++                        .items
++                        .iter()
++                        .enumerate()
++                        .filter_map(|(i, s)| s.as_ref().map(|s| format!("{i}={}", show_stack(&Some(s.clone())))))
++                        .collect();
++                    format!("{} {}", m.id, slots.join(","))
++                })
++                .collect();
++            same("mod-entity-items", want, &got)?;
++        }
+         if let Some(want) = e.mod_entity_damage {
+             if game.entity_damage_result != Some(want) {
+                 return Err(format!("mod-entity-damage: expected {want}, got {:?}", game.entity_damage_result));
+@@ -2315,6 +2382,7 @@ impl Step {
+                         C::KillMob { id } => format!("kill-mob {id}"),
+                         C::RemoveMob { id } => format!("remove-mob {id}"),
+                         C::SetFire { id, ticks } => format!("fire {id} {ticks}"),
++                        C::TakeDropped { id, count } => format!("take-dropped-item {id} {count}"),
+                         C::SpawnModEntity { ticket, kind, pos, data } => {
+                             format!("spawn-mod-entity {kind} {} {} {} {} byte(s) #{ticket}", pos[0], pos[1], pos[2], data.len())
+                         }
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 68269cd76..1dedc4b7a 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 36);
++    assert_eq!(LEVEL, 37);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 973b6c3da..52299a851 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -847,68 +847,6 @@ What the game calls in a client mod that took `net-client`; a mod built before i
+ | --- | --- | --- |
+ | `message` | `func(channel: string, data: list<u8>)` | Bytes the server's half of the mod sent on `channel`. |
+ 
+-## `entities`
+-
+-Access: capability `entities`.
+-
+-Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): the mobs and the other entities of the level the server is simulating. Reading is as of the last server tick. What a mod asks for is made after the call returns, before the next tick; a spawn answers with the new entity's id in `entity-spawned` the tick after (its `ticket` is what the call returned). An entity is named by its `dimension`: another level than the one in place is refused.
+-
+-### record `mob`
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `id` | `u32` |  |
+-| `kind` | `string` | `minecraft:zombie`. |
+-| `x` | `f64` |  |
+-| `y` | `f64` |  |
+-| `z` | `f64` |  |
+-| `yaw` | `f32` | Degrees; 0 faces south. |
+-| `health` | `f32` |  |
+-| `max-health` | `f32` |  |
+-
+-### record `mob-options`
+-
+-What a spawned mob starts with.
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `name` | `option<string>` | A name over it, shown to everyone. |
+-| `health` | `option<f32>` |  |
+-| `no-ai` | `bool` |  |
+-| `invisible` | `bool` |  |
+-| `silent` | `bool` |  |
+-| `invulnerable` | `bool` |  |
+-| `no-gravity` | `bool` |  |
+-
+-### record `display`
+-
+-A display entity's transformation (`block_display`, `item_display`, `text_display`): a translation, a left rotation (a quaternion `x, y, z, w`), a scale and a right rotation, eased over `interpolation` ticks from what it showed; a move eases over `teleport` ticks (0 to 59).
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `translation` | `tuple<f32, f32, f32>` |  |
+-| `left-rotation` | `tuple<f32, f32, f32, f32>` |  |
+-| `scale` | `tuple<f32, f32, f32>` |  |
+-| `right-rotation` | `tuple<f32, f32, f32, f32>` |  |
+-| `interpolation` | `s32` |  |
+-| `teleport` | `s32` |  |
+-
+-| Function | Signature | What it does |
+-| --- | --- | --- |
+-| `mobs` | `func(dimension: string) -> list<mob>` | The living mobs of `dimension` as of the last tick (none for a level that is not the one in place). |
+-| `spawn-mob` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, options: mob-options) -> result<u64, string>` | Spawns a mob of `kind` at the position, finalized as a natural spawn is and kept when its chunk unloads. Returns the ticket `entity-spawned` answers with. An error for a position that isn't finite or a kind that isn't a plain id, and past 64 requests in a call. |
+-| `summon` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, nbt: string) -> result<u64, string>` | Spawns any entity of `kind` (`minecraft:item_display`) from `nbt` (SNBT of its compound, as `/summon` takes it, at most 8192 bytes; an empty text is `{}`). Returns a ticket as `spawn-mob` does. |
+-| `move-entity` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> result<_, string>` | Moves an entity Horizon keeps without simulating (a display, a marker, an interaction); a display eases there over its `teleport` ticks. |
+-| `set-display` | `func(dimension: string, id: u32, display: display) -> result<_, string>` | Sets a display's transformation. |
+-| `remove-entity` | `func(dimension: string, id: u32) -> result<_, string>` | Removes an entity Horizon keeps without simulating, as `/kill` does. |
+-| `teleport-mob` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>` | Moves a mob to the position at once, as `/tp` does. |
+-| `push-mob` | `func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>` | Adds a velocity to a mob's. |
+-| `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
+-| `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+-| `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
+-| `spawn-mod-entity` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>` | Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with. An error for a kind that is not a plain id or too many bytes. API 36. |
+-| `set-entity-fire` | `func(dimension: string, id: u32, ticks: u32) -> result<_, string>` | Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33. |
+-
+ ## `item-types`
+ 
+ Access: not granted by any capability.
+@@ -976,6 +914,86 @@ A cooking recipe of the game's own kinds (`smelting`, `blasting`, `smoking`, `ca
+ | `item-max-stack-size` | `func(item: string) -> option<u32>` | How many of `item` fit a stack (`Item.getMaxStackSize`, the `max_stack_size` component); none for an item the game does not know. API 28. |
+ | `item-tags` | `func(item: string) -> list<string>` | The item tags `item` is in (`c:ores/iron`, `minecraft:logs`, without the `#`), sorted; empty for an item in none or one the game does not know. The reverse of `ingredient-items` for a tag. API 30. |
+ 
++## `entities`
++
++Access: capability `entities`.
++
++Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): the mobs and the other entities of the level the server is simulating. Reading is as of the last server tick. What a mod asks for is made after the call returns, before the next tick; a spawn answers with the new entity's id in `entity-spawned` the tick after (its `ticket` is what the call returned). An entity is named by its `dimension`: another level than the one in place is refused.
++
++### type `item-stack`
++
++`type item-stack = item-stack`
++
++### record `dropped-item`
++
++An item lying in the world (FORK-10 f).
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` | The item entity's id, for `take-dropped-item`. |
++| `stack` | `item-stack` |  |
++| `x` | `f64` |  |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++
++### record `mob`
++
++| Field | Type | |
++| --- | --- | --- |
++| `id` | `u32` |  |
++| `kind` | `string` | `minecraft:zombie`. |
++| `x` | `f64` |  |
++| `y` | `f64` |  |
++| `z` | `f64` |  |
++| `yaw` | `f32` | Degrees; 0 faces south. |
++| `health` | `f32` |  |
++| `max-health` | `f32` |  |
++
++### record `mob-options`
++
++What a spawned mob starts with.
++
++| Field | Type | |
++| --- | --- | --- |
++| `name` | `option<string>` | A name over it, shown to everyone. |
++| `health` | `option<f32>` |  |
++| `no-ai` | `bool` |  |
++| `invisible` | `bool` |  |
++| `silent` | `bool` |  |
++| `invulnerable` | `bool` |  |
++| `no-gravity` | `bool` |  |
++
++### record `display`
++
++A display entity's transformation (`block_display`, `item_display`, `text_display`): a translation, a left rotation (a quaternion `x, y, z, w`), a scale and a right rotation, eased over `interpolation` ticks from what it showed; a move eases over `teleport` ticks (0 to 59).
++
++| Field | Type | |
++| --- | --- | --- |
++| `translation` | `tuple<f32, f32, f32>` |  |
++| `left-rotation` | `tuple<f32, f32, f32, f32>` |  |
++| `scale` | `tuple<f32, f32, f32>` |  |
++| `right-rotation` | `tuple<f32, f32, f32, f32>` |  |
++| `interpolation` | `s32` |  |
++| `teleport` | `s32` |  |
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `mobs` | `func(dimension: string) -> list<mob>` | The living mobs of `dimension` as of the last tick (none for a level that is not the one in place). |
++| `spawn-mob` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, options: mob-options) -> result<u64, string>` | Spawns a mob of `kind` at the position, finalized as a natural spawn is and kept when its chunk unloads. Returns the ticket `entity-spawned` answers with. An error for a position that isn't finite or a kind that isn't a plain id, and past 64 requests in a call. |
++| `summon` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, nbt: string) -> result<u64, string>` | Spawns any entity of `kind` (`minecraft:item_display`) from `nbt` (SNBT of its compound, as `/summon` takes it, at most 8192 bytes; an empty text is `{}`). Returns a ticket as `spawn-mob` does. |
++| `move-entity` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> result<_, string>` | Moves an entity Horizon keeps without simulating (a display, a marker, an interaction); a display eases there over its `teleport` ticks. |
++| `set-display` | `func(dimension: string, id: u32, display: display) -> result<_, string>` | Sets a display's transformation. |
++| `remove-entity` | `func(dimension: string, id: u32) -> result<_, string>` | Removes an entity Horizon keeps without simulating, as `/kill` does. |
++| `teleport-mob` | `func(dimension: string, id: u32, x: f64, y: f64, z: f64) -> result<_, string>` | Moves a mob to the position at once, as `/tp` does. |
++| `push-mob` | `func(dimension: string, id: u32, vx: f64, vy: f64, vz: f64) -> result<_, string>` | Adds a velocity to a mob's. |
++| `set-mob-health` | `func(dimension: string, id: u32, health: f32) -> result<_, string>` | Sets a living mob's health (above 0, cut to its maximum). |
++| `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
++| `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
++| `items-in-box` | `func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>` | The items lying in the box of `dimension` (the level in place; none for another) as of the start of the call: up to 256, the nearest to the box's centre first, whatever their pickup delay. The box is `min` to `max`, each at most 64 blocks across. API 37. |
++| `take-dropped-item` | `func(dimension: string, id: u32, count: u32) -> result<_, string>` | Takes `count` items from the item entity `id` (all of them when it has fewer; the entity goes when it has none left), made after this call returns: the stack is the mod's to put somewhere (an entity's slots). An error for a count of 0. API 37. |
++| `spawn-mod-entity` | `func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>` | Spawns a living entity of the mod's own kind `kind` (`mymod:robit`, declared in `data/<id>/horizon/entity_kind/`) at the position with the saved bytes `data` (at most 64 KiB), kept and ticked by `entities-tick`. Returns the ticket `entity-spawned` answers with. An error for a kind that is not a plain id or too many bytes. API 36. |
++| `set-entity-fire` | `func(dimension: string, id: u32, ticks: u32) -> result<_, string>` | Sets an entity on fire for `ticks` (`Entity.igniteForTicks`: it keeps a longer fire it already has): a mob, or a projectile in flight, which is how a mod's bow lights the arrow it just shot (Flame). API 33. |
++
+ ## `chunks`
+ 
+ Access: capability `chunks`.
+-- 
+2.43.0
+

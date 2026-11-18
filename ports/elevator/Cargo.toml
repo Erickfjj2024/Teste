@@ -1,0 +1,8 @@
+[package]
+name = "horizon_elevator"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of ElevatorMod (VsnGamer, MIT), the Minecraft elevator from OpenBlocks"
+license = "MIT"
+
+[dependencies]

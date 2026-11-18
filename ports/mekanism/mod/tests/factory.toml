@@ -1,0 +1,312 @@
+# A basic crushing factory works three lines at once from one energy store: each line has its own input, output and progress.
+
+items = ["mekanism:upgrade_speed", "minecraft:bread", "minecraft:iron_ingot", "mekanism:dust_iron", "minecraft:redstone", "minecraft:gold_ingot", "mekanism:dust_gold", "minecraft:iron_ore", "minecraft:cobblestone", "minecraft:gravel", "mekanism:dust_refined_obsidian", "mekanism:ingot_refined_obsidian"]
+
+[[recipe]]
+id = "mekanism:crushing/iron"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[recipe]]
+id = "mekanism:crushing/gold"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:gold_ingot"},"output":{"count":1,"id":"mekanism:dust_gold"}}'''
+
+[[step]]
+join = "Alex"
+blocks = [
+    { x = 0, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 0, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=false]" },
+]
+# Lines 1 and 3 have an ingot (line 3 gold); line 2 has none; the charge slot (the seventh) holds redstone.
+set-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "", "", "minecraft:gold_ingot*1", "", "minecraft:redstone*3", "", ""] },
+]
+ticks = 1
+
+[[step]]
+ticks = 220
+# 200 ticks later, each working line has made its dust, from its own input; the empty line did nothing.
+expect.block-items = [
+    { x = 0, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "mekanism:dust_iron*1", "", "", "", "mekanism:dust_gold*1", "minecraft:redstone*2", "", ""] },
+]
+expect.blocks = [{ x = 0, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=true]" }]
+
+# A basic combining factory: its three lines share the extra input (the seventh slot).
+[[recipe]]
+id = "mekanism:combining/gravel"
+json = '''{"type":"mekanism:combining","main_input":{"count":1,"ingredient":"minecraft:iron_ingot"},"extra_input":{"count":1,"ingredient":"minecraft:cobblestone"},"output":{"id":"minecraft:gravel"}}'''
+
+[[recipe]]
+id = "mekanism:sawing/oak"
+json = '''{"type":"mekanism:sawing","input":{"count":1,"ingredient":"minecraft:gold_ingot"},"main_output":{"count":2,"id":"minecraft:redstone"},"secondary_chance":1.0,"secondary_output":{"id":"mekanism:dust_iron"}}'''
+
+[[step]]
+blocks = [
+    { x = 10, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 10, y = 64, z = -1, state = "mekanism:basic_combining_factory[facing=north,lit=false]" },
+    { x = 20, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 20, y = 64, z = -1, state = "mekanism:basic_sawing_factory[facing=north,lit=false]" },
+]
+set-items = [
+    { x = 10, y = 64, z = -1, slots = ["minecraft:iron_ingot*2", "", "minecraft:iron_ingot*1", "", "", "", "minecraft:cobblestone*3", "", "", ""] },
+    { x = 20, y = 64, z = -1, slots = ["minecraft:gold_ingot*2", "", "", "", "", "", "minecraft:gold_ingot*1", "", "", "", "", ""] },
+]
+ticks = 220
+# The first two lines each used one cobblestone of the shared stack; the first and last sawing lines each made their main and secondary output.
+expect.block-items = [
+    { x = 10, y = 64, z = -1, slots = ["minecraft:iron_ingot*1", "minecraft:gravel*1", "", "minecraft:gravel*1", "", "", "minecraft:cobblestone*1", "", "", ""] },
+    { x = 20, y = 64, z = -1, slots = ["minecraft:gold_ingot*1", "minecraft:redstone*2", "mekanism:dust_iron*1", "", "", "", "", "minecraft:redstone*2", "mekanism:dust_iron*1", "", "", ""] },
+]
+
+# A basic compressing factory: three lines draw from one osmium tank, each making an ingot in 200 ticks (a tick of osmium each).
+[[recipe]]
+id = "mekanism:compressing/refined_obsidian"
+json = '''{"type":"mekanism:compressing","chemical_input":{"amount":1,"ingredient":"mekanism:osmium"},"item_input":{"count":1,"ingredient":"mekanism:dust_refined_obsidian"},"output":{"id":"mekanism:ingot_refined_obsidian"},"per_tick_usage":true}'''
+
+[[step]]
+blocks = [
+    { x = 30, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 30, y = 64, z = -1, state = "mekanism:basic_compressing_factory[facing=north,lit=false]" },
+]
+ticks = 1
+
+[[step]]
+set-items = [{ x = 30, y = 64, z = -1, slots = ["mekanism:dust_refined_obsidian*2", "", "mekanism:dust_refined_obsidian*1", "", "", "", "", "", "", ""] }]
+set-tanks = [{ x = 30, y = 64, z = -1, tanks = ["mekanism:osmium*630"] }]
+ticks = 205
+# 205 ticks later both working lines made an ingot (the tank holds 210 a line: 630) and used a tick of osmium each tick.
+expect.block-items = [{ x = 30, y = 64, z = -1, slots = ["mekanism:dust_refined_obsidian*1", "mekanism:ingot_refined_obsidian*1", "", "mekanism:ingot_refined_obsidian*1", "", "", "", "", "", ""] }]
+expect.block-tanks = [{ x = 30, y = 64, z = -1, tanks = ["mekanism:osmium*225"] }]
+
+# An electric pump takes the lava source below it into its tank, a bucket every 19 ticks (the lava turns to air).
+[[step]]
+blocks = [
+    { x = 50, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 50, y = 64, z = -1, state = "mekanism:electric_pump[facing=north,lit=false]" },
+    { x = 50, y = 63, z = -1, state = "minecraft:lava[level=0]" },
+]
+ticks = 45
+
+expect.blocks = [{ x = 50, y = 63, z = -1, state = "minecraft:air" }]
+
+# A fluidic plenisher pours the water of its tank into the air below it, spreading (a bucket every 20 ticks).
+[[step]]
+blocks = [
+    { x = 60, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 60, y = 64, z = -1, state = "mekanism:fluidic_plenisher[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-tanks = [{ x = 60, y = 64, z = -1, tanks = ["minecraft:water*5000"] }]
+ticks = 70
+expect.blocks = [{ x = 60, y = 63, z = -1, state = "minecraft:water[level=0]" }]
+
+# A nutritional liquifier turns food into nutritional paste: 50 mB for each point of nutrition (a bread is 5).
+[[step]]
+blocks = [
+    { x = 70, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 70, y = 64, z = -1, state = "mekanism:nutritional_liquifier[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-items = [{ x = 70, y = 64, z = -1, slots = ["minecraft:bread*2", "", "", ""] }]
+ticks = 110
+expect.block-tanks = [{ x = 70, y = 64, z = -1, tanks = ["mekanism:nutritional_paste*250"] }]
+
+# Speed upgrades shorten a factory's recipes: eight make them ten times faster (200 ticks to 20).
+[[recipe]]
+id = "mekanism:crushing/iron_dust_test"
+json = '''{"type":"mekanism:crushing","input":{"count":1,"ingredient":"minecraft:iron_ingot"},"output":{"count":1,"id":"mekanism:dust_iron"}}'''
+
+[[step]]
+blocks = [
+    { x = 90, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 90, y = 64, z = -1, state = "mekanism:basic_crushing_factory[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+# the upgrade slot is the eighth (after 3 lines, the charge slot)
+set-items = [{ x = 90, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "", "", "", "", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 400
+expect.block-items = [{ x = 90, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", "", "", "", "", "", ""] }]
+
+# The same with an advanced smelting factory (five lines): eight speed upgrades make iron ore smelt ten times faster.
+[[cooking]]
+inputs = ["minecraft:iron_ore"]
+output = "minecraft:iron_ingot"
+
+[[step]]
+blocks = [
+    { x = 100, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 100, y = 64, z = -1, state = "mekanism:advanced_smelting_factory[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+# five lines: ten slots, the charge slot (10) and the upgrade slot (11)
+set-items = [{ x = 100, y = 64, z = -1, slots = ["minecraft:iron_ore*4", "", "", "", "", "", "", "", "", "", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 400
+expect.block-items = [{ x = 100, y = 64, z = -1, slots = ["", "minecraft:iron_ingot*4", "", "", "", "", "", "", "", "", "", "", ""] }]
+
+# A plain crusher with eight speed upgrades too.
+[[step]]
+blocks = [
+    { x = 110, y = 64, z = 0, state = "mekanism:creative_energy_cube" },
+    { x = 110, y = 64, z = -1, state = "mekanism:crusher[facing=north,lit=false]" },
+]
+ticks = 2
+
+[[step]]
+set-items = [{ x = 110, y = 64, z = -1, slots = ["minecraft:iron_ingot*5", "", "mekanism:upgrade_speed*8", ""] }]
+ticks = 330
+expect.block-items = [{ x = 110, y = 64, z = -1, slots = ["", "mekanism:dust_iron*5", "", "", ""] }]
+
+
+# A 3x3x3 hollow box of dynamic tank blocks with a valve in the middle of its top is a tank for one block of inside (16 000 buckets).
+[[step]]
+blocks = [
+    { x = 200, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 200, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 201, y = 66, z = 201, state = "mekanism:dynamic_valve" },
+    { x = 201, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 64, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 65, z = 202, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 200, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 201, state = "mekanism:dynamic_tank" },
+    { x = 202, y = 66, z = 202, state = "mekanism:dynamic_tank" },
+]
+ticks = 5
+
+[[step]]
+set-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
+ticks = 5
+expect.block-tanks = [{ x = 201, y = 66, z = 201, tanks = ["minecraft:water*5000", ""] }]
+# The screen shows millibuckets (GuiDynamicTank): 5000 mB of water, capacity 9,450,000 mB as low and high 16-bit halves.
+expect.block-menu-data = [{ x = 201, y = 66, z = 201, data = [5000, 0, 64, 12816, 144, 0, 0] }]
+
+# An induction matrix (4x4x4: a cell and a provider inside, a port on its south face) is found with 8 GFE of cells and 256 kFE a tick of providers (the harness does not model the ports' capacity limit, so the creative cube fills it).
+[[step]]
+blocks = [
+    { x = 300, y = 64, z = 300, state = "mekanism:induction_casing" },
+    { x = 300, y = 64, z = 301, state = "mekanism:induction_casing" },
+    { x = 300, y = 64, z = 302, state = "mekanism:induction_casing" },
+    { x = 300, y = 64, z = 303, state = "mekanism:induction_casing" },
+    { x = 300, y = 65, z = 300, state = "mekanism:induction_casing" },
+    { x = 300, y = 65, z = 301, state = "mekanism:induction_casing" },
+    { x = 300, y = 65, z = 302, state = "mekanism:induction_casing" },
+    { x = 300, y = 65, z = 303, state = "mekanism:induction_casing" },
+    { x = 300, y = 66, z = 300, state = "mekanism:induction_casing" },
+    { x = 300, y = 66, z = 301, state = "mekanism:induction_casing" },
+    { x = 300, y = 66, z = 302, state = "mekanism:induction_casing" },
+    { x = 300, y = 66, z = 303, state = "mekanism:induction_casing" },
+    { x = 300, y = 67, z = 300, state = "mekanism:induction_casing" },
+    { x = 300, y = 67, z = 301, state = "mekanism:induction_casing" },
+    { x = 300, y = 67, z = 302, state = "mekanism:induction_casing" },
+    { x = 300, y = 67, z = 303, state = "mekanism:induction_casing" },
+    { x = 301, y = 64, z = 300, state = "mekanism:induction_casing" },
+    { x = 301, y = 64, z = 301, state = "mekanism:induction_casing" },
+    { x = 301, y = 64, z = 302, state = "mekanism:induction_casing" },
+    { x = 301, y = 64, z = 303, state = "mekanism:induction_casing" },
+    { x = 301, y = 65, z = 300, state = "mekanism:induction_casing" },
+    { x = 301, y = 65, z = 303, state = "mekanism:induction_port" },
+    { x = 301, y = 66, z = 300, state = "mekanism:induction_casing" },
+    { x = 301, y = 66, z = 303, state = "mekanism:induction_casing" },
+    { x = 301, y = 67, z = 300, state = "mekanism:induction_casing" },
+    { x = 301, y = 67, z = 301, state = "mekanism:induction_casing" },
+    { x = 301, y = 67, z = 302, state = "mekanism:induction_casing" },
+    { x = 301, y = 67, z = 303, state = "mekanism:induction_casing" },
+    { x = 302, y = 64, z = 300, state = "mekanism:induction_casing" },
+    { x = 302, y = 64, z = 301, state = "mekanism:induction_casing" },
+    { x = 302, y = 64, z = 302, state = "mekanism:induction_casing" },
+    { x = 302, y = 64, z = 303, state = "mekanism:induction_casing" },
+    { x = 302, y = 65, z = 300, state = "mekanism:induction_casing" },
+    { x = 302, y = 65, z = 303, state = "mekanism:induction_casing" },
+    { x = 302, y = 66, z = 300, state = "mekanism:induction_casing" },
+    { x = 302, y = 66, z = 303, state = "mekanism:induction_casing" },
+    { x = 302, y = 67, z = 300, state = "mekanism:induction_casing" },
+    { x = 302, y = 67, z = 301, state = "mekanism:induction_casing" },
+    { x = 302, y = 67, z = 302, state = "mekanism:induction_casing" },
+    { x = 302, y = 67, z = 303, state = "mekanism:induction_casing" },
+    { x = 303, y = 64, z = 300, state = "mekanism:induction_casing" },
+    { x = 303, y = 64, z = 301, state = "mekanism:induction_casing" },
+    { x = 303, y = 64, z = 302, state = "mekanism:induction_casing" },
+    { x = 303, y = 64, z = 303, state = "mekanism:induction_casing" },
+    { x = 303, y = 65, z = 300, state = "mekanism:induction_casing" },
+    { x = 303, y = 65, z = 301, state = "mekanism:induction_casing" },
+    { x = 303, y = 65, z = 302, state = "mekanism:induction_casing" },
+    { x = 303, y = 65, z = 303, state = "mekanism:induction_casing" },
+    { x = 303, y = 66, z = 300, state = "mekanism:induction_casing" },
+    { x = 303, y = 66, z = 301, state = "mekanism:induction_casing" },
+    { x = 303, y = 66, z = 302, state = "mekanism:induction_casing" },
+    { x = 303, y = 66, z = 303, state = "mekanism:induction_casing" },
+    { x = 303, y = 67, z = 300, state = "mekanism:induction_casing" },
+    { x = 303, y = 67, z = 301, state = "mekanism:induction_casing" },
+    { x = 303, y = 67, z = 302, state = "mekanism:induction_casing" },
+    { x = 303, y = 67, z = 303, state = "mekanism:induction_casing" },
+    { x = 301, y = 65, z = 301, state = "mekanism:basic_induction_cell" },
+    { x = 301, y = 65, z = 302, state = "mekanism:basic_induction_provider" },
+    { x = 301, y = 65, z = 304, state = "mekanism:creative_energy_cube" },
+]
+ticks = 60
+# MatrixEnergyContainer.insert (MatrixEnergyContainer.java:162-194) takes at most `transferCap - queuedInput` a tick: the providers' rates summed, 256 000 J
+# = 102 400 FE with one basic provider (data 4 = 102 thousand FE). The structure forms in the first two ticks, so the cell has 58 ticks of that, 5.94 MFE,
+# shown as 5 (checked at 100 ticks -> 10 and 200 ticks -> 20: 102 400 FE x (ticks - 2)). The cell holds 3 200 MFE.
+# Then, as GuiInductionMatrix shows them: the fill in thousandths (1), the last input 102 kFE/t and the last output 0 (low and high halves each).
+expect.block-menu-data = [{ x = 301, y = 65, z = 303, data = [5, 0, 3200, 0, 102, 0, 1, 1, 1, 102, 0, 0, 0, 0] }]
+
+[[step]]
+# A sneak click with the configurator on the matrix's port toggles it to output (Alex's tool is fresh in this run,
+# so it is on Items, a configurate mode).
+as = "Alex"
+motion = { sneaking = true }
+player = { x = 301.5, y = 63.88, z = 304.5, yaw = 180.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [301, 65, 303] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Toggled Induction Port transfer mode to Output."]
+
+[[step]]
+# The port's mode survives revalidation: break a corner casing (the structure goes invalid) and put it back (valid
+# again). Each change revalidates the structure and rewrites every member's data; before the fix the mode byte was
+# lost in the rewrite and the port fell back to input.
+blocks = [{ x = 300, y = 64, z = 300, state = "minecraft:air" }]
+ticks = 1
+
+[[step]]
+blocks = [{ x = 300, y = 64, z = 300, state = "mekanism:induction_casing" }]
+ticks = 1
+
+[[step]]
+# A plain click on the port says which mode it is: still output after both revalidations.
+as = "Alex"
+motion = { sneaking = false }
+player = { x = 301.5, y = 63.88, z = 304.5, yaw = 180.0, pitch = 0.0 }
+use-item = { stack = "mekanism:configurator*1", pos = [301, 65, 303] }
+ticks = 1
+expect.claimed = true
+
+[[step]]
+ticks = 2
+expect.told = ["Alex: Induction Port mode: Output"]

@@ -1,0 +1,1241 @@
+From 5243b4222158e54536632944f48ef8d14e07c4a6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 23:36:12 +0000
+Subject: [PATCH] Items with logic for WASM server mods (API block 13)
+
+Capability player-items: read and set what players carry, hurt them, give
+them effects; item-used (can take the click) and item-hit events; shared
+item-types interface; armour and tools stay data (components). API level 12;
+item-logic example with harness support.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   1 +
+ crates/horizon-client/src/game/mods.rs        |   4 +-
+ .../horizon-client/src/game/native_hooks.rs   |  11 ++
+ crates/horizon-client/src/game/server_mods.rs | 143 ++++++++++++++++
+ .../examples/item-logic/Cargo.toml            |  16 ++
+ .../examples/item-logic/horizon-mod.toml      |   9 +
+ .../examples/item-logic/src/lib.rs            |  54 ++++++
+ .../examples/item-logic/tests/items.toml      |  24 +++
+ crates/horizon-mod-sdk/src/lib.rs             |  24 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  58 ++++++-
+ crates/horizon-mods/src/api_level.rs          |   8 +-
+ crates/horizon-mods/src/content.rs            |  20 +++
+ crates/horizon-mods/src/manifest.rs           |  13 +-
+ crates/horizon-mods/src/runtime.rs            | 157 +++++++++++++++++-
+ crates/horizon-mods/src/testing.rs            |  83 +++++++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  54 ++++--
+ 19 files changed, 664 insertions(+), 27 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/item-logic/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 2078716..48f4ec5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2392,6 +2392,13 @@ dependencies = [
+  "horizon-mod-sdk",
+ ]
+ 
++[[package]]
++name = "item-logic"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "itertools"
+ version = "0.14.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index fdb9216..294b704 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -50,6 +50,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/cable-demo",
+     "crates/horizon-mod-sdk/examples/multiblock-demo",
+     "crates/horizon-mod-sdk/examples/robit-demo",
++    "crates/horizon-mod-sdk/examples/item-logic",
+     "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 9ae9a42..114585f 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -280,6 +280,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
++            Output::PlayerItems { command, .. } => format!("asked for a player change: {command:?}"),
+             Output::Entity { command, .. } => format!("asked for an entity change: {command:?}"),
+             Output::NetSend { channel, data, .. } => {
+                 format!("sent {} byte(s) on {channel}", data.len())
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index df80aec..f3aacfc 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -611,6 +611,7 @@ impl Game<'_> {
+             motions: Vec::new(),
+             mobs: Vec::new(),
+             mobs_dimension: String::new(),
++            inventories: Vec::new(),
+             view_hit: self.mod_view_hit(),
+             recipes,
+             known_recipes,
+@@ -846,7 +847,8 @@ impl Game<'_> {
+                 | Output::PlaySound { .. }
+                 | Output::NetSend { .. }
+                 | Output::NetToServer { .. }
+-                | Output::Entity { .. }) => {
++                | Output::Entity { .. }
++                | Output::PlayerItems { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 811a1cc..b16fc4e 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2109,6 +2109,10 @@ impl Game<'_> {
+         face: [i32; 3],
+         claimed: &mut bool,
+     ) {
++        #[cfg(feature = "mods")]
++        if !*claimed && self.mod_item_use(stack, Some(pos)) {
++            *claimed = true;
++        }
+         let _ = (stack, pos, face, claimed);
+     }
+     /// `DispenserBlock.getDispenseMethod`: choose a behaviour for any item,
+@@ -2136,6 +2140,11 @@ impl Game<'_> {
+     /// hand swings and the item's own use doesn't run. Server-side, for every
+     /// player of the world; an item on cooldown is never used. API 13.
+     pub(super) fn native_use_item(&mut self, stack: &ItemStack, claimed: &mut bool) {
++        // Server mods (WebAssembly) may take the use, at once.
++        #[cfg(feature = "mods")]
++        if !*claimed && self.mod_item_use(stack, None) {
++            *claimed = true;
++        }
+         let _ = (stack, claimed);
+     }
+     /// `Item.getUseDuration` of `stack`, in ticks: `duration` arrives with
+@@ -2462,6 +2471,8 @@ impl Game<'_> {
+     /// hears. Another player as the target isn't told yet. Server-side, for
+     /// every player of the world (the helpers read the acting one). API 39.
+     pub(super) fn native_hurt_enemy(&mut self, stack: &ItemStack, entity: u32, kind: &str) {
++        #[cfg(feature = "mods")]
++        self.mod_item_hit(stack, entity, kind);
+         let _ = (stack, entity, kind);
+     }
+     /// A server tick of the stack a player carries in `slot`: where
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index af0816b..e21ab3f 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -203,6 +203,23 @@ mod run {
+     }
+ 
+     /// `UUID.toString()`.
++    /// An effect id as the game keeps one: vanilla's without `minecraft:`, a
++    /// content mod's as `<ns>:<path>`; kept for the life of the process (a mod
++    /// uses few).
++    fn effect_id(effect: &str) -> &'static str {
++        static IDS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
++        let id = effect.strip_prefix("minecraft:").unwrap_or(effect);
++        let Ok(mut ids) = IDS.lock() else {
++            return "";
++        };
++        if let Some(known) = ids.iter().find(|k| **k == id) {
++            return known;
++        }
++        let leaked: &'static str = Box::leak(id.to_owned().into_boxed_str());
++        ids.push(leaked);
++        leaked
++    }
++
+     fn uuid_string(u: u128) -> String {
+         let h = format!("{u:032x}");
+         format!(
+@@ -288,6 +305,9 @@ mod run {
+             if self.mods.world {
+                 snapshot.motions = self.server_motions();
+             }
++            if self.mods.mods.wants_player_items() {
++                snapshot.inventories = self.server_inventories(&players);
++            }
+             if self.mods.mods.wants_entities() {
+                 let dim = self.dim.id();
+                 snapshot.mobs = self
+@@ -515,6 +535,51 @@ mod run {
+                 .map(|g| (Target::Guest(g.conn), g.dimension.clone()))
+         }
+ 
++        /// What each player carries as capability `player-items` reads it
++        /// (slots 0 to 35, then feet, legs, chest, head and the off hand).
++        fn server_inventories(
++            &mut self,
++            players: &[horizon_mods::ServerPlayer],
++        ) -> Vec<(String, Vec<Option<horizon_mods::ModItemStack>>)> {
++            let mut out = Vec::new();
++            for p in players {
++                let Some((target, _)) = self.mod_player(&p.id) else {
++                    continue;
++                };
++                if let Some(slots) = self.for_player(target, |g| g.inventory_for_mods()) {
++                    out.push((p.id.clone(), slots));
++                }
++            }
++            out
++        }
++
++        /// This player's carried stacks, in the order of `player-items`.
++        fn inventory_for_mods(&self) -> Vec<Option<horizon_mods::ModItemStack>> {
++            let stack = |s: Option<&Option<horizon_client::items::ItemStack>>| {
++                s.and_then(|s| s.as_ref()).map(Self::mod_stack)
++            };
++            let mut out: Vec<_> = (0..36).map(|i| stack(self.inventory.get(i))).collect();
++            // `armor` holds the head first: feet is its last.
++            for i in 0..4 {
++                out.push(stack(self.armor.get(3 - i)));
++            }
++            out.push(self.offhand.as_ref().map(Self::mod_stack));
++            out
++        }
++
++        /// Puts `stack` in slot `slot` of `player-items`' numbering.
++        fn put_slot_for_mods(&mut self, slot: u32, stack: Option<horizon_client::items::ItemStack>) {
++            let cell = match slot {
++                0..=35 => self.inventory.get_mut(slot as usize),
++                36..=39 => self.armor.get_mut(3 - (slot as usize - 36)),
++                40 => Some(&mut self.offhand),
++                _ => None,
++            };
++            if let Some(cell) = cell {
++                *cell = stack;
++            }
++        }
++
+         /// What every player is doing, as capability `player-control` reads it:
+         /// the window's own player in-frame, then each guest (their game state
+         /// swapped in for the read).
+@@ -1209,6 +1274,47 @@ mod run {
+             }
+         }
+ 
++        /// The acting player as a server mod sees them, if the mods heard
++        /// them join.
++        fn acting_server_player(&mut self) -> Option<horizon_mods::ServerPlayer> {
++            let id = uuid_string(self.native_acting_id());
++            self.mods.players.iter().find(|p| p.id == id).cloned()
++        }
++
++        /// The acting player used `stack` (on the block at `pos`, or in the
++        /// air): true when a server mod took the use.
++        pub(in crate::game) fn mod_item_use(
++            &mut self,
++            stack: &horizon_client::items::ItemStack,
++            pos: Option<[i32; 3]>,
++        ) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_items() {
++                return false;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return false;
++            };
++            let stack = Self::mod_stack(stack);
++            self.mods.mods.item_used(&player, &stack, pos)
++        }
++
++        /// The acting player hit entity `entity` of `kind` holding `stack`.
++        pub(in crate::game) fn mod_item_hit(
++            &mut self,
++            stack: &horizon_client::items::ItemStack,
++            entity: u32,
++            kind: &str,
++        ) {
++            if !self.mods.server || !self.mods.mods.hears_items() {
++                return;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return;
++            };
++            let stack = Self::mod_stack(stack);
++            self.mods.mods.item_hit(&player, &stack, entity, kind);
++        }
++
+         /// A player's client half sent `data` on `channel`.
+         pub(in crate::game) fn mod_net_event(&mut self, player: u128, channel: &str, data: &[u8]) {
+             if !self.hears_players() {
+@@ -1470,6 +1576,43 @@ mod run {
+                         });
+                     }
+                 }
++                Output::PlayerItems {
++                    name,
++                    player,
++                    command,
++                } => {
++                    use horizon_mods::PlayerItemsCommand as P;
++                    let Some((target, _)) = self.mod_player(&player) else {
++                        return;
++                    };
++                    let done = match command {
++                        P::SetSlot { slot, stack } => self
++                            .for_player(target, |g| {
++                                let made = stack.as_ref().and_then(|s| g.game_stack(s));
++                                if stack.is_some() && made.is_none() {
++                                    return false;
++                                }
++                                g.put_slot_for_mods(slot, made);
++                                true
++                            })
++                            .unwrap_or(false),
++                        P::Hurt { damage_type, amount } => self
++                            .for_player(target, |g| g.hurt_player_by(&damage_type, amount))
++                            .is_some(),
++                        P::Effect { effect, duration, amplifier } => {
++                            let id = effect_id(&effect);
++                            self.for_player(target, |g| {
++                                g.add_player_effect(horizon_client::effects::EffectInstance::new(
++                                    id, duration, amplifier,
++                                ))
++                            })
++                            .is_some()
++                        }
++                    };
++                    if !done {
++                        log::debug!("Horizon: mod {name}'s player request was refused");
++                    }
++                }
+                 Output::Entity {
+                     name,
+                     id: mod_id,
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/Cargo.toml b/crates/horizon-mod-sdk/examples/item-logic/Cargo.toml
+new file mode 100644
+index 0000000..1efe6ae
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-logic/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "item-logic"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: items with logic: a wand that is used and hits, a jetpack that burns energy"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml b/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
+new file mode 100644
+index 0000000..10b1aeb
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-logic/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "itemlogic"
++name = "Item Logic"
++version = "0.1.0"
++description = "Test mod for items with logic: itemlogic:wand hurts its user for speed when used and strengthens its holder when it hits; itemlogic:jetpack in the chest slot burns its itemlogic:energy."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "player-items"]
++experimental = ["player-items"]
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs b/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
+new file mode 100644
+index 0000000..d707164
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-logic/src/lib.rs
+@@ -0,0 +1,54 @@
++//! Item Logic: the smallest user of items with logic. `itemlogic:wand`,
++//! used (right click), costs its user 2 magic damage and gives them speed II
++//! for five seconds, taking the use; hitting an entity with it gives Strength
++//! I for three seconds. A `itemlogic:jetpack` in the chest slot burns 1 of its
++//! `itemlogic:energy` component each tick until it has none.
++use horizon_mod_sdk::components::Components;
++use horizon_mod_sdk::server::{
++    BlockPos, ItemStack, Player, Registration, ServerMod, player_items, players,
++};
++
++struct Logic;
++
++const WAND: &str = "itemlogic:wand";
++const JETPACK: &str = "itemlogic:jetpack";
++const CHEST: u32 = 38;
++
++impl ServerMod for Logic {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Logic, Registration::new().on_items().on_tick()))
++    }
++    fn item_used(&mut self, player: &Player, stack: ItemStack, _pos: Option<BlockPos>) -> bool {
++        if stack.item != WAND {
++            return false;
++        }
++        let _ = player_items::hurt(&player.id, "minecraft:magic", 2.0);
++        let _ = player_items::add_effect(&player.id, "minecraft:speed", 100, 1);
++        true
++    }
++    fn item_hit(&mut self, player: &Player, stack: ItemStack, _entity: u32, _kind: &str) {
++        if stack.item == WAND {
++            let _ = player_items::add_effect(&player.id, "minecraft:strength", 60, 0);
++        }
++    }
++    fn tick(&mut self, _tick: u64) {
++        for p in players::online() {
++            let Some(slots) = player_items::get_inventory(&p.id) else { continue };
++            let Some(Some(chest)) = slots.get(CHEST as usize) else { continue };
++            if chest.item != JETPACK {
++                continue;
++            }
++            let Some(mut c) = Components::parse(&chest.components) else { continue };
++            let energy = c.get_long("itemlogic:energy").unwrap_or(0);
++            if energy <= 0 {
++                continue;
++            }
++            c.set_long("itemlogic:energy", energy - 1);
++            let mut stack = chest.clone();
++            stack.components = c.to_snbt();
++            let _ = player_items::set_slot(&p.id, CHEST, Some(&stack));
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Logic);
+diff --git a/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml b/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
+new file mode 100644
+index 0000000..582ce98
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/item-logic/tests/items.toml
+@@ -0,0 +1,24 @@
++[[step]]
++join = "Alex"
++use-item = { stack = "itemlogic:wand*1" }
++expect.claimed = true
++expect.player-items = ["hurt Alex minecraft:magic 2", "effect Alex minecraft:speed 100 1"]
++
++[[step]]
++# Another item is left to the game.
++use-item = { stack = "minecraft:stick*1", pos = [1, 64, 1] }
++expect.claimed = false
++expect.player-items = []
++
++[[step]]
++hit-with = { stack = "itemlogic:wand*1", entity = 9, kind = "minecraft:zombie" }
++expect.player-items = ["effect Alex minecraft:strength 60 0"]
++
++[[step]]
++# A worn jetpack with energy burns it.
++inventory = [
++    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
++    "", "", 'itemlogic:jetpack*1{"itemlogic:energy":10L}',
++]
++ticks = 1
++expect.player-items = ['set-slot Alex 38 itemlogic:jetpack*1{"itemlogic:energy":9L}']
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index afb7eed..7daa1d5 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -214,6 +214,7 @@ pub mod server {
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
+     pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
++    pub use horizon::mods::player_items;
+     pub use horizon::mods::recipe_types::{self, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+@@ -245,6 +246,13 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// A player used `stack` (right click), on a block (`pos`) or in the air.
++        /// Answer true to take the use. When [`Registration::on_items`] is set.
++        fn item_used(&mut self, _player: &Player, _stack: ItemStack, _pos: Option<BlockPos>) -> bool {
++            false
++        }
++        /// A player hit an entity holding `stack`. When [`Registration::on_items`] is set.
++        fn item_hit(&mut self, _player: &Player, _stack: ItemStack, _entity: u32, _kind: &str) {}
+         /// The answer to `entities::spawn_mob` or `summon`: the new entity's
+         /// id, or none when it could not be made.
+         fn entity_spawned(&mut self, _ticket: u64, _id: Option<u32>) {}
+@@ -329,6 +337,7 @@ pub mod server {
+                 blocks: false,
+                 block_entities: Vec::new(),
+                 net: false,
++                items: false,
+             }
+         }
+         /// `block` (`mymod:machine`) carries a block entity; `ticks` asks
+@@ -401,6 +410,11 @@ pub mod server {
+             self.chat = true;
+             self
+         }
++        /// Call [`ServerMod::item_used`] and [`ServerMod::item_hit`].
++        pub fn on_items(mut self) -> Self {
++            self.items = true;
++            self
++        }
+         /// Call [`ServerMod::net_message`].
+         pub fn on_net(mut self) -> Self {
+             self.net = true;
+@@ -526,7 +540,7 @@ macro_rules! export_server_mod {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+                 Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, Player, Registration,
+-                ServerMod, Structure,
++                ItemStack, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+                 static STATE: RefCell<Option<$t>> = const { RefCell::new(None) };
+@@ -574,6 +588,14 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn item_used(player: Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
++                    let mut out = false;
++                    with(|m| out = m.item_used(&player, stack, pos));
++                    out
++                }
++                fn item_hit(player: Player, stack: ItemStack, entity: u32, kind: String) {
++                    with(|m| m.item_hit(&player, stack, entity, &kind))
++                }
+                 fn entity_spawned(ticket: u64, id: Option<u32>) {
+                     with(|m| m.entity_spawned(ticket, id))
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 03ba921..9cee899 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -871,11 +871,49 @@ interface entities {
+     remove-mob: func(dimension: string, id: u32) -> result<_, string>;
+ }
+ 
++/// Types shared by the server interfaces; no capability asks for it.
++interface item-types {
++    /// An item stack. `components` is the SNBT of its data components
++    /// (`{"minecraft:damage":3}`), empty for none.
++    record item-stack {
++        item: string,
++        count: u32,
++        components: string,
++    }
++}
++
++/// Capability `player-items`, server mods only (manifest `api = "0.3"`,
++/// experimental): what players carry, and hurting them and giving them
++/// effects, for items with logic (a jetpack, a tablet that charges, armour with
++/// effects). Reading is as of the last server tick; what a mod asks for is made
++/// after the call returns, before the next tick.
++interface player-items {
++    use item-types.{item-stack};
++    /// The stacks a player carries as of the last tick: slots 0 to 35 are the
++    /// inventory (0 to 8 the hotbar), 36 the feet, 37 the legs, 38 the chest,
++    /// 39 the head and 40 the off hand; none for an empty slot. None for a
++    /// player who isn't online.
++    get-inventory: func(player: string) -> option<list<option<item-stack>>>;
++    /// Puts a stack in a slot (none empties it); the player's client gets
++    /// it. An error for a slot past 40, a player not online or a stack of an
++    /// item the game doesn't know.
++    set-slot: func(player: string, slot: u32, stack: option<item-stack>) -> result<_, string>;
++    /// Hurts the player by `amount` of a damage type (`minecraft:magic`,
++    /// `minecraft:fall`...), as vanilla's damage does (armour, absorption and
++    /// invulnerable time count; creative players take none).
++    hurt: func(player: string, damage-type: string, amount: f32) -> result<_, string>;
++    /// Gives the player an effect (`minecraft:speed`, or a content mod's own
++    /// `mymod:radiation`) for `duration-ticks` (-1 is infinite), at
++    /// `amplifier` (0 is level I).
++    add-effect: func(player: string, effect: string, duration-ticks: s32, amplifier: s32) -> result<_, string>;
++}
++
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+ /// experimental). Only the hooks `init` asks for are ever called. The player
+ /// in each event is as the server saw them when it happened.
+ interface server-events {
+     use players.{player};
++    use item-types.{item-stack};
+ 
+     record block-pos {
+         x: s32,
+@@ -948,6 +986,8 @@ interface server-events {
+         block-entities: list<block-entity-kind>,
+         /// Call `net-message` for what players' client halves send.
+         net: bool,
++        /// Call `item-used` and `item-hit`.
++        items: bool,
+     }
+     record block-entity-kind {
+         /// The block's id, `mymod:machine`.
+@@ -1076,13 +1116,6 @@ interface server-events {
+         /// (`data/<ns>/horizon/menu/<block>.json`, with as many slots).
+         menu: bool,
+     }
+-    /// An item stack. `components` is the SNBT of its data components
+-    /// (`{"minecraft:damage":3}`), empty for none.
+-    record item-stack {
+-        item: string,
+-        count: u32,
+-        components: string,
+-    }
+     /// A block entity of the mod, as the server holds it.
+     record block-entity {
+         dimension: string,
+@@ -1173,6 +1206,16 @@ interface server-events {
+     /// when it could not be made (an unknown kind, a chunk not loaded, a
+     /// monster on peaceful, a mod keeping it out).
+     entity-spawned: func(ticket: u64, id: option<u32>);
++    /// A player used `stack` (right click), in the air (no `pos`) or on the
++    /// block at `pos`, when `registration.items` is set. Answer true to take
++    /// the use: the hand swings and neither the item's own use nor the
++    /// block's runs after it; false leaves it to the game. It is asked at the
++    /// moment of the click, so what it asks for through imports is made at the
++    /// end of the tick.
++    item-used: func(player: player, stack: item-stack, pos: option<block-pos>) -> bool;
++    /// A player hit the entity `entity` of `kind` holding `stack`
++    /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
++    item-hit: func(player: player, stack: item-stack, entity: u32, kind: string);
+ }
+ 
+ /// A client mod: runs in the player's game.
+@@ -1197,6 +1240,7 @@ world horizon-server-mod {
+     import recipe-types;
+     import net;
+     import entities;
++    import player-items;
+     import %world;
+     export server-events;
+ }
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index f3d358f..bf3f1ae 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 11;
++pub const LEVEL: u32 = 12;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 66] = [
++pub const FUNCTIONS: [(&str, u32); 70] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -80,6 +80,10 @@ pub const FUNCTIONS: [(&str, u32); 66] = [
+     ("entities.set-mob-health", 11),
+     ("entities.kill-mob", 11),
+     ("entities.remove-mob", 11),
++    ("player-items.get-inventory", 12),
++    ("player-items.set-slot", 12),
++    ("player-items.hurt", 12),
++    ("player-items.add-effect", 12),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 0d71fc4..e2ee6c7 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -1322,6 +1322,26 @@ capabilities = ["registries"]
+         assert_eq!(components["minecraft:max_damage"], 900);
+     }
+ 
++    #[test]
++    fn armour_and_mod_components_are_data_too() {
++        // 26.3 armour is data: a worn slot, protection as attribute modifiers, a
++        // durability, and a component of the mod's own beside them (API block 13).
++        let helmet = br#"{"template": "minecraft:iron_helmet", "components": {
++            "minecraft:max_damage": 400,
++            "minecraft:equippable": {"slot": "head", "equip_sound": "minecraft:item.armor.equip_iron"},
++            "minecraft:attribute_modifiers": [
++                {"type": "minecraft:armor", "id": "ruby:helmet_armor", "amount": 3.0,
++                 "operation": "add_value", "slot": "head"},
++                {"type": "minecraft:armor_toughness", "id": "ruby:helmet_toughness", "amount": 1.0,
++                 "operation": "add_value", "slot": "head"}],
++            "ruby:energy": 0}}"#;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/item/ruby_helmet.json", helmet)];
++        let content = hmod("armour", MANIFEST_TEXT, files).unwrap();
++        let components = &content.items[0].components;
++        assert!(components.contains_key("minecraft:equippable"));
++        assert_eq!(components["minecraft:max_damage"], 400);
++    }
++
+     #[test]
+     fn mob_effects_take_a_category_and_a_colour() {
+         let files: &[(&str, &[u8])] = &[
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index b0d23f8..e7bc05a 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -111,6 +111,9 @@ pub enum Capability {
+     /// The level's mobs and entities, to read, spawn, move and remove (server
+     /// mods; interface `entities`).
+     Entities,
++    /// What players carry, hurting them and giving them effects (server mods;
++    /// interface `player-items`).
++    PlayerItems,
+     /// Bytes to and from the server half of the mod (client mods; interface `net-client`).
+     NetClient,
+     /// The recipes and items the game knows, for recipe viewers
+@@ -118,7 +121,7 @@ pub enum Capability {
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 17] = [
++    pub const ALL: [Capability; 18] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -134,6 +137,7 @@ impl Capability {
+         Capability::RecipeTypes,
+         Capability::Net,
+         Capability::Entities,
++        Capability::PlayerItems,
+         Capability::NetClient,
+         Capability::Recipes,
+     ];
+@@ -148,6 +152,7 @@ impl Capability {
+                 | Capability::RecipeTypes
+                 | Capability::Net
+                 | Capability::Entities
++                | Capability::PlayerItems
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -168,6 +173,7 @@ impl Capability {
+             Capability::RecipeTypes => "recipe-types",
+             Capability::Net => "net",
+             Capability::Entities => "entities",
++            Capability::PlayerItems => "player-items",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         }
+@@ -185,6 +191,7 @@ impl Capability {
+                 | Capability::RecipeTypes
+                 | Capability::Net
+                 | Capability::Entities
++                | Capability::PlayerItems
+                 | Capability::NetClient
+         )
+     }
+@@ -210,6 +217,7 @@ impl Capability {
+                 "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
+             }
+             Capability::RecipeTypes => "read the recipes of the types it brings and the item tags they use",
++            Capability::PlayerItems => "see and change what players carry, hurt them and give them effects",
+             Capability::Entities => "see the mobs of the world, spawn, move, hurt and remove them",
+             Capability::Net => "send bytes to its half running in players' games, and hear theirs",
+             Capability::NetClient => "send bytes to its half running on the server, and hear it",
+@@ -227,7 +235,7 @@ impl Capability {
+         if !version.starts_with("0.1.") {
+             return Err(format!("needs API {version}; this Horizon runs {API}"));
+         }
+-        if interface == "log" {
++        if interface == "log" || interface == "item-types" {
+             return Ok(None);
+         }
+         // A recipe viewer's panel is part of capability `ui`.
+@@ -260,6 +268,7 @@ impl fmt::Display for Capability {
+             Capability::RecipeTypes => "recipe-types",
+             Capability::Net => "net",
+             Capability::Entities => "entities",
++            Capability::PlayerItems => "player-items",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         };
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index d8d534b..2a5f5bf 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{entities, net, player_control, players, recipe_types, world as mod_world},
++    horizon::mods::{entities, net, player_control, player_items, players, recipe_types, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -158,6 +158,24 @@ pub struct MobInfo {
+     pub max_health: f32,
+ }
+ 
++/// What a mod asked of a player (capability `player-items`), made after its call.
++#[derive(Clone, Debug, PartialEq)]
++pub enum PlayerItemsCommand {
++    SetSlot {
++        slot: u32,
++        stack: Option<ModItemStack>,
++    },
++    Hurt {
++        damage_type: String,
++        amount: f32,
++    },
++    Effect {
++        effect: String,
++        duration: i32,
++        amplifier: i32,
++    },
++}
++
+ /// What a mod asked of an entity (capability `entities`), made after its call.
+ #[derive(Clone, Debug, PartialEq)]
+ pub enum EntityCommand {
+@@ -234,6 +252,9 @@ pub struct Snapshot {
+     /// capability `entities`.
+     pub mobs: Vec<MobInfo>,
+     pub mobs_dimension: String,
++    /// What each player carries (slots 0 to 40, see `player-items`), by player
++    /// id, for capability `player-items`.
++    pub inventories: Vec<(String, Vec<Option<ModItemStack>>)>,
+     /// The first block along the player's view within [`RAYCAST_MAX`] and
+     /// its distance from the eye, for `game.raycast`; the game works it out
+     /// only while a mod calls it ([`Mods::wants_raycast`]).
+@@ -337,6 +358,12 @@ pub enum Output {
+         volume: f32,
+         pitch: f32,
+     },
++    /// A `player-items` request for a player.
++    PlayerItems {
++        name: String,
++        player: String,
++        command: PlayerItemsCommand,
++    },
+     /// An `entities` request of mod `id`, for `dimension`.
+     Entity {
+         name: String,
+@@ -608,6 +635,63 @@ impl Mods {
+                     .is_some_and(|m| m.capabilities.contains(&crate::Capability::RecipeTypes))
+         })
+     }
++    /// Whether a running mod may use capability `player-items`: only then are
++    /// the players' inventories worth reading each tick.
++    pub fn wants_player_items(&self) -> bool {
++        self.entries.iter().any(|e| {
++            e.status == Status::Running
++                && e.manifest
++                    .as_ref()
++                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::PlayerItems))
++        })
++    }
++    /// Whether a running server mod asked for `item-used` and `item-hit`.
++    pub fn hears_items(&self) -> bool {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .any(|r| r.items)
++    }
++    /// `player` used `stack` (right click), on the block at `pos` or in the
++    /// air: true when a mod took the use.
++    pub fn item_used(
++        &mut self,
++        player: &ServerPlayer,
++        stack: &ModItemStack,
++        pos: Option<[i32; 3]>,
++    ) -> bool {
++        let at = pos.map(|p| BlockPos { x: p[0], y: p[1], z: p[2] });
++        let mut claimed = false;
++        for i in 0..self.entries.len() {
++            if !self.entries[i]
++                .run
++                .as_ref()
++                .and_then(|r| r.hooks.server())
++                .is_some_and(|r| r.items)
++            {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_item_used(&mut run.store, player, stack, at),
++                Hooks::Client(..) => Ok(false),
++            });
++            if answer == Some(true) {
++                claimed = true;
++                break;
++            }
++        }
++        claimed
++    }
++    /// `player` hit entity `entity` of `kind` holding `stack`.
++    pub fn item_hit(&mut self, player: &ServerPlayer, stack: &ModItemStack, entity: u32, kind: &str) {
++        self.each_server(
++            FUEL_EVENT,
++            |h| h.items,
++            |m, s| m.call_item_hit(s, player, stack, entity, kind),
++        );
++    }
+     /// Whether a running mod may use capability `entities`: only then is the
+     /// level's mob list worth making each tick.
+     pub fn wants_entities(&self) -> bool {
+@@ -720,6 +804,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             entities::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            player_items::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -2031,6 +2117,75 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++impl player_items::Host for State {
++    fn get_inventory(&mut self, player: String) -> Option<Vec<Option<ModItemStack>>> {
++        self.snapshot
++            .inventories
++            .iter()
++            .find(|(id, _)| *id == player)
++            .map(|(_, slots)| slots.clone())
++    }
++    fn set_slot(
++        &mut self,
++        player: String,
++        slot: u32,
++        stack: Option<ModItemStack>,
++    ) -> Result<(), String> {
++        if slot > 40 {
++            return Err(format!("slot {slot}: 0 to 40"));
++        }
++        if let Some(s) = &stack
++            && (s.item.is_empty() || s.count == 0 || s.components.len() > SUMMON_BYTES)
++        {
++            return Err("a stack has an item, a count over 0 and small components".into());
++        }
++        self.player_request(player, PlayerItemsCommand::SetSlot { slot, stack })
++    }
++    fn hurt(&mut self, player: String, damage_type: String, amount: f32) -> Result<(), String> {
++        if !amount.is_finite() || amount <= 0.0 || !kind_ok(&damage_type) {
++            return Err("an amount over 0 and a damage type id".into());
++        }
++        self.player_request(player, PlayerItemsCommand::Hurt { damage_type, amount })
++    }
++    fn add_effect(
++        &mut self,
++        player: String,
++        effect: String,
++        duration_ticks: i32,
++        amplifier: i32,
++    ) -> Result<(), String> {
++        if !kind_ok(&effect) || duration_ticks == 0 || duration_ticks < -1 {
++            return Err("an effect id, and a duration over 0 (or -1)".into());
++        }
++        let command = PlayerItemsCommand::Effect {
++            effect,
++            duration: duration_ticks,
++            amplifier: amplifier.clamp(0, 255),
++        };
++        self.player_request(player, command)
++    }
++}
++impl State {
++    fn player_request(&mut self, player: String, command: PlayerItemsCommand) -> Result<(), String> {
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::PlayerItems { .. }))
++            .count();
++        if made >= ENTITY_REQUESTS {
++            return Err(format!("at most {ENTITY_REQUESTS} player requests a call"));
++        }
++        self.out.push(Output::PlayerItems {
++            name: self.name.clone(),
++            player,
++            command,
++        });
++        Ok(())
++    }
++}
+ /// Entity requests one call may make, and the longest `summon` compound.
+ const ENTITY_REQUESTS: usize = 64;
+ const SUMMON_BYTES: usize = 8192;
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 1a27923..a6e9838 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -52,6 +52,10 @@ pub struct TestGame {
+     pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
+     /// The faces each transmitter connects through, by position.
+     pub block_transmitters: std::collections::BTreeMap<(i32, i32, i32), [bool; 6]>,
++    /// What each player carries, by player id (capability `player-items`).
++    pub inventories: Vec<(String, Vec<Option<crate::ModItemStack>>)>,
++    /// What the last `item_used` answered.
++    pub claimed: Option<bool>,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -181,6 +185,8 @@ impl TestGame {
+             block_transmitters: Default::default(),
+             multiblock_seen: Default::default(),
+             mobs: Vec::new(),
++            inventories: Vec::new(),
++            claimed: None,
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -211,6 +217,7 @@ impl TestGame {
+             motions: self.motions.clone(),
+             mobs: self.mobs.clone(),
+             mobs_dimension: "minecraft:overworld".into(),
++            inventories: self.inventories.clone(),
+             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
+             gui_size: (427.0, 240.0),
+             ..Snapshot::default()
+@@ -823,6 +830,18 @@ pub struct NetSet {
+     data: Vec<u8>,
+ }
+ 
++/// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct UseSet {
++    stack: String,
++    /// The block clicked; none: in the air.
++    pos: Option<[i32; 3]>,
++    /// For `hit`: the entity and its kind.
++    entity: Option<u32>,
++    kind: Option<String>,
++}
++
+ /// A mob a step puts in the Overworld (replacing the last list).
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -959,6 +978,13 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Server mods, capability `player-items`: what the actor carries from now
++    /// on, slot 0 first (`"minecraft:stone*3"`, `""` for an empty slot).
++    inventory: Option<Vec<String>>,
++    /// Server mods: the actor uses a stack (right click) after the ticks.
++    use_item: Option<UseSet>,
++    /// Server mods: the actor hits an entity holding a stack after the ticks.
++    hit_with: Option<UseSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+     mobs: Option<Vec<MobSet>>,
+     /// Server mods: a spawn ticket is answered after the ticks.
+@@ -1000,6 +1026,11 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods: whether the mod took the step's `use-item`.
++    claimed: Option<bool>,
++    /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
++    /// (`-` for an empty slot), `"hurt Name type amount"` and `"effect Name id ticks level"`.
++    player_items: Option<Vec<String>>,
+     /// Server mods, capability `entities`: every request, as `"spawn-mob kind x y z #ticket"`,
+     /// `"summon kind x y z #ticket nbt"`, `"move id x y z yaw pitch"`, `"display id"`,
+     /// `"remove-entity id"`, `"teleport-mob id x y z"`, `"push-mob id x y z"`,
+@@ -1218,6 +1249,9 @@ impl Step {
+                 .ok_or_else(|| "no player is on the server: add join = \"Name\"".to_string()),
+         };
+         let acts = self.player.is_some()
++            || self.inventory.is_some()
++            || self.use_item.is_some()
++            || self.hit_with.is_some()
+             || self.press.is_some()
+             || self.net.is_some()
+             || self.motion.is_some()
+@@ -1240,6 +1274,12 @@ impl Step {
+             let id = game.players[i].id.clone();
+             set.apply(game.motion_of(&id));
+         }
++        if let (Some(list), Some(i)) = (&self.inventory, actor) {
++            let id = game.players[i].id.clone();
++            let slots = list.iter().map(|s| parse_stack(s)).collect();
++            game.inventories.retain(|(p, _)| *p != id);
++            game.inventories.push((id, slots));
++        }
+         if let Some(set) = &self.clock {
+             set.apply(game.clock.get_or_insert(Clock {
+                 game_time: 0,
+@@ -1262,6 +1302,17 @@ impl Step {
+         game.tick(self.ticks);
+         game.frames(self.frames);
+         let who = actor.map(|i| game.players[i].clone());
++        if let (Some(u), Some(who)) = (&self.use_item, &who) {
++            game.snapshot();
++            let stack = parse_stack(&u.stack).ok_or("use-item: a stack is item*count")?;
++            game.claimed = Some(game.mods.item_used(who, &stack, u.pos));
++        }
++        if let (Some(u), Some(who)) = (&self.hit_with, &who) {
++            game.snapshot();
++            let stack = parse_stack(&u.stack).ok_or("hit-with: a stack is item*count")?;
++            let kind = u.kind.clone().unwrap_or_default();
++            game.mods.item_hit(who, &stack, u.entity.unwrap_or(0), &kind);
++        }
+         if let Some(s) = &self.spawned {
+             game.snapshot();
+             game.mods.entity_spawned(&game.mod_id(), s.ticket, s.id);
+@@ -1489,6 +1540,38 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = e.claimed {
++            if game.claimed != Some(want) {
++                return Err(format!("claimed: expected {want}, got {:?}", game.claimed));
++            }
++        }
++        if let Some(want) = &e.player_items {
++            use crate::PlayerItemsCommand as P;
++            let name = |id: &str| {
++                let p = game.players.iter().find(|p| p.id == id);
++                p.map_or(id.to_owned(), |p| p.name.clone())
++            };
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::PlayerItems { player, command, .. } => Some(match command {
++                        P::SetSlot { slot, stack } => format!(
++                            "set-slot {} {slot} {}",
++                            name(player),
++                            stack.as_ref().map_or("-".to_owned(), |s| show_stack(&Some(s.clone())))
++                        ),
++                        P::Hurt { damage_type, amount } => {
++                            format!("hurt {} {damage_type} {amount}", name(player))
++                        }
++                        P::Effect { effect, duration, amplifier } => {
++                            format!("effect {} {effect} {duration} {amplifier}", name(player))
++                        }
++                    }),
++                    _ => None,
++                })
++                .collect();
++            same("player-items", want, &got)?;
++        }
+         if let Some(want) = &e.entity_commands {
+             use crate::EntityCommand as C;
+             let got: Vec<String> = out
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 7c8c14e..09ddfcb 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 11);
++    assert_eq!(LEVEL, 12);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 4b61054..d4ca10b 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -22,6 +22,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
+ | `recipe-types` | [`recipe-types`](#recipe-types) | read the recipes of the types it brings and the item tags they use |
+ | `net` | [`net`](#net) | send bytes to its half running in players' games, and hear theirs |
+ | `entities` | [`entities`](#entities) | see the mobs of the world, spawn, move, hurt and remove them |
++| `player-items` | [`player-items`](#player-items) | see and change what players carry, hurt them and give them effects |
+ | `net-client` | [`net-client`](#net-client) | send bytes to its half running on the server, and hear it |
+ | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+ 
+@@ -36,7 +37,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `item-types`, `player-items`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -846,6 +847,40 @@ A display entity's transformation (`block_display`, `item_display`, `text_displa
+ | `kill-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Kills a mob as `/kill` does: it falls and drops its loot. |
+ | `remove-mob` | `func(dimension: string, id: u32) -> result<_, string>` | Takes a mob out of the world with no death and no loot. |
+ 
++## `item-types`
++
++Access: not granted by any capability.
++
++Types shared by the server interfaces; no capability asks for it.
++
++### record `item-stack`
++
++An item stack. `components` is the SNBT of its data components (`{"minecraft:damage":3}`), empty for none.
++
++| Field | Type | |
++| --- | --- | --- |
++| `item` | `string` |  |
++| `count` | `u32` |  |
++| `components` | `string` |  |
++
++
++## `player-items`
++
++Access: capability `player-items`.
++
++Capability `player-items`, server mods only (manifest `api = "0.3"`, experimental): what players carry, and hurting them and giving them effects, for items with logic (a jetpack, a tablet that charges, armour with effects). Reading is as of the last server tick; what a mod asks for is made after the call returns, before the next tick.
++
++### type `item-stack`
++
++`type item-stack = item-stack`
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `get-inventory` | `func(player: string) -> option<list<option<item-stack>>>` | The stacks a player carries as of the last tick: slots 0 to 35 are the inventory (0 to 8 the hotbar), 36 the feet, 37 the legs, 38 the chest, 39 the head and 40 the off hand; none for an empty slot. None for a player who isn't online. |
++| `set-slot` | `func(player: string, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in a slot (none empties it); the player's client gets it. An error for a slot past 40, a player not online or a stack of an item the game doesn't know. |
++| `hurt` | `func(player: string, damage-type: string, amount: f32) -> result<_, string>` | Hurts the player by `amount` of a damage type (`minecraft:magic`, `minecraft:fall`...), as vanilla's damage does (armour, absorption and invulnerable time count; creative players take none). |
++| `add-effect` | `func(player: string, effect: string, duration-ticks: s32, amplifier: s32) -> result<_, string>` | Gives the player an effect (`minecraft:speed`, or a content mod's own `mymod:radiation`) for `duration-ticks` (-1 is infinite), at `amplifier` (0 is level I). |
++
+ ## `server-events`
+ 
+ Access: exported by the mod: the game calls it.
+@@ -856,6 +891,10 @@ What the server calls in a server mod (manifest `api = "0.3"`, experimental). On
+ 
+ `type player = player`
+ 
++### type `item-stack`
++
++`type item-stack = item-stack`
++
+ ### record `block-pos`
+ 
+ | Field | Type | |
+@@ -1028,16 +1067,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `blocks` | `bool` | Call `block-broken` and `block-placed`. |
+ | `block-entities` | `list<block-entity-kind>` | Blocks of the mod that carry a block entity: its saved bytes (`block-entity.data`), kept with the chunk and ticked by `block-entities-tick`. The block's content `template` must itself have a block entity (a furnace, a chest...), so that breaking the block removes it. |
+ | `net` | `bool` | Call `net-message` for what players' client halves send. |
+-
+-### record `item-stack`
+-
+-An item stack. `components` is the SNBT of its data components (`{"minecraft:damage":3}`), empty for none.
+-
+-| Field | Type | |
+-| --- | --- | --- |
+-| `item` | `string` |  |
+-| `count` | `u32` |  |
+-| `components` | `string` |  |
++| `items` | `bool` | Call `item-used` and `item-hit`. |
+ 
+ ### record `block-entity`
+ 
+@@ -1089,3 +1119,5 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+ | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
++| `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick. |
++| `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

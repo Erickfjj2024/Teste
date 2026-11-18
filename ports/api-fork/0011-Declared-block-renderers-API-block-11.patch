@@ -1,0 +1,716 @@
+From 934a9cd3a98de02cbc59dabfa9165890a394aa7c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 23:19:38 +0000
+Subject: [PATCH] Declared block entity renderers (API block 11)
+
+data/<id>/horizon/renderer/<block>.json: cubes, a fluid box that rises with a
+tank, spinning parts; sprites and tints per substance; tanks and energy are
+sent to clients (with capacities) when a drawing changes by a sixteenth; pure
+maths in horizon_mods::block_render (tested).
+---
+ crates/horizon-client/src/game.rs             |   1 +
+ .../src/game/block_renderers.rs               | 168 ++++++++++++++++++
+ crates/horizon-client/src/game/mods.rs        |   8 +
+ .../horizon-client/src/game/native_hooks.rs   |   5 +
+ crates/horizon-client/src/game/server_mods.rs |  22 ++-
+ crates/horizon-client/src/mod_content.rs      |  10 +-
+ .../tank-demo/render-example/tank.json        |   8 +
+ crates/horizon-mods/src/block_render.rs       | 100 +++++++++++
+ crates/horizon-mods/src/content.rs            | 163 ++++++++++++++++-
+ crates/horizon-mods/src/lib.rs                |   1 +
+ 10 files changed, 481 insertions(+), 5 deletions(-)
+ create mode 100644 crates/horizon-client/src/game/block_renderers.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/tank-demo/render-example/tank.json
+ create mode 100644 crates/horizon-mods/src/block_render.rs
+
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index b90e7a1..43f22fa 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -201,6 +201,7 @@ mod native_criteria;
+ mod native_entities;
+ mod native_explosions;
+ mod native_falling;
++mod block_renderers;
+ mod menu_screens;
+ mod native_hooks;
+ #[cfg(target_os = "android")]
+diff --git a/crates/horizon-client/src/game/block_renderers.rs b/crates/horizon-client/src/game/block_renderers.rs
+new file mode 100644
+index 0000000..6b1a3e5
+--- /dev/null
++++ b/crates/horizon-client/src/game/block_renderers.rs
+@@ -0,0 +1,168 @@
++//! Block entity renderers of content mods' blocks, drawn from their data
++//! (`data/<ns>/horizon/renderer/<block>.json`, API block 11): boxes, a fluid
++//! that rises with a tank, parts that spin. What changes comes from what the
++//! server sends of the block entity (`native_block_entity_update_tag`: its
++//! `tanks` with their capacities, its `energy` with its `energy_cap`), which
++//! the server sends again when a drawing would change (`display_signature`).
++use super::{Game, native_block_entity_draw::{BlockEntityDraw, CubeFace}};
++use horizon_client::containers::ModBlockEntity;
++use horizon_mods::{
++    block_render::{fluid_box, fluid_sprite, fluid_tint, sixteenths, spin_degrees},
++    content::{BlockRenderer, RenderElement, parse_color},
++};
++use horizon_world::nbt::{JavaString, Tag};
++use std::{collections::HashMap, sync::OnceLock};
++
++/// The mods' renderers by block id, set once with the menu types.
++pub(super) static BLOCK_RENDERERS: OnceLock<HashMap<String, BlockRenderer>> = OnceLock::new();
++
++/// The renderer of block `id`, if it has one.
++pub(super) fn renderer_of(id: &str) -> Option<&'static BlockRenderer> {
++    BLOCK_RENDERERS.get()?.get(id)
++}
++
++/// A tank as the server sent it.
++struct ShownTank {
++    substance: String,
++    amount: u64,
++    capacity: u64,
++}
++
++fn key(s: &str) -> JavaString {
++    JavaString::from(s)
++}
++fn long(tag: Option<&Tag>) -> u64 {
++    match tag {
++        Some(Tag::Long(v)) => (*v).max(0) as u64,
++        Some(Tag::Int(v)) => (*v).max(0) as u64,
++        _ => 0,
++    }
++}
++
++/// The tanks in a block entity's `nbt`.
++fn tanks_of(entity: &ModBlockEntity) -> Vec<ShownTank> {
++    let Some(Tag::List(list)) = entity.nbt.get(&key("tanks")) else {
++        return Vec::new();
++    };
++    list.iter()
++        .map(|t| ShownTank {
++            substance: match t.get("substance") {
++                Some(Tag::String(s)) => s.to_string_lossy(),
++                _ => String::new(),
++            },
++            amount: long(t.get("amount")),
++            capacity: long(t.get("capacity")),
++        })
++        .collect()
++}
++
++/// What a client draws of a block entity's `nbt`, in sixteenths, folded into
++/// one number: the server sends the block entity again only when it changes.
++pub(super) fn display_signature(entity: &ModBlockEntity) -> u64 {
++    use std::hash::{Hash, Hasher};
++    let mut h = std::collections::hash_map::DefaultHasher::new();
++    for t in tanks_of(entity) {
++        (t.substance, sixteenths(t.amount, t.capacity)).hash(&mut h);
++    }
++    let energy = long(entity.nbt.get(&key("energy")));
++    let cap = long(entity.nbt.get(&key("energy_cap")));
++    sixteenths(energy, cap).hash(&mut h);
++    h.finish()
++}
++
++/// The part of a block entity's `nbt` the clients are sent.
++pub(super) fn display_tag(entity: &ModBlockEntity) -> Option<horizon_world::nbt::Compound> {
++    let mut tag = horizon_world::nbt::Compound::new();
++    for k in ["tanks", "energy", "energy_cap"] {
++        if let Some(v) = entity.nbt.get(&key(k)) {
++            tag.insert(key(k), v.clone());
++        }
++    }
++    (!tag.is_empty()).then_some(tag)
++}
++
++/// The same sprite on all six faces.
++fn all(sprite: &str) -> [Option<CubeFace<'_>>; 6] {
++    [Some(CubeFace { sprite, uv: None }); 6]
++}
++
++impl Game<'_> {
++    /// Draws block `block`'s declared renderer for `entity`; false when it has none.
++    pub(super) fn draw_declared_renderer(
++        &self,
++        block: &str,
++        entity: &ModBlockEntity,
++        draw: &mut BlockEntityDraw,
++    ) -> bool {
++        let Some(renderer) = renderer_of(block) else {
++            return false;
++        };
++        let tanks = tanks_of(entity);
++        for element in &renderer.elements {
++            match element {
++                RenderElement::Cube { from, to, sprite, tint } => {
++                    let tint = tint.as_deref().and_then(parse_color).map_or(0xFFFFFF, |c| c & 0xFF_FFFF);
++                    self.native_draw_cube(draw, *from, *to, all(sprite), tint);
++                }
++                RenderElement::Fluid { tank, from, to, sprites, default_sprite, tints } => {
++                    let Some(t) = tanks.get(usize::from(*tank)).filter(|t| t.capacity > 0 && t.amount > 0)
++                    else {
++                        continue;
++                    };
++                    let fraction = t.amount as f32 / t.capacity as f32;
++                    let Some((lo, hi)) = fluid_box(*from, *to, fraction) else {
++                        continue;
++                    };
++                    let Some(sprite) = fluid_sprite(sprites, default_sprite.as_ref(), &t.substance) else {
++                        continue;
++                    };
++                    let tint = fluid_tint(tints, &t.substance);
++                    self.native_draw_cube(draw, lo, hi, all(sprite), tint);
++                }
++                RenderElement::Spin { from, to, sprite, axis, degrees_per_tick, pivot } => {
++                    let degrees = spin_degrees(draw.game_time, draw.partial, *degrees_per_tick);
++                    let centre = pivot.unwrap_or_else(|| {
++                        [0, 1, 2].map(|i| (from[i] + to[i]) / 2.0)
++                    });
++                    let axis = match axis.as_str() {
++                        "x" => [1.0, 0.0, 0.0],
++                        "y" => [0.0, 1.0, 0.0],
++                        _ => [0.0, 0.0, 1.0],
++                    };
++                    draw.push();
++                    // The pivot is in texels; the pose is in blocks.
++                    draw.rotate_about(axis, degrees, centre.map(|v| v / 16.0));
++                    self.native_draw_cube(draw, *from, *to, all(sprite), 0xFFFFFF);
++                    draw.pop();
++                }
++            }
++        }
++        true
++    }
++
++    /// Tells the clients of the declared-renderer block entities of this
++    /// level whose drawing changed since they were last told.
++    #[cfg(feature = "mods")]
++    pub(super) fn sync_declared_displays(&mut self) {
++        if BLOCK_RENDERERS.get().is_none_or(HashMap::is_empty) {
++            return;
++        }
++        let mut changed: Vec<[i32; 3]> = Vec::new();
++        for (pos, e) in self.world.block_entities.iter_mut() {
++            let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
++                continue;
++            };
++            if renderer_of(&m.id).is_none() {
++                continue;
++            }
++            let sig = display_signature(m);
++            let at = [pos.0, pos.1, pos.2];
++            if self.mods.shown_displays.insert(at, sig) != Some(sig) {
++                changed.push(at);
++            }
++        }
++        for pos in changed {
++            self.native_block_entity_sync(pos);
++        }
++    }
++}
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 86fb67a..f3fd705 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -99,6 +99,9 @@ pub(super) struct ModsState {
+     /// Extras that are official mods now, being installed.
+     #[cfg(feature = "mods")]
+     pub(super) moved: super::moved_extras::MovedState,
++    /// What the clients were last told of each declared-renderer block entity.
++    #[cfg(feature = "mods")]
++    pub(super) shown_displays: std::collections::HashMap<[i32; 3], u64>,
+     /// The multiblock structures last told to the mods.
+     #[cfg(feature = "mods")]
+     pub(super) multiblock_seen: horizon_mods::multiblock::Seen,
+@@ -383,6 +386,11 @@ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+         .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
+         .collect();
+     let _ = super::menu_screens::MENU_SCREENS.set(screens);
++    let renderers = horizon_client::mod_content::block_renderers(mods)
++        .into_iter()
++        .map(|r| (r.id.clone(), r.clone()))
++        .collect();
++    let _ = super::block_renderers::BLOCK_RENDERERS.set(renderers);
+     let set = containers::register_mod_menu_types(menus.iter().map(|m| {
+         let results = m.results.iter().map(|&r| usize::from(r)).collect();
+         (m.id.clone(), m.slots.into(), m.data_slots.into(), results)
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index a10f078..811a1cc 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1536,6 +1536,10 @@ impl Game<'_> {
+         entity: &ModBlockEntity,
+         tag: &mut Option<Compound>,
+     ) {
++        // A declared renderer's block: its tanks and energy, for the drawing.
++        if tag.is_none() && super::block_renderers::renderer_of(&entity.id).is_some() {
++            *tag = super::block_renderers::display_tag(entity);
++        }
+         let _ = (pos, entity, tag);
+     }
+     /// Draw the mod block entity at `pos`, of block `block`
+@@ -1558,6 +1562,7 @@ impl Game<'_> {
+         entity: &ModBlockEntity,
+         draw: &mut BlockEntityDraw,
+     ) {
++        self.draw_declared_renderer(block, entity, draw);
+         let _ = (pos, block, state, entity, draw);
+     }
+     /// Where the mod block entity at `pos` draws, for culling
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index aa1af3e..19cbce7 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -390,6 +390,7 @@ mod run {
+             self.apply_mod_entity_updates(menu_updates);
+             self.transfer_mod_energy();
+             self.transfer_mod_tanks();
++            self.sync_declared_displays();
+             self.mods.players = players;
+             self.show_mod_output();
+             self.apply_mod_block_writes();
+@@ -666,14 +667,19 @@ mod run {
+         fn put_tanks(
+             m: &mut horizon_client_render::containers::ModBlockEntity,
+             tanks: &[horizon_mods::Tank],
++            capacities: &[u64],
+         ) {
+             use horizon_world::nbt::Tag;
+             let list = tanks
+                 .iter()
+-                .map(|t| {
++                .enumerate()
++                .map(|(i, t)| {
++                    let cap = capacities.get(i).copied().unwrap_or(0);
+                     Tag::compound([
+                         ("substance", Tag::String(t.substance.as_str().into())),
+                         ("amount", Tag::Long(t.amount.min(i64::MAX as u64) as i64)),
++                        // For a client drawing the tank (the server alone knows it).
++                        ("capacity", Tag::Long(cap.min(i64::MAX as u64) as i64)),
+                     ])
+                 })
+                 .collect();
+@@ -912,6 +918,10 @@ mod run {
+                         if let Some(e) = u.energy {
+                             let e = e.min(spec.capacity).min(i64::MAX as u64) as i64;
+                             m.nbt.insert(name("energy"), horizon_world::nbt::Tag::Long(e));
++                            m.nbt.insert(
++                                name("energy_cap"),
++                                horizon_world::nbt::Tag::Long(spec.capacity.min(i64::MAX as u64) as i64),
++                            );
+                         }
+                         if let Some(f) = &u.energy_faces {
+                             let bytes = f.iter().map(|s| Self::side_byte(*s)).collect();
+@@ -939,7 +949,8 @@ mod run {
+                                     t.substance.clear();
+                                 }
+                             }
+-                            Self::put_tanks(m, &now);
++                            let caps: Vec<u64> = specs.iter().map(|s| s.capacity).collect();
++                            Self::put_tanks(m, &now, &caps);
+                         }
+                         if let Some(faces) = &u.tank_faces {
+                             let mut bytes = Vec::new();
+@@ -1049,6 +1060,10 @@ mod run {
+                         horizon_world::nbt::JavaString::from("energy"),
+                         horizon_world::nbt::Tag::Long(n.energy.min(i64::MAX as u64) as i64),
+                     );
++                    m.nbt.insert(
++                        horizon_world::nbt::JavaString::from("energy_cap"),
++                        horizon_world::nbt::Tag::Long(n.capacity.min(i64::MAX as u64) as i64),
++                    );
+                     self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                 }
+             }
+@@ -1117,7 +1132,8 @@ mod run {
+                             amount: t.amount,
+                         })
+                         .collect();
+-                    Self::put_tanks(m, &held);
++                    let caps: Vec<u64> = n.tanks.iter().map(|t| t.capacity).collect();
++                    Self::put_tanks(m, &held, &caps);
+                     self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                 }
+             }
+diff --git a/crates/horizon-client/src/mod_content.rs b/crates/horizon-client/src/mod_content.rs
+index c899fec..667d135 100644
+--- a/crates/horizon-client/src/mod_content.rs
++++ b/crates/horizon-client/src/mod_content.rs
+@@ -17,7 +17,7 @@
+ use crate::{Result, blocks::MAP_COLORS};
+ use horizon_core::geometry::{Aabb, Axis, ShapeOp, Vec3, VoxelShape};
+ use horizon_mods::content::{
+-    Block, Content, CreativeTab, EntityType, MenuType, MobEffect, Rarity, StateProperty,
++    Block, BlockRenderer, Content, CreativeTab, EntityType, MenuType, MobEffect, Rarity, StateProperty,
+ };
+ use horizon_world::nbt::{self, Compound, JavaString, Limits, Tag};
+ use serde::{Deserialize, Serialize, de};
+@@ -56,6 +56,14 @@ pub fn menu_types(mods: &[ContentMod]) -> Vec<&MenuType> {
+     menus
+ }
+ 
++/// the mods' block entity renderers, by block id.
++pub fn block_renderers(mods: &[ContentMod]) -> Vec<&BlockRenderer> {
++    let mut renderers: Vec<&BlockRenderer> =
++        mods.iter().flat_map(|m| &m.content.renderers).collect();
++    renderers.sort_by(|a, b| a.id.cmp(&b.id));
++    renderers
++}
++
+ /// JSON with its object keys in file order, so a rewritten table differs
+ /// from the original only by what was added.
+ #[derive(Clone, Debug, PartialEq)]
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/render-example/tank.json b/crates/horizon-mod-sdk/examples/tank-demo/render-example/tank.json
+new file mode 100644
+index 0000000..f1336d9
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/tank-demo/render-example/tank.json
+@@ -0,0 +1,8 @@
++{
++  "elements": [
++    { "type": "cube", "from": [1, 0, 1], "to": [15, 1, 15], "sprite": "block/iron_block" },
++    { "type": "fluid", "tank": 0, "from": [2, 1, 2], "to": [14, 15, 14],
++      "sprites": { "mymod:steam": "mymod:block/steam" }, "default_sprite": "block/water_still",
++      "tints": { "mymod:steam": "#CCCCCC" } }
++  ]
++}
+diff --git a/crates/horizon-mods/src/block_render.rs b/crates/horizon-mods/src/block_render.rs
+new file mode 100644
+index 0000000..6eafee2
+--- /dev/null
++++ b/crates/horizon-mods/src/block_render.rs
+@@ -0,0 +1,100 @@
++//! What a declared block entity renderer works out without drawing (API block
++//! 11): the part of a tank box a fluid fills, which sprite and tint a substance
++//! has, how far a spinning box has turned, and how the server's tanks and
++//! energy are quantised so the clients are told only when a drawing changes.
++use crate::content::parse_color;
++use std::collections::BTreeMap;
++
++/// The box (`from`, `to` in texels) a tank of `fraction` (0 to 1) fills,
++/// rising from the bottom of `from`..`to`; none for an empty one.
++pub fn fluid_box(from: [f32; 3], to: [f32; 3], fraction: f32) -> Option<([f32; 3], [f32; 3])> {
++    let fraction = fraction.clamp(0.0, 1.0);
++    if fraction <= 0.0 {
++        return None;
++    }
++    let mut top = to;
++    top[1] = from[1] + (to[1] - from[1]) * fraction;
++    Some((from, top))
++}
++
++/// The sprite of `substance`: the renderer's own, else vanilla's for water
++/// and lava, else the default.
++pub fn fluid_sprite<'a>(
++    sprites: &'a BTreeMap<String, String>,
++    default: Option<&'a String>,
++    substance: &str,
++) -> Option<&'a str> {
++    if let Some(s) = sprites.get(substance) {
++        return Some(s);
++    }
++    match substance {
++        "minecraft:water" => Some("block/water_still"),
++        "minecraft:lava" => Some("block/lava_still"),
++        _ => default.map(String::as_str),
++    }
++}
++
++/// The 0xRRGGBB tint of `substance`: the renderer's own, else water's blue,
++/// else none (white).
++pub fn fluid_tint(tints: &BTreeMap<String, String>, substance: &str) -> u32 {
++    match tints.get(substance).and_then(|c| parse_color(c)) {
++        Some(c) => c & 0x00FF_FFFF,
++        None if substance == "minecraft:water" => 0x3F76E4,
++        None => 0xFFFFFF,
++    }
++}
++
++/// How far a part has turned, in degrees, at `game_time` and `partial` tick.
++pub fn spin_degrees(game_time: i64, partial: f32, degrees_per_tick: f32) -> f32 {
++    ((game_time % 360_000) as f32 + partial) * degrees_per_tick % 360.0
++}
++
++/// A value in sixteenths (0 to 16), for telling clients of a change only when
++/// what they draw does.
++pub fn sixteenths(value: u64, max: u64) -> u8 {
++    if max == 0 {
++        return 0;
++    }
++    // Rounded up from empty, so a little still shows.
++    let v = (u128::from(value.min(max)) * 16 / u128::from(max)) as u8;
++    if value > 0 && v == 0 { 1 } else { v }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_fluid_rises_from_the_bottom() {
++        let (from, to) = ([2.0, 1.0, 2.0], [14.0, 15.0, 14.0]);
++        assert_eq!(fluid_box(from, to, 0.0), None);
++        assert_eq!(fluid_box(from, to, 0.5), Some((from, [14.0, 8.0, 14.0])));
++        assert_eq!(fluid_box(from, to, 2.0), Some((from, to)));
++    }
++    #[test]
++    fn substances_have_sprites_and_tints() {
++        let mut sprites = BTreeMap::new();
++        sprites.insert("mymod:hydrogen".to_owned(), "mymod:block/hydrogen".to_owned());
++        let default = "mymod:block/gas".to_owned();
++        assert_eq!(fluid_sprite(&sprites, Some(&default), "mymod:hydrogen"), Some("mymod:block/hydrogen"));
++        assert_eq!(fluid_sprite(&sprites, Some(&default), "minecraft:lava"), Some("block/lava_still"));
++        assert_eq!(fluid_sprite(&sprites, Some(&default), "mymod:other"), Some("mymod:block/gas"));
++        assert_eq!(fluid_sprite(&sprites, None, "mymod:other"), None);
++        let mut tints = BTreeMap::new();
++        tints.insert("mymod:hydrogen".to_owned(), "#80FF8000".to_owned());
++        assert_eq!(fluid_tint(&tints, "mymod:hydrogen"), 0xFF8000);
++        assert_eq!(fluid_tint(&tints, "minecraft:water"), 0x3F76E4);
++        assert_eq!(fluid_tint(&tints, "minecraft:lava"), 0xFFFFFF);
++    }
++    #[test]
++    fn spin_and_quantising() {
++        assert_eq!(spin_degrees(10, 0.5, 4.0), 42.0);
++        assert!(spin_degrees(1_000_000_000, 0.0, 7.0) < 360.0);
++        assert_eq!(sixteenths(0, 100), 0);
++        assert_eq!(sixteenths(1, 100), 1);
++        assert_eq!(sixteenths(50, 100), 8);
++        assert_eq!(sixteenths(100, 100), 16);
++        assert_eq!(sixteenths(500, 100), 16);
++        assert_eq!(sixteenths(5, 0), 0);
++    }
++}
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 4923db7..0d71fc4 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -542,6 +542,126 @@ impl MenuScreen {
+ /// container (`native_block_entity_container`) may.
+ pub const MAX_MENU_SLOTS: u16 = 256;
+ 
++/// How a mod block's block entity is drawn in the world, from what the server
++/// sends of it (its tanks and energy), with no code on the client (API block
++/// 11): `data/<id>/horizon/renderer/<name>.json` is for the block `<id>:<name>`.
++/// Boxes are in texels, 16 to a block, from the block's lower north-west corner
++/// as block models are (`from` below `to`).
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct BlockRenderer {
++    /// The block this draws, `<mod id>:<path>`.
++    #[serde(skip)]
++    pub id: String,
++    /// Drawn in this order.
++    pub elements: Vec<RenderElement>,
++}
++
++#[derive(Clone, Debug, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
++pub enum RenderElement {
++    /// A box with one sprite on every face.
++    Cube {
++        from: [f32; 3],
++        to: [f32; 3],
++        sprite: String,
++        #[serde(default)]
++        tint: Option<String>,
++    },
++    /// What a tank holds, as a box that rises with it: the box `from` to `to`
++    /// is the full tank, and the part drawn is the tank's fraction of its
++    /// height from the bottom. `sprites` and `tints` say how each substance
++    /// looks (`minecraft:water` is `block/water_still` by default).
++    Fluid {
++        tank: u16,
++        from: [f32; 3],
++        to: [f32; 3],
++        #[serde(default)]
++        sprites: std::collections::BTreeMap<String, String>,
++        #[serde(default)]
++        default_sprite: Option<String>,
++        #[serde(default)]
++        tints: std::collections::BTreeMap<String, String>,
++    },
++    /// A box that turns about `axis` (`x`, `y` or `z`) through its own centre
++    /// (or `pivot`, in texels), `degrees_per_tick` each game tick.
++    Spin {
++        from: [f32; 3],
++        to: [f32; 3],
++        sprite: String,
++        axis: String,
++        degrees_per_tick: f32,
++        #[serde(default)]
++        pivot: Option<[f32; 3]>,
++    },
++}
++
++impl BlockRenderer {
++    fn check(&self, name: &str) -> Result<(), String> {
++        let sprite = |s: &str| {
++            let ok = !s.is_empty()
++                && s.len() <= 128
++                && !s.contains("..")
++                && s.bytes().all(|b| {
++                    b.is_ascii_lowercase()
++                        || b.is_ascii_digit()
++                        || matches!(b, b'_' | b'-' | b'.' | b'/' | b':')
++                });
++            ok.then_some(()).ok_or_else(|| format!("{name}: sprite {s:?} is not a sprite name"))
++        };
++        let colour = |c: &str| {
++            parse_color(c)
++                .map(drop)
++                .ok_or_else(|| format!("{name}: colour {c:?} is #RRGGBB or #AARRGGBB"))
++        };
++        let boxed = |from: &[f32; 3], to: &[f32; 3]| {
++            let fine = from.iter().chain(to).all(|v| v.is_finite() && (-32.0..=48.0).contains(v));
++            if !fine || (0..3).any(|i| from[i] >= to[i]) {
++                Err(format!("{name}: a box is from below to, within -32 to 48 texels"))
++            } else {
++                Ok(())
++            }
++        };
++        if self.elements.is_empty() || self.elements.len() > 64 {
++            return Err(format!("{name}: 1 to 64 elements"));
++        }
++        for e in &self.elements {
++            match e {
++                RenderElement::Cube { from, to, sprite: s, tint } => {
++                    boxed(from, to)?;
++                    sprite(s)?;
++                    if let Some(c) = tint {
++                        colour(c)?;
++                    }
++                }
++                RenderElement::Fluid { from, to, sprites, default_sprite, tints, .. } => {
++                    boxed(from, to)?;
++                    for s in sprites.values().chain(default_sprite) {
++                        sprite(s)?;
++                    }
++                    for c in tints.values() {
++                        colour(c)?;
++                    }
++                }
++                RenderElement::Spin { from, to, sprite: s, axis, degrees_per_tick, pivot } => {
++                    boxed(from, to)?;
++                    sprite(s)?;
++                    if !matches!(axis.as_str(), "x" | "y" | "z") {
++                        return Err(format!("{name}: axis is x, y or z"));
++                    }
++                    if !degrees_per_tick.is_finite() || degrees_per_tick.abs() > 360.0 {
++                        return Err(format!("{name}: degrees_per_tick is within 360"));
++                    }
++                    if pivot.is_some_and(|p| p.iter().any(|v| !v.is_finite())) {
++                        return Err(format!("{name}: pivot is numbers"));
++                    }
++                }
++            }
++        }
++        Ok(())
++    }
++}
++
+ #[derive(Debug)]
+ enum Source {
+     Dir(PathBuf),
+@@ -561,6 +681,8 @@ pub struct Content {
+     pub creative_tabs: Vec<CreativeTab>,
+     pub entity_types: Vec<EntityType>,
+     pub menu_types: Vec<MenuType>,
++    /// Its block entity renderers, by block id.
++    pub renderers: Vec<BlockRenderer>,
+     /// The namespaces it owns: the mod id, then the manifest's `namespaces`.
+     pub namespaces: Vec<String>,
+ }
+@@ -651,6 +773,7 @@ impl Content {
+             creative_tabs: Vec::new(),
+             entity_types: Vec::new(),
+             menu_types: Vec::new(),
++            renderers: Vec::new(),
+             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
+         };
+         content.check(manifest)?;
+@@ -697,6 +820,7 @@ impl Content {
+         let mut tabs = Vec::new();
+         let mut types = Vec::new();
+         let mut menus = Vec::new();
++        let mut renderers = Vec::new();
+         for name in &self.files {
+             let mut parts = name.splitn(3, '/');
+             let (top, namespace, rest) = (
+@@ -745,9 +869,11 @@ impl Content {
+                 types.push((kind, name.clone()));
+             } else if let Some(menu) = parse("menu") {
+                 menus.push((menu, name.clone()));
++            } else if let Some(block) = parse("renderer") {
++                renderers.push((block, name.clone()));
+             } else {
+                 return Err(format!(
+-                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/ and menu/*.json only"
++                    "{name}: data/{id}/horizon/ holds block/, item/, mob_effect/, creative_tab/, entity_type/, menu/ and renderer/*.json only"
+                 ));
+             }
+         }
+@@ -871,6 +997,12 @@ impl Content {
+             }
+             self.entity_types.push(EntityType { id: kind, ..file });
+         }
++        for (block, name) in renderers {
++            let file: BlockRenderer =
++                serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
++            file.check(&name)?;
++            self.renderers.push(BlockRenderer { id: block, ..file });
++        }
+         for (menu, name) in menus {
+             let file: MenuType =
+                 serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
+@@ -1353,6 +1485,35 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn a_block_renderer_lists_cubes_fluids_and_spins() {
++        let file = br##"{"elements": [
++            {"type": "cube", "from": [0, 0, 0], "to": [16, 2, 16], "sprite": "ruby:block/base", "tint": "#FFAA00"},
++            {"type": "fluid", "tank": 0, "from": [2, 2, 2], "to": [14, 14, 14],
++             "sprites": {"ruby:steam": "ruby:block/steam"}, "default_sprite": "ruby:block/gas",
++             "tints": {"ruby:steam": "#CCCCCC"}},
++            {"type": "spin", "from": [7, 2, 2], "to": [9, 14, 14], "sprite": "block/iron_block",
++             "axis": "x", "degrees_per_tick": 6.0}
++        ]}"##;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/renderer/press.json", file)];
++        let content = hmod("renderer", MANIFEST_TEXT, files).unwrap();
++        let r = &content.renderers[0];
++        assert_eq!((r.id.as_str(), r.elements.len()), ("ruby:press", 3));
++        for (case, file, why) in [
++            ("r-empty", r#"{"elements":[]}"#, "1 to 64 elements"),
++            ("r-box", r#"{"elements":[{"type":"cube","from":[4,0,0],"to":[4,1,1],"sprite":"a:b"}]}"#, "from below to"),
++            ("r-sprite", r#"{"elements":[{"type":"cube","from":[0,0,0],"to":[1,1,1],"sprite":"A B"}]}"#, "is not a sprite name"),
++            ("r-axis", r#"{"elements":[{"type":"spin","from":[0,0,0],"to":[1,1,1],"sprite":"a:b","axis":"w","degrees_per_tick":1}]}"#, "axis is x, y or z"),
++            ("r-speed", r#"{"elements":[{"type":"spin","from":[0,0,0],"to":[1,1,1],"sprite":"a:b","axis":"x","degrees_per_tick":900}]}"#, "within 360"),
++            ("r-tint", r#"{"elements":[{"type":"cube","from":[0,0,0],"to":[1,1,1],"sprite":"a:b","tint":"red"}]}"#, "is #RRGGBB"),
++            ("r-kind", r#"{"elements":[{"type":"ring"}]}"#, "unknown variant"),
++        ] {
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/renderer/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++    }
++
+     #[test]
+     fn entity_types_copy_a_throwable_and_name_its_item() {
+         let files: &[(&str, &[u8])] = &[
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 6db3f43..4b14583 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -6,6 +6,7 @@
+ //! Nothing here runs unless a mod is installed and turned on: an empty
+ //! [`Mods`] makes no engine and every hook returns at once.
+ pub mod api_level;
++pub mod block_render;
+ #[cfg(feature = "runtime")]
+ pub mod commands;
+ #[cfg(feature = "runtime")]
+-- 
+2.43.0
+

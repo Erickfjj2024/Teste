@@ -1,0 +1,500 @@
+From 759de2126535200b32e236cf18cf35efa498ba30 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 20:00:15 +0000
+Subject: [PATCH] API 34 (FORK-20, part 1): world.set-menu-text and the text
+ widget's text_data
+
+A block entity's menu carries up to 64 strings (set-menu-text, kept in its saved compound). The host sends them on horizon:menu_text to the clients within 16 blocks when they change and to the player that opens the menu; a screen's text widget with text_data n shows string n.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ .../horizon-client/src/game/menu_screens.rs   | 42 +++++++++++++++-
+ crates/horizon-client/src/game/mods.rs        |  1 +
+ .../horizon-client/src/game/native_hooks.rs   |  3 ++
+ crates/horizon-client/src/game/native_net.rs  |  1 +
+ crates/horizon-client/src/game/server_mods.rs | 48 ++++++++++++++++++
+ .../horizon-client/src/mod_content_tests.rs   |  6 +++
+ .../examples/block-use/src/lib.rs             |  4 ++
+ .../examples/block-use/tests/block_use.toml   |  6 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  5 ++
+ crates/horizon-mods/src/api_level.rs          |  5 +-
+ crates/horizon-mods/src/content.rs            | 11 +++-
+ crates/horizon-mods/src/runtime.rs            | 16 ++++++
+ crates/horizon-mods/src/screen.rs             | 50 +++++++++++++++++++
+ crates/horizon-mods/src/testing.rs            | 14 ++++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  1 +
+ 17 files changed, 210 insertions(+), 8 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 3eaef614c..03e53287a 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -294,6 +294,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             Output::SetCapabilitiesEnabled { items, fluids, energy, .. } => {
+                 format!("capabilities items {items} fluids {fluids} energy {energy}")
+             }
++            Output::SetMenuText { texts, .. } => format!("set {} menu text(s)", texts.len()),
+             Output::MineBlock { tool, .. } => format!("mined a block with {tool}"),
+             Output::PullItems { face, max, .. } => format!("pulled up to {max} item(s) through face {face}"),
+             Output::SetTankFilter { tank, accepts, .. } => format!("tank {tank} takes {accepts:?}"),
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 8cee4c95e..79a877db0 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -30,6 +30,41 @@ pub(super) fn end_drag() {
+     }
+ }
+ 
++/// The strings of the mods' menus this client was sent (`world.set-menu-text`), by block position, and the block position of the
++/// screen being drawn.
++static MENU_TEXT: Mutex<Option<HashMap<[i32; 3], Vec<String>>>> = Mutex::new(None);
++static SCREEN_AT: Mutex<Option<[i32; 3]>> = Mutex::new(None);
++
++/// Most blocks whose strings a client keeps (the oldest are dropped).
++const MENU_TEXT_BLOCKS: usize = 64;
++
++/// A `horizon:menu_text` message arrived: the strings of the block at its position.
++pub(super) fn remember_menu_text(data: &[u8]) {
++    let Some((pos, texts)) = horizon_mods::screen::decode_menu_text(data) else {
++        return;
++    };
++    if let Ok(mut m) = MENU_TEXT.lock() {
++        let map = m.get_or_insert_with(HashMap::new);
++        if map.len() >= MENU_TEXT_BLOCKS && !map.contains_key(&pos) {
++            map.clear();
++        }
++        map.insert(pos, texts);
++    }
++}
++
++/// The screen drawn now is the one of the block at `pos`.
++pub(super) fn set_screen_at(pos: [i32; 3]) {
++    if let Ok(mut s) = SCREEN_AT.lock() {
++        *s = Some(pos);
++    }
++}
++
++/// String `n` of the open screen's block.
++fn menu_string(n: usize) -> Option<String> {
++    let at = (*SCREEN_AT.lock().ok()?)?;
++    MENU_TEXT.lock().ok()?.as_ref()?.get(&at)?.get(n).cloned()
++}
++
+ /// The id a press that stays on this client gives `native_screen_click`'s `button`: not a menu button.
+ pub(super) const LOCAL_PRESS: i32 = i32::MIN;
+ 
+@@ -143,9 +178,12 @@ impl Game<'_> {
+                         });
+                     self.native_sprite_tinted(batch, texture, src, dst, tint);
+                 }
+-                Widget::Text { x, y, text, color, scale } => {
++                Widget::Text { x, y, text, color, scale, text_data } => {
+                     let rgb = color.as_deref().and_then(parse_color).unwrap_or(0xFF40_4040);
+-                    let text = fill_text(text, data);
++                    let text = match text_data {
++                        Some(n) => menu_string(usize::from(*n)).unwrap_or_default(),
++                        None => fill_text(text, data),
++                    };
+                     let at = [ox + *x as f32, oy + *y as f32];
+                     let start = batch.vertices.len();
+                     self.native_text(batch, &text, at, rgb, false);
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 2c314f821..7f8c45abb 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -888,6 +888,7 @@ impl Game<'_> {
+                 | Output::PullItems { .. }
+                 | Output::MineBlock { .. }
+                 | Output::SetCapabilitiesEnabled { .. }
++                | Output::SetMenuText { .. }
+                 | Output::SpawnParticles { .. }
+                 | Output::SetTankFilter { .. }
+                 | Output::SetEnergyCapacity { .. }) => {
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 4e48b8b19..353958f75 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4098,6 +4098,8 @@ impl Game<'_> {
+         if m.items.len() < slots {
+             m.items.resize(slots, None);
+         }
++        #[cfg(feature = "mods")]
++        self.send_menu_text_to_actor(key);
+         true
+     }
+     /// Why the mod block at `key` has no menu to open, for the message the
+@@ -4338,6 +4340,7 @@ impl Game<'_> {
+                 rgba(139, 139, 139, 255),
+             );
+         }
++        super::menu_screens::set_screen_at([s.at.0, s.at.1, s.at.2]);
+         self.native_screen_draw(&s.block, &s.data, batch, [ox, oy]);
+         if s.screen.own_labels {
+             return true;
+diff --git a/crates/horizon-client/src/game/native_net.rs b/crates/horizon-client/src/game/native_net.rs
+index fa3bef874..6c518898d 100644
+--- a/crates/horizon-client/src/game/native_net.rs
++++ b/crates/horizon-client/src/game/native_net.rs
+@@ -98,6 +98,7 @@ impl Game<'_> {
+     /// A `horizon:mod_net` payload the server sent the window.
+     pub(super) fn remote_native_net(&mut self, data: &[u8]) {
+         match mod_net::decode(data) {
++            Ok(m) if m.channel == horizon_mods::screen::MENU_TEXT_CHANNEL => super::menu_screens::remember_menu_text(&m.data),
+             Ok(m) => self.native_net_from_server(&m.channel, &m.data),
+             Err(e) => log::debug!("Horizon: a bad mod message: {e}"),
+         }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 9df8edd33..e8231a486 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -913,6 +913,47 @@ mod run {
+                 self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+             }
+         }
++        /// A mod's `world.set-menu-text` (FORK-20): the strings are kept in the block entity (`menu_text` of its saved compound) and go
++        /// to the clients within reach, which show them in the menu's `text` widgets.
++        pub(in crate::game) fn native_set_menu_text(&mut self, pos: [i32; 3], texts: &[String]) {
++            let key = (pos[0], pos[1], pos[2]);
++            let bytes = horizon_mods::screen::encode_menu_text(pos, texts);
++            let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&key) else {
++                return;
++            };
++            m.nbt.insert(Self::jname("menu_text"), horizon_world::nbt::Tag::ByteArray(bytes.clone().into()));
++            self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++            let near: Vec<u128> = self
++                .lan
++                .as_ref()
++                .map(|h| {
++                    h.hub
++                        .guests
++                        .iter()
++                        .filter(|g| g.placed && (0..3).map(|i| (g.position[i] - f64::from(pos[i])).powi(2)).sum::<f64>() < 16.0 * 16.0)
++                        .map(|g| g.uuid)
++                        .collect()
++                })
++                .unwrap_or_default();
++            for uuid in near {
++                let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++            }
++        }
++
++        /// The strings of the mod block at `key`, to the acting player: its menu just opened.
++        pub(in crate::game) fn send_menu_text_to_actor(&mut self, key: (i32, i32, i32)) {
++            let bytes = match self.world.block_entities.get(&key) {
++                Some(horizon_client_render::containers::BlockEntity::Mod(m)) => match m.nbt.get(&Self::jname("menu_text")) {
++                    Some(horizon_world::nbt::Tag::ByteArray(b)) => b.iter().map(|v| *v as u8).collect::<Vec<u8>>(),
++                    _ => return,
++                },
++                _ => return,
++            };
++            let ints = self.acting_player_uuid();
++            let uuid = ints.iter().fold(0u128, |acc, i| (acc << 32) | u128::from(*i as u32));
++            let _ = self.native_net_send_to_player(uuid, horizon_mods::screen::MENU_TEXT_CHANNEL, &bytes);
++        }
++
+         /// A mod's `world.set-capabilities-enabled` (FORK-34): which of the entity's capabilities the outside can use, kept in it.
+         pub(in crate::game) fn native_set_capabilities_enabled(&mut self, pos: [i32; 3], items: bool, fluids: bool, energy: bool) {
+             let key = (pos[0], pos[1], pos[2]);
+@@ -2451,6 +2492,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} asked for the particle {particle}, which was not shown");
+                     }
+                 }
++                Output::SetMenuText { name, dimension, pos, texts } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_menu_text(pos, &texts);
++                    } else {
++                        log::debug!("Horizon: mod {name} set menu text in another level");
++                    }
++                }
+                 Output::SetCapabilitiesEnabled { name, dimension, pos, items, fluids, energy } => {
+                     if dimension == self.dim.id() {
+                         self.native_set_capabilities_enabled(pos, items, fluids, energy);
+diff --git a/crates/horizon-client/src/mod_content_tests.rs b/crates/horizon-client/src/mod_content_tests.rs
+index 92d4b7d12..1873b03b1 100644
+--- a/crates/horizon-client/src/mod_content_tests.rs
++++ b/crates/horizon-client/src/mod_content_tests.rs
+@@ -75,6 +75,12 @@ fn a_standalone_item_records_the_vanilla_item_it_behaves_as() {
+     let _ = fs::remove_dir_all(&scratch);
+     let base = scratch.join("base");
+     fs::create_dir_all(&base).unwrap();
++    fs::write(
++        base.join("facts.json"),
++        r#"{"states": [["minecraft:iron_block"]], "defaults": {"minecraft:iron_block": 0}}"#,
++    )
++    .unwrap();
++    fs::write(base.join("gameplay-facts.json"), r#"{"states": [{"item": "minecraft:iron_block"}]}"#).unwrap();
+     let mods = [folder_mod(
+         &scratch.join("bows"),
+         &[
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index bc6eb66d6..26f0b7964 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -31,6 +31,10 @@ impl ServerMod for Gate {
+         } else if pos.y == 73 {
+             let _ = world::unpack_block(&player.dimension, pos.x, 72, pos.z, pos.x + 1, pos.y, pos.z);
+         }
++        // FORK-20: the machine at y 75 shows two strings in its menu (a filter's tag and the player's name), `text_data` 0 and 1.
++        if pos.y == 75 {
++            let _ = world::set_menu_text(&player.dimension, pos.x, pos.y, pos.z, &["forge:ores/iron".to_owned(), player.name.clone()]);
++        }
+         match stack {
+             Some(s) if s.item == "minecraft:stone" => BlockUse::Pass,
+             None if !sneaking => BlockUse::Consume,
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 9b7a72894..839e90dea 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -58,3 +58,9 @@ expect.blocks = [{ x = 41, y = 73, z = 0, state = "minecraft:chest[facing=north]
+ blocks = [{ x = 51, y = 74, z = 0, state = "minecraft:chest[facing=north]" }]
+ use-block = { pos = [50, 74, 0] }
+ expect.blocks = [{ x = 51, y = 74, z = 0, state = "blockuse:box" }]
++
++[[step]]
++# FORK-20: a click on the machine at y 75 sets the strings its menu carries.
++use-block = { pos = [1, 75, 1] }
++ticks = 1
++expect.menu-text = ["minecraft:overworld 1 75 1 forge:ores/iron|Alex"]
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index ead700252..57c664b46 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -763,6 +763,11 @@ interface %world {
+     /// with the entity. Made after this call returns; nothing happens for a
+     /// block that is not a mod's block entity. API 24.
+     set-capabilities-enabled: func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>;
++    /// Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept
++    /// with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them
++    /// when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block
++    /// entity. An error for more than 64 strings or one over 256 bytes. API 34.
++    set-menu-text: func(dimension: string, x: s32, y: s32, z: s32, texts: list<string>) -> result<_, string>;
+     /// Shows a particle to the players of `dimension` within `max-distance`
+     /// blocks (at most 128) of `x y z`, as `/particle` does:
+     /// `ServerLevel.sendParticles`. `particle` is a vanilla particle type
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 6394074ae..4c3e93cac 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 33;
++pub const LEVEL: u32 = 34;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 103] = [
++pub const FUNCTIONS: [(&str, u32); 104] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -98,6 +98,7 @@ pub const FUNCTIONS: [(&str, u32); 103] = [
+     ("world.pull-items", 22),
+     ("world.mine-block", 23),
+     ("world.set-capabilities-enabled", 24),
++    ("world.set-menu-text", 34),
+     ("world.spawn-particles", 26),
+     ("recipe-types.burn-time", 27),
+     ("recipe-types.crafting-find", 28),
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 72c99d7f1..70bc53dd8 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -518,12 +518,16 @@ pub enum Widget {
+         #[serde(default)]
+         tint_by: Option<Value>,
+     },
+-    /// A line of text; `{0}`, `{1}`... are data slots.
++    /// A line of text; `{0}`, `{1}`... are data slots. With `text_data: n` it shows string `n` of the block entity's menu text
++    /// (`world.set-menu-text`) instead, nothing while there is none (FORK-20).
+     Text {
+         x: i32,
+         y: i32,
++        #[serde(default)]
+         text: String,
+         #[serde(default)]
++        text_data: Option<u16>,
++        #[serde(default)]
+         color: Option<String>,
+         /// Percent of the usual size, drawn from `x`, `y` (60 is the small print of an upgrade's description); 100 when unset.
+         #[serde(default)]
+@@ -741,7 +745,10 @@ fn check_widget(
+                 return Err(format!("{name}: a sprite's src is x, y, w, h with w and h over 0"));
+             }
+         }
+-        Widget::Text { x, y, text, color, scale } => {
++        Widget::Text { x, y, text, color, scale, text_data } => {
++            if text_data.is_some_and(|n| usize::from(n) >= crate::runtime::MENU_TEXTS) {
++                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", crate::runtime::MENU_TEXTS - 1));
++            }
+             if scale.is_some_and(|s| !(10..=400).contains(&s)) {
+                 return Err(format!("{name}: a text's scale is 10 to 400 percent"));
+             }
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index a64683a20..3e8c4ae10 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -444,6 +444,8 @@ pub enum Output {
+     PackBlock { name: String, dimension: String, pos: [i32; 3], into: [i32; 3], replacement: Option<String> },
+     /// `world.unpack-block`: what the box at `box_pos` holds, back at `pos`.
+     UnpackBlock { name: String, dimension: String, box_pos: [i32; 3], pos: [i32; 3] },
++    /// `world.set-menu-text`: the strings the menu of a block entity carries (FORK-20).
++    SetMenuText { name: String, dimension: String, pos: [i32; 3], texts: Vec<String> },
+     /// `world.set-capabilities-enabled`: which of a block entity's capabilities the outside can use.
+     SetCapabilitiesEnabled {
+         name: String,
+@@ -2536,6 +2538,17 @@ impl mod_world::Host for State {
+         self.out.push(Output::UnpackBlock { name: self.name.clone(), dimension, box_pos: [box_x, box_y, box_z], pos: [x, y, z] });
+         Ok(())
+     }
++    fn set_menu_text(&mut self, dimension: String, x: i32, y: i32, z: i32, texts: Vec<String>) -> Result<(), String> {
++        if texts.len() > MENU_TEXTS || texts.iter().any(|t| t.len() > MENU_TEXT_BYTES) {
++            return Err(format!("at most {MENU_TEXTS} strings of {MENU_TEXT_BYTES} bytes"));
++        }
++        let made = self.out.iter().filter(|o| matches!(o, Output::SetMenuText { .. })).count();
++        if made >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} menu texts a call"));
++        }
++        self.out.push(Output::SetMenuText { name: self.name.clone(), dimension, pos: [x, y, z], texts });
++        Ok(())
++    }
+     #[allow(clippy::too_many_arguments)]
+     fn set_capabilities_enabled(
+         &mut self,
+@@ -2989,6 +3002,9 @@ impl entities::Host for State {
+         self.entity_request(dimension, EntityCommand::SetFire { id, ticks: ticks.min(72_000) }, &[])
+     }
+ }
++/// Most strings a menu carries and bytes each holds (`world.set-menu-text`).
++pub const MENU_TEXTS: usize = 64;
++pub const MENU_TEXT_BYTES: usize = 256;
+ /// Most bytes a mod message holds, and messages a call may send.
+ const NET_BYTES: usize = 30_000;
+ const NET_PER_CALL: usize = 32;
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index f712e01d8..f10a6d987 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -477,3 +477,53 @@ mod tests {
+         assert_eq!(hovered(&s, &data, &l, [50.0, 5.0]), None);
+     }
+ }
++
++/// The channel a block entity's menu strings travel on, host to client (`world.set-menu-text`).
++pub const MENU_TEXT_CHANNEL: &str = "horizon:menu_text";
++
++/// A block's menu strings as the channel carries them: the position (three little-endian whole numbers), the count, then each string
++/// as its length (two bytes) and its UTF-8.
++pub fn encode_menu_text(pos: [i32; 3], texts: &[String]) -> Vec<u8> {
++    let mut out = Vec::new();
++    for v in pos {
++        out.extend(v.to_le_bytes());
++    }
++    out.push(texts.len().min(255) as u8);
++    for t in texts.iter().take(255) {
++        let bytes = t.as_bytes();
++        let n = bytes.len().min(usize::from(u16::MAX));
++        out.extend((n as u16).to_le_bytes());
++        out.extend(&bytes[..n]);
++    }
++    out
++}
++
++/// The position and the strings of [`encode_menu_text`]; None for bytes that are cut short or not text.
++pub fn decode_menu_text(data: &[u8]) -> Option<([i32; 3], Vec<String>)> {
++    let int = |at: usize| data.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
++    let pos = [int(0)?, int(4)?, int(8)?];
++    let count = usize::from(*data.get(12)?);
++    let mut at = 13;
++    let mut texts = Vec::with_capacity(count);
++    for _ in 0..count {
++        let n = usize::from(u16::from_le_bytes([*data.get(at)?, *data.get(at + 1)?]));
++        at += 2;
++        texts.push(String::from_utf8(data.get(at..at + n)?.to_vec()).ok()?);
++        at += n;
++    }
++    Some((pos, texts))
++}
++
++#[cfg(test)]
++mod menu_text_tests {
++    use super::*;
++
++    #[test]
++    fn menu_text_round_trips_and_a_cut_message_is_refused() {
++        let texts = vec!["forge:ores/iron".to_owned(), String::new(), "ñandú ✓".to_owned()];
++        let bytes = encode_menu_text([-3, 64, 12], &texts);
++        assert_eq!(decode_menu_text(&bytes), Some(([-3, 64, 12], texts)));
++        assert_eq!(decode_menu_text(&bytes[..bytes.len() - 1]), None);
++        assert_eq!(decode_menu_text(&[0; 5]), None);
++    }
++}
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 89f632930..69b24c96a 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -1338,6 +1338,8 @@ pub struct Expect {
+     teleports: Option<Vec<String>>,
+     xp_taken: Option<Vec<String>>,
+     sounds: Option<Vec<String>>,
++    /// Server mods (FORK-20): every `set-menu-text`, as `"dimension x y z text|text"`.
++    menu_text: Option<Vec<String>>,
+     /// Server mods (FORK-34): every `set-capabilities-enabled`, as `"dimension x y z items=true fluids=true energy=false"`.
+     capabilities: Option<Vec<String>>,
+     /// Server mods (FORK-30): every `spawn-particles`, as `"dimension particle x y z count"`.
+@@ -2213,6 +2215,18 @@ impl Step {
+                 .collect();
+             same("particles", want, &got)?;
+         }
++        if let Some(want) = &e.menu_text {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::SetMenuText { dimension, pos, texts, .. } => {
++                        Some(format!("{dimension} {} {} {} {}", pos[0], pos[1], pos[2], texts.join("|")))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("menu-text", want, &got)?;
++        }
+         if let Some(want) = &e.capabilities {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 4357b15d0..3e89830c7 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 33);
++    assert_eq!(LEVEL, 34);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index daf2b646c..7bae364e9 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -735,6 +735,7 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `set-block-property` | `func(dimension: string, x: s32, y: s32, z: s32, property: string, value: string) -> result<_, string>` | Sets one property of the block at a position (`lit`, `facing`) to a value, as a furnace's tick sets its `lit`: neighbours and players are told, and the block entity **stays** (a block set with `set-blocks` loses it). Made after this call returns, before the dimension's next tick; nothing happens for a block with no such property or value, or one already set. At most 4096 per call. |
+ | `set-item-faces` | `func(dimension: string, x: s32, y: s32, z: s32, faces: list<list<u32>>) -> result<_, string>` | Sets which slots of the block entity's container each face reaches: the six lists are down, up, north, south, west, east, each of slot numbers (0 to 31). A hopper or dropper put through a face uses its list, as it would the kind's own `faces`, which this replaces for that one entity (kept with it). Made after this call returns; nothing happens for a block with no mod container. API 17. |
+ | `set-capabilities-enabled` | `func(dimension: string, x: s32, y: s32, z: s32, items: bool, fluids: bool, energy: bool) -> result<_, string>` | Closes or opens, for everything outside the block entity (hoppers and droppers, pipes, tubes and cables, other machines), the three kinds of capability it carries: its `items` container, its `fluids` (tanks) and its `energy`. A closed capability gives and takes nothing through any face, whatever the faces say; the contents, the faces and the mod's own reads and writes are untouched, so a structure that becomes valid again finds everything where it was. All three are open until closed. Kept with the entity. Made after this call returns; nothing happens for a block that is not a mod's block entity. API 24. |
++| `set-menu-text` | `func(dimension: string, x: s32, y: s32, z: s32, texts: list<string>) -> result<_, string>` | Sets the strings the menu of the block entity at the position carries (FORK-20): up to 64, each up to 256 bytes of text, kept with the entity. A screen's `text` widget with `text_data: n` shows string `n`; the clients that have the menu open get them when they change and when they open it. Made after this call returns; nothing happens for a block that is not a mod's block entity. An error for more than 64 strings or one over 256 bytes. API 34. |
+ | `spawn-particles` | `func(dimension: string, particle: string, x: f64, y: f64, z: f64, spread-x: f32, spread-y: f32, spread-z: f32, speed: f32, count: u32, color: option<u32>, scale: f32, max-distance: f32) -> result<_, string>` | Shows a particle to the players of `dimension` within `max-distance` blocks (at most 128) of `x y z`, as `/particle` does: `ServerLevel.sendParticles`. `particle` is a vanilla particle type (`minecraft:happy_villager`, `minecraft:dust`) or the mod's own (`mymod:spark`, from its `assets/<id>/particles/`). `spread-*` is the box the `count` particles (1 to 512) scatter over, `speed` how fast they move; `color` (0xRRGGBB) and `scale` are the options of `minecraft:dust` and the spell particles. Made after this call returns, at most 1024 requests a call. An error (nothing shown) for a particle the game does not know or numbers that are not finite. API 26. |
+ | `pull-items` | `func(dimension: string, x: s32, y: s32, z: s32, face: u32, items: list<string>, max: u32) -> result<_, string>` | Pulls items out of the container beside the block entity, on its face `face` (0 to 5: down, up, north, south, west, east), into the block entity's own container through that same face: up to `max` items of the ids in `items` (any when empty), the ones the other container lets out through its side toward this block and this one lets in. Once, after this call returns; a Mekanism sorter calls it every few ticks. API 22. |
+ | `mine-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: string, silk-touch: bool, to-x: s32, to-y: s32, to-z: s32, face: u32) -> result<_, string>` | Breaks the block at a position as a player with `tool` (an item id, say `minecraft:netherite_pickaxe`; with `silk-touch` it carries Silk Touch) would, rolls its drops, and puts them in the container at (`to-x`, `to-y`, `to-z`) through that block's face `face` (0 to 5: down, up, north, south, west, east); what does not fit drops where the block was. Nothing happens for air, liquids and unbreakable blocks. Once, after this call returns; at most 64 a call. API 23. |
+-- 
+2.43.0
+

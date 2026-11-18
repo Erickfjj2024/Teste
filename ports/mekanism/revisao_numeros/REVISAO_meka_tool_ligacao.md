@@ -1,0 +1,7 @@
+# Ligação do Meka-Tool e do MekaSuit ao jogo / Wiring the Meka-Tool and the MekaSuit
+
+**PT-BR.** **Feito:** teletransporte do Meka-Tool (`equipment_world.rs`): raio de até 100 blocos (percurso por voxels sobre `world.get-block`; ar e fluidos passam, planta e tocha acertam), olho 0,08 mais baixo agachado, destino livre (ar ou fluido em y+1 e y+2), distância ao quadrado < 5 não teleporta, energia `ceil(1000 J × distância²/10)` (arredondada para cima em FE), exige alvo se o módulo mandar, escreve a energia de volta no item. 5 testes novos.
+**Não feito, de propósito:** o dano extra de ataque e seu custo (o `item-hit` só ouve; cobrar energia sem aplicar o dano seria infiel), menu radial, mineração em área/veia, agricultura, e **todo o MekaSuit** (absorção de dano, jetpack, módulos de movimento, HUD, carga em cadeia). O MekaSuit exige escrever o item todo tick com `set-slot` cego, que pode duplicar ou apagar o item; sem um *compare-and-set*, não ligo. Os pedidos novos estão em `ports/api-fork/PROPOSTA-API.wit` (seção Meka-Tool e MekaSuit).
+**Sem prova:** o formato dos componentes do módulo (`mekanism:energy`, `mekanism:modules`) foi inventado pelo módulo; precisa ser confirmado contra o que o Horizon guarda no item.
+
+**EN.** Done: the Meka-Tool teleport (ray, destination check, squared-distance energy, write-back). Not done on purpose: extra attack damage (item-hit only hears), radial menu, area/vein mining, farming and the whole MekaSuit (needs damage hook, motion, HUD and a compare-and-set slot write). New API requests are in `PROPOSTA-API.wit`.

@@ -1,0 +1,485 @@
+From e5adb84d10343d63289e38dbdd68b5f61162f50b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 01:45:21 +0000
+Subject: [PATCH] FORK-10 (e): damage and death of mod entities
+
+A player's blow on a mod entity's box takes the weapon's damage (melee_damage, the kind as the target), the owner mod changes it through mod-entity-damaged (0 cancels), the entity loses that health, and at 0 the mod hears mod-entity-died and the game removes it. mod-entity-update gains health.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/mod_entities.rs   | 10 ++++
+ .../horizon-client/src/game/native_hooks.rs   |  5 ++
+ crates/horizon-client/src/game/server_mods.rs | 35 ++++++++++++++
+ .../examples/entity-kinds/horizon-mod.toml    |  2 +-
+ .../examples/entity-kinds/src/lib.rs          | 11 ++++-
+ .../examples/entity-kinds/tests/robits.toml   | 12 ++++-
+ crates/horizon-mod-sdk/src/lib.rs             | 15 ++++++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 10 ++++
+ crates/horizon-mods/src/entity_state.rs       | 30 ++++++++++++
+ crates/horizon-mods/src/runtime.rs            | 36 +++++++++++++-
+ crates/horizon-mods/src/testing.rs            | 48 ++++++++++++++++++-
+ docs/api/mods-reference.md                    |  3 ++
+ 12 files changed, 211 insertions(+), 6 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/mod_entities.rs b/crates/horizon-client/src/game/mod_entities.rs
+index 372e28c64..698fa8c86 100644
+--- a/crates/horizon-client/src/game/mod_entities.rs
++++ b/crates/horizon-client/src/game/mod_entities.rs
+@@ -189,6 +189,16 @@ impl Game<'_> {
+         }
+     }
+ 
++    /// Takes `amount` of health from the mod entity `id`: whether it died of it.
++    pub(super) fn damage_mod_entity(&mut self, id: u32, amount: f32) -> bool {
++        let Some(e) = self.mod_entities.list.iter_mut().find(|e| e.id == id) else {
++            return false;
++        };
++        let (health, dead) = horizon_mods::entity_state::after_damage(e.health, amount);
++        e.health = health;
++        dead
++    }
++
+     /// The entities of the level in place, as the mods see them.
+     #[cfg(feature = "mods")]
+     pub(super) fn mod_entities_view(&self) -> Vec<horizon_mods::ModEntity> {
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 6fb4a037d..c3f0e1bff 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2347,6 +2347,11 @@ impl Game<'_> {
+         pos: [f64; 3],
+         canceled: &mut bool,
+     ) {
++        // A server mod's own entity: its box is an `interaction` the game keeps for it (FORK-10 e).
++        #[cfg(feature = "mods")]
++        if kind == "minecraft:interaction" && entity >= 0 && self.mod_entity_attacked(entity as u32) {
++            *canceled = true;
++        }
+         let _ = (entity, kind, pos, canceled);
+     }
+     /// A message from `player`'s client on `channel` (`mod_id:name`), within
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 7b0561201..cd9d2bebc 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -2104,6 +2104,41 @@ mod run {
+             took
+         }
+ 
++        /// The acting player attacked entity `entity`: when it is the box of one of a mod's own entities (FORK-10 e), the blow is the
++        /// player's weapon damage as `melee_damage` works it out, the mod may change it (`mod-entity-damaged`), the entity loses that much
++        /// health and dies at 0 (`mod-entity-died`, then removed). True when the blow was for a mod entity (so the game goes no further).
++        pub(in crate::game) fn mod_entity_attacked(&mut self, entity: u32) -> bool {
++            if !self.mods.server || !self.mods.mods.hears_mod_entities() {
++                return false;
++            }
++            let Some(view) = self.mod_entity_of_hitbox(entity) else {
++                return false;
++            };
++            let (amount, ..) = self.melee_damage(&view.kind, true);
++            self.reset_attack_strength();
++            let source = horizon_mods::DamageSource {
++                damage_type: "minecraft:player_attack".into(),
++                causing: None,
++                is_magic: false,
++                is_fire: false,
++                is_fall: false,
++                is_explosion: false,
++                tags: vec!["minecraft:is_player_attack".into()],
++            };
++            self.lend_world();
++            let applied = self.mods.mods.mod_entity_damaged(&view, &source, amount);
++            self.return_world();
++            let dead = self.damage_mod_entity(view.id, applied);
++            if dead {
++                let mut last = view.clone();
++                last.health = 0.0;
++                self.mods.mods.mod_entity_died(&last);
++                self.native_remove_mod_entity(&view.dimension, view.id);
++            }
++            self.apply_mod_block_writes();
++            true
++        }
++
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+         pub(in crate::game) fn mod_item_hit(
+             &mut self,
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml b/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
+index 81c499cac..005d9b152 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/horizon-mod.toml
+@@ -5,5 +5,5 @@ description = "Test mod for mod-defined living entities (FORK-10): robits:robit
+ authors = ["Rust port"]
+ api = "0.3"
+ side = "server"
+-capabilities = ["registries", "players", "entities", "net"]
++capabilities = ["registries", "players", "world", "entities", "net"]
+ experimental = ["entities", "net"]
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+index 312e7f8d2..b6a882fe7 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Robits (FORK-10): `robits:robit`, a living entity kind declared in `data/robits/horizon/entity_kind/robit.json`, drawn on the clients as an item display of the skin's model (`assets/robits/items/`). A message on
+ //! `robits:spawn` (a position as three little-endian whole numbers) spawns one; each tick the mod counts in its saved bytes and its
+ //! energy, takes the red skin from the second tick, walks a block east from the first, is named Bolt on the third, and removes the robit on the sixth.
+-use horizon_mod_sdk::server::{ModEntity, ModEntityUpdate, Player, Registration, ServerMod, entities};
++use horizon_mod_sdk::server::{DamageSource, ModEntity, ModEntityUpdate, Player, Registration, ServerMod, entities, world};
+ 
+ struct Robits;
+ 
+@@ -23,6 +23,14 @@ impl ServerMod for Robits {
+             &[0],
+         );
+     }
++    /// A red robit takes half of every blow (FORK-10 e); the others take it whole.
++    fn mod_entity_damaged(&mut self, entity: ModEntity, _source: DamageSource, amount: f32) -> f32 {
++        if entity.skin == "red" { amount / 2.0 } else { amount }
++    }
++    /// A robit that dies leaves its last words in the menu text of the block under it.
++    fn mod_entity_died(&mut self, entity: ModEntity) {
++        let _ = world::set_menu_text(&entity.dimension, entity.x.floor() as i32, entity.y.floor() as i32 - 1, entity.z.floor() as i32, &[format!("died:{}", entity.id)]);
++    }
+     /// A right click takes the robit's click unless the player sneaks (FORK-10 d): a real mod would open its menu or pick it up.
+     fn mod_entity_used(&mut self, _player: &Player, _entity: ModEntity, sneaking: bool) -> bool {
+         !sneaking
+@@ -43,6 +51,7 @@ impl ServerMod for Robits {
+                     // From the first tick it walks a block east (FORK-10 c); from the sixth the mod removes it.
+                     path_to: (count == 1).then(|| (e.x + 1.0, e.y, e.z, 1.0)),
+                     stop: false,
++                    health: None,
+                     remove: count >= 6,
+                 }
+             })
+diff --git a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+index 0f758467f..b8aee1d73 100644
+--- a/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
++++ b/crates/horizon-mod-sdk/examples/entity-kinds/tests/robits.toml
+@@ -29,6 +29,14 @@ ticks = 1
+ expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
+ 
+ [[step]]
+-# A wall of the script's own blocks in front of a new goal is not part of this mod; the sixth tick removes the robit.
+-ticks = 3
++# FORK-10 e: it is red now, so a blow of 0.5 hurts for 0.25 (health 1 to 0.75), and the robit is still there.
++damage-mod-entity = { id = 1001, amount = 0.5 }
++expect.mod-entity-damage = 0.25
++expect.mod-entities = ["1001 robits:robit 4.500 70.000 4.500 energy=30 data=[3] skin=red name=Bolt"]
++
++[[step]]
++# A blow of 4 hurts for 2: more than the health left, so it dies, the mod hears of it (its words go to the menu text under it) and it is gone.
++damage-mod-entity = { id = 1001, amount = 4.0 }
++expect.mod-entity-damage = 2.0
+ expect.mod-entities = []
++expect.menu-text = ["minecraft:overworld 4 69 4 died:1001"]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 319b49099..d27c45fea 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -308,6 +308,13 @@ pub mod server {
+         fn mod_entity_used(&mut self, _player: &Player, _entity: ModEntity, _sneaking: bool) -> bool {
+             false
+         }
++        /// One of the mod's own entities is about to take `amount` damage from `source`: the damage to apply. When
++        /// [`Registration::on_mod_entities`] is set.
++        fn mod_entity_damaged(&mut self, _entity: ModEntity, _source: DamageSource, amount: f32) -> f32 {
++            amount
++        }
++        /// One of the mod's own entities died of damage. When [`Registration::on_mod_entities`] is set.
++        fn mod_entity_died(&mut self, _entity: ModEntity) {}
+         /// The living entities of the mod's own kinds, each tick (FORK-10): what to do with them. When [`Registration::on_mod_entities`] is set.
+         fn entities_tick(&mut self, _tick: u64, _entities: Vec<ModEntity>) -> Vec<ModEntityUpdate> {
+             Vec::new()
+@@ -712,6 +719,14 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.item_released(&player, stack, &hand, ticks_held));
+                     out
+                 }
++                fn mod_entity_damaged(entity: ModEntity, source: DamageSource, amount: f32) -> f32 {
++                    let mut out = amount;
++                    with(|m| out = m.mod_entity_damaged(entity, source, amount));
++                    out
++                }
++                fn mod_entity_died(entity: ModEntity) {
++                    with(|m| m.mod_entity_died(entity));
++                }
+                 fn mod_entity_used(player: Player, entity: ModEntity, sneaking: bool) -> bool {
+                     let mut out = false;
+                     with(|m| out = m.mod_entity_used(&player, entity, sneaking));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 0738e0125..d2e97abf9 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1523,6 +1523,8 @@ interface server-events {
+         path-to: option<tuple<f64, f64, f64, f32>>,
+         /// Stops walking.
+         stop: bool,
++        /// Its health after the call (above 0, cut to the kind's maximum); none leaves it.
++        health: option<f32>,
+         /// Takes it out of the world with no death and no drops.
+         remove: bool,
+     }
+@@ -1582,6 +1584,14 @@ interface server-events {
+     /// `height`, reached like an interaction entity, before the item in hand is used on it. Answer true to take the click (the arm swings,
+     /// nothing else happens); false leaves it to the game, which does nothing with it. The first mod that owns the kind answers.
+     mod-entity-used: func(player: player, entity: mod-entity, sneaking: bool) -> bool;
++    /// One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box,
++    /// `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage
++    /// to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does
++    /// not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`).
++    mod-entity-damaged: func(entity: mod-entity, source: damage-source, amount: f32) -> f32;
++    /// An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right
++    /// after; its drops, if it has any, are the mod's to spawn.
++    mod-entity-died: func(entity: mod-entity);
+     /// A player pressed button `id` of the menu of the block entity at `pos`
+     /// (a `button` widget of the menu type's screen), with the entity as it
+     /// is. Returns what to change in it, if anything.
+diff --git a/crates/horizon-mods/src/entity_state.rs b/crates/horizon-mods/src/entity_state.rs
+index e58250e46..54e921a82 100644
+--- a/crates/horizon-mods/src/entity_state.rs
++++ b/crates/horizon-mods/src/entity_state.rs
+@@ -202,6 +202,12 @@ pub fn walk(pos: &mut [f64; 3], yaw: &mut f32, goal: [f64; 3], step: f64, height
+     if go >= dist { Walk::Arrived } else { Walk::Moving }
+ }
+ 
++/// What a hit of `amount` after the mod's say leaves: the health, and whether the entity dies (health at or under 0).
++pub fn after_damage(health: f32, amount: f32) -> (f32, bool) {
++    let left = health - amount.max(0.0);
++    (left.max(0.0), amount > 0.0 && left <= 0.0)
++}
++
+ /// The compound (SNBT) of the `interaction` entity that is the box of an entity of `kind`: the kind's size, answering clicks (so the arm
+ /// swings and the click goes to the server), with the carriers' tag.
+ pub fn hitbox_snbt(kind: &EntityKind) -> String {
+@@ -246,6 +252,9 @@ pub fn apply(e: &mut ModEntityState, kind: &EntityKind, u: &ModEntityUpdate) ->
+     if u.stop {
+         e.goal = None;
+     }
++    if let Some(h) = u.health.filter(|h| h.is_finite() && *h > 0.0) {
++        e.health = h.min(kind.max_health);
++    }
+     u.remove
+ }
+ 
+@@ -283,6 +292,7 @@ mod tests {
+             teleport: None,
+             path_to: None,
+             stop: false,
++            health: None,
+             remove: false,
+         }
+     }
+@@ -357,6 +367,26 @@ mod tests {
+         assert_eq!(e.goal, None);
+     }
+ 
++    #[test]
++    fn damage_takes_health_and_death_is_at_zero_and_a_cancelled_blow_does_nothing() {
++        assert_eq!(after_damage(1.0, 0.25), (0.75, false));
++        assert_eq!(after_damage(1.0, 1.0), (0.0, true));
++        assert_eq!(after_damage(1.0, 4.0), (0.0, true));
++        assert_eq!(after_damage(1.0, 0.0), (1.0, false));
++        assert_eq!(after_damage(1.0, -3.0), (1.0, false));
++        // A health the mod sets stays within the kind's maximum, and 0 or less is ignored.
++        let k = kind();
++        let mut e = ModEntityState::new(1, "minecraft:overworld", &k, [0.0; 3], vec![]);
++        e.health = 0.4;
++        let mut u = update(1);
++        u.health = Some(5.0);
++        apply(&mut e, &k, &u);
++        assert_eq!(e.health, 1.0);
++        u.health = Some(0.0);
++        apply(&mut e, &k, &u);
++        assert_eq!(e.health, 1.0);
++    }
++
+     #[test]
+     fn the_hitbox_is_an_interaction_of_the_kinds_size() {
+         assert_eq!(hitbox_snbt(&kind()), r#"{width:0.6f,height:0.65f,response:1b,Tags:["horizon_mod_entity"]}"#);
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 1026875ac..2439578d7 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -1567,6 +1567,39 @@ impl Mods {
+         }
+         false
+     }
++    /// `entity` (of a mod's own kind) is about to take `amount` from `source`: what the mod that owns the kind makes of it, 0 up.
++    pub fn mod_entity_damaged(&mut self, entity: &ModEntity, source: &DamageSource, amount: f32) -> f32 {
++        let Some((owner, _)) = entity.kind.split_once(':') else { return amount };
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.mod_entities)
++                || self.entries[i].manifest.as_ref().is_none_or(|m| m.id != owner)
++            {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_mod_entity_damaged(&mut run.store, entity, source, amount),
++                Hooks::Client(..) => Ok(amount),
++            });
++            return answer.filter(|a| a.is_finite()).map_or(amount, |a| a.clamp(0.0, 1_000_000.0));
++        }
++        amount
++    }
++    /// `entity` of a mod's own kind died: the mod that owns the kind is told.
++    pub fn mod_entity_died(&mut self, entity: &ModEntity) {
++        let Some((owner, _)) = entity.kind.split_once(':') else { return };
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.mod_entities)
++                || self.entries[i].manifest.as_ref().is_none_or(|m| m.id != owner)
++            {
++                continue;
++            }
++            let _ = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_mod_entity_died(&mut run.store, entity),
++                Hooks::Client(..) => Ok(()),
++            });
++            return;
++        }
++    }
+     /// Each mod's own entities (`kind` of its namespace, at most [`MOD_ENTITIES_PER_CALL`]) tick: the updates, checked, of mods that
+     /// asked for them.
+     pub fn entities_tick(&mut self, tick: u64, entities: &[ModEntity]) -> Vec<ModEntityUpdate> {
+@@ -1591,7 +1624,8 @@ impl Mods {
+             });
+             for u in updates.into_iter().flatten() {
+                 let given = mine.iter().any(|e| e.dimension == u.dimension && e.id == u.id);
+-                let finite = u.teleport.is_none_or(|t| t.0.is_finite() && t.1.is_finite() && t.2.is_finite());
++                let finite = u.teleport.is_none_or(|t| t.0.is_finite() && t.1.is_finite() && t.2.is_finite())
++                    && u.health.is_none_or(f32::is_finite);
+                 if given
+                     && finite
+                     && u.data.as_ref().is_none_or(|d| d.len() <= BLOCK_ENTITY_BYTES)
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index e85e48016..6178a3ecd 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -69,8 +69,9 @@ pub struct TestGame {
+     pub hit_damage_result: Option<f32>,
+     /// What the last `item_released` answered.
+     pub release_result: Option<bool>,
+-    /// What the last `mod_entity_used` answered.
++    /// What the last `mod_entity_used` answered, and the damage the last `mod_entity_damaged` applied.
+     pub entity_used_result: Option<bool>,
++    pub entity_damage_result: Option<f32>,
+     /// The living entities of the mod's own kinds (FORK-10) and the kinds its content declares.
+     pub mod_entities: Vec<crate::ModEntity>,
+     pub entity_kinds: Vec<crate::content::EntityKind>,
+@@ -279,6 +280,7 @@ impl TestGame {
+             hit_damage_result: None,
+             release_result: None,
+             entity_used_result: None,
++            entity_damage_result: None,
+             mod_entities: Vec::new(),
+             entity_kinds: Vec::new(),
+             next_mod_entity: 1000,
+@@ -1154,6 +1156,14 @@ pub struct EntityUseSet {
+     sneaking: bool,
+ }
+ 
++/// A blow on one of the mod's entities (FORK-10 e): the damage the weapon makes, before the mod's say.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct EntityDamageSet {
++    id: u32,
++    amount: f32,
++}
++
+ /// A bow-like item let go: `item-released`, and when the mod lets the shot stand, `item-shot` with the arrows' ids.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -1356,6 +1366,8 @@ pub struct Step {
+     release_item: Option<ReleaseSet>,
+     /// Server mods (FORK-10 d): the actor right-clicks one of the mod's entities.
+     use_mod_entity: Option<EntityUseSet>,
++    /// Server mods (FORK-10 e): a blow on one of the mod's entities.
++    damage_mod_entity: Option<EntityDamageSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+     mobs: Option<Vec<MobSet>>,
+     /// Server mods: a spawn ticket is answered after the ticks.
+@@ -1418,6 +1430,8 @@ pub struct Expect {
+     release_result: Option<bool>,
+     /// Server mods (FORK-10 d): whether the mod took the step's `use-mod-entity` click.
+     mod_entity_used: Option<bool>,
++    /// Server mods (FORK-10 e): the damage the mod let the step's `damage-mod-entity` apply.
++    mod_entity_damage: Option<f32>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+     /// (`-` for an empty slot), `"hurt Name type amount"` and `"effect Name id ticks level"`.
+     player_items: Option<Vec<String>>,
+@@ -1674,6 +1688,7 @@ impl Step {
+             || self.hit_damage.is_some()
+             || self.release_item.is_some()
+             || self.use_mod_entity.is_some()
++            || self.damage_mod_entity.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+             || self.net.is_some()
+@@ -1810,6 +1825,32 @@ impl Step {
+             let stack = parse_stack(&h.stack).ok_or("hit-damage: a stack is item*count")?;
+             game.hit_damage_result = Some(game.mods.item_hit_damage(who, &stack, &h.kind, h.damage));
+         }
++        if let Some(d) = &self.damage_mod_entity {
++            game.snapshot();
++            let entity = game.mod_entities.iter().find(|e| e.id == d.id).cloned().ok_or("damage-mod-entity: no such entity")?;
++            let source = crate::DamageSource {
++                damage_type: "minecraft:player_attack".into(),
++                causing: None,
++                is_magic: false,
++                is_fire: false,
++                is_fall: false,
++                is_explosion: false,
++                tags: vec!["minecraft:is_player_attack".into()],
++            };
++            let applied = game.mods.mod_entity_damaged(&entity, &source, d.amount);
++            game.entity_damage_result = Some(applied);
++            let (health, dead) = crate::entity_state::after_damage(entity.health, applied);
++            if let Some(m) = game.mod_entities.iter_mut().find(|m| m.id == d.id) {
++                m.health = health;
++            }
++            if dead {
++                let mut last = entity;
++                last.health = 0.0;
++                game.mods.mod_entity_died(&last);
++                game.mod_entities.retain(|m| m.id != d.id);
++                game.entity_goals.remove(&d.id);
++            }
++        }
+         if let (Some(u), Some(who)) = (&self.use_mod_entity, &who) {
+             game.snapshot();
+             let entity = game.mod_entities.iter().find(|e| e.id == u.id).cloned().ok_or("use-mod-entity: no such entity")?;
+@@ -2172,6 +2213,11 @@ impl Step {
+                 return Err(format!("hit-damage-result: expected {want}, got {:?}", game.hit_damage_result));
+             }
+         }
++        if let Some(want) = e.mod_entity_damage {
++            if game.entity_damage_result != Some(want) {
++                return Err(format!("mod-entity-damage: expected {want}, got {:?}", game.entity_damage_result));
++            }
++        }
+         if let Some(want) = e.mod_entity_used {
+             if game.entity_used_result != Some(want) {
+                 return Err(format!("mod-entity-used: expected {want}, got {:?}", game.entity_used_result));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 30235476a..973b6c3da 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -1286,6 +1286,7 @@ What the mod makes of an entity in a tick; a none leaves that as it is.
+ | `teleport` | `option<tuple<f64, f64, f64>>` | Moves it at once (as `/tp` does). |
+ | `path-to` | `option<tuple<f64, f64, f64, f32>>` | Sets where it walks to (FORK-10 c): the point `x, y, z` and a speed multiplier of the kind's `speed` (1 is its walk). It walks there each tick over the ground, climbing a block and dropping up to 3, and stops when it arrives or a wall is in its way; `some` of a new goal replaces the old, and a teleport clears it. The path is a straight line, not a search. |
+ | `stop` | `bool` | Stops walking. |
++| `health` | `option<f32>` | Its health after the call (above 0, cut to the kind's maximum); none leaves it. |
+ | `remove` | `bool` | Takes it out of the world with no death and no drops. |
+ 
+ ### record `block-entity-update`
+@@ -1318,6 +1319,8 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
+ | `entities-tick` | `func(tick: u64, entities: list<mod-entity>) -> list<mod-entity-update>` | Each tick, the living entities of the mod's own kinds (`registration.mod-entities`, FORK-10) in the level in place, up to 256: what the mod answers is applied at once. Not asked of an entity whose chunk is not loaded. API 36. |
+ | `mod-entity-used` | `func(player: player, entity: mod-entity, sneaking: bool) -> bool` | A player right-clicked one of the mod's own entities (`registration.mod-entities`, FORK-10 d): its box is the kind's `width` by `height`, reached like an interaction entity, before the item in hand is used on it. Answer true to take the click (the arm swings, nothing else happens); false leaves it to the game, which does nothing with it. The first mod that owns the kind answers. |
++| `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
++| `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
+ | `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+-- 
+2.43.0
+

@@ -1,0 +1,304 @@
+From 7805acdac8a28be2abc3edb3eff0c2c97fd865b6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 02:48:09 +0000
+Subject: [PATCH] FORK-20, part 4: the graph widget of mod screens
+
+A line graph (graph: x, y, w, h, series of a value and a colour, samples, min_scale, tooltip) for Mekanism's GuiDoubleGraph (the fission and fusion reactors' heating): the client keeps the last samples readings of each series, one a tick while the screen is open, and draws them from oldest (left) to newest (right) on a scale from the least to the greatest reading kept, at least min_scale tall.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../horizon-client/src/game/menu_screens.rs   | 42 +++++++++
+ crates/horizon-mods/src/content.rs            | 77 +++++++++++++++++
+ crates/horizon-mods/src/screen.rs             | 85 +++++++++++++++++++
+ 3 files changed, 204 insertions(+)
+
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index f4907ac76..173d79fbc 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -49,6 +49,9 @@ pub(super) fn end_drag() -> Option<i32> {
+ static MENU_TEXT: Mutex<Option<HashMap<[i32; 3], Vec<String>>>> = Mutex::new(None);
+ static SCREEN_AT: Mutex<Option<[i32; 3]>> = Mutex::new(None);
+ 
++/// The readings each graph of the open screen keeps (FORK-20 part 4), by the graph's place, with the tick of the last reading.
++static GRAPHS: Mutex<Option<HashMap<(i32, i32), (u64, horizon_mods::screen::GraphHistory)>>> = Mutex::new(None);
++
+ /// Most blocks whose strings a client keeps (the oldest are dropped).
+ const MENU_TEXT_BLOCKS: usize = 64;
+ 
+@@ -119,6 +122,9 @@ pub(super) const LOCAL_PRESS: i32 = i32::MIN;
+ /// A new screen opened: its windows are closed and its variables unset.
+ pub(super) fn reset_locals() {
+     drop_field();
++    if let Ok(mut g) = GRAPHS.lock() {
++        *g = None;
++    }
+     if let Ok(mut l) = LOCALS.lock() {
+         *l = None;
+     }
+@@ -282,6 +288,42 @@ impl Game<'_> {
+                         self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
+                     }
+                 }
++                Widget::Graph { x, y, w, h, series, samples, min_scale, .. } => {
++                    let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
++                    let values: Vec<i64> = series.iter().map(|s| read(&s.value, data)).collect();
++                    let Ok(mut graphs) = GRAPHS.lock() else {
++                        continue;
++                    };
++                    let map = graphs.get_or_insert_with(HashMap::new);
++                    let entry = map
++                        .entry((*x, *y))
++                        .or_insert_with(|| (u64::MAX, horizon_mods::screen::GraphHistory::new(series.len(), usize::from(*samples))));
++                    // One reading a tick while the screen is open (drawing runs every frame).
++                    let tick = self.ticks;
++                    if entry.0 != tick && !data.is_empty() {
++                        entry.0 = tick;
++                        entry.1.push(&values);
++                    }
++                    let lines = entry.1.points(rect, *min_scale);
++                    drop(graphs);
++                    for (points, s) in lines.iter().zip(series) {
++                        let argb = parse_color(&s.color).unwrap_or(0xFFFF_FFFF);
++                        // Each step drawn as 1-pixel columns from one point to the next, so a steep rise stays joined.
++                        for pair in points.windows(2) {
++                            let ([x0, y0], [x1, y1]) = (pair[0], pair[1]);
++                            let cols = (x1 - x0).max(1.0).ceil() as i32;
++                            for c in 0..cols {
++                                let t0 = c as f32 / cols as f32;
++                                let t1 = (c + 1) as f32 / cols as f32;
++                                let ya = y0 + (y1 - y0) * t0;
++                                let yb = y0 + (y1 - y0) * t1;
++                                let top = ya.min(yb).clamp(rect[1], rect[1] + rect[3] - 1.0);
++                                let bottom = ya.max(yb).clamp(rect[1], rect[1] + rect[3] - 1.0);
++                                self.native_fill(batch, [x0 + c as f32, top, 1.0, (bottom - top).max(1.0)], argb);
++                            }
++                        }
++                    }
++                }
+                 Widget::List { x, y, w, h, row_height, first, count, source, color, .. } => {
+                     let total = read(count, data);
+                     let rows = list_rows(*h, *row_height);
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index c0319d0f8..235b1c242 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -714,6 +714,23 @@ pub enum Widget {
+         #[serde(default)]
+         color: Option<String>,
+     },
++    /// A line graph (Mekanism's `GuiDoubleGraph`, the heating of the fission and fusion reactors; FORK-20 part 4): the client keeps the
++    /// last `samples` readings of each series (one a tick while the screen is open) and draws them as lines from left (oldest) to right
++    /// (newest); the vertical scale goes from the least to the greatest reading kept, at least `min_scale` tall. Its tooltip fills `{0}`,
++    /// `{1}`... with data slots, as a text does.
++    Graph {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        series: Vec<GraphSeries>,
++        #[serde(default = "default_samples")]
++        samples: u16,
++        #[serde(default = "default_min_scale")]
++        min_scale: i64,
++        #[serde(default)]
++        tooltip: Option<String>,
++    },
+     #[serde(rename = "textfield")]
+     TextField {
+         x: i32,
+@@ -730,6 +747,22 @@ pub enum Widget {
+     },
+ }
+ 
++/// One line of a graph: what it reads and its colour.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphSeries {
++    pub value: Value,
++    /// `#RRGGBB` or `#AARRGGBB`.
++    pub color: String,
++}
++
++fn default_samples() -> u16 {
++    40
++}
++fn default_min_scale() -> i64 {
++    1
++}
++
+ fn default_row_height() -> i32 {
+     12
+ }
+@@ -1003,6 +1036,25 @@ fn check_widget(
+                 return Err(format!("{name}: a neighbour's side is 0 to 5"));
+             }
+         }
++        Widget::Graph { x, y, w, h, series, samples, min_scale, tooltip } => {
++            rect(*x, *y, *w, *h)?;
++            if series.is_empty() || series.len() > 8 {
++                return Err(format!("{name}: a graph has 1 to 8 series"));
++            }
++            for s in series {
++                data(&s.value)?;
++                colour(&s.color)?;
++            }
++            if !(2..=400).contains(samples) {
++                return Err(format!("{name}: a graph keeps 2 to 400 samples"));
++            }
++            if *min_scale < 1 {
++                return Err(format!("{name}: a graph's min_scale is at least 1"));
++            }
++            if tooltip.as_ref().is_some_and(|t| t.len() > 256) {
++                return Err(format!("{name}: a tooltip is 256 bytes at most"));
++            }
++        }
+         Widget::List { x, y, w, h, row_height, first, count, color, .. } => {
+             rect(*x, *y, *w, *h)?;
+             if !(8..=64).contains(row_height) || *row_height > *h {
+@@ -2187,6 +2239,31 @@ capabilities = ["registries"]
+                 r#"{"slots":1,"data_slots":1,"screen":{"slots":[null],"widgets":[{"type":"list","x":0,"y":0,"w":50,"h":30,"first":0,"count":{"data":5},"on_click":1}]}}"#,
+                 "data slot 5 is past the last one",
+             ),
++            (
++                "graph-series",
++                r#"{"slots":1,"screen":{"slots":[null],"widgets":[{"type":"graph","x":0,"y":0,"w":50,"h":30,"series":[]}]}}"#,
++                "1 to 8 series",
++            ),
++            (
++                "graph-samples",
++                r##"{"slots":1,"data_slots":1,"screen":{"slots":[null],"widgets":[{"type":"graph","x":0,"y":0,"w":50,"h":30,"samples":1,"series":[{"value":{"data":0},"color":"#FF0000"}]}]}}"##,
++                "2 to 400 samples",
++            ),
++            (
++                "graph-scale",
++                r##"{"slots":1,"data_slots":1,"screen":{"slots":[null],"widgets":[{"type":"graph","x":0,"y":0,"w":50,"h":30,"min_scale":0,"series":[{"value":{"data":0},"color":"#FF0000"}]}]}}"##,
++                "min_scale is at least 1",
++            ),
++            (
++                "graph-slot",
++                r##"{"slots":1,"data_slots":1,"screen":{"slots":[null],"widgets":[{"type":"graph","x":0,"y":0,"w":50,"h":30,"series":[{"value":{"data":4},"color":"#FF0000"}]}]}}"##,
++                "data slot 4 is past the last one",
++            ),
++            (
++                "graph-color",
++                r##"{"slots":1,"data_slots":1,"screen":{"slots":[null],"widgets":[{"type":"graph","x":0,"y":0,"w":50,"h":30,"series":[{"value":{"data":0},"color":"red"}]}]}}"##,
++                "is #RRGGBB or #AARRGGBB",
++            ),
+             (
+                 "field-length",
+                 r#"{"slots":1,"screen":{"slots":[null],"widgets":[{"type":"textfield","x":0,"y":0,"w":50,"h":12,"id":1,"max_length":0}]}}"#,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index 0410d7fa5..67b023228 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -323,6 +323,7 @@ fn hover_in(widgets: &[Widget], data: &[i32], locals: &Locals, at: [f32; 2]) ->
+             let label = types.get(k - 1).map_or("", |t| t.label.as_str());
+             tooltip.as_ref().map(|t| tooltip_lines(&t.replace("{label}", label), read(value, data), read(max, data)))
+         }
++        Widget::Graph { x, y, w, h, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => Some(tooltip_lines(&fill_text(t, data), 0, 0)),
+         Widget::Swatch { x, y, w, h, value, labels, tooltip: Some(t), .. } if inside(at, *x, *y, *w, *h) => {
+             let v = read(value, data).max(0) as usize;
+             let label = labels.get(v).or(labels.last()).map_or("", String::as_str);
+@@ -540,6 +541,57 @@ mod tests {
+     }
+ }
+ 
++/// The readings a graph widget keeps on the client: the last `samples` of each series, oldest first.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct GraphHistory {
++    pub samples: usize,
++    pub series: Vec<std::collections::VecDeque<i64>>,
++}
++
++impl GraphHistory {
++    pub fn new(series: usize, samples: usize) -> Self {
++        Self { samples: samples.max(2), series: vec![std::collections::VecDeque::new(); series] }
++    }
++    /// One reading of every series (a tick); the oldest goes once `samples` are kept.
++    pub fn push(&mut self, values: &[i64]) {
++        for (kept, v) in self.series.iter_mut().zip(values) {
++            kept.push_back(*v);
++            while kept.len() > self.samples {
++                kept.pop_front();
++            }
++        }
++    }
++    /// The vertical scale: the least and the greatest reading kept, the top raised so the span is at least `min_scale`.
++    pub fn scale(&self, min_scale: i64) -> (i64, i64) {
++        let all = self.series.iter().flatten();
++        let lo = all.clone().copied().min().unwrap_or(0);
++        let hi = all.copied().max().unwrap_or(0);
++        (lo, hi.max(lo + min_scale.max(1)))
++    }
++    /// Each series as points in `rect` (`x, y, w, h`): the newest reading at the right edge, one step of `w / (samples - 1)` back
++    /// for each older one; `lo` at the bottom, `hi` at the top.
++    pub fn points(&self, rect: [f32; 4], min_scale: i64) -> Vec<Vec<[f32; 2]>> {
++        let (lo, hi) = self.scale(min_scale);
++        let [x, y, w, h] = rect;
++        let step = w / (self.samples - 1) as f32;
++        let span = (hi - lo) as f32;
++        self.series
++            .iter()
++            .map(|kept| {
++                let n = kept.len();
++                kept.iter()
++                    .enumerate()
++                    .map(|(i, v)| {
++                        let px = x + w - (n - 1 - i) as f32 * step;
++                        let py = y + h - (*v - lo) as f32 / span * h;
++                        [px, py]
++                    })
++                    .collect()
++            })
++            .collect()
++    }
++}
++
+ /// What a confirmed text box sends the server, on `<mod id>:menu_text`: the block's position (three little-endian whole numbers),
+ /// the widget's `id` (one more) and the text (UTF-8, the rest of the message).
+ pub fn encode_menu_input(pos: [i32; 3], id: i32, text: &str) -> Vec<u8> {
+@@ -650,6 +702,39 @@ mod menu_text_tests {
+         assert_eq!(press(&screen, &[2], &mut Locals::default(), [12.0, 52.0], false), None);
+     }
+ 
++    #[test]
++    fn a_graph_keeps_its_last_samples_and_scales_from_the_least_to_the_greatest() {
++        let mut g = GraphHistory::new(2, 3);
++        g.push(&[100, 2000]);
++        g.push(&[300, 2500]);
++        g.push(&[200, 2200]);
++        g.push(&[400, 2100]);
++        // Three kept: the first reading is gone.
++        assert_eq!(g.series[0].iter().copied().collect::<Vec<_>>(), [300, 200, 400]);
++        assert_eq!(g.scale(1), (200, 2500));
++        // A flat history still gets the minimum span.
++        let mut flat = GraphHistory::new(1, 4);
++        flat.push(&[1000]);
++        flat.push(&[1000]);
++        assert_eq!(flat.scale(1600), (1000, 2600));
++        // The newest reading is at the right edge, the scale's bottom at the bottom and its top at the top.
++        let pts = g.points([10.0, 20.0, 40.0, 100.0], 1);
++        assert_eq!(pts[0].last(), Some(&[50.0, 20.0 + 100.0 - (400.0 - 200.0) / 2300.0 * 100.0]));
++        assert_eq!(pts[1][0], [10.0, 20.0], "2500, the greatest, is the top, two steps back from the newest");
++        assert_eq!(pts[0][1], [30.0, 120.0], "200, the least, is the bottom");
++    }
++
++    #[test]
++    fn a_graph_is_checked_like_the_other_widgets() {
++        let ok: MenuScreen = serde_json::from_str(
++            r##"{"slots": [], "widgets": [{"type": "graph", "x": 7, "y": 20, "w": 160, "h": 40, "samples": 40, "min_scale": 1600,
++                "series": [{"value": {"data": 0}, "color": "#FF0000"}, {"value": {"pair": [1, 2]}, "color": "#00FFFF"}], "tooltip": "Heat {0}"}]}"##,
++        )
++        .unwrap();
++        assert!(matches!(&ok.widgets[0], Widget::Graph { samples: 40, min_scale: 1600, series, .. } if series.len() == 2));
++        assert_eq!(hovered(&ok, &[1234, 0, 0], &Locals::default(), [10.0, 30.0]), Some(vec!["Heat 1234".to_owned()]));
++    }
++
+     #[test]
+     fn validators_filter_what_is_typed() {
+         use crate::content::Validator;
+-- 
+2.43.0
+

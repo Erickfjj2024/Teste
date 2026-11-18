@@ -1,0 +1,1213 @@
+From 3b6619ea8444802e8e9590a5049dee7a0a852a20 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:56:34 +0000
+Subject: [PATCH] Transmitter networks for WASM block entities (API block 9)
+
+transmitter-spec (cables and pipes of a medium: energy or a tank kind),
+networks of touching transmitters with the least throughput, even sharing
+between machines, connecting faces a mod can change; pure logic in
+horizon_mods::network (7 tests); the game runs it before the neighbour
+transfers; cable-demo example.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game/server_mods.rs |  71 ++++
+ .../examples/block-counter/src/lib.rs         |   1 +
+ .../examples/block-mover/src/lib.rs           |   1 +
+ .../examples/cable-demo/Cargo.toml            |  16 +
+ .../examples/cable-demo/horizon-mod.toml      |   8 +
+ .../examples/cable-demo/src/lib.rs            |  92 ++++
+ .../examples/cable-demo/tests/networks.toml   |  46 ++
+ .../examples/cable-demo/tests/pipes.toml      |  22 +
+ .../examples/energy-demo/src/lib.rs           |   2 +
+ .../examples/item-charger/src/lib.rs          |   2 +
+ .../examples/menu-demo/src/lib.rs             |   2 +
+ .../examples/recipe-crusher/src/lib.rs        |   2 +
+ .../examples/tank-demo/src/lib.rs             |   2 +
+ crates/horizon-mod-sdk/src/lib.rs             |   4 +-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  27 ++
+ crates/horizon-mods/src/lib.rs                |   2 +
+ crates/horizon-mods/src/network.rs            | 396 ++++++++++++++++++
+ crates/horizon-mods/src/runtime.rs            |   2 +-
+ crates/horizon-mods/src/testing.rs            |  48 +++
+ docs/api/mods-reference.md                    |  21 +
+ 22 files changed, 773 insertions(+), 2 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/cable-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/cable-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/cable-demo/tests/networks.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/cable-demo/tests/pipes.toml
+ create mode 100644 crates/horizon-mods/src/network.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index fe8bc97..31512c9 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -417,6 +417,13 @@ version = "1.12.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+ 
++[[package]]
++name = "cable-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "calloop"
+ version = "0.13.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index fddbe2c..a5080f0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -47,6 +47,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/recipe-crusher",
+     "crates/horizon-mod-sdk/examples/menu-demo",
+     "crates/horizon-mod-sdk/examples/net-echo",
++    "crates/horizon-mod-sdk/examples/cable-demo",
+     "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 8f2598f..ad21779 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -558,6 +558,49 @@ mod run {
+         fn jname(s: &str) -> horizon_world::nbt::JavaString {
+             horizon_world::nbt::JavaString::from(s)
+         }
++        /// The faces a transmitter connects through: what its mod last set
++        /// (`transmitter_faces`), else all of them.
++        fn transmitter_connect(
++            m: &horizon_client_render::containers::ModBlockEntity,
++        ) -> [bool; 6] {
++            let mut out = [true; 6];
++            if let Some(horizon_world::nbt::Tag::ByteArray(b)) =
++                m.nbt.get(&Self::jname("transmitter_faces"))
++            {
++                for (to, from) in out.iter_mut().zip(b) {
++                    *to = *from != 0;
++                }
++            }
++            out
++        }
++
++        /// The loaded transmitters (cables and pipes) of this level.
++        fn collect_transmitters(
++            &mut self,
++            kinds: &[horizon_mods::BlockEntityKind],
++        ) -> Vec<horizon_mods::network::Transmitter> {
++            use horizon_mods::network::{Medium, Transmitter};
++            self.world
++                .block_entities
++                .iter_mut()
++                .filter_map(|(pos, e)| {
++                    let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
++                        return None;
++                    };
++                    let spec = kinds.iter().find(|k| k.block == m.id)?.transmitter.as_ref()?;
++                    Some(Transmitter {
++                        pos: [pos.0, pos.1, pos.2],
++                        medium: match &spec.medium {
++                            horizon_mods::TransmitterMedium::Energy => Medium::Energy,
++                            horizon_mods::TransmitterMedium::Tank(kind) => Medium::Tank(kind.clone()),
++                        },
++                        throughput: spec.throughput,
++                        connect: Self::transmitter_connect(m),
++                    })
++                })
++                .collect()
++        }
++
+         /// What a block entity's tanks hold, one per tank the kind declares.
+         fn stored_tanks(
+             m: &horizon_client_render::containers::ModBlockEntity,
+@@ -772,6 +815,11 @@ mod run {
+                 .map(|f| f.to_vec())
+                 .collect();
+             let menu_data = m.data.clone();
++            let transmitter_faces = if kind.transmitter.is_some() {
++                Self::transmitter_connect(m).to_vec()
++            } else {
++                Vec::new()
++            };
+             Some(horizon_mods::BlockEntity {
+                 dimension: dim.into(),
+                 pos: BlockPos {
+@@ -787,6 +835,7 @@ mod run {
+                 tanks,
+                 tank_faces,
+                 menu_data,
++                transmitter_faces,
+             })
+         }
+ 
+@@ -868,6 +917,24 @@ mod run {
+                         self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                     }
+                 }
++                if let Some(faces) = &u.transmitter_faces {
++                    let kinds = self.mods.mods.block_entity_kinds();
++                    if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                        self.world.block_entities.get_mut(&key)
++                        && kinds.iter().any(|k| k.block == m.id && k.transmitter.is_some())
++                    {
++                        let mut now = Self::transmitter_connect(m);
++                        for (to, from) in now.iter_mut().zip(faces) {
++                            *to = *from;
++                        }
++                        let bytes = now.iter().map(|b| u8::from(*b)).collect();
++                        m.nbt.insert(
++                            Self::jname("transmitter_faces"),
++                            horizon_world::nbt::Tag::ByteArray(bytes),
++                        );
++                        self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                    }
++                }
+                 if let Some(data) = &u.menu_data {
+                     if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
+                         self.world.block_entities.get_mut(&key)
+@@ -903,6 +970,7 @@ mod run {
+             if !kinds.iter().any(|k| k.energy.is_some()) {
+                 return;
+             }
++            let transmitters = self.collect_transmitters(&kinds);
+             let mut nodes: Vec<horizon_mods::energy::EnergyNode> = self
+                 .world
+                 .block_entities
+@@ -926,6 +994,7 @@ mod run {
+                 return;
+             }
+             let before: Vec<u64> = nodes.iter().map(|n| n.energy).collect();
++            horizon_mods::network::transfer_energy(&transmitters, &mut nodes);
+             horizon_mods::energy::transfer(&mut nodes);
+             for (n, was) in nodes.iter().zip(before) {
+                 if n.energy == was {
+@@ -951,6 +1020,7 @@ mod run {
+             if !kinds.iter().any(|k| !k.tanks.is_empty()) {
+                 return;
+             }
++            let transmitters = self.collect_transmitters(&kinds);
+             let mut nodes: Vec<horizon_mods::flow::TankNode> = self
+                 .world
+                 .block_entities
+@@ -988,6 +1058,7 @@ mod run {
+                 return;
+             }
+             let before = nodes.clone();
++            horizon_mods::network::transfer_tanks(&transmitters, &mut nodes);
+             horizon_mods::flow::transfer(&mut nodes);
+             for (n, was) in nodes.iter().zip(before) {
+                 if *n == was {
+diff --git a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+index 0958af4..b0c181e 100644
+--- a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+@@ -28,6 +28,7 @@ impl ServerMod for Counter {
+                     tanks: None,
+                     tank_faces: None,
+                     menu_data: None,
++                    transmitter_faces: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+index 626701e..9c90a80 100644
+--- a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+@@ -58,6 +58,7 @@ impl ServerMod for Mover {
+                     tanks: None,
+                     tank_faces: None,
+                     menu_data: None,
++                    transmitter_faces: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/cable-demo/Cargo.toml
+new file mode 100644
+index 0000000..9420c92
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/cable-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "cable-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: cables and pipes that join generators and machines into networks"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/cable-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..3e3d31a
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/cable-demo/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "cabledemo"
++name = "Cable Demo"
++version = "0.1.0"
++description = "Test mod for transmitter networks: a generator, cables, machines, and a pump, pipes and a tank."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
+new file mode 100644
+index 0000000..bfc17e7
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/cable-demo/src/lib.rs
+@@ -0,0 +1,92 @@
++//! Cable Demo: the smallest users of transmitter networks.
++//! `cabledemo:generator` makes 10 energy a tick and only gives;
++//! `cabledemo:cable` joins what touches it (throughput 30);
++//! `cabledemo:machine` stores up to 100 and only takes. And fluids:
++//! `cabledemo:pump` makes 20 of `minecraft:water` a tick, `cabledemo:pipe`
++//! carries it (throughput 15) and `cabledemo:tank` stores up to 1000.
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, EnergySpec, FlowSide, Registration,
++    ServerMod, Tank, TankSpec, TransmitterMedium, TransmitterSpec,
++};
++
++struct Demo;
++
++fn kind(block: &str, ticks: bool) -> BlockEntityKind {
++    BlockEntityKind {
++        block: block.into(),
++        ticks,
++        container: None,
++        energy: None,
++        tanks: Vec::new(),
++        keep_data: false,
++        transmitter: None,
++    }
++}
++fn tank(side: FlowSide) -> TankSpec {
++    TankSpec {
++        kind: "fluid".into(),
++        capacity: 1000,
++        max_rate: 100,
++        faces: vec![side; 6],
++    }
++}
++
++impl ServerMod for Demo {
++    fn init() -> Result<(Self, Registration), String> {
++        let mut generator = kind("cabledemo:generator", true);
++        generator.energy = Some(EnergySpec::open(100, 50, FlowSide::Output));
++        let mut cable = kind("cabledemo:cable", false);
++        cable.transmitter = Some(TransmitterSpec {
++            medium: TransmitterMedium::Energy,
++            throughput: 30,
++        });
++        let mut machine = kind("cabledemo:machine", false);
++        machine.energy = Some(EnergySpec::open(100, 50, FlowSide::Input));
++        let mut pump = kind("cabledemo:pump", true);
++        pump.tanks = vec![tank(FlowSide::Output)];
++        let mut pipe = kind("cabledemo:pipe", false);
++        pipe.transmitter = Some(TransmitterSpec {
++            medium: TransmitterMedium::Tank("fluid".into()),
++            throughput: 15,
++        });
++        let mut store = kind("cabledemo:tank", false);
++        store.tanks = vec![tank(FlowSide::Input)];
++        let r = [generator, cable, machine, pump, pipe, store]
++            .into_iter()
++            .fold(Registration::new(), Registration::block_entity_kind);
++        Ok((Demo, r))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        entities
++            .into_iter()
++            .filter_map(|e| {
++                let mut u = BlockEntityUpdate {
++                    dimension: e.dimension.clone(),
++                    pos: e.pos,
++                    data: e.data.clone(),
++                    items: None,
++                    energy: None,
++                    energy_faces: None,
++                    tanks: None,
++                    tank_faces: None,
++                    menu_data: None,
++                    transmitter_faces: None,
++                };
++                if e.state.starts_with("cabledemo:generator") {
++                    u.energy = Some(e.energy + 10);
++                } else if e.state.starts_with("cabledemo:pump") {
++                    let held = e.tanks.first().map_or(0, |t| t.amount);
++                    u.tanks = Some(vec![Tank {
++                        substance: "minecraft:water".into(),
++                        amount: held + 20,
++                    }]);
++                } else {
++                    return None;
++                }
++                Some(u)
++            })
++            .collect()
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Demo);
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/tests/networks.toml b/crates/horizon-mod-sdk/examples/cable-demo/tests/networks.toml
+new file mode 100644
+index 0000000..698b498
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/cable-demo/tests/networks.toml
+@@ -0,0 +1,46 @@
++# generator - cable x3 - machine, with a second machine above the middle cable.
++
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "cabledemo:generator" },
++    { x = 1, y = 64, z = 0, state = "cabledemo:cable" },
++    { x = 2, y = 64, z = 0, state = "cabledemo:cable" },
++    { x = 3, y = 64, z = 0, state = "cabledemo:cable" },
++    { x = 4, y = 64, z = 0, state = "cabledemo:machine" },
++    { x = 2, y = 65, z = 0, state = "cabledemo:machine" },
++]
++ticks = 1
++# 10 made, shared evenly between the two machines.
++expect.block-energy = [
++    { x = 0, y = 64, z = 0, energy = 0 },
++    { x = 4, y = 64, z = 0, energy = 5 },
++    { x = 2, y = 65, z = 0, energy = 5 },
++]
++
++[[step]]
++ticks = 3
++expect.block-energy = [
++    { x = 4, y = 64, z = 0, energy = 20 },
++    { x = 2, y = 65, z = 0, energy = 20 },
++]
++
++[[step]]
++# Taking the middle cable away splits the network: the machine above has no cable.
++blocks = [{ x = 2, y = 64, z = 0, state = "minecraft:air" }]
++ticks = 1
++expect.block-energy = [
++    { x = 0, y = 64, z = 0, energy = 10 },
++    { x = 4, y = 64, z = 0, energy = 20 },
++    { x = 2, y = 65, z = 0, energy = 20 },
++]
++
++[[step]]
++# Put it back: the generator's 10 and the new 10 flow again, 30 at most.
++blocks = [{ x = 2, y = 64, z = 0, state = "cabledemo:cable" }]
++ticks = 1
++expect.block-energy = [
++    { x = 0, y = 64, z = 0, energy = 0 },
++    { x = 4, y = 64, z = 0, energy = 30 },
++    { x = 2, y = 65, z = 0, energy = 30 },
++]
+diff --git a/crates/horizon-mod-sdk/examples/cable-demo/tests/pipes.toml b/crates/horizon-mod-sdk/examples/cable-demo/tests/pipes.toml
+new file mode 100644
+index 0000000..871d9c7
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/cable-demo/tests/pipes.toml
+@@ -0,0 +1,22 @@
++# pump - pipe x2 - tank: 20 a tick made, 15 a tick carried.
++
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 0, y = 64, z = 0, state = "cabledemo:pump" },
++    { x = 1, y = 64, z = 0, state = "cabledemo:pipe" },
++    { x = 2, y = 64, z = 0, state = "cabledemo:pipe" },
++    { x = 3, y = 64, z = 0, state = "cabledemo:tank" },
++]
++ticks = 1
++expect.block-tanks = [
++    { x = 0, y = 64, z = 0, tanks = ["minecraft:water*5"] },
++    { x = 3, y = 64, z = 0, tanks = ["minecraft:water*15"] },
++]
++
++[[step]]
++ticks = 2
++expect.block-tanks = [
++    { x = 0, y = 64, z = 0, tanks = ["minecraft:water*15"] },
++    { x = 3, y = 64, z = 0, tanks = ["minecraft:water*45"] },
++]
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+index 50af38e..80100f0 100644
+--- a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -17,6 +17,7 @@ fn kind(block: &str, ticks: bool, energy: EnergySpec) -> BlockEntityKind {
+         energy: Some(energy),
+         tanks: Vec::new(),
+         keep_data: false,
++        transmitter: None,
+     }
+ }
+ 
+@@ -61,6 +62,7 @@ impl ServerMod for Demo {
+                     tanks: None,
+                     tank_faces: None,
+                     menu_data: None,
++                    transmitter_faces: None,
+                 })
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+index c507652..3769a5f 100644
+--- a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+@@ -18,6 +18,7 @@ impl ServerMod for Charger {
+             energy: None,
+             tanks: Vec::new(),
+             keep_data: true,
++            transmitter: None,
+         };
+         Ok((Charger, Registration::new().block_entity_kind(kind)))
+     }
+@@ -43,6 +44,7 @@ impl ServerMod for Charger {
+                 tanks: None,
+                 tank_faces: None,
+                 menu_data: None,
++                transmitter_faces: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+index 6609a24..f1f968f 100644
+--- a/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+@@ -20,6 +20,7 @@ fn update(e: &BlockEntity, menu_data: Vec<i32>) -> BlockEntityUpdate {
+         tanks: None,
+         tank_faces: None,
+         menu_data: Some(menu_data),
++        transmitter_faces: None,
+     }
+ }
+ 
+@@ -34,6 +35,7 @@ impl ServerMod for Grinder {
+             energy: None,
+             tanks: Vec::new(),
+             keep_data: false,
++            transmitter: None,
+         };
+         Ok((Grinder, Registration::new().block_entity_kind(kind)))
+     }
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+index 0a74a10..28a0ba8 100644
+--- a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+@@ -61,6 +61,7 @@ impl ServerMod for Crusher {
+             energy: None,
+             tanks: Vec::new(),
+             keep_data: true,
++            transmitter: None,
+         };
+         Ok((Crusher { by_input: None }, Registration::new().block_entity_kind(kind)))
+     }
+@@ -101,6 +102,7 @@ impl ServerMod for Crusher {
+                 tanks: None,
+                 tank_faces: None,
+                 menu_data: None,
++                transmitter_faces: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+index 1869fa8..8cc36ae 100644
+--- a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -17,6 +17,7 @@ fn kind(block: &str, ticks: bool, tank: TankSpec) -> BlockEntityKind {
+         energy: None,
+         tanks: vec![tank],
+         keep_data: false,
++        transmitter: None,
+     }
+ }
+ fn spec(kind: &str, side: FlowSide) -> TankSpec {
+@@ -55,6 +56,7 @@ impl ServerMod for Demo {
+                     }]),
+                     tank_faces: None,
+                     menu_data: None,
++                    transmitter_faces: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 675c119..3758963 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -207,7 +207,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -327,6 +327,7 @@ pub mod server {
+                 energy: None,
+                 tanks: Vec::new(),
+                 keep_data: false,
++                transmitter: None,
+             });
+             self
+         }
+@@ -349,6 +350,7 @@ pub mod server {
+                 energy: None,
+                 tanks: Vec::new(),
+                 keep_data: false,
++                transmitter: None,
+             });
+             self
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 4419e17..5e09d18 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -895,6 +895,28 @@ interface server-events {
+         /// tanks, and placing that item gives them back (a machine that
+         /// keeps its contents when picked up). The slots are then not spilled.
+         keep-data: bool,
++        /// The block is a cable or a pipe (see `transmitter-spec`). None: not.
++        transmitter: option<transmitter-spec>,
++    }
++    /// What a transmitter block carries.
++    variant transmitter-medium {
++        /// Energy: the blocks beside the network with an `energy-spec`.
++        energy,
++        /// Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside
++        /// the network with a tank of that kind.
++        tank(string),
++    }
++    /// A cable or a pipe. Transmitters of one medium that touch through faces
++    /// both connect through make one network. Every tick, after the mods'
++    /// `block-entities-tick`, the game moves from the blocks beside the
++    /// network that give toward it (their face toward it is `output` or
++    /// `both`) to those that take (`input` or `both`), shared evenly among
++    /// them, at most `throughput` in all, and each block within its own rates
++    /// (`max-extract`, `max-receive`, a tank's `max-rate`). A network's
++    /// throughput is its least transmitter's.
++    record transmitter-spec {
++        medium: transmitter-medium,
++        throughput: u64,
+     }
+     /// One tank of a block. A `kind` is a family of substances that mix with
+     /// nothing outside it (`fluid`, `gas`, `infusion`...: the mod's own
+@@ -982,6 +1004,9 @@ interface server-events {
+         /// The data slots its menu shows (progress, a mode), 16 bits each on
+         /// the wire.
+         menu-data: list<s32>,
++        /// The faces a transmitter connects through now (down, up, north,
++        /// south, west, east); empty for a block that is not one.
++        transmitter-faces: list<bool>,
+     }
+     /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+@@ -1003,6 +1028,8 @@ interface server-events {
+         tank-faces: option<list<list<flow-side>>>,
+         /// The menu's data slots after the call; none leaves them as they are.
+         menu-data: option<list<s32>>,
++        /// New connecting faces for a transmitter; none leaves them as they are.
++        transmitter-faces: option<list<bool>>,
+     }
+     /// Once, after loading. An error keeps the mod off and is logged.
+     init: func() -> result<registration, string>;
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index 6e6c89b..f8728be 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -12,6 +12,8 @@ pub mod commands;
+ pub mod energy;
+ #[cfg(feature = "runtime")]
+ pub mod flow;
++#[cfg(feature = "runtime")]
++pub mod network;
+ pub mod content;
+ #[cfg(feature = "index")]
+ pub mod index;
+diff --git a/crates/horizon-mods/src/network.rs b/crates/horizon-mods/src/network.rs
+new file mode 100644
+index 0000000..bf2fb39
+--- /dev/null
++++ b/crates/horizon-mods/src/network.rs
+@@ -0,0 +1,396 @@
++//! Transmitter networks (API block 9): cables and pipes that join the blocks
++//! beside them into one energy or substance network. A network is the
++//! transmitters of one medium that touch through faces both let connect; the
++//! blocks beside it that give (their face toward it outputs) feed it, those
++//! that take (input) are fed, at most the network's throughput a tick, shared
++//! evenly. Pure, like [`crate::energy`] and [`crate::flow`]: the game and the
++//! test harness build the nodes and write the results back.
++use crate::{
++    energy::{EnergyNode, FACES},
++    flow::{TankNode, TankState},
++};
++use crate::FlowSide;
++use std::collections::HashMap;
++
++/// What a transmitter carries.
++#[derive(Clone, Debug, PartialEq, Eq, Hash)]
++pub enum Medium {
++    Energy,
++    /// Tanks of this kind (`fluid`, `gas`...).
++    Tank(String),
++}
++
++/// One cable or pipe block.
++#[derive(Clone, Debug, PartialEq)]
++pub struct Transmitter {
++    pub pos: [i32; 3],
++    pub medium: Medium,
++    /// What its network moves a tick at most; a network takes the least of its blocks'.
++    pub throughput: u64,
++    /// The faces it connects through.
++    pub connect: [bool; 6],
++}
++
++fn gives(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Output | FlowSide::Both)
++}
++fn takes(s: FlowSide) -> bool {
++    matches!(s, FlowSide::Input | FlowSide::Both)
++}
++fn step(pos: [i32; 3], face: usize) -> [i32; 3] {
++    let d = FACES[face];
++    [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]]
++}
++
++/// The networks: for each, the indices of its transmitters (in `all`) in
++/// position order, and the least throughput among them. Networks come in the
++/// order of their first transmitter's position.
++pub fn networks(all: &[Transmitter]) -> Vec<(Vec<usize>, u64)> {
++    let mut order: Vec<usize> = (0..all.len()).collect();
++    order.sort_by_key(|&i| all[i].pos);
++    let at: HashMap<[i32; 3], usize> = all.iter().enumerate().map(|(i, t)| (t.pos, i)).collect();
++    let mut seen = vec![false; all.len()];
++    let mut out = Vec::new();
++    for &start in &order {
++        if seen[start] {
++            continue;
++        }
++        let mut members = vec![start];
++        seen[start] = true;
++        let mut next = 0;
++        while next < members.len() {
++            let t = members[next];
++            next += 1;
++            for face in 0..6 {
++                if !all[t].connect[face] {
++                    continue;
++                }
++                let Some(&o) = at.get(&step(all[t].pos, face)) else {
++                    continue;
++                };
++                if !seen[o] && all[o].medium == all[t].medium && all[o].connect[face ^ 1] {
++                    seen[o] = true;
++                    members.push(o);
++                }
++            }
++        }
++        members.sort_by_key(|&i| all[i].pos);
++        let throughput = members.iter().map(|&i| all[i].throughput).min().unwrap_or(0);
++        out.push((members, throughput));
++    }
++    out
++}
++
++/// The positions of the blocks beside a network that are not its transmitters,
++/// each with the face of the *network side* it touches (the neighbour's own
++/// face toward it is the opposite one), in position order, once per face.
++fn attached(all: &[Transmitter], members: &[usize]) -> Vec<([i32; 3], usize)> {
++    let mine: std::collections::HashSet<[i32; 3]> = members.iter().map(|&i| all[i].pos).collect();
++    let mut out = Vec::new();
++    for &i in members {
++        for face in 0..6 {
++            if !all[i].connect[face] {
++                continue;
++            }
++            let p = step(all[i].pos, face);
++            if !mine.contains(&p) {
++                out.push((p, face));
++            }
++        }
++    }
++    out.sort();
++    out.dedup();
++    out
++}
++
++/// Shares `total` among `caps` as evenly as their limits allow (water
++/// filling): the remainder of an uneven split goes to the first ones.
++pub fn share(total: u64, caps: &[u64]) -> Vec<u64> {
++    let mut got = vec![0u64; caps.len()];
++    let mut left = total;
++    loop {
++        let open: Vec<usize> = (0..caps.len()).filter(|&i| got[i] < caps[i]).collect();
++        if left == 0 || open.is_empty() {
++            break;
++        }
++        let each = left / open.len() as u64;
++        let extra = (left % open.len() as u64) as usize;
++        let mut moved = 0;
++        for (k, &i) in open.iter().enumerate() {
++            let want = each + u64::from(k < extra);
++            let give = want.min(caps[i] - got[i]);
++            got[i] += give;
++            moved += give;
++        }
++        if moved == 0 {
++            break;
++        }
++        left -= moved;
++    }
++    got
++}
++
++/// One tick of energy networks. `given`/`taken` are the budgets the
++/// neighbour transfers already used this tick, by node index.
++pub fn transfer_energy(all: &[Transmitter], nodes: &mut [EnergyNode]) {
++    let at: HashMap<[i32; 3], usize> = nodes.iter().enumerate().map(|(i, n)| (n.pos, i)).collect();
++    let mut given = vec![0u64; nodes.len()];
++    let mut taken = vec![0u64; nodes.len()];
++    for (members, throughput) in networks(all) {
++        if all[members[0]].medium != Medium::Energy {
++            continue;
++        }
++        // The nodes beside it, and which of their faces touch it.
++        let mut gives_to: Vec<usize> = Vec::new();
++        let mut takes_from: Vec<usize> = Vec::new();
++        for (p, face) in attached(all, &members) {
++            let Some(&n) = at.get(&p) else { continue };
++            let side = nodes[n].faces[face ^ 1];
++            if gives(side) && !gives_to.contains(&n) {
++                gives_to.push(n);
++            }
++            if takes(side) && !takes_from.contains(&n) {
++                takes_from.push(n);
++            }
++        }
++        // gives_to: sources; takes_from: sinks (the names say where the energy goes).
++        let sources = gives_to;
++        let sinks = takes_from;
++        let avail: Vec<u64> = sources
++            .iter()
++            .map(|&n| nodes[n].energy.min(nodes[n].max_extract.saturating_sub(given[n])))
++            .collect();
++        // Pure sinks are filled before nodes that also give.
++        let pure: Vec<usize> = sinks.iter().copied().filter(|n| !sources.contains(n)).collect();
++        let both: Vec<usize> = sinks.iter().copied().filter(|n| sources.contains(n)).collect();
++        let room = |n: usize, taken: &[u64], nodes: &[EnergyNode]| {
++            nodes[n]
++                .capacity
++                .saturating_sub(nodes[n].energy)
++                .min(nodes[n].max_receive.saturating_sub(taken[n]))
++        };
++        let mut budget = throughput.min(avail.iter().sum());
++        // Energy moves out of sources in order, into one group of sinks after another.
++        let mut drawn = vec![0u64; sources.len()];
++        for group in [pure, both] {
++            if budget == 0 {
++                break;
++            }
++            let caps: Vec<u64> = group.iter().map(|&n| room(n, &taken, nodes)).collect();
++            let want = budget.min(caps.iter().sum());
++            let parts = share(want, &caps);
++            for (&n, part) in group.iter().zip(parts) {
++                if part == 0 {
++                    continue;
++                }
++                // Take it from the sources in order, never from the sink itself.
++                let mut need = part;
++                for (k, &s) in sources.iter().enumerate() {
++                    if s == n || need == 0 {
++                        continue;
++                    }
++                    let take = need.min(avail[k] - drawn[k]);
++                    drawn[k] += take;
++                    need -= take;
++                }
++                let moved = part - need;
++                nodes[n].energy += moved;
++                taken[n] += moved;
++                budget -= moved;
++            }
++        }
++        for (k, &s) in sources.iter().enumerate() {
++            nodes[s].energy -= drawn[k];
++            given[s] += drawn[k];
++        }
++    }
++}
++
++/// One tick of substance networks (the tanks of nodes beside a network whose
++/// face toward it gives or takes, of the network's kind).
++pub fn transfer_tanks(all: &[Transmitter], nodes: &mut [TankNode]) {
++    let at: HashMap<[i32; 3], usize> = nodes.iter().enumerate().map(|(i, n)| (n.pos, i)).collect();
++    for (members, throughput) in networks(all) {
++        let Medium::Tank(kind) = &all[members[0]].medium else {
++            continue;
++        };
++        let mut left = throughput;
++        // Sources in order: a tank that gives toward the network.
++        let mut refs: Vec<(usize, usize, usize)> = Vec::new(); // node, tank, face
++        for (p, face) in attached(all, &members) {
++            let Some(&n) = at.get(&p) else { continue };
++            for (ti, t) in nodes[n].tanks.iter().enumerate() {
++                if &t.kind == kind && !refs.iter().any(|r| r.0 == n && r.1 == ti) {
++                    refs.push((n, ti, face));
++                }
++            }
++        }
++        let tank = |nodes: &[TankNode], r: (usize, usize, usize)| -> TankState {
++            nodes[r.0].tanks[r.1].clone()
++        };
++        let sources: Vec<(usize, usize, usize)> = refs
++            .iter()
++            .copied()
++            .filter(|&r| {
++                let t = tank(nodes, r);
++                gives(t.faces[r.2 ^ 1]) && t.amount > 0
++            })
++            .collect();
++        for src in sources {
++            if left == 0 {
++                break;
++            }
++            let s = tank(nodes, src);
++            if s.amount == 0 {
++                continue;
++            }
++            let send = s.amount.min(s.max_rate).min(left);
++            // Sinks that take this substance, never the source's own tank.
++            let sinks: Vec<(usize, usize, usize)> = refs
++                .iter()
++                .copied()
++                .filter(|&r| (r.0, r.1) != (src.0, src.1))
++                .filter(|&r| {
++                    let t = tank(nodes, r);
++                    takes(t.faces[r.2 ^ 1]) && (t.amount == 0 || t.substance == s.substance)
++                })
++                .collect();
++            let caps: Vec<u64> = sinks
++                .iter()
++                .map(|&r| {
++                    let t = tank(nodes, r);
++                    t.capacity.saturating_sub(t.amount).min(t.max_rate)
++                })
++                .collect();
++            let parts = share(send.min(caps.iter().sum()), &caps);
++            let mut total = 0;
++            for (&r, part) in sinks.iter().zip(parts) {
++                if part == 0 {
++                    continue;
++                }
++                let t = &mut nodes[r.0].tanks[r.1];
++                if t.amount == 0 {
++                    t.substance.clone_from(&s.substance);
++                }
++                t.amount += part;
++                total += part;
++            }
++            let t = &mut nodes[src.0].tanks[src.1];
++            t.amount -= total;
++            if t.amount == 0 {
++                t.substance.clear();
++            }
++            left -= total;
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use FlowSide::{Input, Output};
++
++    fn cable(x: i32, medium: Medium, throughput: u64) -> Transmitter {
++        Transmitter {
++            pos: [x, 0, 0],
++            medium,
++            throughput,
++            connect: [true; 6],
++        }
++    }
++    fn energy(x: i32, e: u64, side: FlowSide) -> EnergyNode {
++        EnergyNode {
++            pos: [x, 0, 0],
++            energy: e,
++            capacity: 1000,
++            max_receive: 1000,
++            max_extract: 1000,
++            faces: [side; 6],
++        }
++    }
++
++    #[test]
++    fn cables_that_touch_make_one_network_and_the_least_throughput_rules() {
++        let all = vec![
++            cable(1, Medium::Energy, 100),
++            cable(2, Medium::Energy, 40),
++            cable(3, Medium::Energy, 100),
++            cable(5, Medium::Energy, 7),
++            cable(6, Medium::Tank("fluid".into()), 9),
++        ];
++        let n = networks(&all);
++        assert_eq!(n, vec![(vec![0, 1, 2], 40), (vec![3], 7), (vec![4], 9)]);
++    }
++    #[test]
++    fn a_face_that_does_not_connect_splits_a_network() {
++        let mut a = cable(1, Medium::Energy, 10);
++        a.connect[5] = false;
++        let all = vec![a, cable(2, Medium::Energy, 10)];
++        assert_eq!(networks(&all).len(), 2);
++    }
++    #[test]
++    fn sharing_is_even_and_limited() {
++        assert_eq!(share(10, &[100, 100, 100]), [4, 3, 3]);
++        assert_eq!(share(10, &[2, 100, 100]), [2, 4, 4]);
++        assert_eq!(share(10, &[1, 1]), [1, 1]);
++        assert_eq!(share(0, &[5]), [0]);
++    }
++    #[test]
++    fn energy_goes_from_generators_to_machines_through_a_cable_line() {
++        // gen(0) - cable 1..4 - machine(5) and machine(6) beside it? Machines sit at x=5 and (above) .
++        let all: Vec<_> = (1..=4).map(|x| cable(x, Medium::Energy, 50)).collect();
++        let mut nodes = vec![
++            energy(0, 500, Output),
++            energy(5, 0, Input),
++        ];
++        transfer_energy(&all, &mut nodes);
++        assert_eq!((nodes[0].energy, nodes[1].energy), (450, 50));
++    }
++    #[test]
++    fn energy_is_shared_evenly_between_machines() {
++        let all = vec![cable(1, Medium::Energy, 90)];
++        let mut up = cable(1, Medium::Energy, 90);
++        up.pos = [1, 0, 0];
++        let mut nodes = vec![
++            energy(0, 500, Output),
++            energy(2, 0, Input),
++            EnergyNode {
++                pos: [1, 1, 0],
++                ..energy(0, 0, Input)
++            },
++        ];
++        transfer_energy(&all, &mut nodes);
++        assert_eq!(nodes[0].energy, 410);
++        assert_eq!((nodes[1].energy, nodes[2].energy), (45, 45));
++    }
++    #[test]
++    fn a_network_is_limited_by_what_sinks_have_room_for() {
++        let all = vec![cable(1, Medium::Energy, 1000)];
++        let mut nodes = vec![energy(0, 500, Output), energy(2, 990, Input)];
++        transfer_energy(&all, &mut nodes);
++        assert_eq!((nodes[0].energy, nodes[1].energy), (490, 1000));
++    }
++    #[test]
++    fn tanks_pass_one_substance_along_a_pipe() {
++        let t = |side, substance: &str, amount| TankState {
++            kind: "fluid".into(),
++            capacity: 1000,
++            max_rate: 1000,
++            faces: [side; 6],
++            substance: substance.into(),
++            amount,
++        };
++        let all = vec![cable(1, Medium::Tank("fluid".into()), 30)];
++        let mut nodes = vec![
++            TankNode { pos: [0, 0, 0], tanks: vec![t(Output, "minecraft:water", 100)] },
++            TankNode { pos: [2, 0, 0], tanks: vec![t(Input, "", 0)] },
++            TankNode { pos: [1, 1, 0], tanks: vec![t(Input, "minecraft:lava", 5)] },
++        ];
++        transfer_tanks(&all, &mut nodes);
++        // Lava does not take water; the water goes where it is accepted, 30 at most.
++        assert_eq!(nodes[0].tanks[0].amount, 70);
++        assert_eq!(nodes[1].tanks[0].amount, 30);
++        assert_eq!(nodes[1].tanks[0].substance, "minecraft:water");
++        assert_eq!(nodes[2].tanks[0].amount, 5);
++    }
++}
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index dde3c7d..2ebed59 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, ServerCommand,
++        BlockPos, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 07b1906..d01939c 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -50,6 +50,8 @@ pub struct TestGame {
+     pub block_tanks: std::collections::BTreeMap<(i32, i32, i32), Vec<(String, [crate::FlowSide; 6])>>,
+     /// Their menus' data slots, by position.
+     pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
++    /// The faces each transmitter connects through, by position.
++    pub block_transmitters: std::collections::BTreeMap<(i32, i32, i32), [bool; 6]>,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -172,6 +174,7 @@ impl TestGame {
+             block_energy: Default::default(),
+             block_tanks: Default::default(),
+             block_menu_data: Default::default(),
++            block_transmitters: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -252,6 +255,20 @@ impl TestGame {
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
+         self.block_menu_data
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        self.block_transmitters
++            .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        let transmitter_of = |state: &str| {
++            let block = state.split('[').next().unwrap_or("");
++            kinds
++                .iter()
++                .find(|k| k.block == block)
++                .and_then(|k| k.transmitter.clone())
++        };
++        for (pos, state) in &self.world {
++            if transmitter_of(state).is_some() {
++                self.block_transmitters.entry(*pos).or_insert([true; 6]);
++            }
++        }
+         let tanks_of = |state: &str| {
+             let block = state.split('[').next().unwrap_or("");
+             kinds
+@@ -315,6 +332,10 @@ impl TestGame {
+                 data: data.clone(),
+                 items: held.iter().map(|s| parse_stack(s)).collect(),
+                 menu_data: self.block_menu_data.get(&(x, y, z)).cloned().unwrap_or_default(),
++                transmitter_faces: self
++                    .block_transmitters
++                    .get(&(x, y, z))
++                    .map_or_else(Vec::new, |f| f.to_vec()),
+                 tanks: self
+                     .block_tanks
+                     .get(&(x, y, z))
+@@ -361,6 +382,11 @@ impl TestGame {
+             if let Some(d) = &u.menu_data {
+                 self.block_menu_data.insert(key, d.clone());
+             }
++            if let (Some(f), Some(entry)) = (&u.transmitter_faces, self.block_transmitters.get_mut(&key)) {
++                for (to, from) in entry.iter_mut().zip(f) {
++                    *to = *from;
++                }
++            }
+             if let Some(items) = u.items {
+                 let n = self.block_items.get(&key).map_or(0, Vec::len);
+                 let mut text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
+@@ -406,6 +432,23 @@ impl TestGame {
+                 Some(crate::flow::TankNode { pos: [x, y, z], tanks })
+             })
+             .collect();
++        let transmitters: Vec<crate::network::Transmitter> = self
++            .block_transmitters
++            .iter()
++            .filter_map(|(&(x, y, z), &connect)| {
++                let spec = transmitter_of(self.world.get(&(x, y, z))?)?;
++                Some(crate::network::Transmitter {
++                    pos: [x, y, z],
++                    medium: match spec.medium {
++                        crate::TransmitterMedium::Energy => crate::network::Medium::Energy,
++                        crate::TransmitterMedium::Tank(kind) => crate::network::Medium::Tank(kind),
++                    },
++                    throughput: spec.throughput,
++                    connect,
++                })
++            })
++            .collect();
++        crate::network::transfer_tanks(&transmitters, &mut tank_nodes);
+         crate::flow::transfer(&mut tank_nodes);
+         for n in tank_nodes {
+             if let Some(held) = self.block_tanks.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
+@@ -418,6 +461,7 @@ impl TestGame {
+                 }
+             }
+         }
++        crate::network::transfer_energy(&transmitters, &mut nodes);
+         crate::energy::transfer(&mut nodes);
+         for n in nodes {
+             if let Some(e) = self.block_energy.get_mut(&(n.pos[0], n.pos[1], n.pos[2])) {
+@@ -455,6 +499,10 @@ impl TestGame {
+                 .get(&pos)
+                 .map_or_else(Vec::new, |v| v.iter().map(|(_, f)| f.to_vec()).collect()),
+             menu_data: self.block_menu_data.get(&pos).cloned().unwrap_or_default(),
++            transmitter_faces: self
++                .block_transmitters
++                .get(&pos)
++                .map_or_else(Vec::new, |f| f.to_vec()),
+         };
+         self.snapshot();
+         let Some(u) = self.mods.menu_button(player, id, &entity) else {
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 85c3548..173f652 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -846,6 +846,24 @@ An argument's value, parsed as its kind says.
+ | `player` | `player` |  |
+ | `block-pos` | `block-pos` |  |
+ 
++### variant `transmitter-medium`
++
++What a transmitter block carries.
++
++| Case | Payload | |
++| --- | --- | --- |
++| `energy` |  | Energy: the blocks beside the network with an `energy-spec`. |
++| `tank` | `string` | Substance of a tank `kind` (`fluid`, `gas`...): the blocks beside the network with a tank of that kind. |
++
++### record `transmitter-spec`
++
++A cable or a pipe. Transmitters of one medium that touch through faces both connect through make one network. Every tick, after the mods' `block-entities-tick`, the game moves from the blocks beside the network that give toward it (their face toward it is `output` or `both`) to those that take (`input` or `both`), shared evenly among them, at most `throughput` in all, and each block within its own rates (`max-extract`, `max-receive`, a tank's `max-rate`). A network's throughput is its least transmitter's.
++
++| Field | Type | |
++| --- | --- | --- |
++| `medium` | `transmitter-medium` |  |
++| `throughput` | `u64` |  |
++
+ ### record `tank`
+ 
+ What a tank holds: an empty substance is an empty tank.
+@@ -910,6 +928,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `energy` | `option<energy-spec>` | Stored energy, moved between neighbouring blocks by the game (see `energy-spec`). None: the block holds no energy. |
+ | `tanks` | `list<tank-spec>` | Tanks for fluids and chemicals, moved between neighbouring blocks by the game (see `tank-spec`). |
+ | `keep-data` | `bool` | The block keeps its entity's data in the item it drops: breaking it gives an item that carries the saved bytes, slots, energy and tanks, and placing that item gives them back (a machine that keeps its contents when picked up). The slots are then not spilled. |
++| `transmitter` | `option<transmitter-spec>` | The block is a cable or a pipe (see `transmitter-spec`). None: not. |
+ 
+ ### record `registration`
+ 
+@@ -949,6 +968,7 @@ A block entity of the mod, as the server holds it.
+ | `tanks` | `list<tank>` | Its tanks, in the order of its kind's `tanks`, and their faces' sides now. |
+ | `tank-faces` | `list<list<flow-side>>` |  |
+ | `menu-data` | `list<s32>` | The data slots its menu shows (progress, a mode), 16 bits each on the wire. |
++| `transmitter-faces` | `list<bool>` | The faces a transmitter connects through now (down, up, north, south, west, east); empty for a block that is not one. |
+ 
+ ### record `block-entity-update`
+ 
+@@ -965,6 +985,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `tanks` | `option<list<tank>>` | The tanks after the call (kept within their capacities); none leaves them as they are. |
+ | `tank-faces` | `option<list<list<flow-side>>>` | New sides for each tank's faces; none leaves them as they are. |
+ | `menu-data` | `option<list<s32>>` | The menu's data slots after the call; none leaves them as they are. |
++| `transmitter-faces` | `option<list<bool>>` | New connecting faces for a transmitter; none leaves them as they are. |
+ 
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+-- 
+2.43.0
+

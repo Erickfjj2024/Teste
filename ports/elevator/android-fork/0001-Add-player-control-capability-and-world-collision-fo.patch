@@ -1,0 +1,941 @@
+From 60c4b3cfa57d013234c02cc7e965685547030c62 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 19:19:49 +0000
+Subject: [PATCH 1/3] Add player-control capability and world collision for
+ server mods
+
+New WIT interface player-control (get-motion, teleport, take-xp, play-sound),
+world.get-collision, and the matching manifest capability, runtime host,
+test harness and game wiring. Experimental, server mods only.
+---
+ crates/horizon-client/src/game/commands.rs    |   9 +-
+ crates/horizon-client/src/game/mods.rs        |  10 +-
+ crates/horizon-client/src/game/server_mods.rs | 121 ++++++++++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  54 +++++
+ crates/horizon-mods/src/manifest.rs           |  22 +-
+ crates/horizon-mods/src/runtime.rs            | 162 ++++++++++++++-
+ crates/horizon-mods/src/testing.rs            | 196 +++++++++++++++++-
+ 7 files changed, 561 insertions(+), 13 deletions(-)
+
+diff --git a/crates/horizon-client/src/game/commands.rs b/crates/horizon-client/src/game/commands.rs
+index 365548e..5f78a10 100644
+--- a/crates/horizon-client/src/game/commands.rs
++++ b/crates/horizon-client/src/game/commands.rs
+@@ -1355,7 +1355,12 @@ impl Game<'_> {
+         // An entity in another level is teleported in the level that holds it.
+         let _ = self.in_target_level(t, |g| g.teleport_to_in_level(t, pos, rotation));
+     }
+-    fn teleport_to_in_level(&mut self, t: Target, pos: [f64; 3], rotation: Option<[f32; 2]>) {
++    pub(super) fn teleport_to_in_level(
++        &mut self,
++        t: Target,
++        pos: [f64; 3],
++        rotation: Option<[f32; 2]>,
++    ) {
+         let v = Vec3::new(pos[0], pos[1], pos[2]);
+         match t {
+             Target::Guest(_) => {
+@@ -2775,7 +2780,7 @@ impl Game<'_> {
+     }
+     /// ExperienceCommand's add and set on the player in place: false when
+     /// the points to set do not fit the level.
+-    fn change_experience(&mut self, add: bool, levels: bool, amount: i32) -> bool {
++    pub(super) fn change_experience(&mut self, add: bool, levels: bool, amount: i32) -> bool {
+         if add {
+             if levels {
+                 self.experience.level = (self.experience.level + amount).max(0);
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 9556440..f889468 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -71,6 +71,10 @@ pub(super) struct ModsState {
+     /// tick.
+     #[cfg(feature = "mods")]
+     pub(super) block_writes: Vec<(String, horizon_mods::BlockChange)>,
++    /// Every block state's collision boxes, by state id, for capability
++    /// `world`'s `get-collision`; made on the first lend.
++    #[cfg(feature = "mods")]
++    pub(super) collision: Option<std::sync::Arc<Vec<Option<std::sync::Arc<[horizon_mods::CollisionBox]>>>>>,
+     /// `command.run` lines for this window's own world, run on the next tick:
+     /// run at once, their chat lines would reach the mods while their output
+     /// is still being shown, and a mod answering its own lines would recurse.
+@@ -581,6 +585,7 @@ impl Game<'_> {
+             cps,
+             font_widths: self.mods.font_widths.clone(),
+             players,
++            motions: Vec::new(),
+             view_hit: self.mod_view_hit(),
+             recipes,
+             known_recipes,
+@@ -810,7 +815,10 @@ impl Game<'_> {
+                 server @ (Output::Tell { .. }
+                 | Output::Broadcast { .. }
+                 | Output::Reply { .. }
+-                | Output::SetBlocks { .. }) => {
++                | Output::SetBlocks { .. }
++                | Output::Teleport { .. }
++                | Output::TakeXp { .. }
++                | Output::PlaySound { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 8b4a73f..624ec9b 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -59,9 +59,13 @@ mod run {
+         lan::data::component_nbt,
+         text::{self, Text},
+     };
++    use crate::game::commands::Target;
++    use horizon_core::geometry::Axis;
+     use horizon_mods::{
+-        ArgumentKind, BlockPos, GameMode, Output, ServerCommand, ServerPlayer, WorldView,
++        ArgumentKind, BlockPos, CollisionBox, GameMode, Motion, Output, ServerCommand,
++        ServerPlayer, WorldView,
+     };
++    use std::sync::Arc;
+     use horizon_protocol::packets::play::{self, Clientbound as C};
+     use horizon_world::registry::{BlockRegistry, BlockStateId};
+     use serde_json::{Value, json};
+@@ -76,8 +80,23 @@ mod run {
+         registry: &'static BlockRegistry,
+         biomes: std::sync::Arc<horizon_client::biome::Biomes>,
+         dims: Vec<(&'static str, ChunkMap)>,
++        /// Collision boxes by block state id (`None`: a shape that depends on
++        /// its surroundings, taken as empty).
++        shapes: Arc<Vec<Option<Arc<[CollisionBox]>>>>,
+     }
+     impl WorldView for LentWorld {
++        fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
++            let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
++            let chunk = chunks.get(&(x >> 4, z >> 4))?;
++            let id = chunk.block(x & 15, y, z & 15);
++            Some(
++                self.shapes
++                    .get(id.0 as usize)
++                    .and_then(Option::as_deref)
++                    .map(<[CollisionBox]>::to_vec)
++                    .unwrap_or_default(),
++            )
++        }
+         fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String> {
+             let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
+             let chunk = chunks.get(&(x >> 4, z >> 4))?;
+@@ -253,7 +272,13 @@ mod run {
+                 return;
+             }
+             let players = self.server_players(None);
+-            let snapshot = self.mod_snapshot_with(players.clone());
++            let mut snapshot = self.mod_snapshot_with(players.clone());
++            if self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++            {
++                snapshot.motions = vec![(uuid_string(self.player_uuid()), self.own_motion())];
++            }
+             self.mods.mods.set_snapshot(snapshot);
+             self.lend_world();
+             let before = std::mem::take(&mut self.mods.players);
+@@ -341,13 +366,67 @@ mod run {
+             }
+             let registry = self.pack.assets.registry;
+             let biomes = self.res.biomes().clone();
++            let shapes = self.collision_table();
+             self.mods.mods.lend_world(Box::new(LentWorld {
+                 registry,
+                 biomes,
+                 dims,
++                shapes,
+             }));
+         }
+ 
++        /// Every state's collision boxes, made once. A shape the game works out
++        /// from the blocks around it is left out (`None`).
++        fn collision_table(&mut self) -> Arc<Vec<Option<Arc<[CollisionBox]>>>> {
++            if let Some(table) = &self.mods.collision {
++                return table.clone();
++            }
++            let cached = self.collision.cached_shapes();
++            let count = self.pack.assets.registry.len() as u32;
++            let table: Vec<Option<Arc<[CollisionBox]>>> = (0..count)
++                .map(|i| {
++                    let shape = cached.cached_shape(BlockStateId(i)).ok().flatten()?;
++                    let boxes: Vec<CollisionBox> = shape
++                        .boxes()
++                        .iter()
++                        .map(|b| CollisionBox {
++                            min_x: b.min(Axis::X),
++                            min_y: b.min(Axis::Y),
++                            min_z: b.min(Axis::Z),
++                            max_x: b.max(Axis::X),
++                            max_y: b.max(Axis::Y),
++                            max_z: b.max(Axis::Z),
++                        })
++                        .collect();
++                    Some(Arc::from(boxes))
++                })
++                .collect();
++            let table = Arc::new(table);
++            self.mods.collision = Some(table.clone());
++            table
++        }
++
++        /// What the window's own player is doing, as capability `player-control` reads it.
++        fn own_motion(&self) -> Motion {
++            let p = self.player.as_ref();
++            Motion {
++                sneaking: p.is_some_and(|p| p.pose == horizon_client::pose::Pose::Crouching),
++                on_ground: p.is_some_and(|p| p.ground.on_ground),
++                jumps: self.stats.get("custom", "minecraft:jump").max(0) as u32,
++                xp_level: self.experience.level,
++                xp_progress: self.experience.progress,
++            }
++        }
++
++        /// Whether `id` is the window's own player, in-frame: the only player
++        /// capability `player-control` reaches so far.
++        fn is_own_player(&self, id: &str) -> bool {
++            self.options.execution_role.is_client()
++                && self.remote.is_none()
++                && self.player.is_some()
++                && id == uuid_string(self.player_uuid())
++        }
++
+         /// Puts back the chunks [`Game::lend_world`] lent.
+         fn return_world(&mut self) {
+             let Some(view) = self.mods.mods.take_world() else {
+@@ -569,6 +648,44 @@ mod run {
+                         );
+                     }
+                 }
++                Output::Teleport {
++                    name,
++                    player,
++                    dimension,
++                    pos,
++                    yaw,
++                    pitch,
++                } => {
++                    if !self.is_own_player(&player) || dimension != self.dim.id() {
++                        log::warn!(
++                            "Horizon: mod {name} can only move the window's own player within their dimension"
++                        );
++                        return;
++                    }
++                    let rotation = (yaw.is_some() || pitch.is_some())
++                        .then(|| [yaw.unwrap_or(self.yaw), pitch.unwrap_or(self.pitch)]);
++                    self.teleport_to_in_level(Target::Player, pos, rotation);
++                }
++                Output::TakeXp { name, player, points } => {
++                    if !self.is_own_player(&player) {
++                        log::warn!("Horizon: mod {name} can only charge the window's own player");
++                        return;
++                    }
++                    let points = i32::try_from(points).unwrap_or(i32::MAX);
++                    self.change_experience(true, false, -points);
++                }
++                Output::PlaySound {
++                    dimension,
++                    sound,
++                    pos,
++                    volume,
++                    pitch,
++                    ..
++                } => {
++                    if dimension == self.dim.id() {
++                        self.audio.play(&sound, Some(pos), volume, pitch);
++                    }
++                }
+                 _ => {}
+             }
+         }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 78ceb70..bd13fb0 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -686,6 +686,20 @@ interface %world {
+     /// The biome at a position (`minecraft:plains`, ...), as the server
+     /// stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded.
+     get-biome: func(dimension: string, x: s32, y: s32, z: s32) -> option<string>;
++    /// One collision box of a block, in blocks, relative to the block's own
++    /// corner (a full cube is `0,0,0` to `1,1,1`).
++    record collision-box {
++        min-x: f64,
++        min-y: f64,
++        min-z: f64,
++        max-x: f64,
++        max-y: f64,
++        max-z: f64,
++    }
++    /// The collision boxes of the block at a position, as an entity bumps
++    /// into them (an empty list for air, grass or a carpet's top: none):
++    /// none where the server has no chunk loaded there.
++    get-collision: func(dimension: string, x: s32, y: s32, z: s32) -> option<list<collision-box>>;
+     /// Sets blocks as `/setblock` does: the old block entity removed,
+     /// neighbours and shapes updated, light, and every player told. Every
+     /// state is checked now (an error queues nothing); the changes are made
+@@ -694,6 +708,45 @@ interface %world {
+     set-blocks: func(dimension: string, blocks: list<block-change>) -> result<_, string>;
+ }
+ 
++/// Capability `player-control`, server mods only (manifest `api = "0.3"`,
++/// experimental): what a player is doing, and moving, charging and sounding
++/// for them. It is what an elevator, a waystone or a shop needs.
++interface player-control {
++    /// What a player is doing as of the last server tick.
++    record motion {
++        /// The sneak key is held.
++        sneaking: bool,
++        /// The player stands on the ground.
++        on-ground: bool,
++        /// How many times the player has jumped from the ground since the
++        /// world opened: a mod compares it with the last tick's to see a jump.
++        jumps: u32,
++        /// The experience level (`Player.experienceLevel`).
++        xp-level: s32,
++        /// The progress toward the next level, 0 up to (not including) 1
++        /// (`Player.experienceProgress`).
++        xp-progress: f32,
++    }
++    /// What the player with this id is doing; none for an id that is not online.
++    get-motion: func(player: string) -> option<motion>;
++    /// Moves the player, as `/tp` does: the vehicle is left, velocity and fall
++    /// distance reset. `yaw` and `pitch` stay as they are when none. The
++    /// move is made after this call returns, before the next tick. An error
++    /// (nothing queued) for a player not online, a dimension the server does not
++    /// have, a position that is not finite or lies outside the world border
++    /// of 30,000,000 blocks.
++    teleport: func(player: string, dimension: string, x: f64, y: f64, z: f64, yaw: option<f32>, pitch: option<f32>) -> result<_, string>;
++    /// Takes `points` experience points from the player, as vanilla's
++    /// `Player.giveExperiencePoints(-points)` does, going down a level when
++    /// the level's points run out; never below level 0. Made after this call
++    /// returns. An error (nothing queued) for a player not online or 0 points.
++    take-xp: func(player: string, points: u32) -> result<_, string>;
++    /// Plays a sound event for the players near a position, as `/playsound`
++    /// does at the `block` category. `sound` is vanilla's (`minecraft:...`)
++    /// or the mod's own, from its `assets/<id>/sounds.json`.
++    play-sound: func(dimension: string, sound: string, x: f64, y: f64, z: f64, volume: f32, pitch: f32);
++}
++
+ /// What the server calls in a server mod (manifest `api = "0.3"`,
+ /// experimental). Only the hooks `init` asks for are ever called. The player
+ /// in each event is as the server saw them when it happened.
+@@ -804,6 +857,7 @@ world horizon-server-mod {
+     import log;
+     import storage;
+     import players;
++    import player-control;
+     import %world;
+     export server-events;
+ }
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index a5faf1a..8574f69 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -100,12 +100,15 @@ pub enum Capability {
+     /// Blocks in the server's loaded chunks, and changes to them (server
+     /// mods; client mods later, where the game runs the world).
+     World,
++    /// What players are doing, and moving, charging experience from and
++    /// playing sounds for them (server mods; interface `player-control`).
++    PlayerControl,
+     /// The recipes and items the game knows, for recipe viewers
+     /// (interface `recipes`).
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 12] = [
++    pub const ALL: [Capability; 13] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -117,13 +120,17 @@ impl Capability {
+         Capability::Input,
+         Capability::Players,
+         Capability::World,
++        Capability::PlayerControl,
+         Capability::Recipes,
+     ];
+     /// Whether a server mod may have it: the others act on a local player.
+     pub fn on_server(self) -> bool {
+         matches!(
+             self,
+-            Capability::Storage | Capability::Players | Capability::World
++            Capability::Storage
++                | Capability::Players
++                | Capability::World
++                | Capability::PlayerControl
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -140,6 +147,7 @@ impl Capability {
+             Capability::Input => "input",
+             Capability::Players => "players",
+             Capability::World => "world",
++            Capability::PlayerControl => "player-control",
+             Capability::Recipes => "recipes",
+         }
+     }
+@@ -148,7 +156,11 @@ impl Capability {
+     pub fn is_experimental(self) -> bool {
+         matches!(
+             self,
+-            Capability::Ui | Capability::Render | Capability::Input | Capability::Recipes
++            Capability::Ui
++                | Capability::Render
++                | Capability::Input
++                | Capability::Recipes
++                | Capability::PlayerControl
+         )
+     }
+     /// What the player reads before turning the mod on: "May <this>".
+@@ -169,6 +181,9 @@ impl Capability {
+             }
+             Capability::Players => "see who is on the server and message them",
+             Capability::World => "read and change the world's blocks",
++            Capability::PlayerControl => {
++                "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
++            }
+             Capability::Recipes => {
+                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
+             }
+@@ -212,6 +227,7 @@ impl fmt::Display for Capability {
+             Capability::Input => "input",
+             Capability::Players => "players",
+             Capability::World => "world",
++            Capability::PlayerControl => "player-control",
+             Capability::Recipes => "recipes",
+         };
+         f.write_str(name)
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index cff4472..7e08510 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{players, world as mod_world},
++    horizon::mods::{player_control, players, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -55,8 +55,9 @@ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockPos, ServerCommand,
+     },
++    horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+-    horizon::mods::world::BlockChange,
++    horizon::mods::world::{BlockChange, CollisionBox},
+ };
+ type ClientEvents = bindings::exports::horizon::mods::events::Guest;
+ type ServerEvents = server_bindings::exports::horizon::mods::server_events::Guest;
+@@ -154,6 +155,9 @@ pub struct Snapshot {
+     pub font_widths: Arc<[f32]>,
+     /// The players on the server, for server mods.
+     pub players: Vec<ServerPlayer>,
++    /// What each of those players is doing, by player id, for capability
++    /// `player-control`'s `motion`.
++    pub motions: Vec<(String, Motion)>,
+     /// The first block along the player's view within [`RAYCAST_MAX`] and
+     /// its distance from the eye, for `game.raycast`; the game works it out
+     /// only while a mod calls it ([`Mods::wants_raycast`]).
+@@ -231,6 +235,32 @@ pub enum Output {
+         dimension: String,
+         blocks: Vec<BlockChange>,
+     },
++    /// `player-control.teleport`: move the player as `/tp` does, in
++    /// `dimension`. `yaw` and `pitch` stay as they are when `None`.
++    Teleport {
++        name: String,
++        player: String,
++        dimension: String,
++        pos: [f64; 3],
++        yaw: Option<f32>,
++        pitch: Option<f32>,
++    },
++    /// `player-control.take-xp`: `Player.giveExperiencePoints(-points)`.
++    TakeXp {
++        name: String,
++        player: String,
++        points: u32,
++    },
++    /// `player-control.play-sound`: a sound event for the players near
++    /// `pos` in `dimension`, in the blocks category.
++    PlaySound {
++        name: String,
++        dimension: String,
++        sound: String,
++        pos: [f64; 3],
++        volume: f32,
++        pitch: f32,
++    },
+     /// `ui.open-screen`: the mod's entry in `entries()`; what it shows is
+     /// [`Mods::screen`].
+     OpenScreen { owner: usize },
+@@ -257,6 +287,9 @@ pub trait WorldView: std::any::Any + Send {
+     fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
+     /// The biome at a position, `minecraft:plains`; `None` as for blocks.
+     fn biome(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String>;
++    /// The collision boxes of the block at a position, relative to the
++    /// block's corner; `None` where no chunk of that dimension is loaded.
++    fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>>;
+     /// Whether `dimension` is one the server has.
+     fn has_dimension(&self, dimension: &str) -> bool;
+     /// `Err` (why) for a state string that names no block state.
+@@ -455,7 +488,10 @@ impl Mods {
+             e.status == Status::Running
+                 && e.manifest
+                     .as_ref()
+-                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::World))
++                    .is_some_and(|m| {
++                    m.capabilities.contains(&crate::Capability::World)
++                        || m.capabilities.contains(&crate::Capability::PlayerControl)
++                })
+         })
+     }
+     /// Lends the game's world to capability `world` for the calls until
+@@ -542,6 +578,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             mod_world::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            player_control::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             RenderHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -1568,6 +1606,10 @@ impl mod_world::Host for State {
+         let view = self.world.lock().ok()?;
+         view.as_ref()?.biome(&dimension, x, y, z)
+     }
++    fn get_collision(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
++        let view = self.world.lock().ok()?;
++        view.as_ref()?.collision(&dimension, x, y, z)
++    }
+     fn set_blocks(&mut self, dimension: String, blocks: Vec<BlockChange>) -> Result<(), String> {
+         if blocks.len() > BLOCKS_PER_CALL {
+             return Err(format!(
+@@ -1593,6 +1635,120 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++/// `player-control.teleport`, `take-xp` and `play-sound` a mod may queue in one call.
++const CONTROL_PER_CALL: usize = 8;
++const SOUNDS_PER_CALL: usize = 16;
++/// `/tp`'s bounds: horizontally within 30,000,000 blocks, vertically 20,000,000.
++const TP_XZ: f64 = 30_000_000.0;
++const TP_Y: f64 = 20_000_000.0;
++impl player_control::Host for State {
++    fn get_motion(&mut self, player: String) -> Option<Motion> {
++        self.snapshot
++            .motions
++            .iter()
++            .find(|(id, _)| *id == player)
++            .map(|(_, m)| m.clone())
++    }
++    fn teleport(
++        &mut self,
++        player: String,
++        dimension: String,
++        x: f64,
++        y: f64,
++        z: f64,
++        yaw: Option<f32>,
++        pitch: Option<f32>,
++    ) -> Result<(), String> {
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        if !(x.is_finite() && y.is_finite() && z.is_finite())
++            || x.abs() >= TP_XZ
++            || z.abs() >= TP_XZ
++            || y.abs() >= TP_Y
++        {
++            return Err("that position is outside the world".into());
++        }
++        if yaw.is_some_and(|v| !v.is_finite()) || pitch.is_some_and(|v| !v.is_finite()) {
++            return Err("yaw and pitch must be numbers".into());
++        }
++        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
++            && !view.has_dimension(&dimension)
++        {
++            return Err(format!("no dimension {dimension}"));
++        }
++        let queued = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::Teleport { .. }))
++            .count();
++        if queued >= CONTROL_PER_CALL {
++            return Err(format!("at most {CONTROL_PER_CALL} teleports per call"));
++        }
++        self.out.push(Output::Teleport {
++            name: self.name.clone(),
++            player,
++            dimension,
++            pos: [x, y, z],
++            yaw,
++            pitch,
++        });
++        Ok(())
++    }
++    fn take_xp(&mut self, player: String, points: u32) -> Result<(), String> {
++        if points == 0 {
++            return Err("take at least 1 point".into());
++        }
++        if !self.snapshot.players.iter().any(|p| p.id == player) {
++            return Err(format!("no player {player} is online"));
++        }
++        let queued = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::TakeXp { .. }))
++            .count();
++        if queued >= CONTROL_PER_CALL {
++            return Err(format!("at most {CONTROL_PER_CALL} experience takes per call"));
++        }
++        self.out.push(Output::TakeXp {
++            name: self.name.clone(),
++            player,
++            points,
++        });
++        Ok(())
++    }
++    fn play_sound(
++        &mut self,
++        dimension: String,
++        sound: String,
++        x: f64,
++        y: f64,
++        z: f64,
++        volume: f32,
++        pitch: f32,
++    ) {
++        let queued = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::PlaySound { .. }))
++            .count();
++        if queued >= SOUNDS_PER_CALL
++            || !(x.is_finite() && y.is_finite() && z.is_finite())
++            || !volume.is_finite()
++            || !pitch.is_finite()
++        {
++            return;
++        }
++        self.out.push(Output::PlaySound {
++            name: self.name.clone(),
++            dimension,
++            sound: clip(sound),
++            pos: [x, y, z],
++            volume: volume.clamp(0.0, 10.0),
++            pitch: pitch.clamp(0.5, 2.0),
++        });
++    }
++}
+ impl players::Host for State {
+     fn online(&mut self) -> Vec<ServerPlayer> {
+         self.snapshot.players.clone()
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 0fe8210..7d9eccf 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -8,7 +8,8 @@
+ //! test written in TOML, `tests/<name>.toml` in the mod's folder: steps, each
+ //! saying what happens and what the mod must have shown by then.
+ use crate::{
+-    BlockPos, Clock, Corner, GameMode, Mods, Output, Panel, Player, ServerPlayer, Snapshot, Status,
++    BlockPos, Clock, CollisionBox, Corner, GameMode, Mods, Motion, Output, Panel, Player,
++    ServerPlayer, Snapshot, Status,
+ };
+ use serde::Deserialize;
+ use std::{
+@@ -26,6 +27,9 @@ pub struct TestGame {
+     pub clock: Option<Clock>,
+     /// The players on the server, for a server mod, in join order.
+     pub players: Vec<ServerPlayer>,
++    /// What each of those players is doing, by player id (capability
++    /// `player-control`); a player with no entry is standing still with no experience.
++    pub motions: Vec<(String, Motion)>,
+     /// Every name that joined, for their id.
+     names: Vec<String>,
+     tick: u64,
+@@ -54,6 +58,28 @@ impl crate::WorldView for ScriptWorld {
+         };
+         Some(biome.into())
+     }
++    fn collision(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<Vec<CollisionBox>> {
++        let state = self.block(dimension, x, y, z)?;
++        let name = state.split('[').next().unwrap_or_default();
++        // No shapes table here: air, plants and carpets have none, every other
++        // block is a full cube.
++        let none = name == "minecraft:air"
++            || name.ends_with("_carpet")
++            || name.ends_with("grass")
++            || name.ends_with("_torch");
++        Some(if none {
++            Vec::new()
++        } else {
++            vec![CollisionBox {
++                min_x: 0.0,
++                min_y: 0.0,
++                min_z: 0.0,
++                max_x: 1.0,
++                max_y: 1.0,
++                max_z: 1.0,
++            }]
++        })
++    }
+     fn has_dimension(&self, dimension: &str) -> bool {
+         matches!(
+             dimension,
+@@ -117,6 +143,7 @@ impl TestGame {
+                 day_time: 0,
+             }),
+             players: Vec::new(),
++            motions: Vec::new(),
+             names: Vec::new(),
+             tick: 0,
+             world: Default::default(),
+@@ -147,6 +174,7 @@ impl TestGame {
+             player: self.player.clone(),
+             clock: self.clock,
+             players: self.players.clone(),
++            motions: self.motions.clone(),
+             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
+             gui_size: (427.0, 240.0),
+             ..Snapshot::default()
+@@ -247,6 +275,26 @@ impl TestGame {
+         }
+     }
+ 
++    /// The player's motion, made standing still with no experience if the
++    /// player had none yet.
++    pub fn motion_of(&mut self, id: &str) -> &mut Motion {
++        let i = match self.motions.iter().position(|(p, _)| p == id) {
++            Some(i) => i,
++            None => {
++                let still = Motion {
++                    sneaking: false,
++                    on_ground: true,
++                    jumps: 0,
++                    xp_level: 0,
++                    xp_progress: 0.0,
++                };
++                self.motions.push((id.to_owned(), still));
++                self.motions.len() - 1
++            }
++        };
++        &mut self.motions[i].1
++    }
++
+     /// The scratch copy the mod runs from; its `storage` is beside it.
+     pub fn hmod(&self) -> &Path {
+         &self.hmod
+@@ -343,6 +391,18 @@ impl From<Mode> for GameMode {
+     }
+ }
+ 
++/// Fields of what a player is doing (capability `player-control`) to change;
++/// the others keep their values.
++#[derive(Debug, Default, Deserialize)]
++#[serde(deny_unknown_fields, rename_all = "kebab-case")]
++pub struct MotionSet {
++    sneaking: Option<bool>,
++    on_ground: Option<bool>,
++    jumps: Option<u32>,
++    xp_level: Option<i32>,
++    xp_progress: Option<f32>,
++}
++
+ /// A block a player breaks or places.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -361,7 +421,7 @@ pub struct ClockSet {
+ }
+ 
+ /// One step. Its parts happen in this order: `reload`, `title-screen`,
+-/// `blocks`, `join`, `player`, `clock`, `ticks`, `frames`, `chat`, `command`,
++/// `blocks`, `join`, `player`, `motion`, `clock`, `ticks`, `frames`, `chat`, `command`,
+ /// `break`, `place`, `leave`; then the blocks the mod set are made, and
+ /// `expect` is checked against what the mod showed and changed during the
+ /// step. For a server mod, `player`, `chat`, `command`, `break`
+@@ -376,6 +436,8 @@ pub struct Step {
+     #[serde(default)]
+     title_screen: bool,
+     player: Option<PlayerSet>,
++    /// Server mods: what the player is doing, for `player-control`.
++    motion: Option<MotionSet>,
+     clock: Option<ClockSet>,
+     #[serde(default)]
+     ticks: u64,
+@@ -420,6 +482,13 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods, capability `player-control`: every `teleport` as
++    /// `"Name: dimension x y z yaw pitch"` (`~` for a yaw or pitch left as it is),
++    /// every `take-xp` as `"Name: points"` and every `play-sound` as
++    /// `"dimension sound x y z"`, in order.
++    teleports: Option<Vec<String>>,
++    xp_taken: Option<Vec<String>>,
++    sounds: Option<Vec<String>>,
+     /// The mod is turned off during this step, for a reason holding this text.
+     /// Without it, a mod that stops fails the test.
+     stopped: Option<String>,
+@@ -473,6 +542,43 @@ impl PlayerSet {
+     }
+ }
+ 
++impl MotionSet {
++    fn apply(&self, m: &mut Motion) {
++        m.sneaking = self.sneaking.unwrap_or(m.sneaking);
++        m.on_ground = self.on_ground.unwrap_or(m.on_ground);
++        m.jumps = self.jumps.unwrap_or(m.jumps);
++        m.xp_level = self.xp_level.unwrap_or(m.xp_level);
++        m.xp_progress = self.xp_progress.unwrap_or(m.xp_progress);
++    }
++}
++
++/// Experience points needed to leave `level` (`Player.getXpNeededForNextLevel`).
++fn xp_needed(level: i32) -> i32 {
++    if level >= 30 {
++        112 + (level - 30) * 9
++    } else if level >= 15 {
++        37 + (level - 15) * 5
++    } else {
++        7 + level * 2
++    }
++}
++
++/// `Player.giveExperiencePoints(-points)`, as the game does it.
++fn take_xp(m: &mut Motion, points: u32) {
++    let amount = -i64::from(points);
++    m.xp_progress += amount as f32 / xp_needed(m.xp_level) as f32;
++    while m.xp_progress < 0.0 {
++        let f = m.xp_progress * xp_needed(m.xp_level) as f32;
++        if m.xp_level > 0 {
++            m.xp_level -= 1;
++            m.xp_progress = 1.0 + f / xp_needed(m.xp_level) as f32;
++        } else {
++            m.xp_level = 0;
++            m.xp_progress = 0.0;
++        }
++    }
++}
++
+ impl ClockSet {
+     fn apply(&self, c: &mut Clock) {
+         c.game_time = self.game_time.unwrap_or(c.game_time);
+@@ -559,6 +665,10 @@ impl Step {
+                 None => set.apply(game.player.get_or_insert_with(default_player)),
+             }
+         }
++        if let (Some(set), Some(i)) = (&self.motion, actor) {
++            let id = game.players[i].id.clone();
++            set.apply(game.motion_of(&id));
++        }
+         if let Some(set) = &self.clock {
+             set.apply(game.clock.get_or_insert(Clock {
+                 game_time: 0,
+@@ -606,6 +716,27 @@ impl Step {
+                 }
+             }
+         }
++        // Teleports and experience taken happen as the game makes them.
++        for o in &out {
++            match o {
++                Output::Teleport {
++                    player,
++                    dimension,
++                    pos,
++                    ..
++                } => {
++                    if let Some(p) = game.players.iter_mut().find(|p| p.id == *player) {
++                        (p.x, p.y, p.z) = (pos[0], pos[1], pos[2]);
++                        p.dimension.clone_from(dimension);
++                    }
++                }
++                Output::TakeXp { player, points, .. } => {
++                    let m = game.motion_of(player);
++                    take_xp(m, *points);
++                }
++                _ => {}
++            }
++        }
+         let stopped = out.iter().find_map(|o| match o {
+             Output::Stopped { reason, .. } => Some(reason.as_str()),
+             _ => None,
+@@ -701,6 +832,67 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.teleports {
++            let name = |id: &str| {
++                let p = game.players.iter().find(|p| p.id == id);
++                p.map_or(id.to_owned(), |p| p.name.clone())
++            };
++            let angle = |a: &Option<f32>| a.map_or("~".to_owned(), |v| format!("{v}"));
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::Teleport {
++                        player,
++                        dimension,
++                        pos,
++                        yaw,
++                        pitch,
++                        ..
++                    } => Some(format!(
++                        "{}: {dimension} {} {} {} {} {}",
++                        name(player),
++                        pos[0],
++                        pos[1],
++                        pos[2],
++                        angle(yaw),
++                        angle(pitch)
++                    )),
++                    _ => None,
++                })
++                .collect();
++            same("teleports", want, &got)?;
++        }
++        if let Some(want) = &e.xp_taken {
++            let name = |id: &str| {
++                let p = game.players.iter().find(|p| p.id == id);
++                p.map_or(id.to_owned(), |p| p.name.clone())
++            };
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::TakeXp { player, points, .. } => {
++                        Some(format!("{}: {points}", name(player)))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("xp-taken", want, &got)?;
++        }
++        if let Some(want) = &e.sounds {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::PlaySound {
++                        dimension,
++                        sound,
++                        pos,
++                        ..
++                    } => Some(format!("{dimension} {sound} {} {} {}", pos[0], pos[1], pos[2])),
++                    _ => None,
++                })
++                .collect();
++            same("sounds", want, &got)?;
++        }
+         if let Some(want) = &e.corner {
+             let got = game.panel().map(|p| corner_name(p.corner).to_string());
+             same("corner", &Some(want.clone()), &got)?;
+-- 
+2.43.0
+

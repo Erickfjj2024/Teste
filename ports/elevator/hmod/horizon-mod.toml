@@ -1,0 +1,8 @@
+id = "elevatorid"
+name = "Elevator Blocks (PC only)"
+version = "0.1.0"
+description = "Elevators in 16 colours: jump to go up, sneak to go down. Rust port of ElevatorMod, itself a port of the OpenBlocks elevator."
+authors = ["Vasco (VsnGamer), original ElevatorMod"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]

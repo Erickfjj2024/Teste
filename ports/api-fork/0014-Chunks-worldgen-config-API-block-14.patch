@@ -1,0 +1,922 @@
+From 582120d04ecf6f59da28e838fcab3322a6d2d8bf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 23:41:25 +0000
+Subject: [PATCH] World generation hook, chunk loading and configs (API block
+ 14)
+
+Capability chunks: chunk-loaded (where a mod adds its ores, with
+world.set-blocks) and set-forced (the mod's own chunk tickets, never a
+player's /forceload); SDK config helper over storage; oregen-demo example
+with harness support. API level 13.
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/cargo-horizon-mod/src/check.rs         |   3 +
+ crates/horizon-client/src/game/mods.rs        |   7 +-
+ .../horizon-client/src/game/native_hooks.rs   |   2 +
+ crates/horizon-client/src/game/server_mods.rs |  72 +++++++++++
+ .../examples/oregen-demo/Cargo.toml           |  16 +++
+ .../examples/oregen-demo/horizon-mod.toml     |   9 ++
+ .../examples/oregen-demo/src/lib.rs           |  46 +++++++
+ .../examples/oregen-demo/tests/gen.toml       |  23 ++++
+ crates/horizon-mod-sdk/src/config.rs          | 120 ++++++++++++++++++
+ crates/horizon-mod-sdk/src/lib.rs             |  15 ++-
+ crates/horizon-mod-sdk/wit/horizon.wit        |  22 ++++
+ crates/horizon-mods/src/api_level.rs          |   5 +-
+ crates/horizon-mods/src/manifest.rs           |  11 +-
+ crates/horizon-mods/src/runtime.rs            |  61 ++++++++-
+ crates/horizon-mods/src/testing.rs            |  30 +++++
+ crates/horizon-mods/tests/sandbox.rs          |   4 +-
+ docs/api/mods-reference.md                    |  15 ++-
+ 19 files changed, 460 insertions(+), 9 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/oregen-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/oregen-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/oregen-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/oregen-demo/tests/gen.toml
+ create mode 100644 crates/horizon-mod-sdk/src/config.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 48f4ec5..76bc14c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3348,6 +3348,13 @@ dependencies = [
+  "num-traits",
+ ]
+ 
++[[package]]
++name = "oregen-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "os_pipe"
+ version = "1.2.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 294b704..3506747 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -51,6 +51,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/multiblock-demo",
+     "crates/horizon-mod-sdk/examples/robit-demo",
+     "crates/horizon-mod-sdk/examples/item-logic",
++    "crates/horizon-mod-sdk/examples/oregen-demo",
+     "crates/horizon-mod-sdk/examples/net-client-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 114585f..1bf9ab0 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -280,6 +280,9 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::TakeXp { points, .. } => format!("took {points} experience point(s)"),
+             Output::PlaySound { sound, .. } => format!("played {sound}"),
++            Output::Chunk { chunk, forced, .. } => {
++                format!("{} chunk {} {}", if forced { "kept" } else { "let go of" }, chunk[0], chunk[1])
++            }
+             Output::PlayerItems { command, .. } => format!("asked for a player change: {command:?}"),
+             Output::Entity { command, .. } => format!("asked for an entity change: {command:?}"),
+             Output::NetSend { channel, data, .. } => {
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index f3aacfc..a5ddf12 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -99,6 +99,10 @@ pub(super) struct ModsState {
+     /// Extras that are official mods now, being installed.
+     #[cfg(feature = "mods")]
+     pub(super) moved: super::moved_extras::MovedState,
++    /// Chunks mods keep loaded: whether a player had forced the chunk before,
++    /// and the mods holding it.
++    #[cfg(feature = "mods")]
++    pub(super) mod_forced: std::collections::HashMap<(i32, i32), (bool, Vec<String>)>,
+     /// Answers to `spawn-mob` and `summon` tickets, for the next tick: the
+     /// mod's id, the ticket and the new entity's id.
+     #[cfg(feature = "mods")]
+@@ -848,7 +852,8 @@ impl Game<'_> {
+                 | Output::NetSend { .. }
+                 | Output::NetToServer { .. }
+                 | Output::Entity { .. }
+-                | Output::PlayerItems { .. }) => {
++                | Output::PlayerItems { .. }
++                | Output::Chunk { .. }) => {
+                     self.route_server_output(host.as_deref_mut(), server);
+                     continue;
+                 }
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index b16fc4e..e38c077 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -2332,6 +2332,8 @@ impl Game<'_> {
+     /// before `WorldOpenReady`. Not told of a chunk a client receives.
+     /// Server-side. API 57.
+     pub(super) fn native_chunk_load(&mut self, dimension: &str, chunk: [i32; 2], new: bool) {
++        #[cfg(feature = "mods")]
++        self.mod_chunk_event(dimension, chunk, new);
+         let _ = (dimension, chunk, new);
+     }
+     /// Chunk `chunk` of `dimension` left the world (NeoForge's
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index e21ab3f..1f74678 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -29,6 +29,12 @@ pub(super) enum ModEvent {
+         state: String,
+         placed: bool,
+     },
++    /// A chunk came into a level (`new`: just generated).
++    Chunk {
++        dimension: String,
++        chunk: [i32; 2],
++        new: bool,
++    },
+     /// A player's client half sent bytes on a mod channel.
+     Net {
+         who: Who,
+@@ -381,6 +387,9 @@ mod run {
+                             self.mods.mods.player_chat(&p, &text);
+                         }
+                     }
++                    ModEvent::Chunk { dimension, chunk, new } => {
++                        self.mods.mods.chunk_loaded(&dimension, chunk, new);
++                    }
+                     ModEvent::Net { who: w, channel, data } => {
+                         if let Some(p) = who(&w) {
+                             self.mods.mods.net_message(&p, &channel, &data);
+@@ -1315,6 +1324,22 @@ mod run {
+             self.mods.mods.item_hit(&player, &stack, entity, kind);
+         }
+ 
++        /// A chunk came into `dimension`; the mods hear it at the tick's end.
++        pub(in crate::game) fn mod_chunk_event(&mut self, dimension: &str, chunk: [i32; 2], new: bool) {
++            /// Chunks waiting for the tick's end at most (a big first load).
++            const MAX_WAITING: usize = 4096;
++            if !self.mods.server || !self.mods.mods.hears_chunks() {
++                return;
++            }
++            if self.mods.events.len() < MAX_WAITING {
++                self.mods.events.push(ModEvent::Chunk {
++                    dimension: dimension.to_owned(),
++                    chunk,
++                    new,
++                });
++            }
++        }
++
+         /// A player's client half sent `data` on `channel`.
+         pub(in crate::game) fn mod_net_event(&mut self, player: u128, channel: &str, data: &[u8]) {
+             if !self.hears_players() {
+@@ -1576,6 +1601,53 @@ mod run {
+                         });
+                     }
+                 }
++                Output::Chunk {
++                    name,
++                    id,
++                    dimension,
++                    chunk,
++                    forced,
++                } => {
++                    /// Chunks one mod may keep loaded.
++                    const PER_MOD: usize = 256;
++                    let key = (chunk[0], chunk[1]);
++                    if dimension != self.dim.id() {
++                        log::debug!("Horizon: mod {name} kept a chunk of another level");
++                        return;
++                    }
++                    if forced {
++                        let held = self
++                            .mods
++                            .mod_forced
++                            .values()
++                            .filter(|(_, mods)| mods.contains(&id))
++                            .count();
++                        let was_player = self.streaming.forced.contains(&key);
++                        let entry = self
++                            .mods
++                            .mod_forced
++                            .entry(key)
++                            .or_insert_with(|| (was_player, Vec::new()));
++                        if !entry.1.contains(&id) {
++                            if held >= PER_MOD {
++                                log::warn!("Horizon: mod {name} keeps {PER_MOD} chunks loaded already");
++                                return;
++                            }
++                            entry.1.push(id);
++                        }
++                        self.streaming.forced.insert(key);
++                    } else if let Some((was_player, mods)) = self.mods.mod_forced.get_mut(&key) {
++                        mods.retain(|m| *m != id);
++                        if mods.is_empty() {
++                            let was_player = *was_player;
++                            self.mods.mod_forced.remove(&key);
++                            // A chunk a player forced stays forced.
++                            if !was_player {
++                                self.streaming.forced.remove(&key);
++                            }
++                        }
++                    }
++                }
+                 Output::PlayerItems {
+                     name,
+                     player,
+diff --git a/crates/horizon-mod-sdk/examples/oregen-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/oregen-demo/Cargo.toml
+new file mode 100644
+index 0000000..5315d0f
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/oregen-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "oregen-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: adds ore to new chunks and keeps one chunk loaded"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/oregen-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/oregen-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..196bf9d
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/oregen-demo/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "oregen"
++name = "Ore Gen"
++version = "0.1.0"
++description = "Test mod for world generation and chunk loading: every new chunk gets a vein of oregen:ore in its stone, and chunk 0,0 is kept loaded."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "world", "chunks", "storage"]
++experimental = ["chunks"]
+diff --git a/crates/horizon-mod-sdk/examples/oregen-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/oregen-demo/src/lib.rs
+new file mode 100644
+index 0000000..72f4dba
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/oregen-demo/src/lib.rs
+@@ -0,0 +1,46 @@
++//! Ore Gen: the smallest user of `chunk-loaded`. In every chunk that was just
++//! generated it replaces stone with `oregen:ore` along a short vein at
++//! y = 12 starting at the chunk's centre (a real mod picks its places with its
++//! own random numbers from the chunk's coordinates), and it keeps chunk 0, 0
++//! loaded. `set_blocks` is made at the end of the tick, with the chunk there.
++use horizon_mod_sdk::config::Config;
++use horizon_mod_sdk::server::{BlockChange, Registration, ServerMod, chunks, world};
++
++struct OreGen {
++    /// How long a vein is, from the mod's config (default 4).
++    vein: i64,
++}
++
++impl ServerMod for OreGen {
++    fn init() -> Result<(Self, Registration), String> {
++        let config = Config::load("config.txt");
++        let vein = config.get_i64("vein_length", 4, 1, 16);
++        Ok((OreGen { vein }, Registration::new().on_chunks()))
++    }
++    fn chunk_loaded(&mut self, dimension: &str, chunk_x: i32, chunk_z: i32, new: bool) {
++        if chunk_x == 0 && chunk_z == 0 {
++            let _ = chunks::set_forced(dimension, 0, 0, true);
++        }
++        if !new {
++            return;
++        }
++        let (x0, z0) = (chunk_x * 16 + 8, chunk_z * 16 + 8);
++        let mut changes = Vec::new();
++        for i in 0..self.vein as i32 {
++            let (x, y, z) = (x0 + i, 12, z0);
++            if world::get_block(dimension, x, y, z).as_deref() == Some("minecraft:stone") {
++                changes.push(BlockChange {
++                    x,
++                    y,
++                    z,
++                    state: "oregen:ore".into(),
++                });
++            }
++        }
++        if !changes.is_empty() {
++            let _ = world::set_blocks(dimension, &changes);
++        }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(OreGen);
+diff --git a/crates/horizon-mod-sdk/examples/oregen-demo/tests/gen.toml b/crates/horizon-mod-sdk/examples/oregen-demo/tests/gen.toml
+new file mode 100644
+index 0000000..27f5886
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/oregen-demo/tests/gen.toml
+@@ -0,0 +1,23 @@
++[[step]]
++join = "Alex"
++blocks = [
++    { x = 24, y = 12, z = 8, state = "minecraft:stone" },
++    { x = 25, y = 12, z = 8, state = "minecraft:stone" },
++    { x = 26, y = 12, z = 8, state = "minecraft:dirt" },
++    { x = 27, y = 12, z = 8, state = "minecraft:stone" },
++]
++# A new chunk (1, 0): stone along y = 12 becomes ore, dirt stays.
++chunk = { x = 1, z = 0, new = true }
++expect.blocks = [
++    { x = 24, y = 12, z = 8, state = "oregen:ore" },
++    { x = 25, y = 12, z = 8, state = "oregen:ore" },
++    { x = 26, y = 12, z = 8, state = "minecraft:dirt" },
++    { x = 27, y = 12, z = 8, state = "oregen:ore" },
++]
++
++[[step]]
++# A chunk read from the save is not generated again.
++blocks = [{ x = 8, y = 12, z = 8, state = "minecraft:stone" }]
++chunk = { x = 0, z = 0, new = false }
++expect.chunk-forced = ["minecraft:overworld 0 0 true"]
++expect.blocks = [{ x = 8, y = 12, z = 8, state = "minecraft:stone" }]
+diff --git a/crates/horizon-mod-sdk/src/config.rs b/crates/horizon-mod-sdk/src/config.rs
+new file mode 100644
+index 0000000..366d041
+--- /dev/null
++++ b/crates/horizon-mod-sdk/src/config.rs
+@@ -0,0 +1,120 @@
++//! A mod's settings in a small text file (`key = value` lines, `#` comments)
++//! kept with capability `storage`, with typed reads that fall back to a
++//! default and stay inside a range, so a hand-edited file can't break the
++//! mod. (Mekanism's TOML configs map onto this: one file per config, a key
++//! per entry.)
++//!
++//! ```
++//! use horizon_mod_sdk::config::Config;
++//! let c = Config::parse("# tuning\nsmelt_ticks = 400\nloud = true\nname = \"Alex\"\n");
++//! assert_eq!(c.get_i64("smelt_ticks", 200, 1, 10_000), 400);
++//! assert_eq!(c.get_i64("missing", 200, 1, 10_000), 200);
++//! assert_eq!(c.get_i64("smelt_ticks", 200, 1, 100), 100);
++//! assert!(c.get_bool("loud", false));
++//! assert_eq!(c.get_str("name", "x"), "Alex");
++//! ```
++
++/// The entries of one config file.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Config {
++    entries: Vec<(String, String)>,
++}
++
++impl Config {
++    /// Reads `key = value` lines; blank lines and `#` comments are skipped, a
++    /// string may be quoted, and a later line wins.
++    pub fn parse(text: &str) -> Self {
++        let mut c = Self::default();
++        for line in text.lines() {
++            let line = line.trim();
++            if line.is_empty() || line.starts_with('#') {
++                continue;
++            }
++            let Some((k, v)) = line.split_once('=') else {
++                continue;
++            };
++            let v = v.trim();
++            let v = v
++                .strip_prefix('"')
++                .and_then(|v| v.strip_suffix('"'))
++                .unwrap_or(v);
++            c.set(k.trim(), v);
++        }
++        c
++    }
++    /// The file's text, one line an entry.
++    pub fn to_text(&self) -> String {
++        self.entries.iter().map(|(k, v)| format!("{k} = {v}\n")).collect()
++    }
++    pub fn set(&mut self, key: &str, value: &str) {
++        match self.entries.iter_mut().find(|(k, _)| k == key) {
++            Some(e) => e.1 = value.to_owned(),
++            None => self.entries.push((key.to_owned(), value.to_owned())),
++        }
++    }
++    fn raw(&self, key: &str) -> Option<&str> {
++        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
++    }
++    /// A whole number, `default` when missing or not one, cut to `min..=max`.
++    pub fn get_i64(&self, key: &str, default: i64, min: i64, max: i64) -> i64 {
++        self.raw(key)
++            .and_then(|v| v.parse().ok())
++            .unwrap_or(default)
++            .clamp(min, max)
++    }
++    /// A number, `default` when missing, not a number or not finite.
++    pub fn get_f64(&self, key: &str, default: f64, min: f64, max: f64) -> f64 {
++        self.raw(key)
++            .and_then(|v| v.parse::<f64>().ok())
++            .filter(|v| v.is_finite())
++            .unwrap_or(default)
++            .clamp(min, max)
++    }
++    pub fn get_bool(&self, key: &str, default: bool) -> bool {
++        match self.raw(key) {
++            Some("true") => true,
++            Some("false") => false,
++            _ => default,
++        }
++    }
++    pub fn get_str<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
++        self.raw(key).unwrap_or(default)
++    }
++    /// The file `name` of this mod's storage; empty when there is none.
++    pub fn load(name: &str) -> Self {
++        crate::storage::get(name)
++            .map(|b| Self::parse(&String::from_utf8_lossy(&b)))
++            .unwrap_or_default()
++    }
++    /// Writes the file `name` of this mod's storage.
++    pub fn save(&self, name: &str) {
++        let _ = crate::storage::set(name, self.to_text().as_bytes());
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn typed_reads_default_and_clamp() {
++        let c = Config::parse("a = 5\nb = nope\nc = 2.5\nd = inf\ne = true\n# x = 1\nf = \"hi there\"\na = 7\n");
++        assert_eq!(c.get_i64("a", 0, 0, 10), 7);
++        assert_eq!(c.get_i64("b", 3, 0, 10), 3);
++        assert_eq!(c.get_f64("c", 0.0, 0.0, 1.0), 1.0);
++        assert_eq!(c.get_f64("d", 0.5, 0.0, 1.0), 0.5);
++        assert!(c.get_bool("e", false));
++        assert!(!c.get_bool("missing", false));
++        assert_eq!(c.get_str("f", ""), "hi there");
++        assert_eq!(c.get_i64("x", 9, 0, 10), 9);
++    }
++    #[test]
++    fn text_round_trips() {
++        let mut c = Config::default();
++        c.set("rate", "30");
++        c.set("on", "true");
++        c.set("rate", "40");
++        assert_eq!(c.to_text(), "rate = 40\non = true\n");
++        assert_eq!(Config::parse(&c.to_text()), c);
++    }
++}
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 7daa1d5..e3ffaff 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -191,6 +191,7 @@ macro_rules! export_mod {
+ /// [`export_server_mod!`]. It runs where the world is simulated, and reads
+ /// and messages the players with capability `players`.
+ pub mod components;
++pub mod config;
+ 
+ pub mod server {
+     wit_bindgen::generate!({
+@@ -214,7 +215,7 @@ pub mod server {
+     pub use horizon::mods::world::{self, BlockChange, CollisionBox};
+     pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
+-    pub use horizon::mods::player_items;
++    pub use horizon::mods::{chunks, player_items};
+     pub use horizon::mods::recipe_types::{self, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+@@ -246,6 +247,9 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// A chunk came into the world (`new`: just generated), when
++        /// [`Registration::on_chunks`] is set: where a mod adds its ores.
++        fn chunk_loaded(&mut self, _dimension: &str, _chunk_x: i32, _chunk_z: i32, _new: bool) {}
+         /// A player used `stack` (right click), on a block (`pos`) or in the air.
+         /// Answer true to take the use. When [`Registration::on_items`] is set.
+         fn item_used(&mut self, _player: &Player, _stack: ItemStack, _pos: Option<BlockPos>) -> bool {
+@@ -338,6 +342,7 @@ pub mod server {
+                 block_entities: Vec::new(),
+                 net: false,
+                 items: false,
++                chunks: false,
+             }
+         }
+         /// `block` (`mymod:machine`) carries a block entity; `ticks` asks
+@@ -410,6 +415,11 @@ pub mod server {
+             self.chat = true;
+             self
+         }
++        /// Call [`ServerMod::chunk_loaded`].
++        pub fn on_chunks(mut self) -> Self {
++            self.chunks = true;
++            self
++        }
+         /// Call [`ServerMod::item_used`] and [`ServerMod::item_hit`].
+         pub fn on_items(mut self) -> Self {
+             self.items = true;
+@@ -588,6 +598,9 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn chunk_loaded(dimension: String, chunk_x: i32, chunk_z: i32, new: bool) {
++                    with(|m| m.chunk_loaded(&dimension, chunk_x, chunk_z, new))
++                }
+                 fn item_used(player: Player, stack: ItemStack, pos: Option<BlockPos>) -> bool {
+                     let mut out = false;
+                     with(|m| out = m.item_used(&player, stack, pos));
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 9cee899..7240d47 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -882,6 +882,19 @@ interface item-types {
+     }
+ }
+ 
++/// Capability `chunks`, server mods only (manifest `api = "0.3"`,
++/// experimental): keeping chunks loaded (a chunk loader), and, with
++/// `chunk-loaded`, the hook a mod's world generation runs from.
++interface chunks {
++    /// Keeps the chunk (`chunk-x`, `chunk-z` in chunks) of `dimension` loaded
++    /// and ticking even with no player near, or lets go of one the mod kept.
++    /// The mod's own tickets only: it never lets go of a chunk a player forced
++    /// with `/forceload`. At most 256 chunks a mod. Only the level the server
++    /// is simulating takes it; the tickets are not saved, so the mod asks
++    /// again when its blocks load.
++    set-forced: func(dimension: string, chunk-x: s32, chunk-z: s32, forced: bool) -> result<_, string>;
++}
++
+ /// Capability `player-items`, server mods only (manifest `api = "0.3"`,
+ /// experimental): what players carry, and hurting them and giving them
+ /// effects, for items with logic (a jetpack, a tablet that charges, armour with
+@@ -988,6 +1001,8 @@ interface server-events {
+         net: bool,
+         /// Call `item-used` and `item-hit`.
+         items: bool,
++        /// Call `chunk-loaded`.
++        chunks: bool,
+     }
+     record block-entity-kind {
+         /// The block's id, `mymod:machine`.
+@@ -1206,6 +1221,12 @@ interface server-events {
+     /// when it could not be made (an unknown kind, a chunk not loaded, a
+     /// monster on peaceful, a mod keeping it out).
+     entity-spawned: func(ticket: u64, id: option<u32>);
++    /// A chunk came into the world (`registration.chunks`): `new` when it was
++    /// just generated, false when it was read from the save. Its blocks are
++    /// there (read them with `world.get-block`); what the mod changes with
++    /// `world.set-blocks` is made at the end of the tick. This is where a mod
++    /// adds its ores. The chunks around the spawn come before the first tick.
++    chunk-loaded: func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool);
+     /// A player used `stack` (right click), in the air (no `pos`) or on the
+     /// block at `pos`, when `registration.items` is set. Answer true to take
+     /// the use: the hand swings and neither the item's own use nor the
+@@ -1241,6 +1262,7 @@ world horizon-server-mod {
+     import net;
+     import entities;
+     import player-items;
++    import chunks;
+     import %world;
+     export server-events;
+ }
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index bf3f1ae..9971633 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 12;
++pub const LEVEL: u32 = 13;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 70] = [
++pub const FUNCTIONS: [(&str, u32); 71] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -84,6 +84,7 @@ pub const FUNCTIONS: [(&str, u32); 70] = [
+     ("player-items.set-slot", 12),
+     ("player-items.hurt", 12),
+     ("player-items.add-effect", 12),
++    ("chunks.set-forced", 13),
+ ];
+ 
+ /// What the game's program carries so the launcher can read its level
+diff --git a/crates/horizon-mods/src/manifest.rs b/crates/horizon-mods/src/manifest.rs
+index e7bc05a..c85def4 100644
+--- a/crates/horizon-mods/src/manifest.rs
++++ b/crates/horizon-mods/src/manifest.rs
+@@ -114,6 +114,9 @@ pub enum Capability {
+     /// What players carry, hurting them and giving them effects (server mods;
+     /// interface `player-items`).
+     PlayerItems,
++    /// Keeping chunks loaded, and hearing chunks come into the world (server
++    /// mods; interface `chunks`).
++    Chunks,
+     /// Bytes to and from the server half of the mod (client mods; interface `net-client`).
+     NetClient,
+     /// The recipes and items the game knows, for recipe viewers
+@@ -121,7 +124,7 @@ pub enum Capability {
+     Recipes,
+ }
+ impl Capability {
+-    pub const ALL: [Capability; 18] = [
++    pub const ALL: [Capability; 19] = [
+         Capability::GameRead,
+         Capability::Chat,
+         Capability::Hud,
+@@ -138,6 +141,7 @@ impl Capability {
+         Capability::Net,
+         Capability::Entities,
+         Capability::PlayerItems,
++        Capability::Chunks,
+         Capability::NetClient,
+         Capability::Recipes,
+     ];
+@@ -153,6 +157,7 @@ impl Capability {
+                 | Capability::Net
+                 | Capability::Entities
+                 | Capability::PlayerItems
++                | Capability::Chunks
+         )
+     }
+     /// The WIT interface it grants, in `horizon:mods`.
+@@ -174,6 +179,7 @@ impl Capability {
+             Capability::Net => "net",
+             Capability::Entities => "entities",
+             Capability::PlayerItems => "player-items",
++            Capability::Chunks => "chunks",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         }
+@@ -192,6 +198,7 @@ impl Capability {
+                 | Capability::Net
+                 | Capability::Entities
+                 | Capability::PlayerItems
++                | Capability::Chunks
+                 | Capability::NetClient
+         )
+     }
+@@ -217,6 +224,7 @@ impl Capability {
+                 "see whether players sneak, jump and how much experience they have, move them, take experience from them and play sounds"
+             }
+             Capability::RecipeTypes => "read the recipes of the types it brings and the item tags they use",
++            Capability::Chunks => "keep chunks loaded and add to chunks as they are generated",
+             Capability::PlayerItems => "see and change what players carry, hurt them and give them effects",
+             Capability::Entities => "see the mobs of the world, spawn, move, hurt and remove them",
+             Capability::Net => "send bytes to its half running in players' games, and hear theirs",
+@@ -269,6 +277,7 @@ impl fmt::Display for Capability {
+             Capability::Net => "net",
+             Capability::Entities => "entities",
+             Capability::PlayerItems => "player-items",
++            Capability::Chunks => "chunks",
+             Capability::NetClient => "net-client",
+             Capability::Recipes => "recipes",
+         };
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 2a5f5bf..624d5ce 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -3,7 +3,7 @@ use crate::manifest::{Manifest, Package, Side};
+ use server_bindings::{
+     HorizonServerMod,
+     exports::horizon::mods::server_events::Registration as ServerRegistration,
+-    horizon::mods::{entities, net, player_control, player_items, players, recipe_types, world as mod_world},
++    horizon::mods::{chunks, entities, net, player_control, player_items, players, recipe_types, world as mod_world},
+ };
+ use std::{
+     path::{Path, PathBuf},
+@@ -358,6 +358,14 @@ pub enum Output {
+         volume: f32,
+         pitch: f32,
+     },
++    /// `chunks.set-forced` of mod `id`.
++    Chunk {
++        name: String,
++        id: String,
++        dimension: String,
++        chunk: [i32; 2],
++        forced: bool,
++    },
+     /// A `player-items` request for a player.
+     PlayerItems {
+         name: String,
+@@ -645,6 +653,21 @@ impl Mods {
+                     .is_some_and(|m| m.capabilities.contains(&crate::Capability::PlayerItems))
+         })
+     }
++    /// Whether a running server mod asked for `chunk-loaded`.
++    pub fn hears_chunks(&self) -> bool {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .any(|r| r.chunks)
++    }
++    /// A chunk came into `dimension` (`new`: just generated).
++    pub fn chunk_loaded(&mut self, dimension: &str, chunk: [i32; 2], new: bool) {
++        self.each_server(
++            FUEL_EVENT,
++            |h| h.chunks,
++            |m, s| m.call_chunk_loaded(s, dimension, chunk[0], chunk[1], new),
++        );
++    }
+     /// Whether a running server mod asked for `item-used` and `item-hit`.
+     pub fn hears_items(&self) -> bool {
+         self.entries
+@@ -806,6 +829,8 @@ impl Mods {
+                 .map_err(|e| e.to_string())?;
+             player_items::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
++            chunks::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
++                .map_err(|e| e.to_string())?;
+             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                 .map_err(|e| e.to_string())?;
+             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+@@ -2117,6 +2142,40 @@ impl mod_world::Host for State {
+         Ok(())
+     }
+ }
++impl chunks::Host for State {
++    fn set_forced(
++        &mut self,
++        dimension: String,
++        chunk_x: i32,
++        chunk_z: i32,
++        forced: bool,
++    ) -> Result<(), String> {
++        if chunk_x.abs() > 1_875_000 || chunk_z.abs() > 1_875_000 {
++            return Err("that chunk is outside the world".into());
++        }
++        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
++            && !view.has_dimension(&dimension)
++        {
++            return Err(format!("no dimension {dimension}"));
++        }
++        let made = self
++            .out
++            .iter()
++            .filter(|o| matches!(o, Output::Chunk { .. }))
++            .count();
++        if made >= ENTITY_REQUESTS {
++            return Err(format!("at most {ENTITY_REQUESTS} chunk requests a call"));
++        }
++        self.out.push(Output::Chunk {
++            name: self.name.clone(),
++            id: self.id.clone(),
++            dimension,
++            chunk: [chunk_x, chunk_z],
++            forced,
++        });
++        Ok(())
++    }
++}
+ impl player_items::Host for State {
+     fn get_inventory(&mut self, player: String) -> Option<Vec<Option<ModItemStack>>> {
+         self.snapshot
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index a6e9838..8de29ee 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -830,6 +830,16 @@ pub struct NetSet {
+     data: Vec<u8>,
+ }
+ 
++/// A chunk coming into the Overworld in a step.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ChunkSet {
++    x: i32,
++    z: i32,
++    #[serde(default)]
++    new: bool,
++}
++
+ /// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -981,6 +991,8 @@ pub struct Step {
+     /// Server mods, capability `player-items`: what the actor carries from now
+     /// on, slot 0 first (`"minecraft:stone*3"`, `""` for an empty slot).
+     inventory: Option<Vec<String>>,
++    /// Server mods, capability `chunks`: a chunk comes into the Overworld after the ticks.
++    chunk: Option<ChunkSet>,
+     /// Server mods: the actor uses a stack (right click) after the ticks.
+     use_item: Option<UseSet>,
+     /// Server mods: the actor hits an entity holding a stack after the ticks.
+@@ -1026,6 +1038,8 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods, capability `chunks`: every `set-forced` as `"dimension x z true"`.
++    chunk_forced: Option<Vec<String>>,
+     /// Server mods: whether the mod took the step's `use-item`.
+     claimed: Option<bool>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+@@ -1302,6 +1316,10 @@ impl Step {
+         game.tick(self.ticks);
+         game.frames(self.frames);
+         let who = actor.map(|i| game.players[i].clone());
++        if let Some(c) = &self.chunk {
++            game.snapshot();
++            game.mods.chunk_loaded("minecraft:overworld", [c.x, c.z], c.new);
++        }
+         if let (Some(u), Some(who)) = (&self.use_item, &who) {
+             game.snapshot();
+             let stack = parse_stack(&u.stack).ok_or("use-item: a stack is item*count")?;
+@@ -1540,6 +1558,18 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.chunk_forced {
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::Chunk { dimension, chunk, forced, .. } => {
++                        Some(format!("{dimension} {} {} {forced}", chunk[0], chunk[1]))
++                    }
++                    _ => None,
++                })
++                .collect();
++            same("chunk-forced", want, &got)?;
++        }
+         if let Some(want) = e.claimed {
+             if game.claimed != Some(want) {
+                 return Err(format!("claimed: expected {want}, got {:?}", game.claimed));
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index 09ddfcb..40bf743 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`.
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`.
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 12);
++    assert_eq!(LEVEL, 13);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index d4ca10b..31e9582 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -23,6 +23,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
+ | `net` | [`net`](#net) | send bytes to its half running in players' games, and hear theirs |
+ | `entities` | [`entities`](#entities) | see the mobs of the world, spawn, move, hurt and remove them |
+ | `player-items` | [`player-items`](#player-items) | see and change what players carry, hurt them and give them effects |
++| `chunks` | [`chunks`](#chunks) | keep chunks loaded and add to chunks as they are generated |
+ | `net-client` | [`net-client`](#net-client) | send bytes to its half running on the server, and hear it |
+ | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+ 
+@@ -37,7 +38,7 @@ A client mod: runs in the player's game.
+ 
+ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs where the world is simulated, on the dedicated server, a LAN host and single player's own server.
+ 
+-- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `item-types`, `player-items`, `world`
++- Imports (what the game offers): `log`, `storage`, `players`, `player-control`, `recipe-types`, `net`, `entities`, `item-types`, `player-items`, `chunks`, `world`
+ - Exports (what the mod provides): `server-events`
+ 
+ ## World `horizon-ui-mod`
+@@ -864,6 +865,16 @@ An item stack. `components` is the SNBT of its data components (`{"minecraft:dam
+ | `components` | `string` |  |
+ 
+ 
++## `chunks`
++
++Access: capability `chunks`.
++
++Capability `chunks`, server mods only (manifest `api = "0.3"`, experimental): keeping chunks loaded (a chunk loader), and, with `chunk-loaded`, the hook a mod's world generation runs from.
++
++| Function | Signature | What it does |
++| --- | --- | --- |
++| `set-forced` | `func(dimension: string, chunk-x: s32, chunk-z: s32, forced: bool) -> result<_, string>` | Keeps the chunk (`chunk-x`, `chunk-z` in chunks) of `dimension` loaded and ticking even with no player near, or lets go of one the mod kept. The mod's own tickets only: it never lets go of a chunk a player forced with `/forceload`. At most 256 chunks a mod. Only the level the server is simulating takes it; the tickets are not saved, so the mod asks again when its blocks load. |
++
+ ## `player-items`
+ 
+ Access: capability `player-items`.
+@@ -1068,6 +1079,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `block-entities` | `list<block-entity-kind>` | Blocks of the mod that carry a block entity: its saved bytes (`block-entity.data`), kept with the chunk and ticked by `block-entities-tick`. The block's content `template` must itself have a block entity (a furnace, a chest...), so that breaking the block removes it. |
+ | `net` | `bool` | Call `net-message` for what players' client halves send. |
+ | `items` | `bool` | Call `item-used` and `item-hit`. |
++| `chunks` | `bool` | Call `chunk-loaded`. |
+ 
+ ### record `block-entity`
+ 
+@@ -1119,5 +1131,6 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `net-message` | `func(player: player, channel: string, data: list<u8>)` | What `player`'s client half sent on `channel` (the mod's own), when `registration.net` is set. The bytes are the player's own: check them. |
+ | `multiblock-changed` | `func(group: string, dimension: string, structures: list<structure>) -> list<block-entity-update>` | The structure candidates of `group` in `dimension` changed (they are all of them, in the order of their least corner, empty when none is left). Called at the end of the tick, with the world lent, before the tick's transfers. Returns what to change in member blocks: updates for other blocks are dropped. |
+ | `entity-spawned` | `func(ticket: u64, id: option<u32>)` | The answer to a `spawn-mob` or `summon`: the new entity's id, or none when it could not be made (an unknown kind, a chunk not loaded, a monster on peaceful, a mod keeping it out). |
++| `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |
+ | `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

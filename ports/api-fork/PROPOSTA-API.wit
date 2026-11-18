@@ -1,0 +1,636 @@
+// PROPOSTA-API.wit — funções novas pedidas ao fork do Horizon / new functions requested from the Horizon fork
+// Consolidado de / consolidated from FORK_*.md. Interfaces exatas a decidir no fork; cada função cita o arquivo de origem.
+// Exact interface placement is decided in the fork; each function cites its source file.
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Define o nível analógico de sinal de comparador (0 a 15) emitido pelo bloco nas coordenadas dadas.
+    set-comparator-output: func(dimension: string, x: s32, y: s32, z: s32, level: u8);
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Evento disparado quando um jogador clica com o botão direito em um bloco de multibloco
+    /// sem contêiner próprio, permitindo redirecionar e abrir o menu do mestre/controlador.
+    open-multiblock-menu: func(player: player, dimension: string, pos: block-pos, master-pos: block-pos);
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Permite ao mod decidir dinamicamente se consome a interação ou se passa adiante
+    /// para o comportamento padrão (ex.: colocar o item da mão).
+    on-block-interact: func(player: player, dimension: string, pos: block-pos, hand: interaction-hand, sneaking: bool) -> interaction-result;
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Emite partículas visíveis no mundo para jogadores em um determinado raio.
+    spawn-particles: func(dimension: string, particles: particle-options, max-distance: f32);
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Registra ou atualiza a renderização de volume de fluido para uma estrutura de multibloco.
+    update-multiblock-fluid: func(dimension: string, box: multiblock-fluid-box);
+
+// origem/source: revisao_logica/FORK_boiler.md
+/// Remove a malha de renderização ao desmontar ou invalidar a estrutura.
+    clear-multiblock-fluid: func(dimension: string, structure-id: string);
+
+// origem/source: revisao_logica/FORK_dynamic_induction.md
+/// Permite que um membro de multibloco encaminhe a abertura de tela
+    /// para outro bloco do mesmo grupo.
+    set-menu-delegate: func(dimension: string, member-pos: block-pos, target-pos: block-pos);
+
+// origem/source: revisao_logica/FORK_dynamic_induction.md
+/// Chamado quando um jogador interage com um bloco segurando um item.
+    /// Retorna verdadeiro se o mod consumiu a interação (impedindo o comportamento padrão do jogo).
+    block-item-used: func(player: string, dimension: string, pos: block-pos, hand-stack: item-stack) -> option<item-stack>;
+
+// origem/source: revisao_logica/FORK_dynamic_induction.md
+set-multiblock-fluid-render: func(dimension: string, render: multiblock-fluid-render);
+
+// origem/source: revisao_logica/FORK_dynamic_induction.md
+clear-multiblock-fluid-render: func(dimension: string, min: block-pos);
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Transfere calor de uma fonte externa ou duto térmico para a válvula do multibloco.
+    transfer-heat: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+        joules: f64,
+    ) -> result<f64, string>;
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Aplica dano a todas as entidades dentro da caixa [min_pos, max_pos].
+    damage-area: func(
+        dimension: string,
+        min-pos: tuple<s32, s32, s32>,
+        max-pos: tuple<s32, s32, s32>,
+        damage: f32,
+        damage-type: string,
+    ) -> result<u32, string>;
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Executa o experimento elétrico nos mobs suportados dentro da câmara do SPS.
+    transform-experiment-entities: func(
+        dimension: string,
+        min-pos: tuple<s32, s32, s32>,
+        max-pos: tuple<s32, s32, s32>,
+    ) -> result<u32, string>;
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Atualiza ou remove o volume de fluido renderizado no interior de um multibloco.
+    set-multiblock-fluid: func(
+        dimension: string,
+        min-pos: tuple<s32, s32, s32>,
+        max-pos: tuple<s32, s32, s32>,
+        substance: string,
+        fraction: f64,
+    );
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Ativa ou atualiza os efeitos visuais internos da câmara do SPS.
+    set-sps-chamber-effects: func(
+        dimension: string,
+        center: tuple<s32, s32, s32>,
+        progress: f64,
+        active: bool,
+    );
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Informa ao motor do jogo o nível de comparador emitido pelo bloco (0..15).
+    set-comparator-signal: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+        level: u8,
+    ) -> result<_, string>;
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Determina dinamicamente se o clique com o botão direito abre menu ou passa para o bloco na mão.
+    should-activate-block: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+        player-sneaking: bool,
+    ) -> click-result;
+
+// origem/source: revisao_logica/FORK_evaporation_sps.md
+/// Spawna faíscas ao longo das arestas da caixa delimitadora do multibloco formado.
+    spawn-sparkle-box: func(
+        dimension: string,
+        min-pos: tuple<s32, s32, s32>,
+        max-pos: tuple<s32, s32, s32>,
+        density: u32,
+    );
+
+// origem/source: revisao_logica/FORK_fission.md
+/// O bloco recebe uma alteração de sinal de redstone vinda de vizinhos
+    neighbor-redstone-changed: func(pos: block-pos, power: u8, side: direction);
+
+// origem/source: revisao_logica/FORK_fission.md
+/// Chamado no clique direito em um bloco com lógica personalizada
+    on-block-use: func(player: player-id, pos: block-pos, hand: interaction-hand, sneak: bool, held-item: option<item-stack>) -> block-interaction-result;
+
+// origem/source: revisao_logica/FORK_fission.md
+/// Retorna todas as entidades contidas dentro de uma caixa de coordenadas
+    get-entities-in-bounds: func(dimension: string, min: vec3d, max: vec3d) -> list<entity-ref>;
+
+// origem/source: revisao_logica/FORK_fission.md
+/// Aplica dose de radiação ou dano a uma entidade específica
+    radiate-entity: func(entity-id: u32, dose: f64);
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Atualiza ou cria o renderizador do núcleo de plasma (três camadas esféricas concêntricas
+    /// rotativas: Vermelho, Rosa e Laranja com fator de escala dependente da temperatura).
+    update-fusion-core: func(state: plasma-core-state);
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Remove o renderizador ao extinguir a queima ou desmontar o reator.
+    remove-fusion-core: func(dimension: string, center-pos: block-pos);
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Emite sinal redstone de 0 a 15 em uma face específica para blocos vizinhos.
+    set-face-redstone: func(dimension: string, pos: block-pos, side: flow-side, level: u8);
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Invocado antes de abrir qualquer tela de multiblock.
+    on-block-use-check: func(
+        player-id: string,
+        dimension: string,
+        pos: block-pos,
+        sneaking: bool,
+        is-formed: bool
+    ) -> block-use-outcome;
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Spawna lote de partículas visíveis apenas para jogadores dentro do raio especificado.
+    spawn-particles-scoped: func(
+        dimension: string,
+        particles: list<particle-batch>,
+        player-radius: f64
+    );
+
+// origem/source: revisao_logica/FORK_fusion.md
+/// Aplica dano severo instantâneo a todas as entidades dentro da caixa.
+    apply-area-damage: func(
+        dimension: string,
+        box: aabb-box,
+        damage-type: string,
+        amount: f32
+    ) -> u32;
+
+// origem/source: revisao_logica/FORK_multiblock_comum.md
+/// Batch particle spawn along a set of lines (e.g. cuboid edges)
+    spawn-particle-lines: func(particle-type: string, lines: list<tuple<tuple<f64, f64, f64>, tuple<f64, f64, f64>>>, count-per-line: u32);
+
+// origem/source: revisao_logica/FORK_multiblock_comum.md
+/// Clears the fluid volume rendering when a multiblock dismantles
+    remove-multiblock-fluid: func(structure-id: u64);
+
+// origem/source: revisao_logica/FORK_multiblock_comum.md
+/// Allows a mod to selectively enable or disable capability faces on an active block entity
+    set-capabilities-enabled: func(pos: block-pos, tanks: bool, energy: bool, items: bool);
+
+// origem/source: revisao_logica/FORK_turbine.md
+/// Obtém o modo de despejo configurado no multibloco.
+    get-multiblock-dump-mode: func(dimension: string, pos: block-pos) -> dump-mode;
+
+// origem/source: revisao_logica/FORK_turbine.md
+/// Define o modo de despejo do multibloco via interação na interface gráfica.
+    set-multiblock-dump-mode: func(dimension: string, pos: block-pos, mode: dump-mode);
+
+// origem/source: revisao_logica/FORK_turbine.md
+/// Disparado quando um jogador clica com a mão vazia em um bloco do mundo.
+    block-activated: func(player: player, dimension: string, pos: block-pos, sneaking: bool) -> bool;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Obtém os metadados de uma frequência QIO registrada no mundo.
+    get-frequency: func(id: frequency-id) -> option<qio-frequency-summary>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Cria ou atualiza os metadados globais da frequência.
+    set-frequency: func(summary: qio-frequency-summary) -> result<_, string>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Lista todas as frequências acessíveis para um dado jogador.
+    list-frequencies: func(owner: option<string>) -> list<frequency-id>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Configura widgets avançados em uma tela de contêiner aberta.
+    set-screen-widgets: func(player-id: u64, text-fields: list<text-field-spec>, leds: list<status-led-spec>);
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Define a força de sinal de redstone emitida (0 a 15) para cada uma das seis faces do bloco.
+    /// A lista deve conter exatamente 6 valores correspondentes a:
+    /// [0: DOWN, 1: UP, 2: NORTH, 3: SOUTH, 4: WEST, 5: EAST].
+    set-redstone-output-faces: func(
+        dimension: string,
+        x: s32,
+        y: s32,
+        z: s32,
+        levels: list<u8>
+    ) -> result<_, string>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Grava um buffer binário opaco de componente de dados no ItemStack.
+    set-stack-component: func(stack-handle: u64, component-id: string, payload: list<u8>) -> result<_, string>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Lê o buffer binário de um componente de dados associado ao ItemStack.
+    get-stack-component: func(stack-handle: u64, component-id: string) -> option<list<u8>>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Transmite payload de rede para um jogador específico com menu aberto.
+    send-player-payload: func(player-id: u64, channel: string, payload: list<u8>) -> result<_, string>;
+
+// origem/source: rodada3/e1/FORK_qio_armazenamento.md
+/// Transmite payload para todos os jogadores no raio do bloco.
+    broadcast-block-payload: func(
+        dimension: string,
+        x: s32,
+        y: s32,
+        z: s32,
+        channel: string,
+        payload: list<u8>
+    ) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Cria ou registra uma frequência universal nomeada associada ao jogador proprietário.
+    create-frequency: func(name: string, owner: option<list<u8>>, mode: security-mode) -> result<frequency-id, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Exclui frequência e desvincula blocos associados.
+    delete-frequency: func(name: string, owner: option<list<u8>>) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Obtém os bytes serializados de um Data Component arbitrário de um ItemStack.
+    get-component: func(item: string, component-key: string) -> option<list<u8>>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Grava um Data Component estruturado em um ItemStack sem perder durabilidade ou encantamentos.
+    set-component: func(item: string, component-key: string, data: list<u8>) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Remove um Data Component específico do ItemStack.
+    remove-component: func(item: string, component-key: string) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Envia o catálogo em lote de milhares de itens da rede QIO para o cliente do jogador.
+    send-qio-catalog: func(player-id: string, catalog: list<catalog-entry>) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Emite atualização de frequência de segurança para fechamento de GUIs de jogadores não autorizados.
+    broadcast-security-update: func(owner-uuid: list<u8>, mode: u8, override: bool) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Registra um elemento virtual rolável rolável sob demanda na tela ativa.
+    add-virtual-scroll: func(menu-id: string, spec: virtual-scroll-spec) -> result<u32, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Registra campo de entrada de texto nativo com filtro e autocompletar.
+    add-search-box: func(menu-id: string, spec: search-box-spec) -> result<u32, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Instala um módulo tecnológico em uma armadura ou ferramenta modular.
+    install-module: func(gear-item: string, module-id: string, count: u32) -> result<u32, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Remove módulos instalados e devolve os itens ao jogador.
+    remove-module: func(gear-item: string, module-id: string, count: u32) -> result<u32, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Lista os módulos atualmente instalados no contêiner do itemstack.
+    get-installed-modules: func(gear-item: string) -> list<module-entry>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Vincula os blocos secundários da Modification Station (2x2x1) ou Security Desk (1x2x1)
+    /// redirecionando interações de clique direito, dano de mineração e abertura de contêiner para o mestre.
+    bind-bounding-blocks: func(dimension: string, master-x: s32, master-y: s32, master-z: s32, offsets: list<tuple<s32, s32, s32>>) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Define a resistência à quebra (-1.0f para inquebrável em modo sobrevivência)
+    /// para impedir que jogadores sem permissão destruam a Security Desk.
+    set-custom-hardness: func(dimension: string, x: s32, y: s32, z: s32, hardness: f32) -> result<_, string>;
+
+// origem/source: rodada3/e2/FORK_qio_interface_seguranca.md
+/// Callback disparado quando um jogador tenta quebrar o bloco no mundo.
+    can-break-block: func(dimension: string, x: s32, y: s32, z: s32, player-uuid: list<u8>) -> bool;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Obtém a temperatura do bloco em Kelvin
+    get-temperature: func(dimension: string, x: s32, y: s32, z: s32) -> result<float64, string>;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Consulta temperatura ambiente calculada do bioma
+    get-ambient-temperature: func(dimension: string, x: s32, y: s32, z: s32) -> float64;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Executa varredura de entidades no feixe entre dois pontos com largura dada
+    raycast-entities: func(dimension: string, from-x: float64, from-y: float64, from-z: float64,
+                           to-x: float64, to-y: float64, to-z: float64, diameter: float32) -> list<entity-hit>;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Aplica dano térmico/laser a uma entidade específica
+    damage-entity-laser: func(entity-id: u64, amount: float32, ignite-ticks: u32) -> result<float32, string>;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Quebra o bloco na posição dada e retorna a lista de itens dropados sem soltá-los no mundo
+    break-block-with-drop-intercept: func(dimension: string, x: s32, y: s32, z: s32) -> result<list<item-stack>, string>;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Absorve ou destrói uma entidade de item do mundo se recolhida
+    absorb-world-item: func(entity-id: u64, max-count: u32) -> result<item-stack, string>;
+
+// origem/source: rodada3/e3/FORK_calor.md
+/// Ejeta recurso em face específica com velocidade orientada (para transbordamento)
+    pop-resource-from-face: func(dimension: string, x: s32, y: s32, z: s32, face: u32, item: item-stack) -> result<_, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Executa o cálculo de caminho A* no grafo de transportadores respeitando custos e redstone.
+    find-transporter-route: func(
+        dimension: string,
+        start: tuple<s32, s32, s32>,
+        destination: tuple<s32, s32, s32>,
+        nodes: list<routing-node>,
+    ) -> result<list<tuple<s32, s32, s32>>, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Atualiza em lote os tickets de chunks mantidos pelo bloco modificado.
+    sync-chunk-tickets: func(
+        tickets: list<chunk-ticket>,
+    ) -> result<u32, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Captura atomicamente o bloco e seu BlockEntity no mundo.
+    capture-block: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+    ) -> result<captured-block, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Reinstancia o bloco capturado no mundo com seus dados originais.
+    restore-block: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+        data: captured-block,
+    ) -> result<bool, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Abre a GUI de um contêiner de 54 slots a partir de um item na mão do jogador.
+    open-handheld-container: func(
+        player-id: string,
+        title: string,
+        slot-count: u32,
+        initial-items: list<option<item-stack>>,
+    ) -> result<u64, string>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Tenta recarregar um item recarregável no inventário do jogador ou o Robit.
+    charge-entity: func(
+        entity-id: string,
+        max-amount: u64,
+    ) -> u64;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Dispara evento de jogo sísmico no mundo.
+    emit-seismic-event: func(
+        dimension: string,
+        pos: tuple<s32, s32, s32>,
+    ) -> bool;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Obtém os blocos de uma coluna vertical inteira dentro de um chunk.
+    get-chunk-column: func(
+        dimension: string,
+        block-x: s32,
+        block-z: s32,
+        min-y: s32,
+        max-y: s32,
+    ) -> list<tuple<s32, string>>;
+
+// origem/source: rodada3/e4/FORK_transporte_utilidades.md
+/// Retorna a lista de identificadores de tags atribuídos ao item.
+    get-item-tags: func(item-id: string) -> list<string>;
+
+// origem/source: rodada3/e5/FORK_assemblicator_cartao.md
+/// Evaluates a 3x3 crafting grid and resolves the matching recipe, if any.
+    /// The grid contains 9 items in row-major order (indices 0..8); none represents an empty slot.
+    match-recipe: func(grid: list<option<item-stack>>) -> option<crafting-result>;
+
+// origem/source: rodada3/e5/FORK_assemblicator_cartao.md
+/// Triggers an advancement criterion for a player.
+    trigger: func(player: string, trigger-id: string, payload: string) -> bool;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Abre o seletor radial na tela do cliente para o item atualmente segurado.
+    open-radial: func(player: string, slices: list<radial-slice>, current-index: u32) -> result<_, string>;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+on-radial-select: func(player: string, slice-id: string);
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Quebra múltiplos blocos de uma vez no mundo com verificação de proteção e atribuição ao jogador.
+    /// Retorna os blocos efetivamente destruídos e seus drops consolidados.
+    break-blocks-area: func(
+        dimension: string,
+        player: string,
+        positions: list<block-pos>,
+        tool-stack: item-stack,
+        silk-touch: bool,
+        fortune-level: u32
+    ) -> result<list<mined-block-result>, string>;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Teleporta o jogador com validação de passageiro, zeramento de fallDistance,
+    /// reprodução de som e pacote de partículas de portal na origem e destino.
+    teleport-player-fx: func(
+        player: string,
+        target: teleport-target,
+        sound-event: string,
+        particle-effect: string
+    ) -> result<_, string>;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Disparado antes da flecha ser liberada. Mod pode cancelar o tiro (ex.: falta de energia)
+    /// ou alterar propriedades do projétil resultante.
+    on-bow-release: func(event: bow-shoot-event) -> result<bow-override, string>;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Verifica se a armadura no slot do peitoral permite planar e emite ticks de desgaste.
+    check-elytra-gliding: func(player: string) -> bool;
+
+// origem/source: rodada3/e6/FORK_meka_tool.md
+/// Permite que itens customizados definam materiais válidos de reparo na bigorna.
+    is-anvil-repairable: func(target-item: string, repair-item: string) -> bool;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+on-player-damaged: func(player: player, damage-type: string, amount: f32, is-fire: bool, is-magic: bool) -> damage-absorption-result;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Hook de tick de armadura executado a cada tick (20/s) para os equipamentos vestidos
+    tick-armor: func(player: player, slots: armor-slots) -> armor-slots;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Adiciona impulso de velocidade relativa à direção que o jogador está olhando (moveRelative vanilla)
+    add-relative-movement: func(player: player, forward: f32, up: f32, strafe: f32) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Injeta vetor absoluto de aceleração (addDeltaMovement)
+    add-delta-movement: func(player: player, velocity: vec3) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Habilita ou desabilita capacidade de voo estilo criativo (NeoForgeMod.CREATIVE_FLIGHT)
+    set-flight-allowed: func(player: player, allowed: bool) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Define a altura de step-assist (subida de blocos sem pular, de 0.6 até 2.0 blocos)
+    set-step-height: func(player: player, height: f32) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Reseta a distância acumulada de queda para evitar dano de impacto
+    reset-fall-distance: func(player: player) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Envia ou atualiza um widget de HUD na tela do cliente
+    render-hud-element: func(player: player, element: hud-element-spec) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Remove um widget de HUD da tela do cliente
+    clear-hud-element: func(player: player, element-id: string) -> result<_, string>;
+
+// origem/source: rodada3/e7/FORK_mekasuit.md
+/// Consulta as tags e características de uma fonte de dano
+    get-damage-flags: func(damage-type: string) -> damage-flags;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+register-custom-entity: func(spec: entity-spec) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+set-follow-target: func(entity-id: u32, target-player-id: string, goal: ai-goal-follow) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+set-pickup-goal: func(entity-id: u32, goal: ai-goal-item-pickup) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+add-chunk-unload-ticket: func(dimension: string, chunk-x: s32, chunk-z: s32, duration-ticks: u32) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+/// Dispersa uma fonte instantânea de radiação na coordenada global especificada.
+    dump-radiation: func(dimension: string, x: s32, y: s32, z: s32, magnitude-sv-h: f64);
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+/// Consulta o nível de radiação acumulada no bloco ou chunk.
+    get-radiation-level: func(dimension: string, x: s32, y: s32, z: s32) -> f64;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+send-entity-packet-to-server: func(packet: entity-action-packet) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+broadcast-entity-state-to-tracking-players: func(entity-id: u32, state: list<u8>) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+register-custom-fluid: func(spec: custom-fluid-spec) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+register-consumable-bucket: func(spec: consumable-bucket-spec) -> result<_, string>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+/// Consulta uma capacidade específica do bloco vizinho relativo sem recarregar o bloco inteiro.
+    query-vertical-neighbor-capability: func(dimension: string, x: s32, y: s32, z: s32, direction: string, capability: string) -> option<list<u8>>;
+
+// origem/source: rodada3/e8/FORK_robit_quimicos.md
+/// Injeta químicos diretamente no vizinho mantendo cache atômico na transação de tick.
+    transfer-chemical-vertical: func(dimension: string, from-x: s32, from-y: s32, from-z: s32, direction: string, amount: u64) -> u64;
+
+// ---- Chargepad (revisao_numeros/REVISAO_chargepad.md) ----
+// Consulta de entidades por caixa / entity query by box
+entities-in-box: func(dimension: string, min: tuple<f64,f64,f64>, max: tuple<f64,f64,f64>, kind: option<string>) -> list<entity-ref>;
+// Slots de energia do inventário do jogador (item, energia, capacidade, max-insert) / player inventory energy slots
+player-energy-slots: func(player: player) -> list<energy-slot>;
+set-player-slot-energy: func(player: player, slot: u32, energy: u64);
+
+// ---- Meka-Tool e MekaSuit (mekanism/revisao_numeros/REVISAO_meka_tool_ligacao.md) ----
+// Troca de componentes segura: só escreve se o stack ainda for o esperado (evita duplicar/apagar item por escrita cega do set-slot)
+// Safe component swap: writes only if the stack is still the expected one (a blind set-slot can duplicate or destroy an item)
+compare-and-set-slot: func(player: string, slot: u32, expected: item-stack, replacement: option<item-stack>) -> result<bool, string>;
+// Impulso/movimento do jogador (jetpack, módulos de movimento, hydraulic jump) / player motion (jetpack, movement modules)
+set-motion: func(player: string, vx: f64, vy: f64, vz: f64) -> result<_, string>;
+set-allow-flight: func(player: string, allowed: bool, flying: option<bool>) -> result<_, string>;
+// Evento de dano ao jogador com armadura: o mod pode reduzir o dano e consumir energia (absorção do MekaSuit) / armour damage event
+// (a hook before damage: returns the damage to apply)
+// player-damaged: func(player: player, damage-type: string, amount: f32, source-entity: option<u32>) -> f32;
+// Dano de ataque modificado pelo mod (Meka-Tool: Attack Amplification) / mod-modified melee damage
+// item-hit-damage: func(player: player, stack: item-stack, entity: u32, base-damage: f32) -> f32;
+// HUD de módulos (ícone + texto) e menu radial / module HUD and radial menu
+set-hud-line: func(player: string, id: string, icon: string, text: string, fraction: f32) -> result<_, string>;
+open-radial-menu: func(player: string, item: string, entries: list<string>) -> result<_, string>;
+// Quebra de vários blocos por energia (blasting/vein mining) e agricultura com regras próprias / multi-block mining
+break-blocks: func(player: string, dimension: string, positions: list<tuple<s32,s32,s32>>, tool: item-stack) -> result<u32, string>;
+
+// ---- Estado do jogador para o MekaSuit (mekanism/revisao_numeros/REVISAO_mekasuit_ligacao.md) ----
+// `player-control.motion` hoje só tem sneaking/on-ground/jumps/xp. O MekaSuit precisa, por tick:
+// velocidade (deltaMovement), teclas (pulo mantido, descer, sprint, boost), voando, planando (elytra), em água/fluido,
+// ar restante e máximo, em chamas, fluido em que está submerso (temperatura), efeitos nocivos ativos, passageiro, dormindo,
+// cooldown de itens; e alimentar o jogador (comida/saturação), itens de energia no inventário (ler e inserir energia).
+// player-state: func(player: string) -> option<player-state>;   // record com os campos acima
+// set-food: func(player: string, food: u32, saturation: f32) -> result<_, string>;
+// energy-of-stack / insert-energy-in-stack (itens com energia do mod ou de outros mods)
+
+// ---- Formulaic Assemblicator (mekanism/revisao_numeros/REVISAO_assemblicator.md) ----
+// As receitas de crafting de TODO o jogo (vanilla e mods): hoje o mod só lê receitas de tipos próprios e de cozimento.
+// crafting recipes of the whole game (vanilla and mods); today the mod only reads own-type and cooking recipes.
+record craft-match { id: string, output: item-stack, remaining: list<item-stack> }
+// A primeira receita de crafting que a grade 3x3 faz (RecipeManager.getRecipeFor(CRAFTING, input, level)).
+crafting-find: func(grid: list<option<item-stack>>) -> option<craft-match>;
+// Se a receita `id` aceita a grade (recipe.matches(input, level)).
+crafting-matches: func(id: string, grid: list<option<item-stack>>) -> bool;
+// O limite de pilha de um item (Item.getMaxStackSize / componente max_stack_size); hoje o mod adivinha pelo nome (bin::stack_size).
+item-max-stack-size: func(item: string) -> u32;
+// Validador por slot do contêiner (stock control: um slot só aceita o item da fórmula); hoje ContainerSpec só tem entradas/saídas por slot.
+// per-slot item validators for the container (stock control accepts only the formula's item in a slot)
+
+// ---- FORK-10: entidades próprias de mod (Robit) — ver FORK-10-entidades-proprias.md ----
+record entity-skin { id: string, texture: string, model: option<string> }
+record entity-kind { id: string, width: f32, height: f32, eye-height: f32, max-health: f32, speed: f32, persistent: bool, skins: list<entity-skin>, container-slots: u32 }
+record mod-entity { dimension: string, id: u32, kind: string, x: f64, y: f64, z: f64, yaw: f32, data: list<u8>, items: list<option<item-stack>>, energy: u64, skin: string, name: option<string> }
+record mod-entity-update { dimension: string, id: u32, data: option<list<u8>>, items: option<list<option<item-stack>>>, energy: option<u64>, skin: option<string>, name: option<option<string>>, path-to: option<tuple<f64, f64, f64, f32>>, teleport: option<tuple<f64, f64, f64>>, remove: bool }
+// registration.entity-kinds: list<entity-kind>
+// export entities-tick: func(entities: list<mod-entity>) -> list<mod-entity-update>;
+// export mod-entity-used: func(player: player, entity: mod-entity, sneaking: bool) -> bool;
+// export mod-entity-damaged: func(entity: mod-entity, source: damage-source, amount: f32) -> f32;
+// export mod-entity-died: func(entity: mod-entity);
+spawn-mod-entity: func(dimension: string, kind: string, x: f64, y: f64, z: f64, data: list<u8>) -> result<u64, string>;
+record dropped-item { id: u32, stack: item-stack, x: f64, y: f64, z: f64 }
+items-in-box: func(dimension: string, min: tuple<f64, f64, f64>, max: tuple<f64, f64, f64>) -> list<dropped-item>;
+take-dropped-item: func(dimension: string, id: u32, count: u32) -> result<_, string>;
+
+// ---- Pedidos novos do MekaSuit depois da API 29 (mekanism/revisao_numeros/REVISAO_mekasuit_ligacao.md) ----
+set-air: func(player: string, air: s32) -> result<_, string>;                       // eletrolítico: restaurar ar
+reduce-effect: func(player: string, effect: string, ticks: s32) -> result<_, string>; // purificação de inalação: encurtar efeito (ou remover)
+reset-fall-distance: func(player: string) -> result<_, string>;                      // jetpack: handleJetpackMotion -> fallDistance = 0
+// Modificadores de atributo do jogador por mod (velocidade de movimento, altura de degrau, eficiência na água, dano de ataque), com id e remoção
+set-attribute-modifier: func(player: string, attribute: string, id: string, amount: f64, operation: string) -> result<_, string>;
+remove-attribute-modifier: func(player: string, attribute: string, id: string) -> result<_, string>;
+
+// ---- Cartão de configuração e mensagens (mekanism/revisao_numeros/REVISAO_cartao_configuracao.md) ----
+// Mensagem na barra de ação (displayClientMessage(.., true)), como o cartão e outros itens do Mekanism mostram; hoje `players.tell` é bate-papo.
+tell-overlay: func(player: string, text: string) -> bool;
+// Segurança de blocos (IBlockSecurityUtils.canAccessOrDisplayError) já é do mod (security.rs); falta só o dono do bloco colocado (player-placed owner).
+
+// ---- Electric Bow (mekanism/revisao_numeros/REVISAO_electric_bow_hdpe_elytra.md) ----
+// O arco elétrico gasta energia ao soltar a corda e só atira com energia; no modo de fogo a flecha tem Flame. O jogo hoje não avisa o mod.
+// registration.item-release
+// export item-released: func(player: player, stack: item-stack, hand: string, ticks-held: s32) -> bool;   // false cancela o tiro (ItemElectricBow.releaseUsing)
+// export item-shot: func(player: player, stack: item-stack, projectiles: list<u32>);                        // depois que as flechas existem (shoot): cobrar a energia
+set-entity-fire: func(dimension: string, id: u32, ticks: s32) -> result<_, string>;                        // flecha com Flame no modo de fogo
+// Troca de modo de itens (IAttachmentBasedModeItem.changeMode: tecla de modo e rolagem com sneak): o Android não tem a tecla.
+// export item-mode-changed: func(player: player, stack: item-stack, shift: s32) -> option<item-stack>;
+
+// ---- FORK-20: widgets de tela (campo de texto, texto dinâmico, lista rolável) — ver FORK-20-telas-filtros.md ----
+// BlockEntityUpdate.menu-text: option<list<string>>
+// widget textfield { x, y, w, h, max-length, validator, id } -> export menu-text-input: func(player: player, dimension: string, pos: block-pos, id: s32, text: string) -> option<block-entity-update>;
+// widget list { x, y, w, h, row-height, rows, source, first, count, on-click }
+
+// ---- Laser Tractor Beam (mekanism: laser_tractor.rs, TileEntityLaserReceptor/LaserTractorBeam) ----
+// `world.mine-block` já faz o que a quebra do trator faz (drops no contêiner de destino); falta a dureza para o custo em energia (100 000 J por ponto de dureza)
+// e os itens soltos atingidos pelo feixe (items-in-box / take-dropped-item do FORK-10, passo 6).
+block-hardness: func(dimension: string, x: s32, y: s32, z: s32) -> option<f32>;   // Block.defaultDestroyTime; none for unloaded; negative for unbreakable
+
+// ---- Oredictionificator: resultado do filtro (mekanism/oredictionificator.rs) ----
+// O filtro novo (digitado no campo de texto, FORK-20 parte 2) escolhe o resultado entre os itens da tag (getPossibleFilters / FilterButton).
+// recipe-types.item-tag-members: func(tag: string) -> list<string>;   // ids dos itens da tag de item, na ordem do jogo; vazio se a tag não existe
+
+// ---- FORK-20 parte 4: gráfico de linhas (GuiDoubleGraph do Mekanism: aquecimento do reator de fissão e de fusão) ----
+// widget graph { x, y, w, h, series: [{ value: data-ref, color }, ...], samples: 40, min-scale: number, tooltip }: o cliente guarda as últimas `samples` leituras de cada
+// série (uma por tick de tela) e desenha as linhas; a escala vai do menor ao maior valor guardado (no mínimo `min-scale`).

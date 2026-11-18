@@ -1,0 +1,158 @@
+From 496653397e33194f2fa72f11ce8fcb51ba170b6d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 21:17:48 +0000
+Subject: [PATCH] Elevator 0.1.4: land on top of a carpet; /elevator debug
+ reads what tick kept
+
+---
+ .../examples/elevator/horizon-mod.toml        |  2 +-
+ .../examples/elevator/src/lib.rs              | 27 +++++++++++++------
+ .../examples/elevator/tests/blocked.toml      |  2 +-
+ .../elevator/tests/carpet_both_ways.toml      |  9 ++++---
+ .../examples/elevator/tests/config.toml       |  3 ++-
+ 5 files changed, 28 insertions(+), 15 deletions(-)
+
+diff --git a/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+index bcacb09..7daead5 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/horizon-mod.toml
+@@ -1,6 +1,6 @@
+ id = "elevator"
+ name = "Elevator"
+-version = "0.1.3"
++version = "0.1.4"
+ description = "Jump on an elevator block to go up to the next one above, sneak to go down. Rust port of ElevatorMod (VsnGamer, MIT). Needs the Elevator blocks mod (elevatorid)."
+ authors = ["VsnGamer (ElevatorMod, MIT)", "Rust port"]
+ api = "0.3"
+diff --git a/crates/horizon-mod-sdk/examples/elevator/src/lib.rs b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+index 7da219d..fe6e305 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/elevator/src/lib.rs
+@@ -236,12 +236,22 @@ impl Elevators {
+             Err(_) => return false,
+         }
+         let dest = logic::destination(to, &target, p.x, p.z, cfg);
++        // A thin block lying on the elevator (a carpet) would hold the player's feet inside its
++        // collision, where the game cannot stand or crouch them (it crawls them, and a sneak is
++        // not seen). They land on top of it instead: a sixteenth of a block higher.
++        let thin = reader
++            .boxes(to.above())
++            .iter()
++            .filter(|b| b.min_y < 0.01 && b.max_y < 0.999)
++            .map(|b| b.max_y)
++            .fold(0.0_f64, f64::max);
++        let land_y = dest.y.max(f64::from(to.y) + target.support_height + thin);
+         let yaw = match dest.yaw {
+             Yaw::Set(v) => Some(v),
+             Yaw::Keep => None,
+         };
+         let pitch = (dest.pitch == Pitch::Reset).then_some(0.0);
+-        if player_control::teleport(&p.id, &p.dimension, dest.x, dest.y, dest.z, yaw, pitch).is_ok() {
++        if player_control::teleport(&p.id, &p.dimension, dest.x, land_y, dest.z, yaw, pitch).is_ok() {
+             player_control::play_sound(
+                 &p.dimension,
+                 TELEPORT_SOUND,
+@@ -267,14 +277,15 @@ impl Elevators {
+         reader.elevator_at(below).is_some()
+     }
+ 
+-    /// `/elevator debug`: what the mod sees of the player who typed it.
++    /// `/elevator debug`: what the mod saw of the player who typed it on its last tick. (A typed
++    /// command is not given the players' motion, so this reads what `tick` kept.)
+     fn debug(&self, p: &Player) -> String {
+         // The id a typed command carries is not always the one `players::online` lists (it
+         // differed for the owner of a single-player world), so find the player by name.
+         let listed = players::online().into_iter().find(|q| q.name == p.name);
+         let p = listed.as_ref().unwrap_or(p);
+-        let Some(m) = player_control::get_motion(&p.id) else {
+-            return "No motion is reported for you".into();
++        let Some(seen) = self.seen.get(&p.id) else {
++            return "The mod has not seen you move yet: wait a second and try again".into();
+         };
+         let reader = Reader { dimension: &p.dimension };
+         let here = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+@@ -283,14 +294,14 @@ impl Elevators {
+         let show = |b: Option<BlockPos>| b.map_or("none".to_string(), |b| format!("{} {} {}", b.x, b.y, b.z));
+         format!(
+             "sneaking={} onGround={} jumps={} y={:.3} origin={} up={} down={} cooldown={}",
+-            m.sneaking,
+-            m.on_ground,
+-            m.jumps,
++            seen.sneaking,
++            seen.on_ground,
++            seen.jumps,
+             p.y,
+             show(origin),
+             show(at(Dir::Up)),
+             show(at(Dir::Down)),
+-            self.seen.get(&p.id).map_or(0, |s| s.cooldown)
++            seen.cooldown
+         )
+     }
+ }
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml b/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
+index 058ca58..6d25375 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/blocked.toml
+@@ -21,7 +21,7 @@ expect.teleports = []
+ blocks = [{ x = 0, y = 69, z = 0, state = "minecraft:white_carpet" }]
+ motion = { jumps = 2 }
+ ticks = 1
+-expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 69.0625 0.5 ~ ~"]
+ 
+ # Away from any elevator, a jump does nothing.
+ [[step]]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml b/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
+index 46ccde6..a0782d9 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/carpet_both_ways.toml
+@@ -11,11 +11,12 @@ blocks = [
+ command = "elevator watch off"
+ ticks = 1
+ 
+-# Up, onto the elevator that has a carpet on it: they land inside the carpet's sixteenth.
++# Up, onto the elevator that has a carpet on it: they land on top of the carpet (a sixteenth up),
++# not inside it, where the game would crawl them and not see a sneak.
+ [[step]]
+ motion = { jumps = 1 }
+ ticks = 1
+-expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 69.0625 0.5 ~ ~"]
+ 
+ # Standing on that carpet (feet at 69.0625), sneak: down to the white elevator.
+ [[step]]
+@@ -35,10 +36,10 @@ expect.teleports = []
+ [[step]]
+ motion = { jumps = 2 }
+ ticks = 1
+-expect.teleports = ["Alex: minecraft:overworld 0.5 69 0.5 ~ ~"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 69.0625 0.5 ~ ~"]
+ 
+ [[step]]
+ player = { y = 69.0625 }
+ motion = { sneaking = true }
+ ticks = 5
+-expect.teleports = ["Alex: minecraft:overworld 0.5 64 0.5 ~ ~"]
++expect.teleports = ["Alex: minecraft:overworld 0.5 64.0625 0.5 ~ ~"]
+diff --git a/crates/horizon-mod-sdk/examples/elevator/tests/config.toml b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+index 1053395..5c70d3a 100644
+--- a/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
++++ b/crates/horizon-mod-sdk/examples/elevator/tests/config.toml
+@@ -28,6 +28,7 @@ expect.error = "Settings can only be changed when you are alone on the server"
+ [[step]]
+ as = "Alex"
+ motion = { sneaking = false, on-ground = true, jumps = 0 }
++ticks = 1
+ command = "elevator debug"
+ expect.feedback = "sneaking=false onGround=true jumps=0 y=64.000 origin=none up=none down=none cooldown=0"
+ 
+@@ -47,4 +48,4 @@ expect.told = []
+ as = "Alex"
+ motion = { on-ground = false }
+ ticks = 1
+-expect.told = ["Alex: tick 2 (+1): y=64.000 rise=+0.000 onGround=false jumps=0 sneaking=false onElevator=false"]
++expect.told = ["Alex: tick 3 (+1): y=64.000 rise=+0.000 onGround=false jumps=0 sneaking=false onElevator=false"]
+-- 
+2.43.0
+

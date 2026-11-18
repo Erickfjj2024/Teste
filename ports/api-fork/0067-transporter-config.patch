@@ -1,0 +1,514 @@
+From 881248c4044d5e6b02ec16fb1c78506258cec103 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 02:29:43 +0000
+Subject: [PATCH] Transporter Config: eject colour, strict input, transmitter
+ colour (API 54)
+
+world.set-item-eject-color, set-item-strict-input and set-transmitter-color
+keep Mekanism's Transporter Config in the block entities. Item networks route
+by colour: a stack put in by a block ejecting with a colour carries it,
+passes plain transporters and those of its colour (a plain stack plain ones
+only, network::reachable_ends), and a strict block takes only its own
+colour. None of it applies while ejection is off. Harness item-transport.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/cargo-horizon-mod/src/check.rs         |  1 +
+ crates/horizon-client/src/game/mods.rs        |  1 +
+ crates/horizon-client/src/game/server_mods.rs | 62 +++++++++++++++-
+ .../examples/block-use/src/lib.rs             |  8 +++
+ .../examples/block-use/tests/block_use.toml   |  8 +++
+ crates/horizon-mod-sdk/wit/horizon.wit        | 13 ++++
+ crates/horizon-mods/src/api_level.rs          |  7 +-
+ crates/horizon-mods/src/network.rs            | 72 +++++++++++++++++++
+ crates/horizon-mods/src/runtime.rs            | 43 +++++++++++
+ crates/horizon-mods/src/testing.rs            | 25 +++++++
+ crates/horizon-mods/tests/sandbox.rs          |  4 +-
+ docs/api/mods-reference.md                    |  3 +
+ 12 files changed, 240 insertions(+), 7 deletions(-)
+
+diff --git a/crates/cargo-horizon-mod/src/check.rs b/crates/cargo-horizon-mod/src/check.rs
+index 3216e83d5..364de63b4 100644
+--- a/crates/cargo-horizon-mod/src/check.rs
++++ b/crates/cargo-horizon-mod/src/check.rs
+@@ -300,6 +300,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
+             }
+             Output::BreakBlocks { positions, .. } => format!("break {} block(s)", positions.len()),
+             Output::SetComparator { level, .. } => format!("comparator output {level}"),
++            Output::SetItemTransport { setting, .. } => format!("transporter config {setting:?}"),
+             Output::SetRedstone { level, strong, .. } => format!("redstone output {level} (strong {strong})"),
+             Output::SetMenuText { texts, .. } => format!("set {} menu text(s)", texts.len()),
+             Output::MineBlock { tool, .. } => format!("mined a block with {tool}"),
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index f87c7aee9..bbb93ef5c 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -949,6 +949,7 @@ impl Game<'_> {
+                 | Output::SetMenuText { .. }
+                 | Output::SetComparator { .. }
+                 | Output::SetRedstone { .. }
++                | Output::SetItemTransport { .. }
+                 | Output::BreakBlocks { .. }
+                 | Output::SpawnParticles { .. }
+                 | Output::SetTankFilter { .. }
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index bc82de054..7dbe6b69e 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -1407,6 +1407,42 @@ mod run {
+             self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
+             true
+         }
++        /// A mod's Transporter Config change: kept in the entity (`eject_color`, `strict_input`, `transmitter_color`).
++        pub(in crate::game) fn native_set_item_transport(&mut self, pos: [i32; 3], setting: horizon_mods::TransportSetting) {
++            use horizon_mods::TransportSetting as T;
++            use horizon_world::nbt::Tag;
++            let key = (pos[0], pos[1], pos[2]);
++            let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&key) else {
++                return;
++            };
++            let (name, value) = match setting {
++                T::EjectColor(c) => ("eject_color", c.map(|c| Tag::Byte(c as i8))),
++                T::StrictInput(b) => ("strict_input", b.then_some(Tag::Byte(1))),
++                T::TransmitterColor(c) => ("transmitter_color", c.map(|c| Tag::Byte(c as i8))),
++            };
++            match value {
++                Some(v) => {
++                    m.nbt.insert(Self::jname(name), v);
++                }
++                None => {
++                    m.nbt.remove(&Self::jname(name));
++                }
++            }
++            self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++        }
++
++        /// What the block entity at `pos` ejects into item networks with: (its ejection on, its colour, strict input).
++        fn item_transport_of(&self, pos: [i32; 3]) -> (bool, Option<u8>, bool) {
++            let Some(horizon_client_render::containers::BlockEntity::Mod(m)) = self.world.block_entities.get(&(pos[0], pos[1], pos[2])) else {
++                return (false, None, false);
++            };
++            let byte = |k: &str| match m.nbt.get(&Self::jname(k)) {
++                Some(horizon_world::nbt::Tag::Byte(v)) => Some(*v as u8),
++                _ => None,
++            };
++            (byte("eject_items") == Some(1), byte("eject_color").filter(|c| *c <= 17), byte("strict_input") == Some(1))
++        }
++
+         /// A mod's `world.set-item-eject`: whether the entity pushes its output items out.
+         pub(in crate::game) fn native_set_item_eject(&mut self, pos: [i32; 3], on: bool) {
+             let key = (pos[0], pos[1], pos[2]);
+@@ -1553,6 +1589,10 @@ mod run {
+                         },
+                         throughput: spec.throughput,
+                         connect: Self::transmitter_connect(m),
++                        color: match m.nbt.get(&horizon_world::nbt::JavaString::from("transmitter_color")) {
++                            Some(horizon_world::nbt::Tag::Byte(c)) if (0..=17).contains(c) => Some(*c as u8),
++                            _ => None,
++                        },
+                     })
+                 })
+                 .collect()
+@@ -2067,12 +2107,12 @@ mod run {
+             }
+             let transmitters = self.collect_transmitters(&kinds);
+             for (ends, throughput) in horizon_mods::network::item_networks(&transmitters) {
+-                self.run_item_network(&ends, throughput, tick / 10);
++                self.run_item_network(&ends, throughput, tick / 10, &transmitters);
+             }
+         }
+ 
+         /// One network's tick.
+-        fn run_item_network(&mut self, ends: &[([i32; 3], usize)], throughput: u64, round: usize) {
++        fn run_item_network(&mut self, ends: &[([i32; 3], usize)], throughput: u64, round: usize, transmitters: &[horizon_mods::network::Transmitter]) {
+             use horizon_core::geometry::Direction;
+             let face_of = |f: usize| match f {
+                 0 => Direction::Down,
+@@ -2093,13 +2133,22 @@ mod run {
+                 if !self.mod_container_gives(src) {
+                     continue;
+                 }
++                // Mekanism's Transporter Config: a block ejecting with a colour colours what it puts in; the stack goes through the
++                // transporters it passes, to the blocks there, and a strict one takes only its own colour.
++                let (ejecting, color, _) = self.item_transport_of(src);
++                let color = color.filter(|_| ejecting);
++                let reach = horizon_mods::network::reachable_ends(transmitters, (src, src_face), color);
++                let takes = |g: &Self, dst: [i32; 3]| {
++                    let (on, own, strict) = g.item_transport_of(dst);
++                    !(on && strict) || own == color
++                };
+                 while left > 0 {
+                     let Some((slot, one)) = self.take_from_mod_container(src, from_dir) else { break };
+                     let mut rest = Some(one);
+                     let n = ends.len();
+                     for k in 0..n {
+                         let (dst, dst_face) = ends[(turn + k) % n];
+-                        if dst == src {
++                        if dst == src || !reach.contains(&(dst, dst_face)) || !takes(self, dst) {
+                             continue;
+                         }
+                         let Some(stack) = rest.take() else { break };
+@@ -3602,6 +3651,13 @@ mod run {
+                         log::debug!("Horizon: mod {name} pulled items in another level");
+                     }
+                 }
++                Output::SetItemTransport { name, dimension, pos, setting } => {
++                    if dimension == self.dim.id() {
++                        self.native_set_item_transport(pos, setting);
++                    } else {
++                        log::debug!("Horizon: mod {name} set a transporter config in another level");
++                    }
++                }
+                 Output::SetItemEject { name, dimension, pos, on } => {
+                     if dimension == self.dim.id() {
+                         self.native_set_item_eject(pos, on);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 2d75f76f7..3949bd8e0 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -71,6 +71,14 @@ impl ServerMod for Gate {
+             let _ = world::set_comparator_output(&player.dimension, pos.x, pos.y, pos.z, 9);
+             // API 50: and a redstone signal of 12 to every side, strong (it powers the blocks it touches through them).
+             let _ = world::set_redstone_output(&player.dimension, pos.x, pos.y, pos.z, 12, true);
++            // API 54, Mekanism's Transporter Config: it ejects red (14), takes only red from a network, and the transporter east of it
++            // is painted red; a colour past 17 is refused.
++            let _ = world::set_item_eject_color(&player.dimension, pos.x, pos.y, pos.z, Some(14));
++            let _ = world::set_item_strict_input(&player.dimension, pos.x, pos.y, pos.z, true);
++            let _ = world::set_transmitter_color(&player.dimension, pos.x + 1, pos.y, pos.z, Some(14));
++            if world::set_item_eject_color(&player.dimension, pos.x, pos.y, pos.z, Some(18)).is_err() {
++                let _ = world::set_transmitter_color(&player.dimension, pos.x + 2, pos.y, pos.z, None);
++            }
+         }
+         // API 39: the machine at y 78 mines the 3 blocks east of it (one is air, one bedrock) with a silk touch pickaxe.
+         if pos.y == 78 {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 6f842637d..e7be9343d 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -95,6 +95,14 @@ ticks = 1
+ expect.comparator = ["minecraft:overworld 1 77 1 9"]
+ # API 50: and the redstone signal it gives, 12, strong.
+ expect.redstone = ["minecraft:overworld 1 77 1 12 true"]
++# API 54: its Transporter Config (red ejection, strict input, the transporter east painted red); colour 18 was refused, so the one
++# after is made plain.
++expect.item-transport = [
++    "minecraft:overworld 1 77 1 eject-color=14",
++    "minecraft:overworld 1 77 1 strict-input=true",
++    "minecraft:overworld 2 77 1 transmitter-color=14",
++    "minecraft:overworld 3 77 1 transmitter-color=-",
++]
+ 
+ [[step]]
+ # API 39: break-blocks answers how many blocks it will break: the stone only (the bedrock is unbreakable, the third cell is air).
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index fbbbc3f16..a8f6a16f2 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -888,6 +888,19 @@ interface %world {
+     /// Mekanism's machines do with auto-eject on. Kept with the entity. Made
+     /// after this call returns. API 17.
+     set-item-eject: func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>;
++    /// The colour the block entity's ejected items carry into an item network (Mekanism's Transporter Config: one of the 18 transporter
++    /// colours, 0 to 17; none for no colour). A coloured stack goes only through plain transporters and those of its colour, and a
++    /// plain one through plain transporters only (`set-transmitter-color`). It counts only while ejection is on (`set-item-eject`).
++    /// Kept with the entity. An error for a colour past 17. API 54.
++    set-item-eject-color: func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>;
++    /// Strict input (Mekanism's Transporter Config): the block entity takes items from an item network only when their colour is its
++    /// own eject colour (none takes plain stacks alone). Only while its ejection is on; other ways of putting items in (a hopper, a
++    /// player) are not checked. Kept with the entity. API 54.
++    set-item-strict-input: func(dimension: string, x: s32, y: s32, z: s32, strict: bool) -> result<_, string>;
++    /// Paints an item transmitter (a kind with `transmitter` of medium items, Mekanism's logistical transporter): 0 to 17, none for
++    /// plain. A painted one carries stacks of its colour alone, a plain one carries any colour (Mekanism's `TransporterPathfinder`).
++    /// Kept with the entity. An error for a colour past 17. API 54.
++    set-transmitter-color: func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>;
+     /// Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these
+     /// substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank
+     /// itself is not checked. Kept with the entity. Made after this call returns. API 18.
+diff --git a/crates/horizon-mods/src/api_level.rs b/crates/horizon-mods/src/api_level.rs
+index 0618ae9cd..c18006775 100644
+--- a/crates/horizon-mods/src/api_level.rs
++++ b/crates/horizon-mods/src/api_level.rs
+@@ -7,13 +7,13 @@
+ //! version's level so the launcher can tell before it installs.
+ 
+ /// The newest level this Horizon serves.
+-pub const LEVEL: u32 = 53;
++pub const LEVEL: u32 = 54;
+ 
+ /// Every function the game offers mods, as `interface.function`, with its
+ /// level. Level 0 is the contract of Horizon 0.2.67 to 0.2.69. A new
+ /// function takes the next level and raises [`LEVEL`] (the `api_reference`
+ /// test fails until it is listed here).
+-pub const FUNCTIONS: [(&str, u32); 133] = [
++pub const FUNCTIONS: [(&str, u32); 136] = [
+     ("log.write", 0),
+     ("game.get-player", 0),
+     ("game.get-clock", 0),
+@@ -102,6 +102,9 @@ pub const FUNCTIONS: [(&str, u32); 133] = [
+     ("recipe-types.anvil-result", 52),
+     ("players.open-player-menu", 53),
+     ("player-items.selected-slot", 53),
++    ("world.set-item-eject-color", 54),
++    ("world.set-item-strict-input", 54),
++    ("world.set-transmitter-color", 54),
+     ("entities.remove-mob", 11),
+     ("player-items.get-inventory", 12),
+     ("player-items.set-slot", 12),
+diff --git a/crates/horizon-mods/src/network.rs b/crates/horizon-mods/src/network.rs
+index 7f3891d1b..2b34ff343 100644
+--- a/crates/horizon-mods/src/network.rs
++++ b/crates/horizon-mods/src/network.rs
+@@ -31,6 +31,8 @@ pub struct Transmitter {
+     pub throughput: u64,
+     /// The faces it connects through.
+     pub connect: [bool; 6],
++    /// An item transporter's colour (Mekanism's 18, 0 to 17), none for a plain one.
++    pub color: Option<u8>,
+ }
+ 
+ fn gives(s: FlowSide) -> bool {
+@@ -114,6 +116,53 @@ pub fn item_networks(all: &[Transmitter]) -> Vec<(Vec<([i32; 3], usize)>, u64)>
+         .collect()
+ }
+ 
++/// Whether a stack of colour `stack` passes an item transporter of colour `transporter` (Mekanism's
++/// `TransporterPathfinder`: a plain transporter carries a coloured stack, a coloured one only its own colour; a plain stack only
++/// plain transporters).
++pub fn passes(stack: Option<u8>, transporter: Option<u8>) -> bool {
++    match (stack, transporter) {
++        (_, None) => stack.is_none() || transporter.is_none(),
++        (Some(s), Some(t)) => s == t,
++        (None, Some(_)) => false,
++    }
++}
++
++/// The blocks beside the item network that a stack of colour `color` put in by the block at `from` (with the face of the network
++/// side it touches, as [`item_networks`] lists it) reaches through transporters it passes ([`passes`]), in position order, `from`
++/// left out. Empty when the transporter it is put into does not take it.
++pub fn reachable_ends(all: &[Transmitter], from: ([i32; 3], usize), color: Option<u8>) -> Vec<([i32; 3], usize)> {
++    let at: HashMap<[i32; 3], usize> = all.iter().enumerate().map(|(i, t)| (t.pos, i)).collect();
++    let Some(&start) = at.get(&step(from.0, from.1 ^ 1)) else {
++        return Vec::new();
++    };
++    let ok = |i: usize| all[i].medium == Medium::Items && passes(color, all[i].color);
++    if !ok(start) || !all[start].connect[from.1] {
++        return Vec::new();
++    }
++    let mut seen = vec![false; all.len()];
++    let mut members = vec![start];
++    seen[start] = true;
++    let mut next = 0;
++    while next < members.len() {
++        let t = members[next];
++        next += 1;
++        for face in 0..6 {
++            if !all[t].connect[face] {
++                continue;
++            }
++            if let Some(&o) = at.get(&step(all[t].pos, face))
++                && !seen[o]
++                && ok(o)
++                && all[o].connect[face ^ 1]
++            {
++                seen[o] = true;
++                members.push(o);
++            }
++        }
++    }
++    attached(all, &members).into_iter().filter(|e| e.0 != from.0).collect()
++}
++
+ /// Shares `total` among `caps` as evenly as their limits allow (water
+ /// filling): the remainder of an uneven split goes to the first ones.
+ pub fn share(total: u64, caps: &[u64]) -> Vec<u64> {
+@@ -307,8 +356,31 @@ mod tests {
+             medium,
+             throughput,
+             connect: [true; 6],
++            color: None,
+         }
+     }
++
++    #[test]
++    fn a_coloured_stack_goes_by_plain_transporters_and_its_own_colour_only() {
++        // Plain, plain stack: yes; a coloured transporter takes its own colour alone, a plain stack none.
++        assert!(passes(None, None) && passes(Some(3), None) && passes(Some(3), Some(3)));
++        assert!(!passes(Some(3), Some(4)) && !passes(None, Some(3)));
++        // A line of transporters at x 1..=5, the 4th red (14): a machine at x 0 puts in (through the first one's west face, 4);
++        // chests at y 1 above each.
++        let mut line: Vec<Transmitter> = (1..=5).map(|x| cable(x, Medium::Items, 8)).collect();
++        line[3].color = Some(14);
++        let ends = |color| -> Vec<[i32; 3]> { reachable_ends(&line, ([0, 0, 0], 4), color).into_iter().map(|e| e.0).filter(|p| p[1] == 1).collect() };
++        // A plain stack stops at the red transporter: the chests over x 1 to 3.
++        assert_eq!(ends(None), [[1, 1, 0], [2, 1, 0], [3, 1, 0]]);
++        // A red stack goes all along.
++        assert_eq!(ends(Some(14)), [[1, 1, 0], [2, 1, 0], [3, 1, 0], [4, 1, 0], [5, 1, 0]]);
++        // Another colour stops there too; the machine itself is never its own end.
++        assert_eq!(ends(Some(2)).len(), 3);
++        assert!(reachable_ends(&line, ([0, 0, 0], 4), Some(14)).iter().all(|e| e.0 != [0, 0, 0]));
++        // A first transporter that does not take the stack: nothing.
++        line[0].color = Some(1);
++        assert!(reachable_ends(&line, ([0, 0, 0], 4), None).is_empty());
++    }
+     fn energy(x: i32, e: u64, side: FlowSide) -> EnergyNode {
+         EnergyNode {
+             pos: [x, 0, 0],
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 387f277c7..7533ac620 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -522,6 +522,13 @@ pub enum Output {
+         items: Vec<String>,
+         max: u32,
+     },
++    /// `world.set-item-eject-color`, `set-item-strict-input` and `set-transmitter-color` (Mekanism's Transporter Config).
++    SetItemTransport {
++        name: String,
++        dimension: String,
++        pos: [i32; 3],
++        setting: TransportSetting,
++    },
+     /// `world.set-item-eject`: a block entity pushing its output items out, or not.
+     SetItemEject {
+         name: String,
+@@ -2563,6 +2570,17 @@ pub fn nearest_first(found: Vec<SeenEntity>, min: [f64; 3], max: [f64; 3]) -> Ve
+     found
+ }
+ 
++/// One setting of the Transporter Config a mod changes.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TransportSetting {
++    /// The colour ejected items carry (0 to 17), none for plain.
++    EjectColor(Option<u8>),
++    /// Only items of the block's colour come in from a network.
++    StrictInput(bool),
++    /// An item transmitter's paint.
++    TransmitterColor(Option<u8>),
++}
++
+ /// The `slot` of a menu `open-player-menu` opened: none of the player's.
+ pub const NO_SLOT: u32 = u32::MAX;
+ 
+@@ -2990,6 +3008,15 @@ impl mod_world::Host for State {
+         self.out.push(Output::PullItems { name: self.name.clone(), dimension, pos: [x, y, z], face, items, max: max.min(64) });
+         Ok(())
+     }
++    fn set_item_eject_color(&mut self, dimension: String, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> {
++        self.transport_setting(dimension, [x, y, z], TransportSetting::EjectColor(color))
++    }
++    fn set_item_strict_input(&mut self, dimension: String, x: i32, y: i32, z: i32, strict: bool) -> Result<(), String> {
++        self.transport_setting(dimension, [x, y, z], TransportSetting::StrictInput(strict))
++    }
++    fn set_transmitter_color(&mut self, dimension: String, x: i32, y: i32, z: i32, color: Option<u8>) -> Result<(), String> {
++        self.transport_setting(dimension, [x, y, z], TransportSetting::TransmitterColor(color))
++    }
+     fn set_item_eject(&mut self, dimension: String, x: i32, y: i32, z: i32, on: bool) -> Result<(), String> {
+         let made = self
+             .out
+@@ -4303,6 +4330,22 @@ impl ui::Host for State {
+         self.ui.settings = clip_widgets(widgets);
+     }
+ }
++impl State {
++    /// A Transporter Config change, made after the call: an error for a colour past 17 or too many changes a call.
++    fn transport_setting(&mut self, dimension: String, pos: [i32; 3], setting: TransportSetting) -> Result<(), String> {
++        if let TransportSetting::EjectColor(Some(c)) | TransportSetting::TransmitterColor(Some(c)) = setting
++            && c > 17
++        {
++            return Err(format!("colour {c} is past the 18 transporter colours (0 to 17)"));
++        }
++        if self.out.iter().filter(|o| matches!(o, Output::SetItemTransport { .. })).count() >= BLOCKS_PER_CALL {
++            return Err(format!("at most {BLOCKS_PER_CALL} transporter settings a call"));
++        }
++        self.out.push(Output::SetItemTransport { name: self.name.clone(), dimension, pos, setting });
++        Ok(())
++    }
++}
++
+ impl world_data::Host for State {
+     fn get(&mut self, key: String) -> Option<Vec<u8>> {
+         self.world_data.get(&key).cloned()
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 68a233601..8a2578fb7 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -977,6 +977,7 @@ impl TestGame {
+                     },
+                     throughput: spec.throughput,
+                     connect,
++                    color: None,
+                 })
+             })
+             .collect();
+@@ -1915,6 +1916,9 @@ pub struct Expect {
+     broken: Option<Vec<String>>,
+     /// Server mods: every `set-comparator-output`, as `"dimension x y z level"`.
+     comparator: Option<Vec<String>>,
++    /// Server mods: every Transporter Config change, as `"dimension x y z eject-color=c"`, `"... strict-input=true"` or
++    /// `"... transmitter-color=c"` (`-` for none).
++    item_transport: Option<Vec<String>>,
+     /// Server mods (round 4, item 4): every `set-redstone-output`, as `"dimension x y z level strong"`.
+     redstone: Option<Vec<String>>,
+     /// Server mods (FORK-20): every `set-menu-text`, as `"dimension x y z text|text"`.
+@@ -3224,6 +3228,27 @@ impl Step {
+                 .collect();
+             same("hud", want, &got)?;
+         }
++        if let Some(want) = &e.item_transport {
++            let color = |c: &Option<u8>| c.map_or_else(|| "-".to_owned(), |c| c.to_string());
++            let got: Vec<String> = out
++                .iter()
++                .filter_map(|o| match o {
++                    Output::SetItemTransport { dimension, pos, setting, .. } => Some(format!(
++                        "{dimension} {} {} {} {}",
++                        pos[0],
++                        pos[1],
++                        pos[2],
++                        match setting {
++                            crate::TransportSetting::EjectColor(c) => format!("eject-color={}", color(c)),
++                            crate::TransportSetting::StrictInput(b) => format!("strict-input={b}"),
++                            crate::TransportSetting::TransmitterColor(c) => format!("transmitter-color={}", color(c)),
++                        }
++                    )),
++                    _ => None,
++                })
++                .collect();
++            same("item-transport", want, &got)?;
++        }
+         if let Some(want) = &e.redstone {
+             let got: Vec<String> = out
+                 .iter()
+diff --git a/crates/horizon-mods/tests/sandbox.rs b/crates/horizon-mods/tests/sandbox.rs
+index b0aa9312e..fc7e9292c 100644
+--- a/crates/horizon-mods/tests/sandbox.rs
++++ b/crates/horizon-mods/tests/sandbox.rs
+@@ -257,9 +257,9 @@ experimental = ["ui", "render", "input", "recipes", "net-client"]
+     assert_eq!(level("coords_hud.hmod"), 0);
+     // The UI guest draws far terrain (`render.set-far-terrain`, level 7); level 8 is the
+     // world's collision boxes and `player-control`, which the elevator example uses;
+-    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 53 is `players.open-player-menu` and `player-items.selected-slot`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
++    // level 9 is `recipe-types`, 10 is `net`, 11 is `entities`, 12 is `player-items`, 13 is `chunks`, 14 is `world.set-block-property`, 15 is `recipe-types.cooking-recipes`, 16 is `player-control.get-look`, 17 is `world.set-item-faces` and `set-item-eject`, 18 is `world.set-tank-filter`, 22 is `world.pull-items`, 23 is `world.mine-block`, 24 is `world.set-capabilities-enabled`, 25 is `player-items.compare-and-set-slot`, `player-control.set-motion` and `set-allow-flight`, 26 is `world.spawn-particles`, 27 is `recipe-types.burn-time`, 28 is `recipe-types.crafting-find`, `crafting-matches` and `item-max-stack-size`, 29 is `player-control.get-state` and `set-food`, 30 is `recipe-types.item-tags`, 31 is `players.tell-overlay` and the body functions of `player-control`, 32 is `world.pack-block` and `unpack-block`, 33 is `entities.set-entity-fire`, 34 is `world.set-menu-text`, 35 is `world.block-hardness`, 36 is `entities.spawn-mod-entity`, 37 is `entities.items-in-box` and `take-dropped-item`, 38 is `world.set-comparator-output`, 39 is `world.break-blocks`, 40 is `recipe-types.item-tag-members`, 41 is `players.set-hud-line`, 42 is `players.open-radial-menu`, 43 was `players.open-entity-menu` before it opened declared menus (46 now), 47 is `world-data`, 48 is `players.open-item-menu`, 49 is `entities.entities-in-box` and `teleport-entity`, 50 is `world.set-redstone-output`, 51 is `recipe-types.item-energy` with its insert and extract, 52 is the durability, repair, enchantment and anvil functions of `recipe-types`, 53 is `players.open-player-menu` and `player-items.selected-slot`, 54 is `world.set-item-eject-color`, `set-item-strict-input` and `set-transmitter-color`, 44 was `entities.damage-entities-in-box` before its `source` (45 now, with `player-state.blocking`).
+     assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+-    assert_eq!(LEVEL, 53);
++    assert_eq!(LEVEL, 54);
+ }
+ 
+ #[test]
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 5ab3c6263..f93568359 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -761,6 +761,9 @@ One collision box of a block, in blocks, relative to the block's own corner (a f
+ | `pack-block` | `func(dimension: string, x: s32, y: s32, z: s32, into-x: s32, into-y: s32, into-z: s32, replacement: option<string>) -> result<_, string>` | Packs the block at `x y z`, whatever it is (its state and its block entity as the game saves it: slots, energy, a custom name, a mod's bytes), into the block entity of the mod at `into-x into-y into-z` (Mekanism's cardboard box), and takes it away without a drop or a spill, as `removeBlockEntity` then `removeBlock` do. The box keeps it with its own data, so an item of the box that keeps its data (`keep-data`) carries it. Nothing happens (an error) for air, a block the game cannot take away, or when `into` is not a block entity of a mod, or already holds one. `replacement` is the state (`mymod:box`) put where the block was, as Mekanism's box takes the place of what it packs; `into` may then be the same position (the replacement's own block entity keeps it), or none leaves air there. Once, after this call returns. API 32. |
+ | `unpack-block` | `func(dimension: string, box-x: s32, box-y: s32, box-z: s32, x: s32, y: s32, z: s32) -> result<_, string>` | Puts back what the box at `box-x box-y box-z` holds, at `x y z`: the block's state and its block entity as they were packed, replacing whatever is there; the box is empty again. Once, after this call returns. An error for a box that holds nothing or a position not loaded. API 32. |
+ | `set-item-eject` | `func(dimension: string, x: s32, y: s32, z: s32, on: bool) -> result<_, string>` | Turns on or off the block entity pushing items out: every 10 ticks, from the slots of the kind's `outputs` that a face reaches, into the container beside that face (a chest, a hopper, another machine), as Mekanism's machines do with auto-eject on. Kept with the entity. Made after this call returns. API 17. |
++| `set-item-eject-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | The colour the block entity's ejected items carry into an item network (Mekanism's Transporter Config: one of the 18 transporter colours, 0 to 17; none for no colour). A coloured stack goes only through plain transporters and those of its colour, and a plain one through plain transporters only (`set-transmitter-color`). It counts only while ejection is on (`set-item-eject`). Kept with the entity. An error for a colour past 17. API 54. |
++| `set-item-strict-input` | `func(dimension: string, x: s32, y: s32, z: s32, strict: bool) -> result<_, string>` | Strict input (Mekanism's Transporter Config): the block entity takes items from an item network only when their colour is its own eject colour (none takes plain stacks alone). Only while its ejection is on; other ways of putting items in (a hopper, a player) are not checked. Kept with the entity. API 54. |
++| `set-transmitter-color` | `func(dimension: string, x: s32, y: s32, z: s32, color: option<u8>) -> result<_, string>` | Paints an item transmitter (a kind with `transmitter` of medium items, Mekanism's logistical transporter): 0 to 17, none for plain. A painted one carries stacks of its colour alone, a plain one carries any colour (Mekanism's `TransporterPathfinder`). Kept with the entity. An error for a colour past 17. API 54. |
+ | `set-tank-filter` | `func(dimension: string, x: s32, y: s32, z: s32, tank: u32, accepts: list<string>) -> result<_, string>` | Limits what the block entity's tank number `tank` takes in from neighbouring tanks and transmitters: only these substances (`mymod:oxygen`); an empty list takes any again (the kind's default). What the mod puts in the tank itself is not checked. Kept with the entity. Made after this call returns. API 18. |
+ 
+ ## `player-control`
+-- 
+2.43.0
+

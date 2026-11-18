@@ -1,0 +1,744 @@
+From 991531ed70c9e611a328380517a0d43db5bfbcfd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 10 Nov 2026 11:56:45 +0000
+Subject: [PATCH] Damage hooks: server-events.player-damaged and
+ item-hit-damage (registration.damage)
+
+player-damaged runs where NeoForge's LivingIncomingDamageEvent does (before armour and enchantments, past the creative guards) in every
+player-damage path; item-hit-damage works the attack damage attribute before the attack-strength scale. Test mod: examples/damage-mods.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ Cargo.lock                                    |  7 ++
+ Cargo.toml                                    |  1 +
+ crates/horizon-client/src/game.rs             |  2 +
+ crates/horizon-client/src/game/creatures.rs   | 10 +++
+ crates/horizon-client/src/game/explosion.rs   |  9 +++
+ .../horizon-client/src/game/falling_damage.rs |  3 +
+ crates/horizon-client/src/game/potions.rs     | 22 ++++++-
+ crates/horizon-client/src/game/server_mods.rs | 56 ++++++++++++++++
+ .../examples/damage-mods/Cargo.toml           | 16 +++++
+ .../examples/damage-mods/horizon-mod.toml     |  9 +++
+ .../examples/damage-mods/src/lib.rs           | 34 ++++++++++
+ .../examples/damage-mods/tests/damage.toml    | 34 ++++++++++
+ crates/horizon-mod-sdk/src/lib.rs             | 30 ++++++++-
+ crates/horizon-mod-sdk/wit/horizon.wit        | 38 +++++++++++
+ crates/horizon-mods/src/runtime.rs            | 45 ++++++++++++-
+ crates/horizon-mods/src/testing.rs            | 64 +++++++++++++++++++
+ docs/api/mods-reference.md                    | 17 +++++
+ 17 files changed, 393 insertions(+), 4 deletions(-)
+ create mode 100644 crates/horizon-mod-sdk/examples/damage-mods/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/damage-mods/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/damage-mods/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/damage-mods/tests/damage.toml
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 4d48f8394..2cd3b760a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -969,6 +969,13 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "damage-mods"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "dasp_sample"
+ version = "0.11.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 7669b7ba6..a5bbc8e9c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -41,6 +41,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/elevator",
+     "crates/horizon-mod-sdk/examples/block-counter",
+     "crates/horizon-mod-sdk/examples/block-use",
++    "crates/horizon-mod-sdk/examples/damage-mods",
+     "crates/horizon-mod-sdk/examples/block-mover",
+     "crates/horizon-mod-sdk/examples/energy-demo",
+     "crates/horizon-mod-sdk/examples/tank-demo",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index b3a32f101..733f2cb6b 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -10958,6 +10958,8 @@ impl Game<'_> {
+         living: bool,
+     ) -> (f32, f32, bool, bool) {
+         let hand_damage = self.attack_damage();
++        // A server mod may change the attack damage of the blow (the Meka-Tool's modules do, in the original through its attribute).
++        let hand_damage = self.mod_hit_damage(target_kind, hand_damage);
+         // Riptide's spin replaces the attack damage attribute.
+         let spin = self.player.as_ref().map_or(0.0, |p| p.auto_spin_attack_dmg);
+         let damage = if spin > 0.0 { spin } else { hand_damage };
+diff --git a/crates/horizon-client/src/game/creatures.rs b/crates/horizon-client/src/game/creatures.rs
+index ee5d2e19d..96f34243c 100644
+--- a/crates/horizon-client/src/game/creatures.rs
++++ b/crates/horizon-client/src/game/creatures.rs
+@@ -3126,6 +3126,11 @@ impl Game<'_> {
+         let owner = owner.filter(|_| projectile);
+         let causing = known.flatten().or(owner).map_or(0, |id| id as i32);
+         let mut outcome = horizon_client::health::BlockOutcome::default();
++        // A server mod may change the damage, or cancel the hit, before the armour and the enchantments (FORK `player-damaged`).
++        let Some(amount) = self.mod_incoming_damage(damage_type, amount, causing) else {
++            self.combat.forget_noted(true);
++            return false;
++        };
+         if let Some(player) = self.player.as_mut()
+             && let Some(id) = self.motion.health.damage.id(damage_type)
+             && let Ok(o) = player.hurt_caused_by(
+@@ -3257,6 +3262,11 @@ impl Game<'_> {
+     }
+     pub(super) fn hurt_player_by(&mut self, damage_type: &str, amount: f32) {
+         let mut canceled = false;
++        let amount = if self.creative { Some(amount) } else { self.mod_incoming_damage(damage_type, amount, 0) };
++        let Some(amount) = amount else {
++            self.combat.forget_noted(true);
++            return;
++        };
+         if !self.creative
+             && let Some(player) = self.player.as_mut()
+             && let Some(id) = self.motion.health.damage.id(damage_type)
+diff --git a/crates/horizon-client/src/game/explosion.rs b/crates/horizon-client/src/game/explosion.rs
+index 097371c1a..3f20956c4 100644
+--- a/crates/horizon-client/src/game/explosion.rs
++++ b/crates/horizon-client/src/game/explosion.rs
+@@ -398,6 +398,15 @@ impl Game<'_> {
+         if let Some((id, name)) = attacker.filter(|_| !creative && !spectator && hurtable) {
+             self.note_named_attacker(damage_type, *id, name.clone());
+         }
++        // A server mod may change the blast's damage, or cancel it, before the armour and the enchantments.
++        let (amount, hurtable) = if creative || spectator || !hurtable {
++            (amount, hurtable)
++        } else {
++            match self.mod_incoming_damage(damage_type, amount, attacker.map_or(0, |(id, _)| *id as i32)) {
++                Some(left) => (left, true),
++                None => (amount, false),
++            }
++        };
+         if let Some(p) = self.player.as_mut()
+             && let Some(id) = self.motion.health.damage.id(damage_type)
+         {
+diff --git a/crates/horizon-client/src/game/falling_damage.rs b/crates/horizon-client/src/game/falling_damage.rs
+index e9566b3d0..7217c6813 100644
+--- a/crates/horizon-client/src/game/falling_damage.rs
++++ b/crates/horizon-client/src/game/falling_damage.rs
+@@ -185,6 +185,9 @@ impl Game<'_> {
+         } else {
+             amount
+         };
++        let Some(amount) = self.mod_incoming_damage(kind, amount, 0) else {
++            return;
++        };
+         if let Some(p) = self.player.as_mut()
+             && let Some(id) = self.motion.health.damage.id(kind)
+         {
+diff --git a/crates/horizon-client/src/game/potions.rs b/crates/horizon-client/src/game/potions.rs
+index 92c0b7afe..a45ed7697 100644
+--- a/crates/horizon-client/src/game/potions.rs
++++ b/crates/horizon-client/src/game/potions.rs
+@@ -707,6 +707,25 @@ impl Game<'_> {
+     pub(super) fn apply_effect_action(&mut self, action: EffectAction) {
+         let creative = self.creative;
+         let rules = self.world.health_rules;
++        // A server mod may change the damage of a harmful effect, or cancel it, before the armour (`player-damaged`).
++        let mut poison_amount = 1.0;
++        let action = match action {
++            EffectAction::Hurt(source, amount) if !creative => match self.mod_incoming_damage(source, amount, 0) {
++                Some(left) => EffectAction::Hurt(source, left),
++                None => {
++                    self.combat.forget_noted(true);
++                    return;
++                }
++            },
++            EffectAction::Poison if !creative => match self.mod_incoming_damage("minecraft:magic", 1.0, 0) {
++                Some(left) => {
++                    poison_amount = left;
++                    EffectAction::Poison
++                }
++                None => return,
++            },
++            other => other,
++        };
+         let Some(p) = self.player.as_mut() else {
+             self.combat.forget_noted(false);
+             return;
+@@ -730,11 +749,12 @@ impl Game<'_> {
+                 self.combat.forget_noted(canceled);
+             }
+             EffectAction::Poison => {
++                let amount = poison_amount;
+                 if !creative
+                     && p.health.health() > 1.0
+                     && let Some(id) = self.motion.health.damage.id("minecraft:magic")
+                 {
+-                    let _ = p.hurt(&self.motion.health, rules, id, 1.0);
++                    let _ = p.hurt(&self.motion.health, rules, id, amount);
+                 }
+             }
+             EffectAction::Exhaust(amount) => {
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index a745a3111..f916d7a6b 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -66,6 +66,12 @@ impl Game<'_> {
+         false
+     }
+     pub(super) fn apply_mod_block_writes(&mut self) {}
++    pub(super) fn mod_incoming_damage(&mut self, _damage_type: &str, amount: f32, _causing: i32) -> Option<f32> {
++        Some(amount)
++    }
++    pub(super) fn mod_hit_damage(&mut self, _kind: &str, damage: f32) -> f32 {
++        damage
++    }
+ }
+ 
+ #[cfg(feature = "mods")]
+@@ -1688,6 +1694,56 @@ mod run {
+             answer
+         }
+ 
++        /// `LivingIncomingDamageEvent` for the acting player: the damage a server mod lets through of `amount` of `damage_type`, before
++        /// the armour and the enchantments; none when it cancels the hit. Past the guards the caller has (creative, spectator).
++        pub(in crate::game) fn mod_incoming_damage(&mut self, damage_type: &str, amount: f32, causing: i32) -> Option<f32> {
++            if amount <= 0.0 || !self.mods.server || !self.mods.mods.hears_damage() {
++                return Some(amount);
++            }
++            let Some(player) = self.acting_server_player() else {
++                return Some(amount);
++            };
++            let tags: Vec<String> = self
++                .res
++                .stations()
++                .enchantments
++                .damage_tags
++                .iter()
++                .filter(|(_, types)| types.contains(damage_type))
++                .map(|(tag, _)| tag.to_string())
++                .collect();
++            let has = |t: &str| tags.iter().any(|x| x == t);
++            let source = horizon_mods::DamageSource {
++                damage_type: damage_type.to_owned(),
++                causing: u32::try_from(causing).ok().filter(|c| *c != 0),
++                is_magic: matches!(damage_type, "minecraft:magic" | "minecraft:indirect_magic"),
++                is_fire: has("minecraft:is_fire"),
++                is_fall: has("minecraft:is_fall"),
++                is_explosion: has("minecraft:is_explosion"),
++                tags,
++            };
++            self.lend_world();
++            let left = self.mods.mods.player_damaged(&player, &source, amount);
++            self.return_world();
++            self.apply_mod_block_writes();
++            (left > 0.0).then_some(left)
++        }
++
++        /// The attack damage of the acting player's melee blow against `kind`, as a server mod makes it.
++        pub(in crate::game) fn mod_hit_damage(&mut self, kind: &str, damage: f32) -> f32 {
++            if !self.mods.server || !self.mods.mods.hears_damage() {
++                return damage;
++            }
++            let Some(player) = self.acting_server_player() else {
++                return damage;
++            };
++            let Some(stack) = self.held().cloned() else {
++                return damage;
++            };
++            let stack = Self::mod_stack(&stack);
++            self.mods.mods.item_hit_damage(&player, &stack, kind, damage)
++        }
++
+         /// The acting player hit entity `entity` of `kind` holding `stack`.
+         pub(in crate::game) fn mod_item_hit(
+             &mut self,
+diff --git a/crates/horizon-mod-sdk/examples/damage-mods/Cargo.toml b/crates/horizon-mod-sdk/examples/damage-mods/Cargo.toml
+new file mode 100644
+index 000000000..206fcf169
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/damage-mods/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "damage-mods"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: changing the damage a player takes and the damage of their blow"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/damage-mods/horizon-mod.toml b/crates/horizon-mod-sdk/examples/damage-mods/horizon-mod.toml
+new file mode 100644
+index 000000000..9a1c570d6
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/damage-mods/horizon-mod.toml
+@@ -0,0 +1,9 @@
++id = "damagemods"
++name = "Damage Mods"
++version = "0.1.0"
++description = "Test mod for damage hooks: a worn damagemods:suit takes half of the fire damage and all of the magic damage, and damagemods:blade hits twice as hard."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players", "player-items"]
++experimental = ["player-items"]
+diff --git a/crates/horizon-mod-sdk/examples/damage-mods/src/lib.rs b/crates/horizon-mod-sdk/examples/damage-mods/src/lib.rs
+new file mode 100644
+index 000000000..be37e142c
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/damage-mods/src/lib.rs
+@@ -0,0 +1,34 @@
++//! Damage Mods: the two damage hooks. A player wearing `damagemods:suit` on the chest takes half of the fire damage and none of
++//! the magic damage (before the armour, as NeoForge's `LivingIncomingDamageEvent`); a `damagemods:blade` in the hand doubles the
++//! attack damage of the blow.
++use horizon_mod_sdk::server::{DamageSource, ItemStack, Player, Registration, ServerMod, player_items};
++
++struct Damage;
++
++const CHEST: usize = 38;
++
++impl ServerMod for Damage {
++    fn init() -> Result<(Self, Registration), String> {
++        Ok((Damage, Registration::new().on_damage()))
++    }
++    fn player_damaged(&mut self, player: &Player, source: DamageSource, amount: f32) -> f32 {
++        let wears = player_items::get_inventory(&player.id)
++            .and_then(|slots| slots.get(CHEST).cloned().flatten())
++            .is_some_and(|s| s.item == "damagemods:suit");
++        if !wears {
++            return amount;
++        }
++        if source.is_magic {
++            0.0
++        } else if source.is_fire {
++            amount / 2.0
++        } else {
++            amount
++        }
++    }
++    fn item_hit_damage(&mut self, _player: &Player, stack: ItemStack, _kind: &str, damage: f32) -> f32 {
++        if stack.item == "damagemods:blade" { damage * 2.0 } else { damage }
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Damage);
+diff --git a/crates/horizon-mod-sdk/examples/damage-mods/tests/damage.toml b/crates/horizon-mod-sdk/examples/damage-mods/tests/damage.toml
+new file mode 100644
+index 000000000..4de6f6a5b
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/damage-mods/tests/damage.toml
+@@ -0,0 +1,34 @@
++[[step]]
++join = "Alex"
++inventory = [
++    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
++    "", "", "damagemods:suit*1",
++]
++damage = { type = "minecraft:on_fire", amount = 3.0, tags = ["minecraft:is_fire"] }
++expect.damage-result = 1.5
++
++[[step]]
++damage = { type = "minecraft:magic", amount = 6.0 }
++expect.damage-result = 0.0
++
++[[step]]
++# Anything else goes on as it was.
++damage = { type = "minecraft:fall", amount = 4.0, tags = ["minecraft:is_fall"] }
++expect.damage-result = 4.0
++
++[[step]]
++# Without the suit nothing changes.
++inventory = [
++    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
++    "", "", "",
++]
++damage = { type = "minecraft:magic", amount = 6.0 }
++expect.damage-result = 6.0
++
++[[step]]
++hit-damage = { stack = "damagemods:blade*1", kind = "minecraft:zombie", damage = 4.0 }
++expect.hit-damage-result = 8.0
++
++[[step]]
++hit-damage = { stack = "minecraft:stick*1", kind = "minecraft:zombie", damage = 1.0 }
++expect.hit-damage-result = 1.0
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 06e1d6279..537627f05 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -209,7 +209,7 @@ pub mod server {
+ 
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
++        BlockPos, BlockUse, DamageSource, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+     };
+     pub use horizon::mods::players::{self, GameMode, Player};
+     pub use horizon::mods::player_control::{self, Motion};
+@@ -262,6 +262,16 @@ pub mod server {
+         fn block_used(&mut self, _player: &Player, _pos: BlockPos, _sneaking: bool, _stack: Option<ItemStack>) -> BlockUse {
+             BlockUse::Default
+         }
++        /// A player is about to be hurt, before armour and enchantments (NeoForge's `LivingIncomingDamageEvent`): the damage to go on
++        /// with (0 cancels). When [`Registration::on_damage`] is set.
++        fn player_damaged(&mut self, _player: &Player, _source: DamageSource, amount: f32) -> f32 {
++            amount
++        }
++        /// The attack damage of a player's melee blow against an entity of `kind`, before the attack strength scales it: the damage to
++        /// use. When [`Registration::on_damage`] is set.
++        fn item_hit_damage(&mut self, _player: &Player, _stack: ItemStack, _kind: &str, damage: f32) -> f32 {
++            damage
++        }
+         /// A player hit an entity holding `stack`. When [`Registration::on_items`] is set.
+         fn item_hit(&mut self, _player: &Player, _stack: ItemStack, _entity: u32, _kind: &str) {}
+         /// The answer to `entities::spawn_mob` or `summon`: the new entity's
+@@ -350,6 +360,7 @@ pub mod server {
+                 net: false,
+                 items: false,
+                 chunks: false,
++                damage: false,
+             }
+         }
+         /// `block` (`mymod:machine`) carries a block entity; `ticks` asks
+@@ -422,6 +433,11 @@ pub mod server {
+             self.chat = true;
+             self
+         }
++        /// Call [`ServerMod::player_damaged`] and [`ServerMod::item_hit_damage`].
++        pub fn on_damage(mut self) -> Self {
++            self.damage = true;
++            self
++        }
+         /// Call [`ServerMod::chunk_loaded`].
+         pub fn on_chunks(mut self) -> Self {
+             self.chunks = true;
+@@ -556,7 +572,7 @@ macro_rules! export_server_mod {
+         const _: () = {
+             use ::std::cell::RefCell;
+             use $crate::server::{
+-                Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, Player, Registration,
++                Args, ArgumentValue, BlockEntity, BlockEntityUpdate, BlockPos, BlockUse, DamageSource, Player, Registration,
+                 ItemStack, ServerMod, Structure,
+             };
+             ::std::thread_local! {
+@@ -618,6 +634,16 @@ macro_rules! export_server_mod {
+                     with(|m| out = m.block_used(&player, pos, sneaking, stack));
+                     out
+                 }
++                fn player_damaged(player: Player, source: DamageSource, amount: f32) -> f32 {
++                    let mut out = amount;
++                    with(|m| out = m.player_damaged(&player, source, amount));
++                    out
++                }
++                fn item_hit_damage(player: Player, stack: ItemStack, kind: String, damage: f32) -> f32 {
++                    let mut out = damage;
++                    with(|m| out = m.item_hit_damage(&player, stack, &kind, damage));
++                    out
++                }
+                 fn item_hit(player: Player, stack: ItemStack, entity: u32, kind: String) {
+                     with(|m| m.item_hit(&player, stack, entity, &kind))
+                 }
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 403c273de..70ce037a8 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1041,6 +1041,26 @@ interface server-events {
+     use players.{player};
+     use item-types.{item-stack};
+ 
++    /// What hurts a player (`player-damaged`): the damage type and what the
++    /// game knows of it.
++    record damage-source {
++        /// `minecraft:fall`, `minecraft:magic`, `minecraft:player_attack`...
++        damage-type: string,
++        /// The entity that caused it (a mob's id; the shooter of an arrow), none
++        /// when there is none or it is not known.
++        causing: option<u32>,
++        /// `minecraft:magic` or `minecraft:indirect_magic`.
++        is-magic: bool,
++        /// In the damage type tag `minecraft:is_fire`.
++        is-fire: bool,
++        /// In `minecraft:is_fall`.
++        is-fall: bool,
++        /// In `minecraft:is_explosion`.
++        is-explosion: bool,
++        /// Every damage type tag the type is in (`minecraft:is_fire`, a mod's own...).
++        tags: list<string>,
++    }
++
+     /// How a mod answers a click on one of its blocks (`block-used`).
+     enum block-use {
+         default,
+@@ -1123,6 +1143,8 @@ interface server-events {
+         items: bool,
+         /// Call `chunk-loaded`.
+         chunks: bool,
++        /// Call `player-damaged` and `item-hit-damage`.
++        damage: bool,
+     }
+     record block-entity-kind {
+         /// The block's id, `mymod:machine`.
+@@ -1368,6 +1390,22 @@ interface server-events {
+     /// runs). `sneaking` and `stack` (the held item, none for an empty hand)
+     /// are as at the click. API 24.
+     block-used: func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use;
++    /// A player is about to be hurt (`registration.damage`): where NeoForge's
++    /// `LivingIncomingDamageEvent` runs, in `hurtServer` once its guards
++    /// (creative, dead, immune) have passed and before the armour, the
++    /// enchantments, the resistance and the absorption take their share of
++    /// `amount`. Returns the damage to go on with: the same to leave it, less
++    /// to reduce it, 0 (or less) to cancel the hit. The first mod to change
++    /// it decides. What the mod asks for through imports is made at the end
++    /// of the tick; `player-items.get-inventory` is as of the last tick.
++    /// (An export: it has no level; a mod that implements it needs a Horizon that has it.)
++    player-damaged: func(player: player, source: damage-source, amount: f32) -> f32;
++    /// A player's melee blow is being worked out (`registration.damage`): the
++    /// attack damage attribute, with the held weapon's modifiers, is `damage`
++    /// before the attack strength, the critical hit and the enchantments
++    /// scale it, against an entity of `kind`, holding `stack`. Returns the
++    /// damage to use. The first mod to change it decides.
++    item-hit-damage: func(player: player, stack: item-stack, kind: string, damage: f32) -> f32;
+     /// A player hit the entity `entity` of `kind` holding `stack`
+     /// (`registration.items`): where `Item.hurtEnemy` starts. It only hears.
+     item-hit: func(player: player, stack: item-stack, entity: u32, kind: string);
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index a26fec532..b3247ec00 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -54,7 +54,7 @@ use bindings::{
+ pub use server_bindings::{
+     exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+-        BlockPos, BlockUse, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
++        BlockPos, BlockUse, DamageSource, ContainerSpec, FlowSide, EnergySpec, ItemStack as ModItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure as ModStructure, ServerCommand,
+     },
+     horizon::mods::player_control::Motion,
+     horizon::mods::players::{GameMode, Player as ServerPlayer},
+@@ -828,6 +828,49 @@ impl Mods {
+         }
+         BlockUse::Default
+     }
++    /// Whether a running server mod asked for `damage`.
++    pub fn hears_damage(&self) -> bool {
++        self.entries
++            .iter()
++            .filter_map(|e| e.run.as_ref()?.hooks.server())
++            .any(|r| r.damage)
++    }
++    /// `player` is about to be hurt by `source` for `amount`: the damage to go on with (the first mod that changes it decides).
++    pub fn player_damaged(&mut self, player: &ServerPlayer, source: &DamageSource, amount: f32) -> f32 {
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.damage) {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_player_damaged(&mut run.store, player, source, amount),
++                Hooks::Client(..) => Ok(amount),
++            });
++            if let Some(a) = answer.filter(|a| a.is_finite() && (*a - amount).abs() > f32::EPSILON) {
++                return a.min(amount.max(0.0) * 1000.0 + 1000.0);
++            }
++        }
++        amount
++    }
++    /// `player`'s melee blow with `stack` against `kind` has `damage` attack damage: what to use.
++    pub fn item_hit_damage(&mut self, player: &ServerPlayer, stack: &ModItemStack, kind: &str, damage: f32) -> f32 {
++        for i in 0..self.entries.len() {
++            if !self.entries[i].run.as_ref().and_then(|r| r.hooks.server()).is_some_and(|r| r.damage) {
++                continue;
++            }
++            let answer = self.call(i, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m
++                    .horizon_mods_server_events()
++                    .call_item_hit_damage(&mut run.store, player, stack, kind, damage),
++                Hooks::Client(..) => Ok(damage),
++            });
++            if let Some(a) = answer.filter(|a| a.is_finite() && (*a - damage).abs() > f32::EPSILON) {
++                return a.clamp(0.0, 1024.0);
++            }
++        }
++        damage
++    }
+     /// Whether a running server mod asked for `blocks` (and so hears `block-used`).
+     pub fn hears_blocks(&self) -> bool {
+         self.entries
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index e61c4aa75..3be3cf169 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -62,6 +62,9 @@ pub struct TestGame {
+     pub claimed: Option<bool>,
+     /// What the last `block_used` answered (`default`, `pass` or `consume`).
+     pub block_use: Option<&'static str>,
++    /// What the last `player_damaged` and `item_hit_damage` answered.
++    pub damage_result: Option<f32>,
++    pub hit_damage_result: Option<f32>,
+     /// The mobs of the Overworld a script set, for capability `entities`.
+     pub mobs: Vec<crate::MobInfo>,
+     /// The structures last told to the mod, by dimension and group.
+@@ -212,6 +215,8 @@ impl TestGame {
+             inventories: Vec::new(),
+             claimed: None,
+             block_use: None,
++            damage_result: None,
++            hit_damage_result: None,
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -940,6 +945,25 @@ fn with_property(state: &str, property: &str, value: &str) -> String {
+ }
+ 
+ /// A stack used or hit with in a step: `"minecraft:stick*1"`, components after the count.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct DamageSet {
++    #[serde(rename = "type")]
++    damage_type: String,
++    amount: f32,
++    causing: Option<u32>,
++    #[serde(default)]
++    tags: Vec<String>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct HitDamageSet {
++    stack: String,
++    kind: String,
++    damage: f32,
++}
++
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct UseBlockSet {
+@@ -1117,6 +1141,10 @@ pub struct Step {
+     hit_with: Option<UseSet>,
+     /// Server mods (FORK-29): the actor right-clicks the block at `pos` after the ticks, holding `stack` (none: an empty hand).
+     use_block: Option<UseBlockSet>,
++    /// Server mods: the actor is about to be hurt.
++    damage: Option<DamageSet>,
++    /// Server mods: the actor's melee blow is worked out.
++    hit_damage: Option<HitDamageSet>,
+     /// Server mods, capability `entities`: the mobs of the Overworld from now on.
+     mobs: Option<Vec<MobSet>>,
+     /// Server mods: a spawn ticket is answered after the ticks.
+@@ -1167,6 +1195,10 @@ pub struct Expect {
+     claimed: Option<bool>,
+     /// Server mods (FORK-29): what the mod answered to the step's `use-block`: `default`, `pass` or `consume`.
+     block_use: Option<String>,
++    /// Server mods: what the mod answered to the step's `damage` (the damage to go on with).
++    damage_result: Option<f32>,
++    /// Server mods: what the mod answered to the step's `hit-damage`.
++    hit_damage_result: Option<f32>,
+     /// Server mods, capability `player-items`: every request, as `"set-slot Name 3 stack"`
+     /// (`-` for an empty slot), `"hurt Name type amount"` and `"effect Name id ticks level"`.
+     player_items: Option<Vec<String>>,
+@@ -1408,6 +1440,8 @@ impl Step {
+             || self.inventory.is_some()
+             || self.use_item.is_some()
+             || self.use_block.is_some()
++            || self.damage.is_some()
++            || self.hit_damage.is_some()
+             || self.hit_with.is_some()
+             || self.press.is_some()
+             || self.net.is_some()
+@@ -1483,6 +1517,26 @@ impl Step {
+             let stack = parse_stack(&u.stack).ok_or("use-item: a stack is item*count")?;
+             game.claimed = Some(game.mods.item_used(who, &stack, u.pos));
+         }
++        if let (Some(d), Some(who)) = (&self.damage, &who) {
++            game.snapshot();
++            let t = d.damage_type.as_str();
++            let has = |tag: &str| d.tags.iter().any(|x| x == tag);
++            let source = crate::DamageSource {
++                damage_type: t.to_owned(),
++                causing: d.causing,
++                is_magic: matches!(t, "minecraft:magic" | "minecraft:indirect_magic"),
++                is_fire: has("minecraft:is_fire"),
++                is_fall: has("minecraft:is_fall"),
++                is_explosion: has("minecraft:is_explosion"),
++                tags: d.tags.clone(),
++            };
++            game.damage_result = Some(game.mods.player_damaged(who, &source, d.amount));
++        }
++        if let (Some(h), Some(who)) = (&self.hit_damage, &who) {
++            game.snapshot();
++            let stack = parse_stack(&h.stack).ok_or("hit-damage: a stack is item*count")?;
++            game.hit_damage_result = Some(game.mods.item_hit_damage(who, &stack, &h.kind, h.damage));
++        }
+         if let (Some(u), Some(who)) = (&self.use_block, &who) {
+             game.snapshot();
+             let stack = match &u.stack {
+@@ -1757,6 +1811,16 @@ impl Step {
+                 .collect();
+             same("chunk-forced", want, &got)?;
+         }
++        if let Some(want) = e.damage_result {
++            if game.damage_result != Some(want) {
++                return Err(format!("damage-result: expected {want}, got {:?}", game.damage_result));
++            }
++        }
++        if let Some(want) = e.hit_damage_result {
++            if game.hit_damage_result != Some(want) {
++                return Err(format!("hit-damage-result: expected {want}, got {:?}", game.hit_damage_result));
++            }
++        }
+         if let Some(want) = &e.block_use {
+             if game.block_use != Some(want.as_str()) {
+                 return Err(format!("block-use: expected {want}, got {:?}", game.block_use));
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 8c0001e94..dcdd9a515 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -947,6 +947,20 @@ What the server calls in a server mod (manifest `api = "0.3"`, experimental). On
+ 
+ `type item-stack = item-stack`
+ 
++### record `damage-source`
++
++What hurts a player (`player-damaged`): the damage type and what the game knows of it.
++
++| Field | Type | |
++| --- | --- | --- |
++| `damage-type` | `string` | `minecraft:fall`, `minecraft:magic`, `minecraft:player_attack`... |
++| `causing` | `option<u32>` | The entity that caused it (a mob's id; the shooter of an arrow), none when there is none or it is not known. |
++| `is-magic` | `bool` | `minecraft:magic` or `minecraft:indirect_magic`. |
++| `is-fire` | `bool` | In the damage type tag `minecraft:is_fire`. |
++| `is-fall` | `bool` | In `minecraft:is_fall`. |
++| `is-explosion` | `bool` | In `minecraft:is_explosion`. |
++| `tags` | `list<string>` | Every damage type tag the type is in (`minecraft:is_fire`, a mod's own...). |
++
+ ### enum `block-use`
+ 
+ How a mod answers a click on one of its blocks (`block-used`).
+@@ -1132,6 +1146,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `net` | `bool` | Call `net-message` for what players' client halves send. |
+ | `items` | `bool` | Call `item-used` and `item-hit`. |
+ | `chunks` | `bool` | Call `chunk-loaded`. |
++| `damage` | `bool` | Call `player-damaged` and `item-hit-damage`. |
+ 
+ ### record `block-entity`
+ 
+@@ -1186,4 +1201,6 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `chunk-loaded` | `func(dimension: string, chunk-x: s32, chunk-z: s32, new: bool)` | A chunk came into the world (`registration.chunks`): `new` when it was just generated, false when it was read from the save. Its blocks are there (read them with `world.get-block`); what the mod changes with `world.set-blocks` is made at the end of the tick. This is where a mod adds its ores. The chunks around the spawn come before the first tick. |
+ | `item-used` | `func(player: player, stack: item-stack, pos: option<block-pos>) -> bool` | A player used `stack` (right click), in the air (no `pos`) or on the block at `pos`, when `registration.items` is set. Answer true to take the use: the hand swings and neither the item's own use nor the block's runs after it; false leaves it to the game. It is asked at the moment of the click, so what it asks for through imports is made at the end of the tick; `world.get-block` reads the blocks as they are now. |
+ | `block-used` | `func(player: player, pos: block-pos, sneaking: bool, stack: option<item-stack>) -> block-use` | What a right click on a block of this mod does (`registration.blocks`), asked at the moment of the click for the mod's own blocks, with the block's own use still to come: `default` leaves it to the game (the block opens its menu or acts as it would), `pass` skips the block's own use and goes on to the held item (so a block in hand is placed against it), `consume` takes the click (the hand swings and nothing else runs). `sneaking` and `stack` (the held item, none for an empty hand) are as at the click. API 24. |
++| `player-damaged` | `func(player: player, source: damage-source, amount: f32) -> f32` | A player is about to be hurt (`registration.damage`): where NeoForge's `LivingIncomingDamageEvent` runs, in `hurtServer` once its guards (creative, dead, immune) have passed and before the armour, the enchantments, the resistance and the absorption take their share of `amount`. Returns the damage to go on with: the same to leave it, less to reduce it, 0 (or less) to cancel the hit. The first mod to change it decides. What the mod asks for through imports is made at the end of the tick; `player-items.get-inventory` is as of the last tick. (An export: it has no level; a mod that implements it needs a Horizon that has it.) |
++| `item-hit-damage` | `func(player: player, stack: item-stack, kind: string, damage: f32) -> f32` | A player's melee blow is being worked out (`registration.damage`): the attack damage attribute, with the held weapon's modifiers, is `damage` before the attack strength, the critical hit and the enchantments scale it, against an entity of `kind`, holding `stack`. Returns the damage to use. The first mod to change it decides. |
+ | `item-hit` | `func(player: player, stack: item-stack, entity: u32, kind: string)` | A player hit the entity `entity` of `kind` holding `stack` (`registration.items`): where `Item.hurtEnemy` starts. It only hears. |
+-- 
+2.43.0
+

@@ -1,0 +1,149 @@
+From dbd738a0b1cbe67a114003bbeeca0d8f715c67af Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 20:58:56 +0000
+Subject: [PATCH] item_grid: a press on a cell with no entry reaches
+ menu-grid-click as index u32::MAX
+
+Past the last entry (or on an empty grid) the press was dropped; now it goes
+to the mod with index 4294967295 (GRID_EMPTY), with button, Shift and the
+cursor stack, so the mod can store the cursor's stack anywhere on the grid
+as Mekanism's QIO Dashboard does. API stays 55.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ .../examples/qio-demo/tests/qio.toml             | 11 +++++++++++
+ crates/horizon-mod-sdk/src/lib.rs                |  3 +++
+ crates/horizon-mod-sdk/wit/horizon.wit           |  3 ++-
+ crates/horizon-mods/src/content.rs               |  2 +-
+ crates/horizon-mods/src/screen.rs                | 16 ++++++++++++----
+ docs/api/mods-reference.md                       |  2 +-
+ 6 files changed, 30 insertions(+), 7 deletions(-)
+
+diff --git a/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml b/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
+index 30c6027c0..199c17a92 100644
+--- a/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
++++ b/crates/horizon-mod-sdk/examples/qio-demo/tests/qio.toml
+@@ -29,6 +29,17 @@ grid-click = { index = 3, shift = true }
+ expect.carried = "-"
+ expect.to-inventory = ["minecraft:diamond*3"]
+ 
++[[step]]
++# A press on a cell with no entry (index 4294967295, past the last one) with a stack on the cursor stores it too: the catalogue
++# has 8 more dirt than before the half stack (32 left + 40).
++carried = "minecraft:dirt*40"
++grid-click = { index = 4294967295 }
++expect.carried = "-"
++
++[[step]]
++ticks = 1
++expect.item-menu-grid = ["minecraft:cobblestone*1500000", "minecraft:stone*12345", "minecraft:dirt*72"]
++
+ [[step]]
+ # The search box (`qio:menu_text`, position (i32::MIN, 1, -1), box 1, "stone") filters it: cobblestone and stone.
+ net = { channel = "qio:menu_text", data = [0, 0, 0, 128, 1, 0, 0, 0, 255, 255, 255, 255, 1, 0, 0, 0, 115, 116, 111, 110, 101] }
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index 3db58afc2..b794ad428 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -243,6 +243,9 @@ pub mod server {
+     pub use horizon::mods::entities::{self, Display, Mob, MobOptions};
+     pub use horizon::mods::net;
+     pub use horizon::mods::{chunks, player_items, world_data};
++    /// The `index` of a `menu_grid_click` on a cell with no entry (past the last one): the grid itself, where Mekanism's QIO
++    /// Dashboard stores the cursor's stack.
++    pub const GRID_EMPTY: u32 = u32::MAX;
+     pub use horizon::mods::recipe_types::{self, CookingRecipe, CustomRecipe};
+     /// For reading the recipes' JSON.
+     pub use serde_json;
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index 4708e8fe0..243622e80 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -1854,7 +1854,8 @@ interface server-events {
+     /// `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with
+     /// no screen open, as the player bound it in Controls. True when the mod used the press. API 53.
+     key-pressed: func(player: player, key: string) -> bool;
+-    /// `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`): `button` 0 left, 1 right,
++    /// `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`), or a cell with no entry (past the
++    /// last one, or an empty grid) with `index` 4294967295: `button` 0 left, 1 right,
+     /// 2 middle, `shift` with Shift held, `carried` the stack on their cursor now. The mod takes from its catalogue or puts the cursor's
+     /// stack in and answers the cursor's stack after (Mekanism's QIO Dashboard: left takes a stack, right half of one, shift into the
+     /// inventory, a carried stack is stored); none leaves the cursor as it was. API 55.
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 4f4bdb457..2222539d5 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -823,7 +823,7 @@ pub enum Widget {
+     /// A grid of item cells (Mekanism's QIO Dashboard catalogue): `columns` by `rows` cells of `cell` pixels from `x`, `y`, showing the
+     /// entries its mod gives (`world.set-menu-grid`, an item menu's `menu-grid`: item, components, count up to 2^64) from the scroll
+     /// down, the count abbreviated over 999 (`1.2k`); the wheel and the bar at its right scroll it by rows, and a press on a cell
+-    /// goes to the mod (`menu-grid-click`). One a screen.
++    /// goes to the mod (`menu-grid-click`), a cell with no entry as index 4294967295. One a screen.
+     ItemGrid {
+         x: i32,
+         y: i32,
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index f6dd9bab0..da0fa9a61 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -27,6 +27,9 @@ pub struct Locals {
+     pub grid_total: i64,
+ }
+ 
++/// The index a press on an item grid's cell with no entry carries (`menu-grid-click`): the grid, not an entry.
++pub const GRID_EMPTY: u32 = u32::MAX;
++
+ /// The variable an item grid keeps its scroll (in rows) in.
+ pub const GRID_SCROLL: &str = "@grid";
+ 
+@@ -220,7 +223,8 @@ pub enum Press {
+     Row { button: i32, first: u16 },
+     /// Menu button `id`, for the server.
+     Send(i32),
+-    /// Entry `index` of the item grid (its place in the mod's list, the scroll counted), for the server.
++    /// Entry `index` of the item grid (its place in the mod's list, the scroll counted), or [`GRID_EMPTY`] for a cell with none, for
++    /// the server.
+     Grid(u32),
+     /// Something here: a local action, or a press a window took.
+     Local,
+@@ -262,7 +266,8 @@ fn press_in(
+             let col = ((at[0] - x as f32) / c as f32) as i64;
+             let row = ((at[1] - y as f32) / c as f32) as i64;
+             let index = (grid_top(locals, columns, rows, locals.grid_total) + row) * i64::from(columns) + col;
+-            return Some(if index < locals.grid_total { Press::Grid(index as u32) } else { Press::Local });
++            // A cell with no entry is a press on the grid itself (`GRID_EMPTY`): the mod stores the cursor's stack there.
++            return Some(Press::Grid(if index < locals.grid_total { index as u32 } else { GRID_EMPTY }));
+         }
+         if inside(at, x + w, y, 6, h) {
+             let lines = (locals.grid_total + i64::from(columns) - 1) / i64::from(columns);
+@@ -524,8 +529,11 @@ mod tests {
+         assert_eq!(press(&screen, &[], &mut locals, [8.0 + 18.0 + 2.0, 18.0 + 18.0 + 2.0], false), Some(Press::Grid(28)));
+         assert!(scroll_lists(&screen, &[], &mut locals, [20.0, 30.0], -9));
+         assert_eq!(grid_top(&locals, 9, 3, 50), 3);
+-        // Past the last entry is nothing to take; the bar's bottom scrolls to the end, its top back to the start.
+-        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 8.0 * 18.0 + 2.0, 18.0 + 2.0 * 18.0 + 2.0], false), Some(Press::Local));
++        // A cell past the last entry is the grid itself (the cursor's stack is stored there); the bar's bottom scrolls to the end,
++        // its top back to the start.
++        assert_eq!(press(&screen, &[], &mut locals, [8.0 + 8.0 * 18.0 + 2.0, 18.0 + 2.0 * 18.0 + 2.0], false), Some(Press::Grid(GRID_EMPTY)));
++        let mut empty = Locals::default();
++        assert_eq!(press(&screen, &[], &mut empty, [10.0, 20.0], true), Some(Press::Grid(u32::MAX)), "an empty grid too");
+         assert_eq!(press(&screen, &[], &mut locals, [8.0 + 9.0 * 18.0 + 2.0, 18.0], false), Some(Press::Local));
+         assert_eq!(grid_top(&locals, 9, 3, 50), 0);
+     }
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index b3967af0d..94a46f6a8 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -1498,7 +1498,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `mod-entity-damaged` | `func(entity: mod-entity, source: damage-source, amount: f32) -> f32` | One of the mod's own entities is about to take `amount` damage from `source` (FORK-10 e; today a player's blow on its box, `minecraft:player_attack`, the damage the player's weapon makes before armour, which a mod entity has none of). Returns the damage to apply: the same to leave it, less to reduce it, 0 to cancel the blow. The first mod that owns the kind answers; a mod that does not implement it takes the damage as it is. At 0 health the entity dies (`mod-entity-died`). |
+ | `mod-entity-died` | `func(entity: mod-entity)` | An entity of the mod's own kind died of damage (its health reached 0): last look at it, as it was. The game removes it right after; its drops, if it has any, are the mod's to spawn. |
+ | `key-pressed` | `func(player: player, key: string) -> bool` | `player` pressed one of the mod's keys (`data/<mod>/horizon/key/<name>.json`, `key` its id `<mod>:<name>`) while playing with no screen open, as the player bound it in Controls. True when the mod used the press. API 53. |
+-| `menu-grid-click` | `func(player: player, target: grid-target, index: u32, button: u8, shift: bool, carried: option<item-stack>) -> option<grid-answer>` | `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`): `button` 0 left, 1 right, 2 middle, `shift` with Shift held, `carried` the stack on their cursor now. The mod takes from its catalogue or puts the cursor's stack in and answers the cursor's stack after (Mekanism's QIO Dashboard: left takes a stack, right half of one, shift into the inventory, a carried stack is stored); none leaves the cursor as it was. API 55. |
++| `menu-grid-click` | `func(player: player, target: grid-target, index: u32, button: u8, shift: bool, carried: option<item-stack>) -> option<grid-answer>` | `player` pressed entry `index` of the item grid (`item_grid`) of a menu of the mod (`target`), or a cell with no entry (past the last one, or an empty grid) with `index` 4294967295: `button` 0 left, 1 right, 2 middle, `shift` with Shift held, `carried` the stack on their cursor now. The mod takes from its catalogue or puts the cursor's stack in and answers the cursor's stack after (Mekanism's QIO Dashboard: left takes a stack, right half of one, shift into the inventory, a carried stack is stored); none leaves the cursor as it was. API 55. |
+ | `item-menu-tick` | `func(player: player, menu: item-menu) -> option<item-menu-update>` | Each tick while `player` has an item menu of the mod open (`players.open-item-menu`): what to change in it. API 48. |
+ | `item-menu-button` | `func(player: player, menu: item-menu, id: s32) -> option<item-menu-update>` | `player` pressed button `id` (`id`, `shift_id` or `alt_id`, as the client chose it) of one of the mod's item menus. |
+ | `item-menu-taken` | `func(player: player, menu: item-menu, slot: u32, stack: item-stack) -> option<item-menu-update>` | `player` took `stack` out of result slot `slot` of one of the mod's item menus (the menu as it is after the take): the mod uses up what made it. |
+-- 
+2.43.0
+

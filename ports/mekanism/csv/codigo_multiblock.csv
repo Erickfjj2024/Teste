@@ -1,0 +1,122 @@
+item,estado,nota
+mekanism/common/content/assemblicator/RecipeFormula.java,FALTA?,
+mekanism/common/content/blocktype/BlockShapes.java,FALTA?,
+mekanism/common/content/blocktype/BlockType.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/blocktype/BlockTypeTile.java,FALTA?,
+mekanism/common/content/blocktype/Factory.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/blocktype/FactoryType.java,FALTA?,
+mekanism/common/content/blocktype/Machine.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/boiler/BoilerMultiblockData.java,FALTA?,
+mekanism/common/content/boiler/BoilerValidator.java,FALTA?,
+mekanism/common/content/entangloporter/InventoryFrequency.java,FALTA?,
+mekanism/common/content/evaporation/EvaporationMultiblockData.java,FALTA?,
+mekanism/common/content/evaporation/EvaporationValidator.java,FALTA?,
+mekanism/common/content/filter/BaseFilter.java,FALTA?,
+mekanism/common/content/filter/FilterManager.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/filter/FilterType.java,FALTA?,
+mekanism/common/content/filter/IFilter.java,FALTA?,
+mekanism/common/content/filter/IItemStackFilter.java,FALTA?,
+mekanism/common/content/filter/IModIDFilter.java,FALTA?,
+mekanism/common/content/filter/ITagFilter.java,FALTA?,
+mekanism/common/content/filter/SortableFilterManager.java,FALTA?,
+mekanism/common/content/gear/HUDElement.java,FALTA?,
+mekanism/common/content/gear/IBlastingItem.java,FALTA?,
+mekanism/common/content/gear/IModuleContainerItem.java,FALTA?,
+mekanism/common/content/gear/IModuleItem.java,FALTA?,
+mekanism/common/content/gear/IRadialModuleContainerItem.java,FALTA?,
+mekanism/common/content/gear/MekaSuitDispenseBehavior.java,FALTA?,
+mekanism/common/content/gear/Module.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/ModuleContainer.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/ModuleDispenseBehavior.java,FALTA?,
+mekanism/common/content/gear/ModuleHelper.java,FALTA?,
+mekanism/common/content/gear/mekasuit/GyroscopicStabilizationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleChargeDistributionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleDosimeterUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleElectrolyticBreathingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleElytraUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleGeigerUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleGravitationalModulatingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleHydraulicPropulsionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleHydrostaticRepulsorUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleInhalationPurificationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleJetpackUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleLocomotiveBoostingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleMagneticAttractionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleNutritionalInjectionUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/ModuleVisionEnhancementUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/MotorizedServoUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekasuit/SoulSurferUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleAttackAmplificationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleBlastingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleExcavationEscalationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleFarmingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleShearingUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleTeleportationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/mekatool/ModuleVeinMiningUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/shared/ModuleColorModulationUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/gear/shared/ModuleEnergyUnit.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/matrix/MatrixEnergyContainer.java,FALTA?,
+mekanism/common/content/matrix/MatrixMultiblockData.java,FALTA?,
+mekanism/common/content/matrix/MatrixValidator.java,FALTA?,
+mekanism/common/content/miner/MinerFilter.java,FALTA?,
+mekanism/common/content/miner/MinerItemStackFilter.java,FALTA?,
+mekanism/common/content/miner/MinerModIDFilter.java,FALTA?,
+mekanism/common/content/miner/MinerRegionCache.java,FALTA?,
+mekanism/common/content/miner/MinerTagFilter.java,FALTA?,
+mekanism/common/content/miner/ThreadMinerSearch.java,FALTA?,
+mekanism/common/content/network/ChemicalNetwork.java,FALTA?,
+mekanism/common/content/network/EnergyNetwork.java,FALTA?,
+mekanism/common/content/network/FluidNetwork.java,FALTA?,
+mekanism/common/content/network/HeatNetwork.java,FALTA?,
+mekanism/common/content/network/InventoryNetwork.java,FALTA?,
+mekanism/common/content/network/distribution/ChemicalHandlerTarget.java,FALTA?,
+mekanism/common/content/network/distribution/ChemicalTransmitterSaveTarget.java,FALTA?,
+mekanism/common/content/network/distribution/EnergyAcceptorTarget.java,FALTA?,
+mekanism/common/content/network/distribution/EnergySaveTarget.java,FALTA?,
+mekanism/common/content/network/distribution/EnergyTransmitterSaveTarget.java,FALTA?,
+mekanism/common/content/network/distribution/FluidHandlerTarget.java,FALTA?,
+mekanism/common/content/network/distribution/FluidTransmitterSaveTarget.java,FALTA?,
+mekanism/common/content/network/transmitter/BufferedTransmitter.java,FALTA?,
+mekanism/common/content/network/transmitter/DiversionTransporter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/IUpgradeableTransmitter.java,FALTA?,
+mekanism/common/content/network/transmitter/LogisticalTransporter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/LogisticalTransporterBase.java,FALTA?,
+mekanism/common/content/network/transmitter/MechanicalPipe.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/PressurizedTube.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/RestrictiveTransporter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/ThermodynamicConductor.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/Transmitter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/network/transmitter/UniversalCable.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/oredictionificator/OredictionificatorFilter.java,FALTA?,
+mekanism/common/content/oredictionificator/OredictionificatorItemFilter.java,?,match heurístico por nome / name heuristic
+mekanism/common/content/qio/IQIOCraftingWindowHolder.java,FALTA?,
+mekanism/common/content/qio/IQIODriveHolder.java,FALTA?,
+mekanism/common/content/qio/IQIODriveItem.java,FALTA?,
+mekanism/common/content/qio/IQIOFrequencyHolder.java,FALTA?,
+mekanism/common/content/qio/PortableQIODashboardInventory.java,FALTA?,
+mekanism/common/content/qio/QIOCraftingTransferHelper.java,FALTA?,
+mekanism/common/content/qio/QIOCraftingWindow.java,FALTA?,
+mekanism/common/content/qio/QIODriveData.java,FALTA?,
+mekanism/common/content/qio/QIOFrequency.java,FALTA?,
+mekanism/common/content/qio/QIOGlobalItemLookup.java,FALTA?,
+mekanism/common/content/qio/QIOServerCraftingTransferHandler.java,FALTA?,
+mekanism/common/content/qio/SearchQueryParser.java,FALTA?,
+mekanism/common/content/qio/filter/QIOFilter.java,FALTA?,
+mekanism/common/content/qio/filter/QIOItemStackFilter.java,FALTA?,
+mekanism/common/content/qio/filter/QIOModIDFilter.java,FALTA?,
+mekanism/common/content/qio/filter/QIOTagFilter.java,FALTA?,
+mekanism/common/content/sps/SPSCache.java,FALTA?,
+mekanism/common/content/sps/SPSMultiblockData.java,FALTA?,
+mekanism/common/content/sps/SPSValidator.java,FALTA?,
+mekanism/common/content/tank/TankCache.java,FALTA?,
+mekanism/common/content/tank/TankMultiblockData.java,FALTA?,
+mekanism/common/content/tank/TankValidator.java,FALTA?,
+mekanism/common/content/teleporter/TeleporterFrequency.java,FALTA?,
+mekanism/common/content/transporter/PathfinderCache.java,FALTA?,
+mekanism/common/content/transporter/SorterFilter.java,FALTA?,
+mekanism/common/content/transporter/SorterItemStackFilter.java,FALTA?,
+mekanism/common/content/transporter/SorterModIDFilter.java,FALTA?,
+mekanism/common/content/transporter/SorterTagFilter.java,FALTA?,
+mekanism/common/content/transporter/TransporterManager.java,FALTA?,
+mekanism/common/content/transporter/TransporterPathfinder.java,FALTA?,
+mekanism/common/content/transporter/TransporterStack.java,FALTA?,

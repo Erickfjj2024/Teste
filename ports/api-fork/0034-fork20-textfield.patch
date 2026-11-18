@@ -1,0 +1,582 @@
+From 913ed9d9c370886a7b4cfa9ebfbf4fc06055cd0e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 00:02:29 +0000
+Subject: [PATCH] FORK-20, part 2: the textfield widget of mod screens
+
+A text box (textfield: x, y, w, h, id, max_length, validator any/digit/id, text_data) takes the focus on a press, types with the validator's filter, and Enter sends the text to the server as a mod message on <mod id>:menu_text (server::menu_input decodes it). Keyboard, IME and the touch keyboard reach it like the other text boxes.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RYe92n7spgy8vtm4CovRWA
+---
+ crates/horizon-client/src/game.rs             |  13 +-
+ .../horizon-client/src/game/android_input.rs  |   6 +
+ crates/horizon-client/src/game/ime.rs         |   6 +-
+ .../horizon-client/src/game/menu_screens.rs   | 120 +++++++++++++++++-
+ .../horizon-client/src/game/native_hooks.rs   |   4 +
+ crates/horizon-client/src/game/pad_menu.rs    |   6 +
+ .../examples/block-use/horizon-mod.toml       |   3 +-
+ .../examples/block-use/src/lib.rs             |  13 +-
+ .../examples/block-use/tests/block_use.toml   |   6 +
+ crates/horizon-mod-sdk/src/lib.rs             |  26 ++++
+ crates/horizon-mods/src/content.rs            |  67 ++++++++++
+ crates/horizon-mods/src/screen.rs             |  64 ++++++++++
+ 12 files changed, 326 insertions(+), 8 deletions(-)
+
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 34c6c8d23..d8c8d3b66 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -17432,12 +17432,21 @@ impl Game<'_> {
+                     self.mod_browser_key(&event);
+                 }
+                 WindowEvent::KeyboardInput { event, .. }
+-                    if self.station_typing()
++                    if (self.station_typing() || self.mod_field_typing())
+                         && event.state == ElementState::Pressed
+                         && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                 {
+                     // The anvil rename box takes every key but Escape (AnvilScreen.keyPressed).
+-                    if let Some(shortcut) = self.edit_shortcut(&event) {
++                    if self.mod_field_typing() {
++                        // A mod screen's text box (FORK-20).
++                        if let PhysicalKey::Code(key) = event.physical_key
++                            && self.mod_field_key(key)
++                        {
++                        } else {
++                            let backspace = event.physical_key == PhysicalKey::Code(KeyCode::Backspace);
++                            self.mod_field_text(event.text.as_deref(), backspace);
++                        }
++                    } else if let Some(shortcut) = self.edit_shortcut(&event) {
+                         self.station_shortcut(shortcut);
+                     } else if let PhysicalKey::Code(key) = event.physical_key
+                         && self.station_key(key)
+diff --git a/crates/horizon-client/src/game/android_input.rs b/crates/horizon-client/src/game/android_input.rs
+index 6e2dab619..bc9eea070 100644
+--- a/crates/horizon-client/src/game/android_input.rs
++++ b/crates/horizon-client/src/game/android_input.rs
+@@ -454,6 +454,8 @@ impl Game<'_> {
+             self.ui.options.android_edit_value(&self.gui.atlas)
+         } else if self.screen == Screen::WorldOptions {
+             self.world_options_edit_value()
++        } else if self.mod_field_typing() {
++            self.mod_field_value()
+         } else if self.mod_browser_typing() {
+             self.mod_browser_edit_value()
+         } else if self.station_typing() {
+@@ -493,6 +495,10 @@ impl Game<'_> {
+                 result.unwrap_or_else(|e| format!("File export failed: {e}")),
+             ));
+         }
++        // A text box of a mod screen took the focus by a touch: its keyboard opens.
++        if super::menu_screens::take_field_keyboard() && self.mod_field_typing() {
++            self.android_show_keyboard();
++        }
+         for out in crate::platform::poll() {
+             let next_sign_line = self.sign_edit.is_some() && matches!(out, Output::Enter);
+             let done =
+diff --git a/crates/horizon-client/src/game/ime.rs b/crates/horizon-client/src/game/ime.rs
+index 97013d5ff..97b1234be 100644
+--- a/crates/horizon-client/src/game/ime.rs
++++ b/crates/horizon-client/src/game/ime.rs
+@@ -30,7 +30,10 @@ impl Game<'_> {
+             Screen::WorldOptions => self.world_options_typing(),
+             Screen::Creative => self.creative_screen.tab().search,
+             Screen::Inventory => {
+-                self.mod_browser_typing() || self.recipe_search_focused() || self.station_typing()
++                self.mod_field_typing()
++                    || self.mod_browser_typing()
++                    || self.recipe_search_focused()
++                    || self.station_typing()
+             }
+             _ => false,
+         }
+@@ -128,6 +131,7 @@ impl Game<'_> {
+                 Screen::DebugOptions => self.debug_options_type(&text),
+                 Screen::WorldOptions => self.world_options_text(Some(&text)),
+                 Screen::Creative => self.creative_search_edit(Some(&text)),
++                Screen::Inventory if self.mod_field_typing() => self.mod_field_text(Some(&text), false),
+                 Screen::Inventory if self.mod_browser_typing() => {
+                     self.mod_browser_text(Some(&text), false)
+                 }
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+index 79a877db0..acdc25063 100644
+--- a/crates/horizon-client/src/game/menu_screens.rs
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -6,7 +6,7 @@
+ use super::{Game, native_hooks::NativeScreen};
+ use horizon_client::hud::{HudBatch, rgba};
+ use horizon_mods::{
+-    content::{ArmorSlots, Direction, MenuScreen, Widget, parse_color},
++    content::{ArmorSlots, Direction, MenuScreen, Validator, Widget, find_field, parse_color},
+     screen::{DRAG_HEIGHT, Locals, Press, press_with, fill_text, neighbor_step, window_origin, filled, fraction, hovered, open_window, press, read, showing},
+ };
+ use std::{
+@@ -38,6 +38,28 @@ static SCREEN_AT: Mutex<Option<[i32; 3]>> = Mutex::new(None);
+ /// Most blocks whose strings a client keeps (the oldest are dropped).
+ const MENU_TEXT_BLOCKS: usize = 64;
+ 
++/// The text box of the open mod screen that has the focus (FORK-20): its widget `id`, what it takes and the edit box.
++struct ModField {
++    id: i32,
++    validator: Validator,
++    edit: horizon_client::ui::EditBox,
++}
++static FIELD: Mutex<Option<ModField>> = Mutex::new(None);
++/// A text box just took the focus: a touch screen opens its keyboard once (`take_field_keyboard`).
++static FIELD_KEYBOARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++/// Whether a text box took the focus since the last call.
++pub(super) fn take_field_keyboard() -> bool {
++    FIELD_KEYBOARD.swap(false, std::sync::atomic::Ordering::Relaxed)
++}
++
++/// A new screen opened or the old one closed: no text box has the focus.
++pub(super) fn drop_field() {
++    if let Ok(mut f) = FIELD.lock() {
++        *f = None;
++    }
++}
++
+ /// A `horizon:menu_text` message arrived: the strings of the block at its position.
+ pub(super) fn remember_menu_text(data: &[u8]) {
+     let Some((pos, texts)) = horizon_mods::screen::decode_menu_text(data) else {
+@@ -70,6 +92,7 @@ pub(super) const LOCAL_PRESS: i32 = i32::MIN;
+ 
+ /// A new screen opened: its windows are closed and its variables unset.
+ pub(super) fn reset_locals() {
++    drop_field();
+     if let Ok(mut l) = LOCALS.lock() {
+         *l = None;
+     }
+@@ -233,6 +256,25 @@ impl Game<'_> {
+                         self.native_fill(batch, [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32], argb);
+                     }
+                 }
++                Widget::TextField { x, y, w, h, id, max_length, text_data, .. } => {
++                    let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
++                    let mut focused = false;
++                    if let Ok(mut f) = FIELD.lock()
++                        && let Some(field) = f.as_mut().filter(|f| f.id == *id)
++                    {
++                        let edit = &mut field.edit;
++                        [edit.x, edit.y, edit.width, edit.height] = rect;
++                        edit.focused = true;
++                        edit.draw(batch, &self.gui.atlas, None);
++                        focused = true;
++                    }
++                    if !focused {
++                        let mut edit = horizon_client::ui::EditBox::new(rect[0], rect[1], rect[2], rect[3]);
++                        edit.max_length = usize::from(*max_length);
++                        edit.set_value(&text_data.and_then(|n| menu_string(usize::from(n))).unwrap_or_default());
++                        edit.draw(batch, &self.gui.atlas, None);
++                    }
++                }
+                 Widget::Button { .. } | Widget::Show { .. } => {}
+             }
+         }
+@@ -405,7 +447,25 @@ impl Game<'_> {
+         });
+         let result = press_with(screen, data, &mut now, at, alt, self.has_shift_down());
+         *l = Some(now);
++        // A press anywhere but on the text box that has the focus lets it go.
++        let on_field = matches!(result, Some(Press::Field(_)));
++        if !on_field {
++            drop_field();
++        }
+         let result = result?;
++        if let Press::Field(id) = result {
++            if let Some(Widget::TextField { max_length, validator, text_data, .. }) = find_field(screen, id) {
++                let mut edit = horizon_client::ui::EditBox::new(0.0, 0.0, 100.0, 20.0);
++                edit.max_length = usize::from(*max_length);
++                edit.set_value(&text_data.and_then(|n| menu_string(usize::from(n))).unwrap_or_default());
++                edit.move_cursor_to_end(false);
++                if let Ok(mut f) = FIELD.lock() {
++                    *f = Some(ModField { id, validator: *validator, edit });
++                    FIELD_KEYBOARD.store(true, std::sync::atomic::Ordering::Relaxed);
++                }
++            }
++            return Some(LOCAL_PRESS);
++        }
+         if let (Press::Local, (true, offset), false) = (&result, grab.unwrap_or((false, [0.0; 2])), alt)
+             && let Ok(mut d) = DRAG.lock()
+         {
+@@ -413,10 +473,66 @@ impl Game<'_> {
+         }
+         match result {
+             Press::Send(id) => Some(id),
+-            Press::Local => Some(LOCAL_PRESS),
++            Press::Local | Press::Field(_) => Some(LOCAL_PRESS),
++        }
++    }
++
++    /// Whether a text box of the open mod screen has the focus (FORK-20).
++    pub(super) fn mod_field_typing(&self) -> bool {
++        self.screen == super::Screen::Inventory && FIELD.lock().is_ok_and(|f| f.is_some())
++    }
++
++    /// The focused text box's text, for the touch keyboard's first value.
++    pub(super) fn mod_field_value(&self) -> String {
++        FIELD.lock().ok().and_then(|mut f| f.as_mut().map(|f| {
++            f.edit.move_cursor_to_end(false);
++            f.edit.value.clone()
++        })).unwrap_or_default()
++    }
++
++    /// Typed text (what the validator allows) or a backspace in the focused text box.
++    pub(super) fn mod_field_text(&mut self, text: Option<&str>, backspace: bool) {
++        let Ok(mut f) = FIELD.lock() else {
++            return;
++        };
++        let Some(field) = f.as_mut() else {
++            return;
++        };
++        if backspace {
++            field.edit.delete_chars(-1);
++        } else if let Some(t) = text {
++            let allowed: String = t.chars().filter(|c| field.validator.allows(*c)).collect();
++            if !allowed.is_empty() {
++                field.edit.insert_text(&allowed);
++            }
+         }
+     }
+ 
++    /// A key in the focused text box (cursor, delete, select...): Enter confirms, and false lets the key go on.
++    pub(super) fn mod_field_key(&mut self, key: winit::keyboard::KeyCode) -> bool {
++        if key == winit::keyboard::KeyCode::Enter || key == winit::keyboard::KeyCode::NumpadEnter {
++            self.mod_field_confirm();
++            return true;
++        }
++        let (ctrl, shift) = (self.has_control_down(), self.has_shift_down());
++        FIELD.lock().ok().and_then(|mut f| f.as_mut().map(|f| f.edit.key(key, ctrl, shift))).unwrap_or(false)
++    }
++
++    /// Enter: the text goes to the server, as a mod message on `<mod id>:menu_text`, and the box lets go of the focus.
++    pub(super) fn mod_field_confirm(&mut self) {
++        let Some((id, text)) = FIELD.lock().ok().and_then(|mut f| f.take()).map(|f| (f.id, f.edit.value)) else {
++            return;
++        };
++        let (Some(at), Some(block)) = (*SCREEN_AT.lock().ok().as_deref().unwrap_or(&None), self.native_open_block()) else {
++            return;
++        };
++        let Some((namespace, _)) = block.split_once(':') else {
++            return;
++        };
++        let data = horizon_mods::screen::encode_menu_input(at, id, &text);
++        let _ = self.native_net_send_to_server(&format!("{namespace}:menu_text"), &data);
++    }
++
+     /// The tooltip under `at` on block `block`'s declared screen.
+     pub(super) fn declared_screen_tooltip(
+         &self,
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 353958f75..bc26909de 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -4211,6 +4211,10 @@ impl Game<'_> {
+     pub(super) fn native_screen_block(&self) -> Option<String> {
+         self.shown_native_screen().map(|s| s.block.clone())
+     }
++    /// The block id of the mod screen showing now (a text box's message is named after its namespace).
++    pub(super) fn native_open_block(&self) -> Option<String> {
++        self.shown_native_screen().map(|s| s.block.clone())
++    }
+     /// The mod screen showing now, if any.
+     fn shown_native_screen(&self) -> Option<&OpenNativeScreen> {
+         self.mod_screen
+diff --git a/crates/horizon-client/src/game/pad_menu.rs b/crates/horizon-client/src/game/pad_menu.rs
+index 6543ccebb..d34005223 100644
+--- a/crates/horizon-client/src/game/pad_menu.rs
++++ b/crates/horizon-client/src/game/pad_menu.rs
+@@ -1413,6 +1413,12 @@ impl Game<'_> {
+             if key != Some(KeyCode::Enter) {
+                 self.recipe_text(text, backspace);
+             }
++        } else if self.mod_field_typing() {
++            if key == Some(KeyCode::Enter) {
++                self.mod_field_confirm();
++            } else {
++                self.mod_field_text(text, backspace);
++            }
+         } else if self.mod_browser_typing() {
+             if key != Some(KeyCode::Enter) {
+                 self.mod_browser_text(text, backspace);
+diff --git a/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml b/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
+index c7bd9610a..a24f7bd93 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/horizon-mod.toml
+@@ -5,4 +5,5 @@ description = "Test mod for mod-decided block use (FORK-29): a click on a block
+ authors = ["Rust port"]
+ api = "0.3"
+ side = "server"
+-capabilities = ["players", "world"]
++capabilities = ["players", "world", "net"]
++experimental = ["net"]
+diff --git a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+index 26f0b7964..2db5df67e 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-use/src/lib.rs
+@@ -1,18 +1,27 @@
+ //! Block Use (FORK-29): a mod that decides what a right click on one of its blocks does. Holding a block, the click
+ //! passes (the block does not use itself; the held block is placed); sneaking with a hand held, or holding anything
+ //! else, leaves it to the game; an empty hand and no sneaking is the block's own use, taken by the mod.
+-use horizon_mod_sdk::server::{BlockPos, BlockUse, ItemStack, Player, Registration, ServerMod, world};
++use horizon_mod_sdk::server::{BlockPos, BlockUse, ItemStack, Player, Registration, ServerMod, menu_input, world};
+ 
+ struct Gate;
+ 
+ impl ServerMod for Gate {
+     fn init() -> Result<(Self, Registration), String> {
+-        Ok((Gate, Registration::new().on_blocks().redirect("blockuse:bound", 0, 1)))
++        Ok((Gate, Registration::new().on_blocks().on_net().redirect("blockuse:bound", 0, 1)))
+     }
+     /// FORK-35: a machine of the mod needs the block above it free: with one over it (y 81 over a block at 80), the placement is refused.
+     fn can_place(&mut self, _player: &Player, pos: BlockPos, _state: &str) -> bool {
+         world::get_block("minecraft:overworld", pos.x, pos.y + 1, pos.z).is_none_or(|b| b == "minecraft:air")
+     }
++    /// FORK-20: what a text box of the machine's screen confirms (widget 7800) comes back as the menu's first string.
++    fn net_message(&mut self, player: &Player, channel: &str, data: &[u8]) {
++        if channel != menu_input::channel("blockuse") {
++            return;
++        }
++        if let Some(input) = menu_input::decode(data).filter(|i| i.id == 7800) {
++            let _ = world::set_menu_text(&player.dimension, input.pos.x, input.pos.y, input.pos.z, &[input.text]);
++        }
++    }
+     fn block_used(&mut self, player: &Player, pos: BlockPos, sneaking: bool, stack: Option<ItemStack>) -> BlockUse {
+         // FORK-34: the gate at y 70 is a structure that is not formed: its items, tanks and energy are closed to the outside.
+         if pos.y == 70 {
+diff --git a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+index 839e90dea..f560e9460 100644
+--- a/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
++++ b/crates/horizon-mod-sdk/examples/block-use/tests/block_use.toml
+@@ -64,3 +64,9 @@ expect.blocks = [{ x = 51, y = 74, z = 0, state = "blockuse:box" }]
+ use-block = { pos = [1, 75, 1] }
+ ticks = 1
+ expect.menu-text = ["minecraft:overworld 1 75 1 forge:ores/iron|Alex"]
++
++[[step]]
++# FORK-20: the text box (widget 7800) of the machine at 3 76 4 confirmed "forge:ores/gold": the mod answers with it as the menu's first string.
++net = { channel = "blockuse:menu_text", data = [3, 0, 0, 0, 76, 0, 0, 0, 4, 0, 0, 0, 120, 30, 0, 0, 102, 111, 114, 103, 101, 58, 111, 114, 101, 115, 47, 103, 111, 108, 100] }
++ticks = 1
++expect.menu-text = ["minecraft:overworld 3 76 4 forge:ores/gold"]
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index db28b69f8..cc77ab6c0 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -207,6 +207,32 @@ pub mod server {
+         },
+     });
+ 
++    /// What a mod screen's `textfield` sends the server when the player confirms it (FORK-20): a mod message on channel
++    /// `<mod id>:menu_text`, which [`menu_input::decode`] reads. Needs [`Registration::on_net`].
++    pub mod menu_input {
++        use super::BlockPos;
++        /// The block whose menu has the box, the box's widget `id` and the confirmed text.
++        #[derive(Clone, Debug, PartialEq)]
++        pub struct MenuInput {
++            pub pos: BlockPos,
++            pub id: i32,
++            pub text: String,
++        }
++        /// The channel of the mod `mod_id`.
++        pub fn channel(mod_id: &str) -> String {
++            format!("{mod_id}:menu_text")
++        }
++        /// The message's position, widget id and text; None for bytes that are not one.
++        pub fn decode(data: &[u8]) -> Option<MenuInput> {
++            let int = |at: usize| data.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
++            Some(MenuInput {
++                pos: BlockPos { x: int(0)?, y: int(4)?, z: int(8)? },
++                id: int(12)?,
++                text: String::from_utf8(data.get(16..)?.to_vec()).ok()?,
++            })
++        }
++    }
++
+     pub use exports::horizon::mods::server_events::{
+         Argument, ArgumentKind, ArgumentValue, BlockEntity, BlockEntityKind, BlockEntityUpdate,
+         BlockPos, BlockUse, DamageSource, RedirectSpec, ContainerSpec, FlowSide, EnergySpec, ItemStack, Tank, TankSpec, TransmitterMedium, TransmitterSpec, MultiblockMember, MultiblockSpec, Structure, Guest as __Guest, Registration, ServerCommand,
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 70bc53dd8..e8c666a64 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -604,6 +604,64 @@ pub enum Widget {
+     },
+     /// The icon of item `item` (`minecraft:iron_ingot`), drawn 16 by 16 at `x`, `y`; nothing when the item is unknown.
+     Item { x: i32, y: i32, item: String },
++    /// A text box (`GuiTextField`, FORK-20): a press focuses it (and opens the keyboard on a touch screen), typing fills it
++    /// up to `max_length` characters that `validator` allows, Enter confirms. The confirmed text goes to the server as a mod
++    /// message on channel `<mod id>:menu_text` (`horizon_mod_sdk::server::menu_input` reads it), with this widget's `id`. It
++    /// starts with string `text_data` of the menu text (`world.set-menu-text`) when it has one.
++    #[serde(rename = "textfield")]
++    TextField {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        id: i32,
++        #[serde(default = "default_field_length")]
++        max_length: u16,
++        #[serde(default)]
++        validator: Validator,
++        #[serde(default)]
++        text_data: Option<u16>,
++    },
++}
++
++fn default_field_length() -> u16 {
++    32
++}
++
++/// What a text box lets be typed (`TextValidator`).
++#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum Validator {
++    /// Any printable character.
++    #[default]
++    Any,
++    /// Digits only.
++    Digit,
++    /// Lower case letters, digits and `_ . / : - #` (a tag or a block, item or entity id).
++    Id,
++}
++
++impl Validator {
++    /// Whether `c` may be typed.
++    pub fn allows(self, c: char) -> bool {
++        match self {
++            Validator::Any => !c.is_control(),
++            Validator::Digit => c.is_ascii_digit(),
++            Validator::Id => c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '/' | ':' | '-' | '#'),
++        }
++    }
++}
++
++/// The text box of `id` in `widgets` and what they hold (groups and windows too).
++pub fn find_field<'a>(screen: &'a MenuScreen, id: i32) -> Option<&'a Widget> {
++    fn walk<'a>(widgets: &'a [Widget], id: i32) -> Option<&'a Widget> {
++        widgets.iter().find_map(|w| match w {
++            Widget::TextField { id: i, .. } if *i == id => Some(w),
++            Widget::Show { widgets, .. } => walk(widgets, id),
++            _ => None,
++        })
++    }
++    walk(&screen.widgets, id).or_else(|| screen.windows.iter().find_map(|w| walk(&w.widgets, id)))
+ }
+ 
+ /// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
+@@ -824,6 +882,15 @@ fn check_widget(
+                 return Err(format!("{name}: a neighbour's side is 0 to 5"));
+             }
+         }
++        Widget::TextField { x, y, w, h, max_length, text_data, .. } => {
++            rect(*x, *y, *w, *h)?;
++            if !(1..=256).contains(max_length) {
++                return Err(format!("{name}: a text field's max_length is 1 to 256"));
++            }
++            if text_data.is_some_and(|n| usize::from(n) >= crate::runtime::MENU_TEXTS) {
++                return Err(format!("{name}: text_data is a string of the menu, 0 to {}", crate::runtime::MENU_TEXTS - 1));
++            }
++        }
+         Widget::Item { x, y, item } => {
+             rect(*x, *y, 16, 16)?;
+             if item.is_empty() || item.len() > 128 || !item.contains(':') {
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+index f10a6d987..2ef2baf58 100644
+--- a/crates/horizon-mods/src/screen.rs
++++ b/crates/horizon-mods/src/screen.rs
+@@ -92,6 +92,8 @@ pub const DRAG_HEIGHT: f32 = 18.0;
+ /// What a press did.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Press {
++    /// The text box `id` was pressed (FORK-20): it takes the focus.
++    Field(i32),
+     /// Menu button `id`, for the server.
+     Send(i32),
+     /// Something here: a local action, or a press a window took.
+@@ -111,6 +113,12 @@ fn press_in(
+     alt: bool,
+     shift: bool,
+ ) -> Option<Press> {
++    if let Some(id) = showing(widgets, data, locals).into_iter().find_map(|w| match w {
++        Widget::TextField { x, y, w, h, id, .. } if inside(at, *x, *y, *w, *h) => Some(*id),
++        _ => None,
++    }) {
++        return Some(Press::Field(id));
++    }
+     let hit = showing(widgets, data, locals).into_iter().find_map(|w| match w {
+         Widget::Button { x, y, w, h, id, alt_id, shift_id, local, .. } if inside(at, *x, *y, *w, *h) => {
+             Some((*id, *alt_id, *shift_id, local.clone()))
+@@ -478,6 +486,24 @@ mod tests {
+     }
+ }
+ 
++/// What a confirmed text box sends the server, on `<mod id>:menu_text`: the block's position (three little-endian whole numbers),
++/// the widget's `id` (one more) and the text (UTF-8, the rest of the message).
++pub fn encode_menu_input(pos: [i32; 3], id: i32, text: &str) -> Vec<u8> {
++    let mut out = Vec::new();
++    for v in pos {
++        out.extend(v.to_le_bytes());
++    }
++    out.extend(id.to_le_bytes());
++    out.extend(text.as_bytes());
++    out
++}
++
++/// The position, widget id and text of [`encode_menu_input`].
++pub fn decode_menu_input(data: &[u8]) -> Option<([i32; 3], i32, String)> {
++    let int = |at: usize| data.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
++    Some(([int(0)?, int(4)?, int(8)?], int(12)?, String::from_utf8(data.get(16..)?.to_vec()).ok()?))
++}
++
+ /// The channel a block entity's menu strings travel on, host to client (`world.set-menu-text`).
+ pub const MENU_TEXT_CHANNEL: &str = "horizon:menu_text";
+ 
+@@ -518,6 +544,44 @@ pub fn decode_menu_text(data: &[u8]) -> Option<([i32; 3], Vec<String>)> {
+ mod menu_text_tests {
+     use super::*;
+ 
++    #[test]
++    fn menu_input_round_trips_and_a_short_message_is_refused() {
++        let bytes = encode_menu_input([5, -64, 9], 7800, "forge:ores/iron");
++        assert_eq!(decode_menu_input(&bytes), Some(([5, -64, 9], 7800, "forge:ores/iron".to_owned())));
++        assert_eq!(decode_menu_input(&bytes[..15]), None);
++        // An empty text is a message too (a cleared box).
++        assert_eq!(decode_menu_input(&encode_menu_input([0; 3], 1, "")), Some(([0; 3], 1, String::new())));
++    }
++
++    #[test]
++    fn a_press_on_a_text_field_focuses_it_and_one_beside_it_is_not_a_field_press() {
++        use crate::content::{MenuScreen, Widget};
++        let screen: MenuScreen = serde_json::from_str(
++            r#"{"slots": [], "widgets": [
++                {"type": "textfield", "x": 10, "y": 20, "w": 60, "h": 12, "id": 7800, "validator": "digit", "max_length": 7},
++                {"type": "button", "x": 10, "y": 40, "w": 20, "h": 10, "id": 3}]}"#,
++        )
++        .unwrap();
++        let mut locals = Locals::default();
++        assert_eq!(press(&screen, &[], &mut locals, [12.0, 22.0], false), Some(Press::Field(7800)));
++        assert_eq!(press(&screen, &[], &mut locals, [12.0, 42.0], false), Some(Press::Send(3)));
++        assert_eq!(press(&screen, &[], &mut locals, [100.0, 22.0], false), None);
++        let Some(Widget::TextField { max_length, validator, .. }) = crate::content::find_field(&screen, 7800) else {
++            panic!("the field is found by its id");
++        };
++        assert_eq!(*max_length, 7);
++        assert!(validator.allows('5') && !validator.allows('a'));
++    }
++
++    #[test]
++    fn validators_filter_what_is_typed() {
++        use crate::content::Validator;
++        assert!(Validator::Id.allows('a') && Validator::Id.allows('/') && Validator::Id.allows('#'));
++        assert!(!Validator::Id.allows('A') && !Validator::Id.allows(' '));
++        assert!(Validator::Any.allows('ñ') && !Validator::Any.allows('\n'));
++        assert!(Validator::Digit.allows('0') && !Validator::Digit.allows('-'));
++    }
++
+     #[test]
+     fn menu_text_round_trips_and_a_cut_message_is_refused() {
+         let texts = vec!["forge:ores/iron".to_owned(), String::new(), "ñandú ✓".to_owned()];
+-- 
+2.43.0
+

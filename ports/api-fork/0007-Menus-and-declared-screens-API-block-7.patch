@@ -1,0 +1,1636 @@
+From bcb0c020213a970a7a533fcd700407845ba857b8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 22:34:35 +0000
+Subject: [PATCH] Menus and declared screens for WASM block entities (API block
+ 7)
+
+Menu types get a screen (slots, bars, sprites, text, buttons) read from data
+slots, with no client code; container-spec.menu opens the menu of the
+block's id; menu-data in block-entity and update; menu-button server event;
+screen maths in horizon_mods::screen (tested); menu-demo example and harness
+support (press, block-menu-data).
+---
+ Cargo.lock                                    |   7 +
+ Cargo.toml                                    |   1 +
+ crates/horizon-client/src/game.rs             |   1 +
+ .../horizon-client/src/game/menu_screens.rs   | 121 +++++++
+ crates/horizon-client/src/game/mods.rs        |   5 +
+ .../horizon-client/src/game/native_hooks.rs   |  17 +-
+ crates/horizon-client/src/game/server_mods.rs | 160 ++++++---
+ .../examples/block-counter/src/lib.rs         |   1 +
+ .../examples/block-mover/src/lib.rs           |   2 +
+ .../examples/energy-demo/src/lib.rs           |   1 +
+ .../examples/item-charger/src/lib.rs          |   1 +
+ .../examples/menu-demo/Cargo.toml             |  16 +
+ .../examples/menu-demo/horizon-mod.toml       |   8 +
+ .../menu-demo/screen-example/grinder.json     |  13 +
+ .../examples/menu-demo/src/lib.rs             |  65 ++++
+ .../examples/menu-demo/tests/menu.toml        |  25 ++
+ .../examples/recipe-crusher/src/lib.rs        |   1 +
+ .../examples/tank-demo/src/lib.rs             |   1 +
+ crates/horizon-mod-sdk/src/lib.rs             |  23 ++
+ crates/horizon-mod-sdk/wit/horizon.wit        |  13 +
+ crates/horizon-mods/src/content.rs            | 307 ++++++++++++++++++
+ crates/horizon-mods/src/lib.rs                |   1 +
+ crates/horizon-mods/src/runtime.rs            |  38 +++
+ crates/horizon-mods/src/screen.rs             | 158 +++++++++
+ crates/horizon-mods/src/testing.rs            |  96 ++++++
+ docs/api/mods-reference.md                    |   4 +
+ 26 files changed, 1042 insertions(+), 44 deletions(-)
+ create mode 100644 crates/horizon-client/src/game/menu_screens.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/menu-demo/Cargo.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/menu-demo/horizon-mod.toml
+ create mode 100644 crates/horizon-mod-sdk/examples/menu-demo/screen-example/grinder.json
+ create mode 100644 crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+ create mode 100644 crates/horizon-mod-sdk/examples/menu-demo/tests/menu.toml
+ create mode 100644 crates/horizon-mods/src/screen.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index d38f654..7a63efb 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2669,6 +2669,13 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "menu-demo"
++version = "0.1.0"
++dependencies = [
++ "horizon-mod-sdk",
++]
++
+ [[package]]
+ name = "mimalloc"
+ version = "0.1.52"
+diff --git a/Cargo.toml b/Cargo.toml
+index afe1f63..3308ca6 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,6 +45,7 @@ members = [
+     "crates/horizon-mod-sdk/examples/tank-demo",
+     "crates/horizon-mod-sdk/examples/item-charger",
+     "crates/horizon-mod-sdk/examples/recipe-crusher",
++    "crates/horizon-mod-sdk/examples/menu-demo",
+     "crates/horizon-mod-sdk/examples/predator-missile",
+     "crates/horizon-mod-sdk/examples/welcome",
+     "crates/horizon-mod-sdk/examples/beacons",
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 6cd0e3e..b90e7a1 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -201,6 +201,7 @@ mod native_criteria;
+ mod native_entities;
+ mod native_explosions;
+ mod native_falling;
++mod menu_screens;
+ mod native_hooks;
+ #[cfg(target_os = "android")]
+ use android_bundled::{
+diff --git a/crates/horizon-client/src/game/menu_screens.rs b/crates/horizon-client/src/game/menu_screens.rs
+new file mode 100644
+index 0000000..609127a
+--- /dev/null
++++ b/crates/horizon-client/src/game/menu_screens.rs
+@@ -0,0 +1,121 @@
++//! Screens of content mods' menu types drawn from their data
++//! (`data/<ns>/horizon/menu/<name>.json`'s `screen`, API block 7): a block
++//! whose id is the menu type's gets this screen with no code of its own on
++//! the client. The pure parts (what a value reads, where a bar fills, which
++//! button a press hits, a tooltip's text) are free functions with tests.
++use super::{Game, native_hooks::NativeScreen};
++use horizon_client::hud::HudBatch;
++use horizon_mods::{
++    content::{MenuScreen, Widget, parse_color},
++    screen::{button_at, fill_text, filled, fraction, hovered, read},
++};
++use std::{collections::HashMap, sync::OnceLock};
++
++/// The mods' menu screens by menu type id, set once with the menu types.
++pub(super) static MENU_SCREENS: OnceLock<HashMap<String, MenuScreen>> = OnceLock::new();
++
++/// The screen of menu type `id`, if it has one.
++pub(super) fn screen_of(id: &str) -> Option<&'static MenuScreen> {
++    MENU_SCREENS.get()?.get(id)
++}
++
++impl Game<'_> {
++    /// The layout of block `block`'s screen: its menu type's, if it has one.
++    pub(super) fn declared_screen(&self, block: &str) -> Option<NativeScreen> {
++        let def = screen_of(block)?;
++        Some(NativeScreen {
++            width: def.width as f32,
++            height: def.height as f32,
++            slots: def
++                .slots
++                .iter()
++                .map(|s| s.map(|[x, y]| [x as f32, y as f32]))
++                .collect(),
++            inventory_y: def.inventory_y as f32,
++            inventory_x: def.inventory_x as f32,
++            own_labels: false,
++        })
++    }
++
++    /// Draws block `block`'s declared screen at `origin`; false when it has none.
++    pub(super) fn draw_declared_screen(
++        &self,
++        block: &str,
++        data: &[i32],
++        batch: &mut HudBatch,
++        origin: [f32; 2],
++    ) -> bool {
++        let Some(def) = screen_of(block) else {
++            return false;
++        };
++        let [ox, oy] = origin;
++        if let Some(texture) = &def.texture
++            && let Some([sw, sh]) = self.native_sprite_size(texture)
++        {
++            self.native_sprite(
++                batch,
++                texture,
++                [0.0, 0.0, sw, sh],
++                [ox, oy, def.width as f32, def.height as f32],
++            );
++        }
++        for w in &def.widgets {
++            match w {
++                Widget::Bar { x, y, w, h, value, max, color, direction, .. } => {
++                    let rect = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
++                    // The well behind the fill.
++                    self.native_fill(batch, rect, 0xFF37_3737);
++                    let frac = fraction(read(value, data), read(max, data));
++                    if frac > 0.0 {
++                        let argb = parse_color(color).unwrap_or(0xFFFF_FFFF);
++                        self.native_fill(batch, filled(rect, frac, *direction), argb);
++                    }
++                }
++                Widget::Sprite { texture, x, y, w, h, src, value, max, direction, .. } => {
++                    let Some([sw, sh]) = self.native_sprite_size(texture) else {
++                        continue;
++                    };
++                    let src = src.map_or([0.0, 0.0, sw, sh], |s| s.map(|v| v as f32));
++                    let dst = [ox + *x as f32, oy + *y as f32, *w as f32, *h as f32];
++                    let (src, dst) = match (value, max) {
++                        (Some(v), Some(m)) => {
++                            let frac = fraction(read(v, data), read(m, data));
++                            if frac <= 0.0 {
++                                continue;
++                            }
++                            // The same part of the sprite as of the box.
++                            (filled(src, frac, *direction), filled(dst, frac, *direction))
++                        }
++                        _ => (src, dst),
++                    };
++                    self.native_sprite(batch, texture, src, dst);
++                }
++                Widget::Text { x, y, text, color } => {
++                    let rgb = color.as_deref().and_then(parse_color).unwrap_or(0xFF40_4040);
++                    let text = fill_text(text, data);
++                    self.native_text(batch, &text, [ox + *x as f32, oy + *y as f32], rgb, false);
++                }
++                Widget::Button { .. } => {}
++            }
++        }
++        true
++    }
++
++    /// The menu button a press at `at` hits on block `block`'s declared screen.
++    pub(super) fn declared_screen_button(&self, block: &str, at: [f32; 2]) -> Option<i32> {
++        button_at(screen_of(block)?, at)
++    }
++
++    /// The tooltip under `at` on block `block`'s declared screen.
++    pub(super) fn declared_screen_tooltip(
++        &self,
++        block: &str,
++        data: &[i32],
++        at: [f32; 2],
++    ) -> Vec<String> {
++        screen_of(block)
++            .and_then(|s| hovered(s, data, at))
++            .unwrap_or_default()
++    }
++}
++
+diff --git a/crates/horizon-client/src/game/mods.rs b/crates/horizon-client/src/game/mods.rs
+index 579baa4..d92b0a5 100644
+--- a/crates/horizon-client/src/game/mods.rs
++++ b/crates/horizon-client/src/game/mods.rs
+@@ -375,6 +375,11 @@ fn register_entity_types(mods: &[horizon_client::mod_content::ContentMod]) {
+ fn register_menu_types(mods: &[horizon_client::mod_content::ContentMod]) {
+     use horizon_client::containers;
+     let menus = horizon_client::mod_content::menu_types(mods);
++    let screens = menus
++        .iter()
++        .filter_map(|m| Some((m.id.clone(), m.screen.clone()?)))
++        .collect();
++    let _ = super::menu_screens::MENU_SCREENS.set(screens);
+     let set = containers::register_mod_menu_types(menus.iter().map(|m| {
+         let results = m.results.iter().map(|&r| usize::from(r)).collect();
+         (m.id.clone(), m.slots.into(), m.data_slots.into(), results)
+diff --git a/crates/horizon-client/src/game/native_hooks.rs b/crates/horizon-client/src/game/native_hooks.rs
+index 96504c7..7566794 100644
+--- a/crates/horizon-client/src/game/native_hooks.rs
++++ b/crates/horizon-client/src/game/native_hooks.rs
+@@ -1481,7 +1481,8 @@ impl Game<'_> {
+                 faces,
+                 inputs: list(&spec.inputs),
+                 outputs: list(&spec.outputs),
+-                menu: None,
++                // The menu type of the block's own id.
++                menu: spec.menu.then(|| block.to_owned()),
+             });
+         }
+         let _ = (block, container);
+@@ -1581,6 +1582,10 @@ impl Game<'_> {
+     /// draws it). The server asks it too: a slot it hides is not in the menu
+     /// there either, so shift-clicks never fill it. API 19.
+     pub(super) fn native_screen(&self, block: &str, screen: &mut Option<NativeScreen>) {
++        // A content mod's menu type of the block's id with a `screen`.
++        if screen.is_none() {
++            *screen = self.declared_screen(block);
++        }
+         let _ = (block, screen);
+     }
+     /// Draw block `block`'s screen at `origin` (its top left, GUI pixels),
+@@ -1597,6 +1602,7 @@ impl Game<'_> {
+         batch: &mut HudBatch,
+         origin: [f32; 2],
+     ) {
++        self.draw_declared_screen(block, data, batch, origin);
+         let _ = (block, data, batch, origin);
+     }
+     /// The open screen has drawn itself and its tooltips (`Screen.render`,
+@@ -1909,6 +1915,9 @@ impl Game<'_> {
+         right: bool,
+         button: &mut Option<i32>,
+     ) {
++        if button.is_none() && !right {
++            *button = self.declared_screen_button(block, at);
++        }
+         let _ = (block, data, at, right, button);
+     }
+     /// The tooltip at `at` (as in `native_screen_click`) on block `block`'s
+@@ -1921,6 +1930,9 @@ impl Game<'_> {
+         at: [f32; 2],
+         lines: &mut Vec<String>,
+     ) {
++        if lines.is_empty() {
++            lines.extend(self.declared_screen_tooltip(block, data, at));
++        }
+         let _ = (block, data, at, lines);
+     }
+     /// A player pressed menu button `id` on the menu of the mod block entity
+@@ -1933,6 +1945,9 @@ impl Game<'_> {
+         entity: &mut ModBlockEntity,
+         id: i32,
+     ) {
++        // Server mods (WebAssembly) hear it at the end of the tick.
++        #[cfg(feature = "mods")]
++        self.mod_menu_button_event(pos, id);
+         let _ = (pos, entity, id);
+     }
+     /// `AbstractContainerMenu.clickMenuButton(Player, int)`'s other half:
+diff --git a/crates/horizon-client/src/game/server_mods.rs b/crates/horizon-client/src/game/server_mods.rs
+index 0329bd5..163a011 100644
+--- a/crates/horizon-client/src/game/server_mods.rs
++++ b/crates/horizon-client/src/game/server_mods.rs
+@@ -29,6 +29,12 @@ pub(super) enum ModEvent {
+         state: String,
+         placed: bool,
+     },
++    /// A player pressed menu button `id` of the mod menu at `pos`.
++    MenuButton {
++        who: Who,
++        pos: [i32; 3],
++        id: i32,
++    },
+ }
+ 
+ #[cfg(not(feature = "mods"))]
+@@ -279,6 +285,23 @@ mod run {
+             self.mods.mods.set_snapshot(snapshot);
+             self.lend_recipe_types();
+             let entities = self.collect_mod_entities();
++            // Menu buttons pressed this tick get their entity as it is now,
++            // before the levels' chunks are lent out.
++            let kinds = self.mods.mods.block_entity_kinds();
++            let pressed_at: Vec<[i32; 3]> = self
++                .mods
++                .events
++                .iter()
++                .filter_map(|e| match e {
++                    ModEvent::MenuButton { pos, .. } => Some(*pos),
++                    _ => None,
++                })
++                .collect();
++            let pressed: Vec<([i32; 3], horizon_mods::BlockEntity)> = pressed_at
++                .into_iter()
++                .filter_map(|p| Some((p, self.snapshot_entity(p, &kinds, false)?)))
++                .collect();
++            let mut menu_updates = Vec::new();
+             self.lend_world();
+             let before = std::mem::take(&mut self.mods.players);
+             for p in before
+@@ -312,6 +335,14 @@ mod run {
+                             self.mods.mods.player_chat(&p, &text);
+                         }
+                     }
++                    ModEvent::MenuButton { who: w, pos, id } => {
++                        let Some(p) = who(&w) else { continue };
++                        if let Some((_, entity)) = pressed.iter().find(|(q, _)| *q == pos)
++                            && let Some(u) = self.mods.mods.menu_button(&p, id, entity)
++                        {
++                            menu_updates.push(u);
++                        }
++                    }
+                     ModEvent::Block {
+                         who: w,
+                         pos,
+@@ -340,6 +371,7 @@ mod run {
+             };
+             self.return_world();
+             self.apply_mod_entity_updates(updates);
++            self.apply_mod_entity_updates(menu_updates);
+             self.transfer_mod_energy();
+             self.transfer_mod_tanks();
+             self.mods.players = players;
+@@ -667,9 +699,7 @@ mod run {
+             if !kinds.iter().any(|k| k.ticks) {
+                 return Vec::new();
+             }
+-            let registry = self.pack.assets.registry;
+-            let dim = self.dim.id();
+-            let found: Vec<([i32; 3], Vec<u8>, Vec<Option<horizon_mods::ModItemStack>>, u64, Vec<horizon_mods::FlowSide>, Vec<horizon_mods::Tank>, Vec<Vec<horizon_mods::FlowSide>>)> = self
++            let positions: Vec<[i32; 3]> = self
+                 .world
+                 .block_entities
+                 .iter_mut()
+@@ -677,53 +707,78 @@ mod run {
+                     let horizon_client_render::containers::BlockEntity::Mod(m) = e else {
+                         return None;
+                     };
+-                    let kind = kinds.iter().find(|k| k.ticks && k.block == m.id)?;
+-                    // Grown only, as the engine's own tick does.
+-                    let slots = kind.container.as_ref().map_or(0, |c| c.slots.min(256) as usize);
+-                    if m.items.len() < slots {
+-                        m.items.resize(slots, None);
+-                    }
+-                    let data = match m.nbt.get(&horizon_world::nbt::JavaString::from("data")) {
+-                        Some(horizon_world::nbt::Tag::ByteArray(b)) => b.clone(),
+-                        _ => Vec::new(),
+-                    };
+-                    let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
+-                    let (energy, faces) = match &kind.energy {
+-                        Some(spec) => (
+-                            Self::stored_energy(m).min(spec.capacity),
+-                            Self::energy_faces(m, spec).to_vec(),
+-                        ),
+-                        None => (0, Vec::new()),
+-                    };
+-                    let tanks = Self::stored_tanks(m, &kind.tanks);
+-                    let tank_faces = Self::tank_sides(m, &kind.tanks)
+-                        .into_iter()
+-                        .map(|f| f.to_vec())
+-                        .collect();
+-                    Some(([pos.0, pos.1, pos.2], data, items, energy, faces, tanks, tank_faces))
++                    kinds
++                        .iter()
++                        .any(|k| k.ticks && k.block == m.id)
++                        .then_some([pos.0, pos.1, pos.2])
+                 })
+                 .take(horizon_mods::BLOCK_ENTITIES_PER_CALL)
+                 .collect();
+-            found
++            positions
+                 .into_iter()
+-                .map(|(p, data, items, energy, energy_faces, tanks, tank_faces)| horizon_mods::BlockEntity {
+-                    dimension: dim.into(),
+-                    pos: BlockPos {
+-                        x: p[0],
+-                        y: p[1],
+-                        z: p[2],
+-                    },
+-                    state: state_string(registry, self.world.block(p[0], p[1], p[2])),
+-                    data,
+-                    items,
+-                    energy,
+-                    energy_faces,
+-                    tanks,
+-                    tank_faces,
+-                })
++                .filter_map(|p| self.snapshot_entity(p, &kinds, true))
+                 .collect()
+         }
+ 
++        /// The block entity at `p` as a server mod sees it (`need_ticks`: only
++        /// if its kind ticks); none unless it is a mod's of a registered kind.
++        fn snapshot_entity(
++            &mut self,
++            p: [i32; 3],
++            kinds: &[horizon_mods::BlockEntityKind],
++            need_ticks: bool,
++        ) -> Option<horizon_mods::BlockEntity> {
++            let registry = self.pack.assets.registry;
++            let dim = self.dim.id();
++            let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                self.world.block_entities.get_mut(&(p[0], p[1], p[2]))
++            else {
++                return None;
++            };
++            let kind = kinds
++                .iter()
++                .find(|k| k.block == m.id && (k.ticks || !need_ticks))?;
++            // Grown only, as the engine's own tick does.
++            let slots = kind.container.as_ref().map_or(0, |c| c.slots.min(256) as usize);
++            if m.items.len() < slots {
++                m.items.resize(slots, None);
++            }
++            let data = match m.nbt.get(&horizon_world::nbt::JavaString::from("data")) {
++                Some(horizon_world::nbt::Tag::ByteArray(b)) => b.clone(),
++                _ => Vec::new(),
++            };
++            let items = m.items.iter().map(|s| s.as_ref().map(Self::mod_stack)).collect();
++            let (energy, energy_faces) = match &kind.energy {
++                Some(spec) => (
++                    Self::stored_energy(m).min(spec.capacity),
++                    Self::energy_faces(m, spec).to_vec(),
++                ),
++                None => (0, Vec::new()),
++            };
++            let tanks = Self::stored_tanks(m, &kind.tanks);
++            let tank_faces = Self::tank_sides(m, &kind.tanks)
++                .into_iter()
++                .map(|f| f.to_vec())
++                .collect();
++            let menu_data = m.data.clone();
++            Some(horizon_mods::BlockEntity {
++                dimension: dim.into(),
++                pos: BlockPos {
++                    x: p[0],
++                    y: p[1],
++                    z: p[2],
++                },
++                state: state_string(registry, self.world.block(p[0], p[1], p[2])),
++                data,
++                items,
++                energy,
++                energy_faces,
++                tanks,
++                tank_faces,
++                menu_data,
++            })
++        }
++
+         /// Keeps the bytes server mods returned for this level's block
+         /// entities, and has their chunks saved.
+         fn apply_mod_entity_updates(&mut self, updates: Vec<horizon_mods::BlockEntityUpdate>) {
+@@ -802,6 +857,15 @@ mod run {
+                         self.world.modified.insert((key.0 >> 4, key.2 >> 4));
+                     }
+                 }
++                if let Some(data) = &u.menu_data {
++                    if let Some(horizon_client_render::containers::BlockEntity::Mod(m)) =
++                        self.world.block_entities.get_mut(&key)
++                        && m.data != *data
++                    {
++                        m.data.clone_from(data);
++                        self.world.modified.insert((key.0 >> 4, key.2 >> 4));
++                    }
++                }
+                 if let Some(items) = u.items {
+                     let slots = match self.world.block_entities.get_mut(&key) {
+                         Some(horizon_client_render::containers::BlockEntity::Mod(m)) => m.items.len(),
+@@ -987,6 +1051,16 @@ mod run {
+             }
+         }
+ 
++        /// A player pressed menu button `id` of the mod menu at `pos`: the
++        /// player acting now.
++        pub(in crate::game) fn mod_menu_button_event(&mut self, pos: [i32; 3], id: i32) {
++            if !self.hears_players() {
++                return;
++            }
++            let who = self.lan_acting.map_or(Who::Local, Who::Conn);
++            self.mods.events.push(ModEvent::MenuButton { who, pos, id });
++        }
++
+         /// A player broke (or placed) `state` at `pos`: the player acting now.
+         pub(in crate::game) fn mod_block_event(
+             &mut self,
+diff --git a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+index 3f56cf8..0958af4 100644
+--- a/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-counter/src/lib.rs
+@@ -27,6 +27,7 @@ impl ServerMod for Counter {
+                     energy_faces: None,
+                     tanks: None,
+                     tank_faces: None,
++                    menu_data: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+index 75319d6..626701e 100644
+--- a/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/block-mover/src/lib.rs
+@@ -15,6 +15,7 @@ impl ServerMod for Mover {
+             faces: vec![vec![1], vec![0], vec![1], vec![1], vec![1], vec![1]],
+             inputs: vec![0],
+             outputs: vec![1],
++            menu: false,
+         };
+         Ok((
+             Mover,
+@@ -56,6 +57,7 @@ impl ServerMod for Mover {
+                 energy_faces: None,
+                     tanks: None,
+                     tank_faces: None,
++                    menu_data: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+index 8bacf5e..50af38e 100644
+--- a/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/energy-demo/src/lib.rs
+@@ -60,6 +60,7 @@ impl ServerMod for Demo {
+                     energy_faces: None,
+                     tanks: None,
+                     tank_faces: None,
++                    menu_data: None,
+                 })
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+index d637186..c507652 100644
+--- a/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/item-charger/src/lib.rs
+@@ -42,6 +42,7 @@ impl ServerMod for Charger {
+                 energy_faces: None,
+                 tanks: None,
+                 tank_faces: None,
++                menu_data: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/Cargo.toml b/crates/horizon-mod-sdk/examples/menu-demo/Cargo.toml
+new file mode 100644
+index 0000000..c796857
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/menu-demo/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "menu-demo"
++version = "0.1.0"
++edition.workspace = true
++license.workspace = true
++publish = false
++description = "Example Horizon server mod: a block with a menu: a progress bar and a pause button"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++horizon-mod-sdk = { path = "../.." }
++
++[lints]
++workspace = true
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/horizon-mod.toml b/crates/horizon-mod-sdk/examples/menu-demo/horizon-mod.toml
+new file mode 100644
+index 0000000..d41c880
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/menu-demo/horizon-mod.toml
+@@ -0,0 +1,8 @@
++id = "menudemo"
++name = "Menu Demo"
++version = "0.1.0"
++description = "Test mod for menus: menudemo:grinder has two slots, a progress that counts to 100 and a button that pauses it."
++authors = ["Rust port"]
++api = "0.3"
++side = "server"
++capabilities = ["players"]
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/screen-example/grinder.json b/crates/horizon-mod-sdk/examples/menu-demo/screen-example/grinder.json
+new file mode 100644
+index 0000000..35ba943
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/menu-demo/screen-example/grinder.json
+@@ -0,0 +1,13 @@
++{
++  "slots": 2,
++  "data_slots": 2,
++  "screen": {
++    "slots": [[56, 17], [116, 35]],
++    "widgets": [
++      { "type": "text", "x": 8, "y": 6, "text": "Grinder" },
++      { "type": "bar", "x": 8, "y": 20, "w": 6, "h": 40, "value": { "data": 0 }, "max": { "const": 100 },
++        "color": "#33AA33", "direction": "up", "tooltip": "Progress: {value}%" },
++      { "type": "button", "x": 150, "y": 6, "w": 18, "h": 18, "id": 1, "tooltip": "Pause / resume" }
++    ]
++  }
++}
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+new file mode 100644
+index 0000000..6609a24
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/menu-demo/src/lib.rs
+@@ -0,0 +1,65 @@
++//! Menu Demo: the smallest user of menus. `menudemo:grinder` has two slots
++//! and a menu (see `screen-example/grinder.json`, the menu type that draws
++//! it). Its menu data are `[progress, paused]`; the progress counts to 100
++//! and starts over, unless paused with menu button 1.
++use horizon_mod_sdk::server::{
++    BlockEntity, BlockEntityKind, BlockEntityUpdate, BlockPos, ContainerSpec, Player, Registration,
++    ServerMod,
++};
++
++struct Grinder;
++
++fn update(e: &BlockEntity, menu_data: Vec<i32>) -> BlockEntityUpdate {
++    BlockEntityUpdate {
++        dimension: e.dimension.clone(),
++        pos: e.pos,
++        data: e.data.clone(),
++        items: None,
++        energy: None,
++        energy_faces: None,
++        tanks: None,
++        tank_faces: None,
++        menu_data: Some(menu_data),
++    }
++}
++
++impl ServerMod for Grinder {
++    fn init() -> Result<(Self, Registration), String> {
++        let mut container = ContainerSpec::open(2);
++        container.menu = true;
++        let kind = BlockEntityKind {
++            block: "menudemo:grinder".into(),
++            ticks: true,
++            container: Some(container),
++            energy: None,
++            tanks: Vec::new(),
++            keep_data: false,
++        };
++        Ok((Grinder, Registration::new().block_entity_kind(kind)))
++    }
++    fn block_entities_tick(&mut self, _tick: u64, entities: Vec<BlockEntity>) -> Vec<BlockEntityUpdate> {
++        entities
++            .iter()
++            .filter_map(|e| {
++                let progress = e.menu_data.first().copied().unwrap_or(0);
++                let paused = e.menu_data.get(1).copied().unwrap_or(0);
++                (paused == 0).then(|| update(e, vec![(progress + 1) % 100, 0]))
++            })
++            .collect()
++    }
++    fn menu_button(
++        &mut self,
++        _player: &Player,
++        _pos: BlockPos,
++        id: i32,
++        entity: BlockEntity,
++    ) -> Option<BlockEntityUpdate> {
++        (id == 1).then(|| {
++            let progress = entity.menu_data.first().copied().unwrap_or(0);
++            let paused = entity.menu_data.get(1).copied().unwrap_or(0);
++            update(&entity, vec![progress, 1 - paused])
++        })
++    }
++}
++
++horizon_mod_sdk::export_server_mod!(Grinder);
+diff --git a/crates/horizon-mod-sdk/examples/menu-demo/tests/menu.toml b/crates/horizon-mod-sdk/examples/menu-demo/tests/menu.toml
+new file mode 100644
+index 0000000..c646546
+--- /dev/null
++++ b/crates/horizon-mod-sdk/examples/menu-demo/tests/menu.toml
+@@ -0,0 +1,25 @@
++# The menu's data counts up; the button pauses it and resumes it.
++
++[[step]]
++join = "Alex"
++blocks = [{ x = 0, y = 64, z = 0, state = "menudemo:grinder" }]
++ticks = 3
++expect.block-menu-data = [{ x = 0, y = 64, z = 0, data = [3, 0] }]
++
++[[step]]
++press = { x = 0, y = 64, z = 0, id = 1 }
++ticks = 2
++# A step's ticks come before its press: 2 more ticks count, then it pauses.
++expect.block-menu-data = [{ x = 0, y = 64, z = 0, data = [5, 1] }]
++
++[[step]]
++press = { x = 0, y = 64, z = 0, id = 1 }
++ticks = 2
++# Paused during its ticks, resumed by the press.
++expect.block-menu-data = [{ x = 0, y = 64, z = 0, data = [5, 0] }]
++
++[[step]]
++# A button the mod doesn't know does nothing.
++press = { x = 0, y = 64, z = 0, id = 9 }
++ticks = 1
++expect.block-menu-data = [{ x = 0, y = 64, z = 0, data = [6, 0] }]
+diff --git a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+index 05cf817..0a74a10 100644
+--- a/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/recipe-crusher/src/lib.rs
+@@ -100,6 +100,7 @@ impl ServerMod for Crusher {
+                 energy_faces: None,
+                 tanks: None,
+                 tank_faces: None,
++                menu_data: None,
+             });
+         }
+         out
+diff --git a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+index 91d85a0..1869fa8 100644
+--- a/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
++++ b/crates/horizon-mod-sdk/examples/tank-demo/src/lib.rs
+@@ -54,6 +54,7 @@ impl ServerMod for Demo {
+                         amount: held + 20,
+                     }]),
+                     tank_faces: None,
++                    menu_data: None,
+                 }
+             })
+             .collect()
+diff --git a/crates/horizon-mod-sdk/src/lib.rs b/crates/horizon-mod-sdk/src/lib.rs
+index ec989c7..3e2560d 100644
+--- a/crates/horizon-mod-sdk/src/lib.rs
++++ b/crates/horizon-mod-sdk/src/lib.rs
+@@ -234,6 +234,17 @@ pub mod server {
+         /// When [`Registration::blocks`] is set: `state` is what was there.
+         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
++        /// A player pressed a menu button of a block entity: what to change
++        /// in it, if anything.
++        fn menu_button(
++            &mut self,
++            _player: &Player,
++            _pos: BlockPos,
++            _id: i32,
++            _entity: BlockEntity,
++        ) -> Option<BlockEntityUpdate> {
++            None
++        }
+         /// Each tick, for the block entities of blocks added with
+         /// [`Registration::block_entity`] that tick. Return the ones whose
+         /// bytes changed.
+@@ -255,6 +266,7 @@ pub mod server {
+                 faces: vec![all.clone(); 6],
+                 inputs: all.clone(),
+                 outputs: all,
++                menu: false,
+             }
+         }
+     }
+@@ -525,6 +537,17 @@ macro_rules! export_server_mod {
+                 fn block_placed(player: Player, pos: BlockPos, state: String) {
+                     with(|m| m.block_placed(&player, pos, &state))
+                 }
++                fn menu_button(
++                    player: Player,
++                    _dimension: String,
++                    pos: BlockPos,
++                    id: i32,
++                    entity: BlockEntity,
++                ) -> Option<BlockEntityUpdate> {
++                    let mut out = None;
++                    with(|m| out = m.menu_button(&player, pos, id, entity));
++                    out
++                }
+                 fn block_entities_tick(
+                     tick: u64,
+                     entities: Vec<BlockEntity>,
+diff --git a/crates/horizon-mod-sdk/wit/horizon.wit b/crates/horizon-mod-sdk/wit/horizon.wit
+index f7319f9..5bf692d 100644
+--- a/crates/horizon-mod-sdk/wit/horizon.wit
++++ b/crates/horizon-mod-sdk/wit/horizon.wit
+@@ -920,6 +920,10 @@ interface server-events {
+         inputs: list<u32>,
+         /// The slots hoppers may take from.
+         outputs: list<u32>,
++        /// Using the block opens a menu with these slots, drawn as the content
++        /// mod's menu type of the same id as the block describes
++        /// (`data/<ns>/horizon/menu/<block>.json`, with as many slots).
++        menu: bool,
+     }
+     /// An item stack. `components` is the SNBT of its data components
+     /// (`{"minecraft:damage":3}`), empty for none.
+@@ -945,6 +949,9 @@ interface server-events {
+         /// Its tanks, in the order of its kind's `tanks`, and their faces' sides now.
+         tanks: list<tank>,
+         tank-faces: list<list<flow-side>>,
++        /// The data slots its menu shows (progress, a mode), 16 bits each on
++        /// the wire.
++        menu-data: list<s32>,
+     }
+     /// New bytes and slots for the block entity at `pos` in `dimension`.
+     record block-entity-update {
+@@ -964,6 +971,8 @@ interface server-events {
+         tanks: option<list<tank>>,
+         /// New sides for each tank's faces; none leaves them as they are.
+         tank-faces: option<list<list<flow-side>>>,
++        /// The menu's data slots after the call; none leaves them as they are.
++        menu-data: option<list<s32>>,
+     }
+     /// Once, after loading. An error keeps the mod off and is logged.
+     init: func() -> result<registration, string>;
+@@ -991,6 +1000,10 @@ interface server-events {
+     /// turn). Returns the entities whose bytes changed; the chunk is then
+     /// saved with them.
+     block-entities-tick: func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>;
++    /// A player pressed button `id` of the menu of the block entity at `pos`
++    /// (a `button` widget of the menu type's screen), with the entity as it
++    /// is. Returns what to change in it, if anything.
++    menu-button: func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>;
+ }
+ 
+ /// A client mod: runs in the player's game.
+diff --git a/crates/horizon-mods/src/content.rs b/crates/horizon-mods/src/content.rs
+index 283209c..4923db7 100644
+--- a/crates/horizon-mods/src/content.rs
++++ b/crates/horizon-mods/src/content.rs
+@@ -295,6 +295,247 @@ pub struct MenuType {
+     /// slots a player takes from but never puts into, each below `slots`.
+     #[serde(default)]
+     pub results: Vec<u16>,
++    /// How the screen of a block of the same id is laid out and drawn, from
++    /// the menu's data slots, without a line of code (API block 7).
++    #[serde(default)]
++    pub screen: Option<MenuScreen>,
++}
++
++fn default_width() -> i32 {
++    176
++}
++fn default_height() -> i32 {
++    166
++}
++fn default_inventory_x() -> i32 {
++    8
++}
++fn default_inventory_y() -> i32 {
++    84
++}
++
++/// The screen of a mod menu type, in GUI pixels from its top left corner.
++/// Vanilla's container screens are 176 wide and 166 high, with the player's
++/// inventory at 8, 84.
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct MenuScreen {
++    #[serde(default = "default_width")]
++    pub width: i32,
++    #[serde(default = "default_height")]
++    pub height: i32,
++    #[serde(default = "default_inventory_x")]
++    pub inventory_x: i32,
++    #[serde(default = "default_inventory_y")]
++    pub inventory_y: i32,
++    /// A sprite (`mymod:gui/machine`, from `assets/mymod/textures/gui/`) drawn
++    /// over the whole panel instead of the plain grey one.
++    #[serde(default)]
++    pub texture: Option<String>,
++    /// Where each container slot is (its item's top left); `null` hides the
++    /// slot, and so do slots past the list.
++    pub slots: Vec<Option<[i32; 2]>>,
++    /// Drawn in this order, over the panel and under the items.
++    #[serde(default)]
++    pub widgets: Vec<Widget>,
++}
++
++/// A number a widget reads: a constant, a data slot of the menu, or two data
++/// slots read as the low and the high 16 bits (the wire carries 16 bits a
++/// data slot; an energy bar needs more).
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields, rename_all = "snake_case")]
++pub enum Value {
++    Const(i64),
++    Data(u16),
++    Pair([u16; 2]),
++}
++
++/// The way a bar or a progress arrow fills.
++#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum Direction {
++    #[default]
++    Up,
++    Down,
++    Left,
++    Right,
++}
++
++#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
++pub enum Widget {
++    /// A rectangle `color` (`#RRGGBB` or `#AARRGGBB`) filled `value` of `max`.
++    Bar {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        value: Value,
++        max: Value,
++        color: String,
++        #[serde(default)]
++        direction: Direction,
++        /// Shown on hover; `{value}`, `{max}` and `{percent}` are filled in.
++        #[serde(default)]
++        tooltip: Option<String>,
++    },
++    /// Part of a sprite drawn at `x`, `y`, `w` by `h`: all of it, or its first
++    /// `value` of `max` from the side `direction` says (a progress arrow).
++    /// `src` is the part of the sprite, in its own pixels (`x, y, w, h`).
++    Sprite {
++        texture: String,
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        #[serde(default)]
++        src: Option<[i32; 4]>,
++        #[serde(default)]
++        value: Option<Value>,
++        #[serde(default)]
++        max: Option<Value>,
++        #[serde(default)]
++        direction: Direction,
++        #[serde(default)]
++        tooltip: Option<String>,
++    },
++    /// A line of text; `{0}`, `{1}`... are data slots.
++    Text {
++        x: i32,
++        y: i32,
++        text: String,
++        #[serde(default)]
++        color: Option<String>,
++    },
++    /// A press inside it sends menu button `id` to the server.
++    Button {
++        x: i32,
++        y: i32,
++        w: i32,
++        h: i32,
++        id: i32,
++        #[serde(default)]
++        tooltip: Option<String>,
++    },
++}
++
++/// `#RRGGBB` (opaque) or `#AARRGGBB` as `0xAARRGGBB`.
++pub fn parse_color(text: &str) -> Option<u32> {
++    let hex = text.strip_prefix('#')?;
++    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
++        return None;
++    }
++    match hex.len() {
++        6 => u32::from_str_radix(hex, 16).ok().map(|v| 0xFF00_0000 | v),
++        8 => u32::from_str_radix(hex, 16).ok(),
++        _ => None,
++    }
++}
++
++impl MenuScreen {
++    /// Checks the screen against its menu's slot and data slot counts.
++    fn check(&self, name: &str, slots: u16, data_slots: u16) -> Result<(), String> {
++        let sprite = |t: &str| {
++            let ok = t.split_once(':').is_some_and(|(ns, path)| {
++                !ns.is_empty()
++                    && !path.is_empty()
++                    && !t.contains("..")
++                    && t.bytes().all(|b| {
++                        b.is_ascii_lowercase()
++                            || b.is_ascii_digit()
++                            || matches!(b, b'_' | b'-' | b'.' | b'/' | b':')
++                    })
++            });
++            ok.then_some(()).ok_or_else(|| format!("{name}: sprite {t:?} is not <mod id>:<path>"))
++        };
++        if !(16..=1024).contains(&self.width) || !(16..=1024).contains(&self.height) {
++            return Err(format!("{name}: width and height are 16 to 1024"));
++        }
++        if self.slots.len() > usize::from(slots) {
++            return Err(format!(
++                "{name}: screen.slots lists {} slots, the menu has {slots}",
++                self.slots.len()
++            ));
++        }
++        if let Some(t) = &self.texture {
++            sprite(t)?;
++        }
++        let data = |v: &Value| -> Result<(), String> {
++            let bad = |i: u16| i >= data_slots;
++            match v {
++                Value::Data(i) if bad(*i) => Err(format!(
++                    "{name}: data slot {i} is past the last one, {}",
++                    i64::from(data_slots) - 1
++                )),
++                Value::Pair([a, b]) if bad(*a) || bad(*b) => Err(format!(
++                    "{name}: data slots {a} and {b} must both exist ({data_slots})"
++                )),
++                _ => Ok(()),
++            }
++        };
++        let rect = |x: i32, y: i32, w: i32, h: i32| {
++            if w < 1 || h < 1 || x < -1024 || y < -1024 || x > 4096 || y > 4096 || w > 1024 || h > 1024 {
++                Err(format!("{name}: a widget at {x}, {y} of {w} by {h} is out of range"))
++            } else {
++                Ok(())
++            }
++        };
++        for w in &self.widgets {
++            match w {
++                Widget::Bar { x, y, w, h, value, max, color, .. } => {
++                    rect(*x, *y, *w, *h)?;
++                    data(value)?;
++                    data(max)?;
++                    parse_color(color)
++                        .ok_or_else(|| format!("{name}: colour {color:?} is #RRGGBB or #AARRGGBB"))?;
++                }
++                Widget::Sprite { texture, x, y, w, h, src, value, max, .. } => {
++                    sprite(texture)?;
++                    rect(*x, *y, *w, *h)?;
++                    if value.is_some() != max.is_some() {
++                        return Err(format!("{name}: a sprite takes value and max together"));
++                    }
++                    if let Some(v) = value {
++                        data(v)?;
++                    }
++                    if let Some(v) = max {
++                        data(v)?;
++                    }
++                    if let Some([_, _, sw, sh]) = src
++                        && (*sw < 1 || *sh < 1)
++                    {
++                        return Err(format!("{name}: a sprite's src is x, y, w, h with w and h over 0"));
++                    }
++                }
++                Widget::Text { x, y, text, color } => {
++                    rect(*x, *y, 1, 1)?;
++                    if text.len() > 256 {
++                        return Err(format!("{name}: text is 256 bytes at most"));
++                    }
++                    if let Some(c) = color {
++                        parse_color(c).ok_or_else(|| {
++                            format!("{name}: colour {c:?} is #RRGGBB or #AARRGGBB")
++                        })?;
++                    }
++                    // `{n}` must name a data slot.
++                    let mut rest = text.as_str();
++                    while let Some(open) = rest.find('{') {
++                        let after = &rest[open + 1..];
++                        let Some(close) = after.find('}') else { break };
++                        if let Ok(i) = after[..close].parse::<u16>()
++                            && i >= data_slots
++                        {
++                            return Err(format!("{name}: text names data slot {i}, past the last one"));
++                        }
++                        rest = &after[close + 1..];
++                    }
++                }
++                Widget::Button { x, y, w, h, .. } => rect(*x, *y, *w, *h)?,
++            }
++        }
++        Ok(())
++    }
+ }
+ 
+ /// the most container or data slots a mod menu type has, as many as a mod
+@@ -650,6 +891,9 @@ impl Content {
+                     return Err(format!("{name}: result {r} is listed twice"));
+                 }
+             }
++            if let Some(screen) = &file.screen {
++                screen.check(&name, file.slots, file.data_slots)?;
++            }
+             self.menu_types.push(MenuType { id: menu, ..file });
+         }
+         Ok(())
+@@ -1046,6 +1290,69 @@ capabilities = ["registries"]
+         }
+     }
+ 
++    #[test]
++    fn a_menu_screen_places_slots_and_widgets() {
++        let screen = br##"{
++            "slots": 2, "data_slots": 3,
++            "screen": {
++                "height": 180, "texture": "ruby:gui/press",
++                "slots": [[56, 17], null],
++                "widgets": [
++                    {"type": "bar", "x": 8, "y": 16, "w": 6, "h": 54, "value": {"pair": [0, 1]},
++                     "max": {"const": 100000}, "color": "#AA2020", "direction": "up",
++                     "tooltip": "Energy: {value} / {max} ({percent}%)"},
++                    {"type": "sprite", "texture": "ruby:gui/arrow", "x": 79, "y": 34, "w": 24, "h": 17,
++                     "value": {"data": 2}, "max": {"const": 200}, "direction": "right"},
++                    {"type": "text", "x": 8, "y": 6, "text": "Progress {2}"},
++                    {"type": "button", "x": 150, "y": 6, "w": 18, "h": 18, "id": 1, "tooltip": "Mode"}
++                ]
++            }
++        }"##;
++        let files: &[(&str, &[u8])] = &[("data/ruby/horizon/menu/press.json", screen)];
++        let content = hmod("screen", MANIFEST_TEXT, files).unwrap();
++        let s = content.menu_types[0].screen.as_ref().unwrap();
++        assert_eq!((s.width, s.height, s.inventory_y), (176, 180, 84));
++        assert_eq!(s.slots, [Some([56, 17]), None]);
++        assert_eq!(s.widgets.len(), 4);
++        assert_eq!(parse_color("#AA2020"), Some(0xFFAA_2020));
++        assert_eq!(parse_color("#80AA2020"), Some(0x80AA_2020));
++        assert_eq!(parse_color("AA2020"), None);
++        for (case, file, why) in [
++            ("scr-slots", r#"{"slots":1,"screen":{"slots":[null,null]}}"#, "lists 2 slots"),
++            ("scr-size", r#"{"slots":1,"screen":{"width":4,"slots":[]}}"#, "16 to 1024"),
++            ("scr-sprite", r#"{"slots":1,"screen":{"texture":"nope","slots":[]}}"#, "is not <mod id>:<path>"),
++            (
++                "scr-data",
++                r##"{"slots":1,"data_slots":1,"screen":{"slots":[],"widgets":[{"type":"bar","x":0,"y":0,"w":4,"h":4,"value":{"data":1},"max":{"const":1},"color":"#FFFFFF"}]}}"##,
++                "data slot 1 is past the last one",
++            ),
++            (
++                "scr-color",
++                r##"{"slots":1,"screen":{"slots":[],"widgets":[{"type":"bar","x":0,"y":0,"w":4,"h":4,"value":{"const":1},"max":{"const":1},"color":"red"}]}}"##,
++                "is #RRGGBB or #AARRGGBB",
++            ),
++            (
++                "scr-text",
++                r#"{"slots":1,"data_slots":1,"screen":{"slots":[],"widgets":[{"type":"text","x":0,"y":0,"text":"{3}"}]}}"#,
++                "text names data slot 3",
++            ),
++            (
++                "scr-pair",
++                r#"{"slots":1,"screen":{"slots":[],"widgets":[{"type":"sprite","texture":"ruby:a","x":0,"y":0,"w":4,"h":4,"value":{"const":1}}]}}"#,
++                "value and max together",
++            ),
++            (
++                "scr-widget",
++                r#"{"slots":1,"screen":{"slots":[],"widgets":[{"type":"star"}]}}"#,
++                "unknown variant",
++            ),
++        ] {
++            let files: &[(&str, &[u8])] = &[("data/ruby/horizon/menu/a.json", file.as_bytes())];
++            let e = hmod(case, MANIFEST_TEXT, files).unwrap_err();
++            assert!(e.contains(why), "{case}: {e}");
++        }
++    }
++
+     #[test]
+     fn entity_types_copy_a_throwable_and_name_its_item() {
+         let files: &[(&str, &[u8])] = &[
+diff --git a/crates/horizon-mods/src/lib.rs b/crates/horizon-mods/src/lib.rs
+index eb296ac..6e6c89b 100644
+--- a/crates/horizon-mods/src/lib.rs
++++ b/crates/horizon-mods/src/lib.rs
+@@ -17,6 +17,7 @@ pub mod content;
+ pub mod index;
+ pub mod manifest;
+ pub mod modpack;
++pub mod screen;
+ #[cfg(feature = "runtime")]
+ pub mod recipe_types;
+ #[cfg(feature = "runtime")]
+diff --git a/crates/horizon-mods/src/runtime.rs b/crates/horizon-mods/src/runtime.rs
+index 8bb2280..5fe6291 100644
+--- a/crates/horizon-mods/src/runtime.rs
++++ b/crates/horizon-mods/src/runtime.rs
+@@ -991,6 +991,7 @@ impl Mods {
+                     && u.data.len() <= BLOCK_ENTITY_BYTES
+                     && u.items.as_ref().is_none_or(|s| s.len() <= 256)
+                     && u.tanks.as_ref().is_none_or(|s| s.len() <= 16)
++                    && u.menu_data.as_ref().is_none_or(|s| s.len() <= 256)
+                 {
+                     out.push(u);
+                 }
+@@ -998,6 +999,43 @@ impl Mods {
+         }
+         out
+     }
++    /// `player` pressed menu button `id` of the menu of `entity` (a block
++    /// entity of a running server mod's block, as the game holds it): the
++    /// update the mod answers with, checked as a tick's.
++    pub fn menu_button(
++        &mut self,
++        player: &ServerPlayer,
++        id: i32,
++        entity: &BlockEntity,
++    ) -> Option<BlockEntityUpdate> {
++        let block = entity.state.split('[').next().unwrap_or("");
++        let owner = self.entries.iter().position(|e| {
++            e.run
++                .as_ref()
++                .and_then(|r| r.hooks.server())
++                .is_some_and(|r| r.block_entities.iter().any(|k| k.block == block))
++        })?;
++        let update = self
++            .call(owner, FUEL_EVENT, |run| match &run.hooks {
++                Hooks::Server(m, _) => m.horizon_mods_server_events().call_menu_button(
++                    &mut run.store,
++                    player,
++                    &entity.dimension,
++                    entity.pos,
++                    id,
++                    entity,
++                ),
++                Hooks::Client(..) => Ok(None),
++            })
++            .flatten()?;
++        (update.dimension == entity.dimension
++            && update.pos == entity.pos
++            && update.data.len() <= BLOCK_ENTITY_BYTES
++            && update.items.as_ref().is_none_or(|s| s.len() <= 256)
++            && update.tanks.as_ref().is_none_or(|s| s.len() <= 16)
++            && update.menu_data.as_ref().is_none_or(|s| s.len() <= 256))
++        .then_some(update)
++    }
+     /// `player` joined the server (they are in the snapshot's players).
+     pub fn player_joined(&mut self, player: &ServerPlayer) {
+         self.each_server(
+diff --git a/crates/horizon-mods/src/screen.rs b/crates/horizon-mods/src/screen.rs
+new file mode 100644
+index 0000000..bb9b346
+--- /dev/null
++++ b/crates/horizon-mods/src/screen.rs
+@@ -0,0 +1,158 @@
++//! What a declared menu screen computes without drawing (API block 7): the
++//! number a widget reads, how much of a bar or arrow is filled, which button
++//! a press hits and a tooltip's or a label's text. The game draws with these.
++use crate::content::{Direction, MenuScreen, Value, Widget};
++
++/// What a widget reads from the menu's data slots `data`: a constant, a data
++/// slot (16 bits on the wire) or two read as low and high halves.
++pub fn read(value: &Value, data: &[i32]) -> i64 {
++    let slot = |i: u16| i64::from(data.get(usize::from(i)).copied().unwrap_or(0)) & 0xFFFF;
++    match value {
++        Value::Const(c) => *c,
++        Value::Data(i) => slot(*i),
++        Value::Pair([lo, hi]) => (slot(*hi) << 16) | slot(*lo),
++    }
++}
++
++/// `value` of `max` as 0 to 1; 0 when `max` is not over 0.
++pub fn fraction(value: i64, max: i64) -> f32 {
++    if max <= 0 {
++        return 0.0;
++    }
++    (value.clamp(0, max) as f64 / max as f64) as f32
++}
++
++/// The part of `[x, y, w, h]` a fill of `frac` covers when it grows from the
++/// side `direction` says (`up` grows from the bottom).
++pub fn filled(rect: [f32; 4], frac: f32, direction: Direction) -> [f32; 4] {
++    let [x, y, w, h] = rect;
++    match direction {
++        Direction::Up => [x, y + h - h * frac, w, h * frac],
++        Direction::Down => [x, y, w, h * frac],
++        Direction::Right => [x, y, w * frac, h],
++        Direction::Left => [x + w - w * frac, y, w * frac, h],
++    }
++}
++
++/// The id of the first button a press at `at` (from the screen's top left) hits.
++pub fn button_at(screen: &MenuScreen, at: [f32; 2]) -> Option<i32> {
++    screen.widgets.iter().find_map(|w| match w {
++        Widget::Button { x, y, w, h, id, .. }
++            if at[0] >= *x as f32
++                && at[1] >= *y as f32
++                && at[0] < (*x + *w) as f32
++                && at[1] < (*y + *h) as f32 =>
++        {
++            Some(*id)
++        }
++        _ => None,
++    })
++}
++
++/// A tooltip's lines with `{value}`, `{max}` and `{percent}` filled in.
++pub fn tooltip_lines(text: &str, value: i64, max: i64) -> Vec<String> {
++    let percent = (fraction(value, max) * 100.0).round() as i64;
++    text.replace("{value}", &value.to_string())
++        .replace("{max}", &max.to_string())
++        .replace("{percent}", &percent.to_string())
++        .split('\n')
++        .map(str::to_owned)
++        .collect()
++}
++
++/// `{0}`, `{1}`... in a text, filled from the data slots.
++pub fn fill_text(text: &str, data: &[i32]) -> String {
++    let mut out = String::new();
++    let mut rest = text;
++    while let Some(open) = rest.find('{') {
++        out.push_str(&rest[..open]);
++        let after = &rest[open + 1..];
++        match after.find('}').and_then(|close| {
++            let n = after[..close].parse::<u16>().ok()?;
++            Some((close, read(&Value::Data(n), data)))
++        }) {
++            Some((close, v)) => {
++                out.push_str(&v.to_string());
++                rest = &after[close + 1..];
++            }
++            None => {
++                out.push('{');
++                rest = after;
++            }
++        }
++    }
++    out.push_str(rest);
++    out
++}
++
++/// The rectangle and tooltip of a widget under `at`, with what it reads.
++pub fn hovered(screen: &MenuScreen, data: &[i32], at: [f32; 2]) -> Option<Vec<String>> {
++    let inside = |x: i32, y: i32, w: i32, h: i32| {
++        at[0] >= x as f32 && at[1] >= y as f32 && at[0] < (x + w) as f32 && at[1] < (y + h) as f32
++    };
++    screen.widgets.iter().rev().find_map(|w| match w {
++        Widget::Bar { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++            Some(tooltip_lines(t, read(value, data), read(max, data)))
++        }
++        Widget::Sprite { x, y, w, h, value, max, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++            let v = value.as_ref().map_or(0, |v| read(v, data));
++            let m = max.as_ref().map_or(0, |m| read(m, data));
++            Some(tooltip_lines(t, v, m))
++        }
++        Widget::Button { x, y, w, h, tooltip: Some(t), .. } if inside(*x, *y, *w, *h) => {
++            Some(tooltip_lines(t, 0, 0))
++        }
++        _ => None,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn values_read_constants_slots_and_pairs() {
++        let data = [7, -1, 0x1234, 0x0002];
++        assert_eq!(read(&Value::Const(50), &data), 50);
++        assert_eq!(read(&Value::Data(0), &data), 7);
++        // A data slot is 16 bits on the wire: -1 is 65535.
++        assert_eq!(read(&Value::Data(1), &data), 0xFFFF);
++        assert_eq!(read(&Value::Pair([2, 3]), &data), 0x2_1234);
++        assert_eq!(read(&Value::Data(9), &data), 0);
++    }
++    #[test]
++    fn fractions_and_fills() {
++        assert_eq!(fraction(50, 100), 0.5);
++        assert_eq!(fraction(500, 100), 1.0);
++        assert_eq!(fraction(-3, 100), 0.0);
++        assert_eq!(fraction(5, 0), 0.0);
++        let r = [10.0, 20.0, 6.0, 40.0];
++        assert_eq!(filled(r, 0.5, Direction::Up), [10.0, 40.0, 6.0, 20.0]);
++        assert_eq!(filled(r, 0.5, Direction::Down), [10.0, 20.0, 6.0, 20.0]);
++        assert_eq!(filled(r, 0.5, Direction::Right), [10.0, 20.0, 3.0, 40.0]);
++        assert_eq!(filled(r, 0.5, Direction::Left), [13.0, 20.0, 3.0, 40.0]);
++    }
++    #[test]
++    fn text_and_tooltips_fill_in() {
++        assert_eq!(fill_text("Progress {0}/{1}", &[3, 100]), "Progress 3/100");
++        assert_eq!(fill_text("{x} {9}", &[1]), "{x} 0");
++        assert_eq!(
++            tooltip_lines("Energy: {value} / {max}\n{percent}%", 25, 100),
++            ["Energy: 25 / 100", "25%"]
++        );
++    }
++    #[test]
++    fn a_press_hits_the_first_button_under_it() {
++        let screen: MenuScreen = serde_json::from_str(
++            r#"{"slots":[],"widgets":[
++                {"type":"button","x":10,"y":10,"w":20,"h":10,"id":1},
++                {"type":"button","x":10,"y":10,"w":20,"h":10,"id":2},
++                {"type":"button","x":40,"y":10,"w":20,"h":10,"id":3}]}"#,
++        )
++        .unwrap();
++        assert_eq!(button_at(&screen, [15.0, 12.0]), Some(1));
++        assert_eq!(button_at(&screen, [40.0, 10.0]), Some(3));
++        assert_eq!(button_at(&screen, [30.0, 12.0]), None);
++        assert_eq!(button_at(&screen, [15.0, 20.0]), None);
++    }
++}
+diff --git a/crates/horizon-mods/src/testing.rs b/crates/horizon-mods/src/testing.rs
+index 85079f2..6c5618a 100644
+--- a/crates/horizon-mods/src/testing.rs
++++ b/crates/horizon-mods/src/testing.rs
+@@ -48,6 +48,8 @@ pub struct TestGame {
+     /// Their tanks, by position: what each holds (`"minecraft:water*500"`,
+     /// empty for none) and the sides of its faces.
+     pub block_tanks: std::collections::BTreeMap<(i32, i32, i32), Vec<(String, [crate::FlowSide; 6])>>,
++    /// Their menus' data slots, by position.
++    pub block_menu_data: std::collections::BTreeMap<(i32, i32, i32), Vec<i32>>,
+ }
+ 
+ /// The world a script's mod reads: [`TestGame::world`], copied for a step.
+@@ -169,6 +171,7 @@ impl TestGame {
+             block_items: Default::default(),
+             block_energy: Default::default(),
+             block_tanks: Default::default(),
++            block_menu_data: Default::default(),
+         };
+         copy_mod(hmod, &copy)?;
+         game.start()?;
+@@ -247,6 +250,8 @@ impl TestGame {
+         };
+         self.block_tanks
+             .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
++        self.block_menu_data
++            .retain(|pos, _| self.world.get(pos).is_some_and(|s| of(s)));
+         let tanks_of = |state: &str| {
+             let block = state.split('[').next().unwrap_or("");
+             kinds
+@@ -309,6 +314,7 @@ impl TestGame {
+                 state,
+                 data: data.clone(),
+                 items: held.iter().map(|s| parse_stack(s)).collect(),
++                menu_data: self.block_menu_data.get(&(x, y, z)).cloned().unwrap_or_default(),
+                 tanks: self
+                     .block_tanks
+                     .get(&(x, y, z))
+@@ -352,6 +358,9 @@ impl TestGame {
+                     };
+                 }
+             }
++            if let Some(d) = &u.menu_data {
++                self.block_menu_data.insert(key, d.clone());
++            }
+             if let Some(items) = u.items {
+                 let n = self.block_items.get(&key).map_or(0, Vec::len);
+                 let mut text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
+@@ -416,6 +425,54 @@ impl TestGame {
+             }
+         }
+     }
++    /// `player` presses menu button `id` of the block entity at `x y z`, and
++    /// the mod's update is kept as a tick's is. False when the mod answers
++    /// with none or there is no entity there.
++    pub fn press_button(&mut self, player: &ServerPlayer, pos: (i32, i32, i32), id: i32) -> bool {
++        let Some(state) = self.world.get(&pos).cloned() else {
++            return false;
++        };
++        if !self.block_entities.contains_key(&pos) {
++            return false;
++        }
++        let entity = crate::BlockEntity {
++            dimension: "minecraft:overworld".into(),
++            pos: BlockPos { x: pos.0, y: pos.1, z: pos.2 },
++            state,
++            data: self.block_entities[&pos].clone(),
++            items: self
++                .block_items
++                .get(&pos)
++                .map_or_else(Vec::new, |v| v.iter().map(|s| parse_stack(s)).collect()),
++            energy: self.block_energy.get(&pos).map_or(0, |e| e.0),
++            energy_faces: self.block_energy.get(&pos).map_or_else(Vec::new, |e| e.1.to_vec()),
++            tanks: self
++                .block_tanks
++                .get(&pos)
++                .map_or_else(Vec::new, |v| v.iter().map(|(s, _)| parse_tank(s)).collect()),
++            tank_faces: self
++                .block_tanks
++                .get(&pos)
++                .map_or_else(Vec::new, |v| v.iter().map(|(_, f)| f.to_vec()).collect()),
++            menu_data: self.block_menu_data.get(&pos).cloned().unwrap_or_default(),
++        };
++        self.snapshot();
++        let Some(u) = self.mods.menu_button(player, id, &entity) else {
++            return false;
++        };
++        self.block_entities.insert(pos, u.data);
++        if let Some(d) = u.menu_data {
++            self.block_menu_data.insert(pos, d);
++        }
++        if let Some(items) = u.items {
++            let text: Vec<String> = items.iter().map(|s| show_stack(s)).collect();
++            self.block_items.insert(pos, text);
++        }
++        if let (Some(e), Some(entry)) = (u.energy, self.block_energy.get_mut(&pos)) {
++            entry.0 = e;
++        }
++        true
++    }
+     /// `n` frames, 1/60 s apart.
+     pub fn frames(&mut self, n: u64) {
+         self.snapshot();
+@@ -677,6 +734,26 @@ pub struct BlockItemsSet {
+     slots: Vec<String>,
+ }
+ 
++/// A menu button a step presses.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct PressSet {
++    x: i32,
++    y: i32,
++    z: i32,
++    id: i32,
++}
++
++/// The data slots of a block entity's menu a step expects.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct MenuDataSet {
++    x: i32,
++    y: i32,
++    z: i32,
++    data: Vec<i32>,
++}
++
+ /// The tanks of a block entity a step sets or expects.
+ #[derive(Debug, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -766,6 +843,8 @@ pub struct Step {
+     /// its block in an earlier step).
+     #[serde(default)]
+     set_items: Vec<BlockItemsSet>,
++    /// Server mods: the actor presses a menu button after the ticks.
++    press: Option<PressSet>,
+     /// Tanks of block entities before the ticks (as `set-items`).
+     #[serde(default)]
+     set_tanks: Vec<BlockTanksSet>,
+@@ -797,6 +876,8 @@ pub struct Expect {
+     /// Blocks of the Overworld after the step, the mod's changes made
+     /// (capability `world`).
+     blocks: Option<Vec<BlockSet>>,
++    /// Server mods: the data slots of block entities' menus after the step.
++    block_menu_data: Option<Vec<MenuDataSet>>,
+     /// Server mods: the tanks of block entities after the step.
+     block_tanks: Option<Vec<BlockTanksSet>>,
+     /// Server mods: the stored energy of block entities after the step.
+@@ -1004,6 +1085,7 @@ impl Step {
+                 .ok_or_else(|| "no player is on the server: add join = \"Name\"".to_string()),
+         };
+         let acts = self.player.is_some()
++            || self.press.is_some()
+             || self.motion.is_some()
+             || self.chat.is_some()
+             || self.command.is_some()
+@@ -1033,6 +1115,9 @@ impl Step {
+         game.tick(self.ticks);
+         game.frames(self.frames);
+         let who = actor.map(|i| game.players[i].clone());
++        if let (Some(p), Some(who)) = (&self.press, &who) {
++            game.press_button(who, (p.x, p.y, p.z), p.id);
++        }
+         if let Some(line) = &self.chat {
+             match &who {
+                 Some(p) => game.player_chat(p, line),
+@@ -1187,6 +1272,17 @@ impl Step {
+                 }
+             }
+         }
++        if let Some(want) = &e.block_menu_data {
++            for b in want {
++                let got = game.block_menu_data.get(&(b.x, b.y, b.z));
++                if got != Some(&b.data) {
++                    return Err(format!(
++                        "menu data at {} {} {}: expected {:?}, got {got:?}",
++                        b.x, b.y, b.z, b.data
++                    ));
++                }
++            }
++        }
+         if let Some(want) = &e.block_tanks {
+             for b in want {
+                 let got: Option<Vec<String>> = game
+diff --git a/docs/api/mods-reference.md b/docs/api/mods-reference.md
+index 3b4fadf..0d38b29 100644
+--- a/docs/api/mods-reference.md
++++ b/docs/api/mods-reference.md
+@@ -859,6 +859,7 @@ The slots of a block entity. Slot numbers start at 0; at most 256 slots.
+ | `faces` | `list<list<u32>>` | The slots each face reaches, in this order of faces: down, up, north, south, west, east (what a hopper next to that face sees). |
+ | `inputs` | `list<u32>` | The slots hoppers may put into. |
+ | `outputs` | `list<u32>` | The slots hoppers may take from. |
++| `menu` | `bool` | Using the block opens a menu with these slots, drawn as the content mod's menu type of the same id as the block describes (`data/<ns>/horizon/menu/<block>.json`, with as many slots). |
+ 
+ ### record `block-entity-kind`
+ 
+@@ -907,6 +908,7 @@ A block entity of the mod, as the server holds it.
+ | `energy-faces` | `list<flow-side>` |  |
+ | `tanks` | `list<tank>` | Its tanks, in the order of its kind's `tanks`, and their faces' sides now. |
+ | `tank-faces` | `list<list<flow-side>>` |  |
++| `menu-data` | `list<s32>` | The data slots its menu shows (progress, a mode), 16 bits each on the wire. |
+ 
+ ### record `block-entity-update`
+ 
+@@ -922,6 +924,7 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `energy-faces` | `option<list<flow-side>>` | New sides for the faces; none leaves them as they are. |
+ | `tanks` | `option<list<tank>>` | The tanks after the call (kept within their capacities); none leaves them as they are. |
+ | `tank-faces` | `option<list<list<flow-side>>>` | New sides for each tank's faces; none leaves them as they are. |
++| `menu-data` | `option<list<s32>>` | The menu's data slots after the call; none leaves them as they are. |
+ 
+ | Function | Signature | What it does |
+ | --- | --- | --- |
+@@ -934,3 +937,4 @@ New bytes and slots for the block entity at `pos` in `dimension`.
+ | `block-broken` | `func(player: player, pos: block-pos, state: string)` | A player broke the block at `pos` in their dimension: `state` is what was there, as `minecraft:oak_log[axis=y]`. |
+ | `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
+ | `block-entities-tick` | `func(tick: u64, entities: list<block-entity>) -> list<block-entity-update>` | Each server tick, for the loaded block entities of blocks `registration.block-entities` marked `ticks` (those of the level the server is simulating; at most 4096 a call, the rest wait their turn). Returns the entities whose bytes changed; the chunk is then saved with them. |
++| `menu-button` | `func(player: player, dimension: string, pos: block-pos, id: s32, entity: block-entity) -> option<block-entity-update>` | A player pressed button `id` of the menu of the block entity at `pos` (a `button` widget of the menu type's screen), with the entity as it is. Returns what to change in it, if anything. |
+-- 
+2.43.0
+
