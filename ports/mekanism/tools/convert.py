@@ -3753,7 +3753,9 @@ for bs_path in sorted(glob.glob(f'{AJ}/blockstates/*.json')):
     if kind == '_glow_panel':
         block['state_properties'] = {'facing': {'type': 'enum', 'values': ['down', 'up', 'north', 'south', 'west', 'east']}}
     put(f'{OUT}/data/{GNS}/horizon/block/{name}.json', block)
-    item_model = read_json(f'{AJ}/models/item/{name}.json') if os.path.exists(f'{AJ}/models/item/{name}.json') else {'parent': f'mekanismadditions:block/plastic/block'}
+    # the item's model: the hand-written one, else the generated one (a slab's item is the half block, stairs the stairs, a fence the inventory fence...); only a block with none is the full block
+    _item_path = next((q for q in (f'{AJ}/models/item/{name}.json', f'{AGEN}/assets/mekanismadditions/models/item/{name}.json') if os.path.exists(q)), None)
+    item_model = read_json(_item_path) if _item_path else {'parent': f'mekanismadditions:block/plastic/block'}
     target = item_model['parent'].replace('mekanismadditions:block/plastic/', f'{NS}:block/additions/{color}/').replace('mekanismadditions:block/glow_panel', f'{NS}:block/additions/{color}/glow_panel')
     put(f'{OUT}/assets/{NS}/items/{name}.json', {'model': {'type': 'minecraft:model', 'model': target}})
     put(f'{OUT}/data/{GNS}/loot_table/blocks/{name}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
