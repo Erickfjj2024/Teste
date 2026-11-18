@@ -3541,7 +3541,7 @@ for g in TURBINE + FISSION + FUSION:
     put(f'{OUT}/assets/{GNS}/items/{g}.json', {'model': {'type': 'minecraft:model', 'model': bs['variants'][''] ['model']}})
     put(f'{OUT}/data/{GNS}/loot_table/blocks/{g}.json', {'type': 'minecraft:block', 'pools': [{'rolls': 1, 'entries': [
         {'type': 'minecraft:item', 'name': f'{GNS}:{g}'}], 'conditions': [{'type': 'minecraft:survives_explosion'}]}]})
-for gi in ('turbine_blade', 'hohlraum', 'module_geothermal_generator_unit', 'module_solar_recharging_unit'):
+for gi in ('turbine_blade', 'hohlraum', 'solar_panel', 'module_geothermal_generator_unit', 'module_solar_recharging_unit'):
     gen_model(f'{GSRC}:item/{gi}')
     put(f'{OUT}/data/{NS}/horizon/item/{gi}.json', {'template': 'minecraft:stick'})
     put(f'{OUT}/assets/{NS}/items/{gi}.json', {'model': {'type': 'minecraft:model', 'model': f'{NS}:item/generators/{gi}'}})
@@ -4093,6 +4093,37 @@ for p in sorted(glob.glob(f'{GEN}/data/{NS}/recipe/energy_cube/*.json')):
         r['type'] = 'minecraft:crafting_shaped'
         put(f'{OUT}/data/{NS}/recipe/energy_cube_{os.path.basename(p)}', r)
         nrec += 1
+# every other `mekanism:mek_data` recipe (the machines, the bins and tanks of the upper tiers, the induction cells, the laser, the generators...) as a plain
+# shaped one, and the generators module's own crafting recipes (generator/, reactor/, the solar panel, the focus matrix...): without them the player cannot make
+# these blocks at all. A recipe is kept when its result is in the port and every ingredient of ours is (the rest is listed below).
+_emitted = set()
+for _p in glob.glob(f'{OUT}/data/{NS}/recipe/*.json'):
+    if not os.path.basename(_p).startswith('additions_'):
+        _rr = read_json(_p).get('result', {})
+        _emitted.add((_rr.get('id', '') if isinstance(_rr, dict) else str(_rr)).split(':')[-1])
+_skipped_recipes = []
+for _base, _tag in ((f'{GEN}/data/{NS}/recipe', 'mek'), (f'{GGEN}/data/{GNS_SRC}/recipe', 'gen')):
+    for p in sorted(glob.glob(f'{_base}/**/*.json', recursive=True)):
+        _rel = os.path.relpath(p, _base)[:-5].replace(os.sep, '__')
+        if _rel.startswith(('factory__', 'energy_cube__')):
+            continue
+        r = json.loads(open(p).read().replace(f'{GSRC}:', f'{NS}:'))
+        _t = str(r.get('type', ''))
+        if not (_t == 'mekanism:mek_data' or (_tag == 'gen' and _t.startswith('minecraft:crafting_'))):
+            continue
+        _res = r.get('result', {})
+        _name = (_res.get('id', '') if isinstance(_res, dict) else str(_res)).split(':')[-1]
+        if _name in _emitted:
+            continue
+        _missing = sorted({s_ for s_ in refs(r.get('key', r.get('ingredients', []))) if s_.startswith(NS + ':') and s_.split(':')[1] not in have})
+        if _name not in have or _missing:
+            _skipped_recipes.append((_name, _missing))
+            continue
+        r['type'] = 'minecraft:crafting_shaped' if 'pattern' in r else 'minecraft:crafting_shapeless'
+        r.pop('group', None)
+        put(f'{OUT}/data/{NS}/recipe/{_tag}_{_rel}.json', r)
+        nrec += 1
+print(f'mek_data and generators crafting recipes added; {len(_skipped_recipes)} left out:', _skipped_recipes[:40])
 
 # ---------------------------------------------------------------- tags
 def filtered_tag(v):
@@ -4156,6 +4187,8 @@ def vanilla_members(cat, mat):
         v = ['minecraft:sand', 'minecraft:red_sand']
     elif cat == 'slimeballs':
         v = ['minecraft:slime_ball']
+    elif cat == 'strings':
+        v = ['minecraft:string']
     elif cat == 'ender_pearls':
         v = ['minecraft:ender_pearl']
     elif cat == 'nether_stars':
